@@ -17,12 +17,12 @@ pub struct ExcludePattern {
 impl ExcludePattern {
     /// Parses `text` as one gitignore-style pattern.
     pub fn parse(text: &str) -> Result<Self, ExcludePatternError> {
-        let invalid = |reason| ExcludePatternError {
+        let invalid = |problem| ExcludePatternError {
             pattern: text.to_owned(),
-            reason,
+            problem,
         };
         if text.starts_with('!') {
-            return Err(invalid(ExcludePatternReason::Negation));
+            return Err(invalid(ExcludePatternProblem::Negation));
         }
         let (rest, directory_only) = match text.strip_suffix('/') {
             Some(rest) => (rest, true),
@@ -35,7 +35,7 @@ impl ExcludePattern {
             None => (rest, rest.contains('/')),
         };
         if rest.is_empty() {
-            return Err(invalid(ExcludePatternReason::Empty));
+            return Err(invalid(ExcludePatternProblem::Empty));
         }
         let body = translate(&tokenize(rest).map_err(invalid)?);
         let depth = if anchored { "" } else { "(?:.*/)?" };
@@ -45,7 +45,7 @@ impl ExcludePattern {
         // The translation is always valid syntax, so only the regex's size
         // limit can refuse it.
         let regex = Regex::new(&format!("(?s)^{depth}{body}{inside}$"))
-            .map_err(|_| invalid(ExcludePatternReason::TooLong))?;
+            .map_err(|_| invalid(ExcludePatternProblem::TooLong))?;
         Ok(Self {
             text: text.to_owned(),
             regex,
@@ -193,13 +193,15 @@ impl DefaultExclusion {
     pub fn name_pattern(self) -> &'static str {
         self.name_pattern
     }
+}
 
-    /// Why the file is left out, as the outbound review shows it.
+impl DefaultExclusionKind {
+    /// Why a file of this kind is left out, as the outbound review shows it.
     #[must_use]
     pub fn reason(self) -> &'static str {
-        match self.kind {
-            DefaultExclusionKind::Lockfile => "lockfile",
-            DefaultExclusionKind::SecretPath => "common secret path",
+        match self {
+            Self::Lockfile => "lockfile",
+            Self::SecretPath => "common secret path",
         }
     }
 }
@@ -227,11 +229,11 @@ enum Token {
     /// `**` as a whole level: any number of directory levels.
     Globstar,
     /// A regex fragment matching exactly one character other than `/`.
-    Char(String),
+    OneChar(String),
 }
 
 /// Splits a pattern, without its anchoring or trailing slash, into tokens.
-fn tokenize(pattern: &str) -> Result<Vec<Token>, ExcludePatternReason> {
+fn tokenize(pattern: &str) -> Result<Vec<Token>, ExcludePatternProblem> {
     let mut tokens = Vec::new();
     let mut chars = pattern.chars().peekable();
     while let Some(c) = chars.next() {
@@ -252,15 +254,15 @@ fn tokenize(pattern: &str) -> Result<Vec<Token>, ExcludePatternReason> {
                     Token::Star
                 }
             }
-            '?' => Token::Char("[^/]".to_owned()),
-            '[' => Token::Char(class(&mut chars)?),
+            '?' => Token::OneChar("[^/]".to_owned()),
+            '[' => Token::OneChar(class(&mut chars)?),
             '\\' => {
                 let escaped = chars
                     .next()
-                    .ok_or(ExcludePatternReason::TrailingBackslash)?;
-                Token::Char(literal(escaped))
+                    .ok_or(ExcludePatternProblem::TrailingBackslash)?;
+                Token::OneChar(literal(escaped))
             }
-            c => Token::Char(literal(c)),
+            c => Token::OneChar(literal(c)),
         };
         tokens.push(token);
     }
@@ -275,29 +277,36 @@ const POSIX_CLASSES: [&str; 12] = [
 
 /// Reads a bracket expression after its `[` and translates it into a regex
 /// class. Like Git's, it never matches `/`.
-fn class(chars: &mut Peekable<Chars<'_>>) -> Result<String, ExcludePatternReason> {
+fn class(chars: &mut Peekable<Chars<'_>>) -> Result<String, ExcludePatternProblem> {
     let negated = chars.next_if(|&c| c == '!' || c == '^').is_some();
     let mut items = String::new();
     let mut first = true;
     loop {
-        let c = chars.next().ok_or(ExcludePatternReason::UnclosedClass)?;
+        let c = chars.next().ok_or(ExcludePatternProblem::UnclosedClass)?;
         match c {
             // A `]` straight after the `[` (or its negation) is literal.
             ']' if !first => break,
-            '[' if chars.next_if_eq(&':').is_some() => {
-                let mut name = String::new();
-                while let Some(c) = chars.next_if(|&c| c != ':') {
-                    name.push(c);
+            '[' if chars.peek() == Some(&':') => {
+                // As in Git, `[:` starts a class name only when the next `]`
+                // follows a `:`. Otherwise the `[` is literal.
+                let mut after = chars.clone();
+                after.next();
+                let mut inner = String::new();
+                while let Some(c) = after.next_if(|&c| c != ']') {
+                    inner.push(c);
                 }
-                if chars.next() != Some(':') || chars.next() != Some(']') {
-                    return Err(ExcludePatternReason::UnclosedClass);
+                match inner.strip_suffix(':') {
+                    Some(name) if after.next() == Some(']') => {
+                        if !POSIX_CLASSES.contains(&name) {
+                            return Err(ExcludePatternProblem::UnknownClass);
+                        }
+                        *chars = after;
+                        items.push_str("[:");
+                        items.push_str(name);
+                        items.push_str(":]");
+                    }
+                    _ => items.push_str(&literal('[')),
                 }
-                if !POSIX_CLASSES.contains(&name.as_str()) {
-                    return Err(ExcludePatternReason::UnknownClass);
-                }
-                items.push_str("[:");
-                items.push_str(&name);
-                items.push_str(":]");
             }
             c => {
                 let start = escaped(c, chars)?;
@@ -305,10 +314,10 @@ fn class(chars: &mut Peekable<Chars<'_>>) -> Result<String, ExcludePatternReason
                 // A `-` before the closing `]` is literal.
                 if chars.peek() == Some(&'-') && chars.clone().nth(1).is_some_and(|c| c != ']') {
                     chars.next();
-                    let end = chars.next().ok_or(ExcludePatternReason::UnclosedClass)?;
+                    let end = chars.next().ok_or(ExcludePatternProblem::UnclosedClass)?;
                     let end = escaped(end, chars)?;
                     if end < start {
-                        return Err(ExcludePatternReason::ReversedRange);
+                        return Err(ExcludePatternProblem::ReversedRange);
                     }
                     items.push('-');
                     items.push_str(&literal(end));
@@ -326,9 +335,9 @@ fn class(chars: &mut Peekable<Chars<'_>>) -> Result<String, ExcludePatternReason
 
 /// The character `c` stands for inside a bracket expression, reading the one
 /// after it when `c` is a backslash.
-fn escaped(c: char, chars: &mut Peekable<Chars<'_>>) -> Result<char, ExcludePatternReason> {
+fn escaped(c: char, chars: &mut Peekable<Chars<'_>>) -> Result<char, ExcludePatternProblem> {
     if c == '\\' {
-        chars.next().ok_or(ExcludePatternReason::UnclosedClass)
+        chars.next().ok_or(ExcludePatternProblem::UnclosedClass)
     } else {
         Ok(c)
     }
@@ -356,18 +365,18 @@ fn translate(tokens: &[Token]) -> String {
                     body.push_str(".*");
                 }
             }
-            Token::Char(fragment) => body.push_str(fragment),
+            Token::OneChar(fragment) => body.push_str(fragment),
         }
     }
     body
 }
 
-/// An `exclude` pattern that can't be parsed, with the reason.
+/// An `exclude` pattern that can't be parsed, with its problem.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("invalid exclude pattern `{pattern}`: {reason}")]
+#[error("invalid exclude pattern `{pattern}`: {problem}")]
 pub struct ExcludePatternError {
     pattern: String,
-    reason: ExcludePatternReason,
+    problem: ExcludePatternProblem,
 }
 
 impl ExcludePatternError {
@@ -379,14 +388,14 @@ impl ExcludePatternError {
 
     /// Why it is invalid.
     #[must_use]
-    pub fn reason(&self) -> ExcludePatternReason {
-        self.reason
+    pub fn problem(&self) -> ExcludePatternProblem {
+        self.problem
     }
 }
 
 /// Why an `exclude` pattern is invalid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ExcludePatternReason {
+pub enum ExcludePatternProblem {
     /// It is empty, or only a slash.
     Empty,
     /// It starts with `!`, which in a gitignore file brings files back.
@@ -403,7 +412,7 @@ pub enum ExcludePatternReason {
     TooLong,
 }
 
-impl fmt::Display for ExcludePatternReason {
+impl fmt::Display for ExcludePatternProblem {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Self::Empty => "it is empty",
@@ -573,6 +582,19 @@ mod tests {
     }
 
     #[test]
+    fn an_open_bracket_and_colon_without_a_class_name_is_literal() {
+        let colon = pattern("[[:]");
+        let mixed = pattern("[a[:b]");
+
+        assert!(colon.matches("["));
+        assert!(colon.matches(":"));
+        for name in ["a", "[", ":", "b"] {
+            assert!(mixed.matches(name), "{name}");
+        }
+        assert!(!mixed.matches("c"));
+    }
+
+    #[test]
     fn a_backslash_makes_the_next_character_literal() {
         let star = pattern(r"\*.md");
         let bang = pattern(r"\!important.txt");
@@ -599,7 +621,7 @@ mod tests {
             .expect_err("a negation is invalid");
 
         assert_eq!(error.pattern(), "!fixtures/keep.json");
-        assert_eq!(error.reason(), ExcludePatternReason::Negation);
+        assert_eq!(error.problem(), ExcludePatternProblem::Negation);
     }
 
     #[test]
@@ -722,23 +744,23 @@ mod tests {
 
     #[test]
     fn each_default_exclusion_gives_the_reason_the_review_shows() {
-        let reason = |path| DefaultExclusion::of(path).map(DefaultExclusion::reason);
+        let reason = |path| DefaultExclusion::of(path).map(|exclusion| exclusion.kind().reason());
 
         assert_eq!(reason("Cargo.lock"), Some("lockfile"));
         assert_eq!(reason(".env.example"), Some("common secret path"));
     }
 
-    fn reason(text: &str) -> ExcludePatternReason {
+    fn problem(text: &str) -> ExcludePatternProblem {
         let error = ExcludePattern::parse(text).expect_err("the pattern is invalid");
         assert_eq!(error.pattern(), text);
-        error.reason()
+        error.problem()
     }
 
     #[test]
     fn a_negation_is_rejected_because_config_can_only_add_exclusions() {
         let error = ExcludePattern::parse("!.env.example").expect_err("negation is invalid");
 
-        assert_eq!(error.reason(), ExcludePatternReason::Negation);
+        assert_eq!(error.problem(), ExcludePatternProblem::Negation);
         assert_eq!(
             error.to_string(),
             "invalid exclude pattern `!.env.example`: `!` can't bring files back, \
@@ -747,16 +769,16 @@ mod tests {
     }
 
     #[test]
-    fn a_malformed_pattern_is_rejected_with_its_reason() {
-        assert_eq!(reason(""), ExcludePatternReason::Empty);
-        assert_eq!(reason("/"), ExcludePatternReason::Empty);
+    fn a_malformed_pattern_is_rejected_with_its_problem() {
+        assert_eq!(problem(""), ExcludePatternProblem::Empty);
+        assert_eq!(problem("/"), ExcludePatternProblem::Empty);
         assert_eq!(
-            reason("report-[0-9.pdf"),
-            ExcludePatternReason::UnclosedClass
+            problem("report-[0-9.pdf"),
+            ExcludePatternProblem::UnclosedClass
         );
-        assert_eq!(reason("[!]"), ExcludePatternReason::UnclosedClass);
-        assert_eq!(reason("[z-a].md"), ExcludePatternReason::ReversedRange);
-        assert_eq!(reason("[[:digits:]]"), ExcludePatternReason::UnknownClass);
-        assert_eq!(reason(r"notes\"), ExcludePatternReason::TrailingBackslash);
+        assert_eq!(problem("[!]"), ExcludePatternProblem::UnclosedClass);
+        assert_eq!(problem("[z-a].md"), ExcludePatternProblem::ReversedRange);
+        assert_eq!(problem("[[:digits:]]"), ExcludePatternProblem::UnknownClass);
+        assert_eq!(problem(r"notes\"), ExcludePatternProblem::TrailingBackslash);
     }
 }
