@@ -14,7 +14,8 @@ pub struct ShowcaseProject {
 
 impl ShowcaseProject {
     /// The project with the areas its config declares and its curated
-    /// `changes`. A project that declares no areas gets [`Area::defaults`]:
+    /// `changes`. A project that declares no areas offers
+    /// [`Area::defaults`]:
     ///
     /// ```
     /// use whetstone_core::{Area, ShowcaseProject};
@@ -26,11 +27,7 @@ impl ShowcaseProject {
     #[must_use]
     pub fn new(declared_areas: Vec<Area>, changes: Vec<Change>) -> Self {
         Self {
-            areas: if declared_areas.is_empty() {
-                Area::defaults()
-            } else {
-                declared_areas
-            },
+            areas: Area::offered(declared_areas),
             changes,
         }
     }

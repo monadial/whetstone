@@ -157,6 +157,11 @@ impl Picker {
     }
 }
 
+/// The heading above the areas.
+const AREA_HEADING: &str = "Areas the questions focus on";
+/// The heading above the changes.
+const CHANGE_HEADING: &str = "Change to practice on";
+
 /// Why "Generate questions" cannot be used yet.
 const GENERATE_QUESTIONS_UNAVAILABLE: &str = "arrives with Jev";
 
@@ -177,19 +182,19 @@ fn areas_of(change: &Change) -> String {
 #[derive(Debug)]
 struct Parts {
     title: Rect,
-    areas_heading: Rect,
-    areas: Rect,
-    changes_heading: Rect,
-    changes: Rect,
+    area_heading: Rect,
+    area_list: Rect,
+    change_heading: Rect,
+    change_list: Rect,
     generate_questions: Rect,
 }
 
-/// Where the picker's parts go in `area`, for `areas` areas and `changes`
-/// changes. The title, headings and lists get their rows first, and the gaps
-/// between them share what is left, so a short terminal keeps every control.
-/// When even the lists do not fit, they scroll, and the changes always keep
-/// at least one row.
-fn layout(area: Rect, areas: usize, changes: usize) -> Parts {
+/// Where the picker's parts go in `area`, for lists of `area_count` areas
+/// and `change_count` changes. The title, headings, lists and "Generate
+/// questions" get their rows first, and the gaps between them share what is
+/// left, so a short terminal keeps every control. When even the lists do not
+/// fit, they scroll, and the change list always keeps at least one row.
+fn layout(area: Rect, area_count: usize, change_count: usize) -> Parts {
     const TITLE: u16 = 1;
     const HEADING: u16 = 1;
     const GENERATE_QUESTIONS: u16 = 1;
@@ -197,10 +202,10 @@ fn layout(area: Rect, areas: usize, changes: usize) -> Parts {
     let mut left = area
         .height
         .saturating_sub(TITLE + 2 * HEADING + GENERATE_QUESTIONS);
-    let areas_rows = rows(areas).min(left.saturating_sub(rows(changes.min(1))));
-    left -= areas_rows;
-    let changes_rows = rows(changes).min(left);
-    left -= changes_rows;
+    let area_rows = rows(area_count).min(left.saturating_sub(rows(change_count.min(1))));
+    left -= area_rows;
+    let change_rows = rows(change_count).min(left);
+    left -= change_rows;
     let mut take = |wanted: u16| {
         let taken = wanted.min(left);
         left -= taken;
@@ -212,31 +217,31 @@ fn layout(area: Rect, areas: usize, changes: usize) -> Parts {
     let [
         title,
         _,
-        areas_heading,
-        areas,
+        area_heading,
+        area_list,
         _,
-        changes_heading,
-        changes,
+        change_heading,
+        change_list,
         _,
         generate_questions,
     ] = Layout::vertical([
         Constraint::Length(TITLE),
         Constraint::Length(after_title),
         Constraint::Length(HEADING),
-        Constraint::Length(areas_rows),
+        Constraint::Length(area_rows),
         Constraint::Length(before_changes),
         Constraint::Length(HEADING),
-        Constraint::Length(changes_rows),
+        Constraint::Length(change_rows),
         Constraint::Length(before_generate_questions),
         Constraint::Length(GENERATE_QUESTIONS),
     ])
     .areas(area);
     Parts {
         title,
-        areas_heading,
-        areas,
-        changes_heading,
-        changes,
+        area_heading,
+        area_list,
+        change_heading,
+        change_list,
         generate_questions,
     }
 }
@@ -295,18 +300,24 @@ impl View for Picker {
             )),
             parts.title,
         );
+        // Practice needs one area or more.
+        let area_heading = if self.areas.contains(&true) {
+            AREA_HEADING.to_owned()
+        } else {
+            format!("{AREA_HEADING}: choose at least one")
+        };
         frame.render_widget(
-            Paragraph::new(Line::styled("Areas the questions focus on", theme.muted)),
-            parts.areas_heading,
+            Paragraph::new(Line::styled(area_heading, theme.muted)),
+            parts.area_heading,
         );
         let shown_area = match self.focused() {
             Control::Area(index) => Some(index),
             Control::Change(_) | Control::GenerateQuestions => None,
         };
-        render_list(frame, parts.areas, self.area_rows(context), shown_area);
+        render_list(frame, parts.area_list, self.area_rows(context), shown_area);
         frame.render_widget(
-            Paragraph::new(Line::styled("Change to practice on", theme.muted)),
-            parts.changes_heading,
+            Paragraph::new(Line::styled(CHANGE_HEADING, theme.muted)),
+            parts.change_heading,
         );
         // The focused change, or else the chosen one, stays in view.
         let shown_change = match self.focused() {
@@ -315,8 +326,8 @@ impl View for Picker {
         };
         render_list(
             frame,
-            parts.changes,
-            self.change_rows(context, parts.changes.width),
+            parts.change_list,
+            self.change_rows(context, parts.change_list.width),
             shown_change,
         );
         frame.render_widget(

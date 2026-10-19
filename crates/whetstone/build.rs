@@ -10,7 +10,7 @@
 //! and each touched file before and after.
 //!
 //! The output depends only on those files, so the build is deterministic. A
-//! hunk that does not apply exactly, an area the config does not declare, or
+//! hunk that does not apply exactly, an area the project does not offer, or
 //! anything else the replay does not understand fails the build.
 
 use std::collections::BTreeMap;
@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::{env, fs, io};
 
-use whetstone_core::{Area, ShowcaseProject};
+use whetstone_core::Area;
 
 /// The showcase project's patch series, relative to this crate.
 const HISTORY: &str = "../../showcase/payments-history";
@@ -34,7 +34,7 @@ fn main() -> ExitCode {
             let mut message = error.to_string();
             let mut source = error.source();
             while let Some(cause) = source {
-                let _ = write!(message, ": {cause}");
+                message = format!("{message}: {cause}");
                 source = cause.source();
             }
             report_failure(&message);
@@ -51,9 +51,11 @@ fn report_failure(message: &str) {
     eprintln!("error: cannot embed the showcase project: {message}");
 }
 
-/// The showcase history could not be embedded.
+/// The showcase project could not be embedded.
 #[derive(Debug, thiserror::Error)]
 enum EmbedError {
+    #[error("Cargo did not set OUT_DIR")]
+    NoOutDir,
     #[error("cannot read {}", path.display())]
     Read {
         path: PathBuf,
@@ -72,37 +74,43 @@ enum EmbedError {
         #[source]
         source: toml::de::Error,
     },
-    #[error("{}: {problem}", path.display())]
-    Invalid { path: PathBuf, problem: String },
+    #[error("`areas` in {} must be an array of area names", path.display())]
+    Areas { path: PathBuf },
+    #[error("{}", path.display())]
+    History {
+        path: PathBuf,
+        #[source]
+        source: HistoryError,
+    },
+}
+
+/// A patch the replay cannot parse or apply, and why.
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+struct HistoryError(String);
+
+/// A `HistoryError` saying `problem`.
+fn malformed(problem: impl Into<String>) -> HistoryError {
+    HistoryError(problem.into())
 }
 
 fn embed() -> Result<(), EmbedError> {
     tell_cargo(&[HISTORY, CONFIG]);
+    let out = PathBuf::from(env::var_os("OUT_DIR").ok_or(EmbedError::NoOutDir)?);
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let declared = read_areas(&crate_dir.join(CONFIG))?;
-    // The areas a learner is offered, which the trailers must name.
-    let offered = ShowcaseProject::new(declared.clone(), Vec::new());
+    // A trailer may name only the areas a learner is offered.
+    let offered = Area::offered(declared.clone());
     let mut replay = Replay::default();
     for path in patch_files(&crate_dir.join(HISTORY))? {
         let text = read(&path)?;
-        let invalid = |problem: String| EmbedError::Invalid {
-            path: path.clone(),
-            problem,
-        };
-        let patch = Patch::parse(&text).map_err(invalid)?;
-        if let Some(area) = patch
-            .areas
-            .iter()
-            .find(|area| !offered.areas().contains(&Area::new(**area)))
-        {
-            return Err(invalid(format!(
-                "the change declares the area {area:?}, which the showcase project does not"
-            )));
-        }
-        replay.apply(&patch).map_err(invalid)?;
+        Patch::parse(&text)
+            .and_then(|patch| patch.check_areas(&offered).map(|()| patch))
+            .and_then(|patch| replay.apply(patch))
+            .map_err(|source| EmbedError::History { path, source })?;
     }
-    let out = PathBuf::from(env::var_os("OUT_DIR").unwrap_or_default()).join("showcase.rs");
-    fs::write(&out, replay.source(&declared))
+    let out = out.join("showcase.rs");
+    fs::write(&out, rust_source(&declared, &replay))
         .map_err(|source| EmbedError::Write { path: out, source })
 }
 
@@ -149,9 +157,8 @@ fn read_areas(config: &Path) -> Result<Vec<Area>, EmbedError> {
         path: config.to_owned(),
         source,
     })?;
-    let invalid = || EmbedError::Invalid {
+    let invalid = || EmbedError::Areas {
         path: config.to_owned(),
-        problem: "`areas` must be an array of area names".to_owned(),
     };
     match table.get("areas") {
         None => Ok(Vec::new()),
@@ -164,7 +171,7 @@ fn read_areas(config: &Path) -> Result<Vec<Area>, EmbedError> {
     }
 }
 
-/// One change of the series, parsed from its patch file.
+/// One file of the series: a change as `git format-patch` writes it.
 #[derive(Debug)]
 struct Patch<'a> {
     /// The commit message, without its `Areas:` trailer.
@@ -180,14 +187,14 @@ struct Patch<'a> {
 #[derive(Debug)]
 struct FileDiff {
     path: String,
-    kind: FileChange,
+    status: FileStatus,
     hunks: Vec<Hunk>,
 }
 
-/// What a patch does to a file.
+/// What a patch does to a file, in git's terms.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum FileChange {
-    Created,
+enum FileStatus {
+    Added,
     Modified,
     Deleted,
 }
@@ -212,24 +219,24 @@ enum HunkLine {
 impl<'a> Patch<'a> {
     /// Parses a `git format-patch` file: its mail headers, its message up to
     /// the `---` line, the diffstat, then each file's diff.
-    fn parse(text: &'a str) -> Result<Self, String> {
+    fn parse(text: &'a str) -> Result<Self, HistoryError> {
         let lines: Vec<&str> = text.split('\n').collect();
         let blank = lines
             .iter()
             .position(|line| line.is_empty())
-            .ok_or("no blank line after the mail headers")?;
+            .ok_or_else(|| malformed("no blank line after the mail headers"))?;
         let subject = subject(&lines[..blank])?;
         let separator = blank
             + lines[blank..]
                 .iter()
                 .position(|line| *line == "---")
-                .ok_or("no `---` line after the message")?;
+                .ok_or_else(|| malformed("no `---` line after the message"))?;
         let (message, areas) = message(&subject, &lines[blank + 1..separator])?;
         let first_diff = separator
             + lines[separator..]
                 .iter()
                 .position(|line| line.starts_with("diff --git "))
-                .ok_or("no diff")?;
+                .ok_or_else(|| malformed("no diff"))?;
         let mut at = first_diff;
         let mut files = Vec::new();
         while lines
@@ -246,7 +253,9 @@ impl<'a> Patch<'a> {
             .take_while(|line| **line != "-- ")
             .find(|line| !line.is_empty())
         {
-            return Err(format!("unexpected line after the diff: {line:?}"));
+            return Err(malformed(format!(
+                "unexpected line after the diff: {line:?}"
+            )));
         }
         Ok(Self {
             message,
@@ -255,15 +264,29 @@ impl<'a> Patch<'a> {
             files,
         })
     }
+
+    /// Fails unless every area the trailer declares is one of `offered`.
+    fn check_areas(&self, offered: &[Area]) -> Result<(), HistoryError> {
+        match self
+            .areas
+            .iter()
+            .find(|area| !offered.contains(&Area::new(**area)))
+        {
+            Some(area) => Err(malformed(format!(
+                "the change declares the area {area:?}, which the showcase project does not offer"
+            ))),
+            None => Ok(()),
+        }
+    }
 }
 
 /// The subject from the mail `headers`, without its `[PATCH n/m]` prefix.
 /// A long subject is folded onto indented lines, which are joined again.
-fn subject(headers: &[&str]) -> Result<String, String> {
+fn subject(headers: &[&str]) -> Result<String, HistoryError> {
     let start = headers
         .iter()
         .position(|line| line.starts_with("Subject: "))
-        .ok_or("no Subject header")?;
+        .ok_or_else(|| malformed("no Subject header"))?;
     let mut subject = headers[start]
         .strip_prefix("Subject: ")
         .unwrap_or_default()
@@ -276,9 +299,9 @@ fn subject(headers: &[&str]) -> Result<String, String> {
         subject.push_str(folded.trim_start());
     }
     if subject.contains("=?") {
-        return Err(format!(
+        return Err(malformed(format!(
             "the subject {subject:?} is MIME-encoded, which the replay does not decode"
-        ));
+        )));
     }
     Ok(
         match subject
@@ -292,49 +315,63 @@ fn subject(headers: &[&str]) -> Result<String, String> {
 }
 
 /// The commit message from `subject` and the `body` lines, without the
-/// `Areas:` trailer that ends it, and the areas that trailer declares.
-fn message<'a>(subject: &str, body: &[&'a str]) -> Result<(String, Vec<&'a str>), String> {
-    let mut body = body.to_vec();
-    while body.last().is_some_and(|line| line.is_empty()) {
-        body.pop();
-    }
+/// `Areas:` trailer that ends it, and the areas that trailer declares. As in
+/// git, the trailer is a paragraph of its own.
+fn message<'a>(subject: &str, body: &[&'a str]) -> Result<(String, Vec<&'a str>), HistoryError> {
+    let mut body = without_blank_lines_at_end(body);
     let areas = body
         .pop()
         .and_then(|line| line.strip_prefix("Areas:"))
-        .ok_or("the message does not end with an `Areas:` trailer")?;
+        .ok_or_else(|| malformed("the message does not end with an `Areas:` trailer"))?;
+    if body.last().is_some_and(|line| !line.is_empty()) {
+        return Err(malformed(
+            "the `Areas:` trailer is not a paragraph of its own",
+        ));
+    }
     let areas: Vec<&str> = areas.split(',').map(str::trim).collect();
     if areas.iter().any(|area| area.is_empty()) {
-        return Err("the `Areas:` trailer names an empty area".to_owned());
+        return Err(malformed("the `Areas:` trailer names an empty area"));
     }
-    while body.last().is_some_and(|line| line.is_empty()) {
-        body.pop();
-    }
-    let mut message = subject.to_owned();
-    if !body.is_empty() {
-        message.push_str("\n\n");
-        message.push_str(&body.join("\n"));
-    }
-    Ok((message, areas))
+    let body = without_blank_lines_at_end(&body);
+    Ok((
+        if body.is_empty() {
+            subject.to_owned()
+        } else {
+            format!("{subject}\n\n{}", body.join("\n"))
+        },
+        areas,
+    ))
+}
+
+/// `lines` without the blank lines at their end.
+fn without_blank_lines_at_end<'a>(lines: &[&'a str]) -> Vec<&'a str> {
+    let end = lines
+        .iter()
+        .rposition(|line| !line.is_empty())
+        .map_or(0, |last| last + 1);
+    lines[..end].to_vec()
 }
 
 impl FileDiff {
     /// Parses the file diff starting at the `diff --git` line `at`, and
     /// returns it with the index of the line after it.
-    fn parse(lines: &[&str], mut at: usize) -> Result<(Self, usize), String> {
+    fn parse(lines: &[&str], mut at: usize) -> Result<(Self, usize), HistoryError> {
         let header = lines[at];
         at += 1;
-        let mut kind = FileChange::Modified;
+        let mut status = FileStatus::Modified;
         loop {
             let line = lines.get(at).copied().unwrap_or_default();
             if line.starts_with("--- ") {
                 break;
             } else if line.starts_with("new file mode ") {
-                kind = FileChange::Created;
+                status = FileStatus::Added;
             } else if line.starts_with("deleted file mode ") {
-                kind = FileChange::Deleted;
+                status = FileStatus::Deleted;
             } else if !line.starts_with("index ") {
                 // Renames, copies, mode changes and binary files.
-                return Err(format!("unsupported line {line:?} after {header:?}"));
+                return Err(malformed(format!(
+                    "unsupported line {line:?} after {header:?}"
+                )));
             }
             at += 1;
         }
@@ -342,13 +379,15 @@ impl FileDiff {
         let new = lines
             .get(at + 1)
             .and_then(|line| line.strip_prefix("+++ "))
-            .ok_or_else(|| format!("no `+++` line after {header:?}"))?;
+            .ok_or_else(|| malformed(format!("no `+++` line after {header:?}")))?;
         at += 2;
-        let path = match (kind, old.strip_prefix("a/"), new.strip_prefix("b/")) {
-            (FileChange::Created, None, Some(path)) if old == "/dev/null" => path,
-            (FileChange::Deleted, Some(path), None) if new == "/dev/null" => path,
-            (FileChange::Modified, Some(old), Some(new)) if old == new => new,
-            _ => return Err(format!("unsupported paths {old:?} and {new:?}")),
+        let path = match (status, old.strip_prefix("a/"), new.strip_prefix("b/")) {
+            (FileStatus::Added, None, Some(path)) if old == "/dev/null" => path,
+            (FileStatus::Deleted, Some(path), None) if new == "/dev/null" => path,
+            (FileStatus::Modified, Some(old), Some(new)) if old == new => new,
+            _ => {
+                return Err(malformed(format!("unsupported paths {old:?} and {new:?}")));
+            }
         };
         let mut hunks = Vec::new();
         while lines.get(at).is_some_and(|line| line.starts_with("@@ ")) {
@@ -359,7 +398,7 @@ impl FileDiff {
         Ok((
             Self {
                 path: path.to_owned(),
-                kind,
+                status,
                 hunks,
             },
             at,
@@ -371,19 +410,19 @@ impl Hunk {
     /// Parses the hunk starting at the `@@` line `at`, and returns it with the
     /// index of the line after it. The counts in the `@@` line say where it
     /// ends.
-    fn parse(lines: &[&str], mut at: usize) -> Result<(Self, usize), String> {
+    fn parse(lines: &[&str], mut at: usize) -> Result<(Self, usize), HistoryError> {
         let header = lines[at];
         let (old, new) = header
             .strip_prefix("@@ -")
             .and_then(|rest| rest.split_once(" @@"))
             .and_then(|(ranges, _)| ranges.split_once(" +"))
-            .ok_or_else(|| format!("malformed hunk header {header:?}"))?;
+            .ok_or_else(|| malformed(format!("malformed hunk header {header:?}")))?;
         let (old_start, mut old_left) = range(old, header)?;
         let (_, mut new_left) = range(new, header)?;
         let old_len = old_left;
         at += 1;
         let mut hunk_lines = Vec::new();
-        let short = || format!("the hunk {header:?} is shorter than it says");
+        let short = || malformed(format!("the hunk {header:?} is shorter than it says"));
         while old_left > 0 || new_left > 0 {
             let line = lines.get(at).ok_or_else(short)?;
             at += 1;
@@ -394,17 +433,19 @@ impl Hunk {
             } else if let Some(text) = line.strip_prefix('+') {
                 (HunkLine::Added(format!("{text}\n")), 0, 1)
             } else if line.starts_with('\\') {
-                no_newline(&mut hunk_lines);
+                strip_line_ending(&mut hunk_lines);
                 continue;
             } else {
-                return Err(format!("unexpected line {line:?} in the hunk {header:?}"));
+                return Err(malformed(format!(
+                    "unexpected line {line:?} in the hunk {header:?}"
+                )));
             };
             old_left = old_left.checked_sub(old_lines).ok_or_else(short)?;
             new_left = new_left.checked_sub(new_lines).ok_or_else(short)?;
             hunk_lines.push(line);
         }
         if lines.get(at).is_some_and(|line| line.starts_with('\\')) {
-            no_newline(&mut hunk_lines);
+            strip_line_ending(&mut hunk_lines);
             at += 1;
         }
         Ok((
@@ -418,8 +459,9 @@ impl Hunk {
     }
 }
 
-/// Applies a `\ No newline at end of file` marker to the line before it.
-fn no_newline(lines: &mut [HunkLine]) {
+/// Removes the line ending from the last of `lines`, as a
+/// `\ No newline at end of file` marker after it says.
+fn strip_line_ending(lines: &mut [HunkLine]) {
     if let Some(HunkLine::Context(text) | HunkLine::Removed(text) | HunkLine::Added(text)) =
         lines.last_mut()
     {
@@ -428,10 +470,10 @@ fn no_newline(lines: &mut [HunkLine]) {
 }
 
 /// A hunk header's `start,len` range. A range without `,len` is one line.
-fn range(range: &str, header: &str) -> Result<(usize, usize), String> {
+fn range(range: &str, header: &str) -> Result<(usize, usize), HistoryError> {
     let number = |text: &str| {
         text.parse()
-            .map_err(|_| format!("malformed hunk header {header:?}"))
+            .map_err(|_| malformed(format!("malformed hunk header {header:?}")))
     };
     match range.split_once(',') {
         Some((start, len)) => Ok((number(start)?, number(len)?)),
@@ -439,95 +481,88 @@ fn range(range: &str, header: &str) -> Result<(usize, usize), String> {
     }
 }
 
-/// The series replayed so far: the tree it has built, and every change as
-/// it will be embedded.
+/// The series replayed so far: the tree it has built, and every change.
 #[derive(Debug, Default)]
 struct Replay {
     /// Each file in the tree, and the index of its contents.
     tree: BTreeMap<String, usize>,
     /// Every version of every file. A file's version before a change is its
-    /// version after the change before, so each is stored once.
+    /// version after the change before, so each is kept once.
     contents: Vec<String>,
-    /// Each change, as Rust source.
-    changes: String,
+    changes: Vec<ReplayedChange>,
+}
+
+/// A change as the replay applied it.
+#[derive(Debug)]
+struct ReplayedChange {
+    message: String,
+    areas: Vec<String>,
+    diff: String,
+    files: Vec<(String, Versions)>,
+}
+
+/// A touched file's contents on each side of a change, as indexes into
+/// [`Replay::contents`].
+#[derive(Debug, Clone, Copy)]
+enum Versions {
+    Created { after: usize },
+    Modified { before: usize, after: usize },
+    Deleted { before: usize },
 }
 
 impl Replay {
     /// Applies `patch` to the tree, and records it as a change.
-    fn apply(&mut self, patch: &Patch<'_>) -> Result<(), String> {
-        let mut files = String::new();
+    fn apply(&mut self, patch: Patch<'_>) -> Result<(), HistoryError> {
+        let mut files = Vec::new();
         for file in &patch.files {
             let before = self.tree.get(&file.path).copied();
-            let after =
-                apply(before.map(|index| self.contents[index].as_str()), file)?.map(|after| {
+            let after = apply_file_diff(before.map(|index| self.contents[index].as_str()), file)?
+                .map(|after| {
                     self.contents.push(after);
                     self.contents.len() - 1
                 });
+            let versions = match (before, after) {
+                (None, Some(after)) => Versions::Created { after },
+                (Some(before), Some(after)) => Versions::Modified { before, after },
+                (Some(before), None) => Versions::Deleted { before },
+                (None, None) => {
+                    return Err(malformed(format!(
+                        "the patch leaves {} absent before and after",
+                        file.path
+                    )));
+                }
+            };
             match after {
                 Some(index) => self.tree.insert(file.path.clone(), index),
                 None => self.tree.remove(&file.path),
             };
-            let _ = write!(
-                files,
-                "EmbeddedFile {{ path: {:?}, before: {}, after: {} }}, ",
-                file.path,
-                contents_source(before),
-                contents_source(after),
-            );
+            files.push((file.path.clone(), versions));
         }
-        let mut areas = String::new();
-        for area in &patch.areas {
-            let _ = write!(areas, "{area:?}, ");
-        }
-        let _ = writeln!(
-            self.changes,
-            "    EmbeddedChange {{ message: {:?}, areas: &[{areas}], diff: {:?}, files: &[{files}] }},",
-            patch.message, patch.diff,
-        );
+        self.changes.push(ReplayedChange {
+            message: patch.message,
+            areas: patch.areas.iter().map(|&area| area.to_owned()).collect(),
+            diff: patch.diff,
+            files,
+        });
         Ok(())
     }
-
-    /// The Rust source `src/showcase.rs` includes, with the areas the config
-    /// declares.
-    fn source(&self, declared: &[Area]) -> String {
-        let mut declared_areas = String::new();
-        for area in declared {
-            let _ = write!(declared_areas, "{:?}, ", area.name());
-        }
-        let mut contents = String::new();
-        for text in &self.contents {
-            let _ = writeln!(contents, "    {text:?},");
-        }
-        format!(
-            "// @generated by crates/whetstone/build.rs from the showcase project's\n\
-             // patch series and config. Do not edit.\n\n\
-             const DECLARED_AREAS: &[&str] = &[{declared_areas}];\n\n\
-             const CHANGES: &[EmbeddedChange] = &[\n{}];\n\n\
-             const CONTENTS: &[&str] = &[\n{contents}];\n",
-            self.changes,
-        )
-    }
-}
-
-/// A file's version as Rust source: an entry of `CONTENTS`, or `None`.
-fn contents_source(index: Option<usize>) -> String {
-    index.map_or_else(
-        || "None".to_owned(),
-        |index| format!("Some(CONTENTS[{index}])"),
-    )
 }
 
 /// The file `diff` changes, as it is after the change, from its contents
 /// `before` it. Every hunk must match exactly where it says it applies.
 /// Returns `None` if the change deletes the file.
-fn apply(before: Option<&str>, diff: &FileDiff) -> Result<Option<String>, String> {
+fn apply_file_diff(before: Option<&str>, diff: &FileDiff) -> Result<Option<String>, HistoryError> {
     let path = &diff.path;
-    match (diff.kind, before) {
-        (FileChange::Created, Some(_)) => {
-            return Err(format!("the patch creates {path}, which already exists"));
+    match (diff.status, before) {
+        (FileStatus::Added, Some(_)) => {
+            return Err(malformed(format!(
+                "the patch creates {path}, which already exists"
+            )));
         }
-        (FileChange::Modified | FileChange::Deleted, None) => {
-            return Err(format!("the patch changes {path}, which does not exist"));
+        (FileStatus::Modified | FileStatus::Deleted, None) => {
+            return Err(malformed(format!(
+                "the patch changes {path}, which does not exist"
+            )));
         }
         _ => {}
     }
@@ -542,10 +577,10 @@ fn apply(before: Option<&str>, diff: &FileDiff) -> Result<Option<String>, String
             hunk.old_start.saturating_sub(1)
         };
         if start < next || start > old.len() {
-            return Err(format!(
+            return Err(malformed(format!(
                 "a hunk for {path} starts at line {}, out of order or past the end",
                 hunk.old_start
-            ));
+            )));
         }
         after.extend(old[next..start].iter().copied());
         let mut at = start;
@@ -553,10 +588,10 @@ fn apply(before: Option<&str>, diff: &FileDiff) -> Result<Option<String>, String
             match line {
                 HunkLine::Context(text) | HunkLine::Removed(text) => {
                     if old.get(at) != Some(&text.as_str()) {
-                        return Err(format!(
+                        return Err(malformed(format!(
                             "a hunk does not match {path} at line {}: expected {text:?}",
                             at + 1
-                        ));
+                        )));
                     }
                     if let HunkLine::Context(text) = line {
                         after.push_str(text);
@@ -569,9 +604,75 @@ fn apply(before: Option<&str>, diff: &FileDiff) -> Result<Option<String>, String
         next = at;
     }
     after.extend(old[next..].iter().copied());
-    match diff.kind {
-        FileChange::Deleted if after.is_empty() => Ok(None),
-        FileChange::Deleted => Err(format!("the patch deletes {path} but leaves lines in it")),
-        FileChange::Created | FileChange::Modified => Ok(Some(after)),
+    match diff.status {
+        FileStatus::Deleted if after.is_empty() => Ok(None),
+        FileStatus::Deleted => Err(malformed(format!(
+            "the patch deletes {path} but leaves lines in it"
+        ))),
+        FileStatus::Added | FileStatus::Modified => Ok(Some(after)),
     }
+}
+
+/// Writing to a `String` cannot fail.
+const INFALLIBLE: &str = "writing to a String never fails";
+
+/// The Rust source `src/showcase.rs` includes: the `declared` areas and the
+/// replayed changes, built with `whetstone-core`'s constructors. Each
+/// version of a file is one entry of `CONTENTS`.
+fn rust_source(declared: &[Area], replay: &Replay) -> String {
+    let mut source = String::from(
+        "// @generated by crates/whetstone/build.rs from the showcase project's\n\
+         // patch series and config. Do not edit.\n\n\
+         fn declared_areas() -> Vec<Area> {\n    vec![",
+    );
+    for area in declared {
+        write!(source, "Area::new({:?}), ", area.name()).expect(INFALLIBLE);
+    }
+    source.push_str("]\n}\n\nfn changes() -> Vec<Change> {\n    vec![\n");
+    for change in &replay.changes {
+        write_change(&mut source, change);
+    }
+    source.push_str("    ]\n}\n\nconst CONTENTS: &[&str] = &[\n");
+    for text in &replay.contents {
+        writeln!(source, "    {text:?},").expect(INFALLIBLE);
+    }
+    source.push_str("];\n");
+    source
+}
+
+/// Writes one replayed change to `source` as a `Change::new` call.
+fn write_change(source: &mut String, change: &ReplayedChange) {
+    write!(
+        source,
+        "        Change::new({:?}.to_owned(), vec![",
+        change.message
+    )
+    .expect(INFALLIBLE);
+    for area in &change.areas {
+        write!(source, "Area::new({area:?}), ").expect(INFALLIBLE);
+    }
+    write!(source, "], {:?}.to_owned(), vec![", change.diff).expect(INFALLIBLE);
+    let contents = |index: usize| format!("CONTENTS[{index}].to_owned()");
+    for (path, versions) in &change.files {
+        match *versions {
+            Versions::Created { after } => write!(
+                source,
+                "TouchedFile::created({path:?}.to_owned(), {}), ",
+                contents(after)
+            ),
+            Versions::Modified { before, after } => write!(
+                source,
+                "TouchedFile::modified({path:?}.to_owned(), {}, {}), ",
+                contents(before),
+                contents(after)
+            ),
+            Versions::Deleted { before } => write!(
+                source,
+                "TouchedFile::deleted({path:?}.to_owned(), {}), ",
+                contents(before)
+            ),
+        }
+        .expect(INFALLIBLE);
+    }
+    source.push_str("]),\n");
 }

@@ -15,6 +15,17 @@ impl Area {
         Self(name.into())
     }
 
+    /// The areas a project offers when it declares `declared`: those, or
+    /// [`Area::defaults`] when it declares none.
+    #[must_use]
+    pub fn offered(declared: Vec<Self>) -> Vec<Self> {
+        if declared.is_empty() {
+            Self::defaults()
+        } else {
+            declared
+        }
+    }
+
     /// The areas of a project that declares none: domain, observability,
     /// scalability, infrastructure and system design.
     #[must_use]

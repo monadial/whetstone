@@ -30,6 +30,11 @@ pub(crate) const EVERYWHERE: &[Action] = &[
         command: Command::Go(Route::Home),
     },
     Action {
+        label: "Practice",
+        does: "Choose areas and a change",
+        command: Command::Go(Route::Picker),
+    },
+    Action {
         label: "Settings",
         does: "See what Practice will use",
         command: Command::Go(Route::Settings),

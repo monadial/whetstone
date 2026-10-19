@@ -17,8 +17,15 @@ pub struct Change {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TouchedFile {
     path: String,
-    before: Option<String>,
-    after: Option<String>,
+    versions: Versions,
+}
+
+/// A touched file's contents on each side of the change.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Versions {
+    Created { after: String },
+    Modified { before: String, after: String },
+    Deleted { before: String },
 }
 
 impl Change {
@@ -66,15 +73,31 @@ impl Change {
 }
 
 impl TouchedFile {
-    /// The file at `path`, relative to the project's root, with its contents
-    /// `before` the change (`None` if the change creates it) and `after` it
-    /// (`None` if the change deletes it).
+    /// The file at `path`, relative to the project's root, which the change
+    /// creates with the contents `after`.
     #[must_use]
-    pub fn new(path: String, before: Option<String>, after: Option<String>) -> Self {
+    pub fn created(path: String, after: String) -> Self {
         Self {
             path,
-            before,
-            after,
+            versions: Versions::Created { after },
+        }
+    }
+
+    /// The file at `path`, which the change edits from `before` to `after`.
+    #[must_use]
+    pub fn modified(path: String, before: String, after: String) -> Self {
+        Self {
+            path,
+            versions: Versions::Modified { before, after },
+        }
+    }
+
+    /// The file at `path`, which the change deletes from `before`.
+    #[must_use]
+    pub fn deleted(path: String, before: String) -> Self {
+        Self {
+            path,
+            versions: Versions::Deleted { before },
         }
     }
 
@@ -88,13 +111,19 @@ impl TouchedFile {
     /// creates it.
     #[must_use]
     pub fn before(&self) -> Option<&str> {
-        self.before.as_deref()
+        match &self.versions {
+            Versions::Created { .. } => None,
+            Versions::Modified { before, .. } | Versions::Deleted { before } => Some(before),
+        }
     }
 
     /// The file's contents after the change, or `None` if the change deletes
     /// it.
     #[must_use]
     pub fn after(&self) -> Option<&str> {
-        self.after.as_deref()
+        match &self.versions {
+            Versions::Created { after } | Versions::Modified { after, .. } => Some(after),
+            Versions::Deleted { .. } => None,
+        }
     }
 }
