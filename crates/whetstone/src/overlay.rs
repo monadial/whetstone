@@ -9,7 +9,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear};
 
 use crate::help::KeyHelp;
-use crate::keymap::{Command, Keymap};
+use crate::keymap::{self, Command, Keymap};
 use crate::palette::Palette;
 use crate::theme::Theme;
 
@@ -80,13 +80,15 @@ pub(crate) fn draw_box(
     title: &str,
     keymap: Keymap,
 ) {
-    let hints: Vec<&str> = keymap.iter().filter_map(|binding| binding.hint).collect();
     frame.render_widget(Clear, area);
     frame.render_widget(
         Block::bordered()
             .border_style(theme.muted)
             .title(Span::styled(format!(" {title} "), theme.title))
-            .title_bottom(Line::styled(format!(" {} ", hints.join("  ")), theme.muted))
+            .title_bottom(Line::styled(
+                format!(" {} ", keymap::hints(&[keymap])),
+                theme.muted,
+            ))
             .style(theme.canvas),
         area,
     );

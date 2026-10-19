@@ -6,11 +6,12 @@ use ratatui::crossterm::event::KeyCode;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::List;
 
-use crate::app::Route;
+use crate::columns;
 use crate::focus::Position;
 use crate::keymap::{self, Binding, Command, Keymap, Press};
 use crate::overlay::{self, Outcome};
 use crate::theme::{ControlState, Theme};
+use crate::view::{Route, View};
 
 /// Something the palette can run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,23 +75,19 @@ impl Palette {
         },
     ];
 
-    /// The palette for the screen called `screen`, listing its own
-    /// `actions` and then the ones every screen has.
-    pub(crate) fn new(screen: &'static str, actions: &[Action]) -> Self {
+    /// The palette over `screen`, listing its own actions and then the ones
+    /// every screen has.
+    pub(crate) fn new(screen: &dyn View) -> Self {
         Self {
-            screen,
-            actions: actions.iter().chain(EVERYWHERE).copied().collect(),
+            screen: screen.name(),
+            actions: screen.actions().iter().chain(EVERYWHERE).copied().collect(),
             selected: Position::default(),
         }
     }
 
     pub(crate) fn apply(&mut self, command: Command) -> Outcome {
-        let count = self.actions.len();
+        self.selected = self.selected.after(command, self.actions.len());
         match command {
-            Command::Down => self.selected = self.selected.down(count),
-            Command::Up => self.selected = self.selected.up(),
-            Command::NextControl => self.selected = self.selected.next(count),
-            Command::PreviousControl => self.selected = self.selected.previous(count),
             Command::Activate => {
                 return self
                     .actions
@@ -104,13 +101,8 @@ impl Palette {
     }
 
     pub(crate) fn render(&self, theme: &Theme, frame: &mut Frame<'_>) {
-        let label_width = self
-            .actions
-            .iter()
-            .map(|action| Line::raw(action.label).width())
-            .max()
-            .unwrap_or_default()
-            + 2;
+        // Past the focus marker, and the widest label.
+        let does_column = 2 + columns::next_column(self.actions.iter().map(|action| action.label));
         let rows: Vec<Line<'_>> = self
             .actions
             .iter()
@@ -123,7 +115,7 @@ impl Palette {
                         ..ControlState::default()
                     },
                 );
-                line.push_span(" ".repeat(label_width - Line::raw(action.label).width()));
+                columns::pad_to(&mut line, does_column);
                 line.push_span(Span::styled(action.does, theme.muted));
                 line
             })

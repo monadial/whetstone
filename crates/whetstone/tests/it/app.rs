@@ -9,8 +9,8 @@ use crate::session::{Session, Setup};
 
 /// A terminal that reports 24-bit colour.
 const TRUECOLOR: &[(&str, &str)] = &[("COLORTERM", "truecolor")];
-/// The same terminal with colour turned off.
-const NO_COLOR: &[(&str, &str)] = &[("COLORTERM", "truecolor"), ("NO_COLOR", "1")];
+/// The same terminal with colour turned off, which wins over 24-bit colour.
+const TRUECOLOR_TURNED_OFF: &[(&str, &str)] = &[("COLORTERM", "truecolor"), ("NO_COLOR", "1")];
 
 /// The app as it starts, without a config file, in a `width` by `height`
 /// terminal whose environment is `variables`.
@@ -23,10 +23,6 @@ fn app_in(variables: &[(&str, &str)], width: u16, height: u16) -> Session {
         width,
         height,
     )
-}
-
-fn key(code: KeyCode, modifiers: KeyModifiers) -> Event {
-    Event::Key(KeyEvent::new(code, modifiers))
 }
 
 #[test]
@@ -45,14 +41,14 @@ fn home_in_colour_shows_the_mark_the_actions_and_what_practice_will_send_at_80x2
 
 #[test]
 fn home_without_colour_keeps_the_mark_and_marks_focus_with_a_marker_and_bold_at_120x32() {
-    let session = app_in(NO_COLOR, 120, 32);
+    let session = app_in(TRUECOLOR_TURNED_OFF, 120, 32);
 
     insta::assert_debug_snapshot!("home_without_colour_120x32", session.frame());
 }
 
 #[test]
 fn home_without_colour_keeps_the_mark_and_marks_focus_with_a_marker_and_bold_at_80x24() {
-    let session = app_in(NO_COLOR, 80, 24);
+    let session = app_in(TRUECOLOR_TURNED_OFF, 80, 24);
 
     insta::assert_debug_snapshot!("home_without_colour_80x24", session.frame());
 }
@@ -75,10 +71,8 @@ fn ctrl_c_quits_from_home() {
 fn other_keys_keep_the_app_running() {
     let mut session = app_in(TRUECOLOR, 80, 24);
 
+    assert_eq!(session.press("c x <Esc>"), Flow::Continue);
     for event in [
-        key(KeyCode::Char('c'), KeyModifiers::NONE),
-        key(KeyCode::Char('x'), KeyModifiers::NONE),
-        key(KeyCode::Esc, KeyModifiers::NONE),
         Event::Resize(80, 24),
         // Only key presses act; a release of `q` is not a second quit.
         Event::Key(KeyEvent::new_with_kind(

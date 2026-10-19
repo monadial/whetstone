@@ -3,13 +3,17 @@
 //!
 //! Screens and overlays each declare their [`Keymap`], and the app adds the
 //! keys that work everywhere. Dispatch and key help read the same bindings,
-//! so what `?` shows is what the keys do. A later screen registers its own
-//! keys (`h`/`l`, `gg`/`G`, `Ctrl-d`/`Ctrl-u`, `/`, `n`/`N`) by declaring
-//! bindings for the commands it understands.
+//! so what `?` shows is what the keys do.
+//!
+//! A later screen adds single keys, such as `h`/`l`, `G`, `Ctrl-d`/`Ctrl-u`
+//! and `n`/`N`, by declaring bindings for new commands it understands. Two
+//! things do not exist yet: a two-key sequence such as `gg` needs
+//! [`command`] to remember a pending first key, and a `/` search needs a
+//! text-entry focus that takes every key but Ctrl+C before any binding.
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::app::Route;
+use crate::view::Route;
 
 /// What a key asks for. Each screen or overlay decides what a command means
 /// for it, and ignores the ones it has no use for.
@@ -125,6 +129,16 @@ impl Binding {
 
 /// The bindings of one screen or overlay, in key help order.
 pub(crate) type Keymap = &'static [Binding];
+
+/// The footer reminders of `keymaps`' bindings, in order.
+pub(crate) fn hints(keymaps: &[Keymap]) -> String {
+    keymaps
+        .iter()
+        .flat_map(|keymap| keymap.iter())
+        .filter_map(|binding| binding.hint)
+        .collect::<Vec<_>>()
+        .join("  ")
+}
 
 /// The command `key` sends in `keymap`, if it sends one.
 pub(crate) fn command(keymap: Keymap, key: &KeyEvent) -> Option<Command> {

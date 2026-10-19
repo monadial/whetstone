@@ -1,21 +1,33 @@
 //! The Settings screen: what Practice will use, read-only. Each setting is a
 //! control, and the focused one says what it is for and how to change it.
 
+use std::fmt;
+
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{List, Paragraph, Wrap};
 
+use crate::columns;
 use crate::config::{
     ConfigFile, DEFAULT_GENERATOR_MODEL, DEFAULT_JEV_MODEL, KeyStatus, OPENROUTER_KEY_VARIABLE,
-    Origin, Settings,
+    Origin, Setting, Settings,
 };
 use crate::focus::Position;
 use crate::keymap::{self, Command, Keymap};
+use crate::palette::Action;
 use crate::theme::{ControlState, Theme};
+use crate::view::{Context, Route, View};
 
 /// Settings' own keys: `q` and Esc go back.
-pub(crate) const KEYMAP: Keymap = &[keymap::MOVE, keymap::ACTIVATE, keymap::BACK];
+const KEYMAP: Keymap = &[keymap::MOVE, keymap::ACTIVATE, keymap::BACK];
+
+/// Settings' own action in the palette.
+const ACTIONS: &[Action] = &[Action {
+    label: "Back",
+    does: "Return to the screen before",
+    command: Command::Back,
+}];
 
 /// The controls on Settings, in focus order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,25 +64,12 @@ impl Control {
         }
     }
 
-    /// The setting's value, and whether it is the default.
+    /// The setting's value, and a note if it is the default.
     fn value(self, settings: &Settings) -> (String, Option<&'static str>) {
-        let shown = |origin| match origin {
-            Origin::Default => Some(" (default)"),
-            Origin::File => None,
-        };
         match self {
-            Self::Provider => (
-                settings.provider.value.to_string(),
-                shown(settings.provider.origin),
-            ),
-            Self::JevModel => (
-                settings.jev_model.value.clone(),
-                shown(settings.jev_model.origin),
-            ),
-            Self::GeneratorModel => (
-                settings.generator_model.value.clone(),
-                shown(settings.generator_model.origin),
-            ),
+            Self::Provider => shown(&settings.provider),
+            Self::JevModel => shown(&settings.jev_model),
+            Self::GeneratorModel => shown(&settings.generator_model),
             Self::OpenRouterKey => (
                 match settings.openrouter_key {
                     KeyStatus::Set => format!("set ({OPENROUTER_KEY_VARIABLE})"),
@@ -89,12 +88,12 @@ impl Control {
                 OpenRouter is the only provider so far."
                 .to_owned(),
             Self::JevModel => format!(
-                "Jev assesses your choice and each part of your reasoning; it never writes \
+                "Jev is the evaluator: it returns typed decisions and probabilities, never \
                  prose. The default is {DEFAULT_JEV_MODEL}."
             ),
             Self::GeneratorModel => format!(
-                "The generator writes questions, explanations and hints. The default is \
-                 {DEFAULT_GENERATOR_MODEL}."
+                "The generator writes questions, explanations and hints from the evidence it \
+                 is given. The default is {DEFAULT_GENERATOR_MODEL}."
             ),
             Self::OpenRouterKey => match settings.openrouter_key {
                 KeyStatus::Set => "Read from the environment when Whetstone starts. Its value \
@@ -135,61 +134,8 @@ pub(crate) struct SettingsScreen {
 }
 
 impl SettingsScreen {
-    /// Applies `command`, and returns what it asks of the app, if anything.
-    pub(crate) fn apply(&mut self, command: Command) -> Option<Command> {
-        let count = Control::ALL.len();
-        match command {
-            Command::Down => self.focus = self.focus.down(count),
-            Command::Up => self.focus = self.focus.up(),
-            Command::NextControl => self.focus = self.focus.next(count),
-            Command::PreviousControl => self.focus = self.focus.previous(count),
-            // The settings are read-only; only Back does something.
-            Command::Activate if self.focused() == Control::Back => return Some(Command::Back),
-            _ => {}
-        }
-        None
-    }
-
     fn focused(&self) -> Control {
         Control::ALL[self.focus.index()]
-    }
-
-    pub(crate) fn render(
-        &self,
-        theme: &Theme,
-        settings: &Settings,
-        frame: &mut Frame<'_>,
-        area: Rect,
-    ) {
-        let note = Paragraph::new(Line::styled(file_note(&settings.file), theme.muted))
-            .wrap(Wrap { trim: true });
-        let [title, note_area, rows, back, about] = layout(area, note.line_count(area.width));
-        frame.render_widget(Paragraph::new(Span::styled("Settings", theme.title)), title);
-        frame.render_widget(note, note_area);
-        let label_width = Control::ROWS
-            .iter()
-            .map(|control| control.label().len())
-            .max()
-            .unwrap_or_default()
-            + 2;
-        frame.render_widget(
-            List::new(Control::ROWS.map(|control| {
-                let mut line = self.control(theme, control);
-                let (value, origin) = control.value(settings);
-                line.push_span(" ".repeat(label_width - control.label().len()));
-                line.push_span(value);
-                if let Some(origin) = origin {
-                    line.push_span(Span::styled(origin, theme.muted));
-                }
-                line
-            })),
-            rows,
-        );
-        frame.render_widget(self.control(theme, Control::Back), back);
-        let focused = self.focused();
-        let mut explanation = vec![Line::styled(focused.about(settings), theme.muted)];
-        explanation.extend(focused.how_to_change(settings).map(Line::raw));
-        frame.render_widget(Paragraph::new(explanation).wrap(Wrap { trim: true }), about);
     }
 
     fn control(&self, theme: &Theme, control: Control) -> Line<'static> {
@@ -201,6 +147,67 @@ impl SettingsScreen {
             },
         )
     }
+}
+
+impl View for SettingsScreen {
+    fn route(&self) -> Route {
+        Route::Settings
+    }
+
+    fn name(&self) -> &'static str {
+        "Settings"
+    }
+
+    fn keymap(&self) -> Keymap {
+        KEYMAP
+    }
+
+    fn actions(&self) -> &'static [Action] {
+        ACTIONS
+    }
+
+    fn apply(&mut self, command: Command) -> Option<Command> {
+        self.focus = self.focus.after(command, Control::ALL.len());
+        // The settings are read-only; only Back does something.
+        (command == Command::Activate && self.focused() == Control::Back).then_some(Command::Back)
+    }
+
+    fn render(&self, context: &Context<'_>, frame: &mut Frame<'_>, area: Rect) {
+        let Context { theme, settings } = *context;
+        let note = Paragraph::new(Line::styled(file_note(&settings.file), theme.muted))
+            .wrap(Wrap { trim: true });
+        let [title, note_area, rows, back, about] = layout(area, note.line_count(area.width));
+        frame.render_widget(Paragraph::new(Span::styled("Settings", theme.title)), title);
+        frame.render_widget(note, note_area);
+        // Past the focus marker, and the widest label.
+        let value_column = 2 + columns::next_column(Control::ROWS.map(Control::label));
+        frame.render_widget(
+            List::new(Control::ROWS.map(|control| {
+                let mut line = self.control(theme, control);
+                let (value, default_note) = control.value(settings);
+                columns::pad_to(&mut line, value_column);
+                line.push_span(value);
+                if let Some(note) = default_note {
+                    line.push_span(Span::styled(note, theme.muted));
+                }
+                line
+            })),
+            rows,
+        );
+        frame.render_widget(self.control(theme, Control::Back), back);
+        let focused = self.focused();
+        let mut explanation = vec![Line::styled(focused.about(settings), theme.muted)];
+        explanation.extend(focused.how_to_change(settings).map(Line::raw));
+        frame.render_widget(Paragraph::new(explanation).wrap(Wrap { trim: true }), about);
+    }
+}
+
+/// A setting's value as Settings shows it, and a note if it is the default.
+fn shown<T: fmt::Display>(setting: &Setting<T>) -> (String, Option<&'static str>) {
+    (
+        setting.value.to_string(),
+        (setting.origin == Origin::Default).then_some(" (default)"),
+    )
 }
 
 /// Where the title, the note on the config file, the setting rows, Back and

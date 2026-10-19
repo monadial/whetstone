@@ -5,6 +5,7 @@
 
 mod app;
 mod cli;
+mod columns;
 mod config;
 mod environment;
 mod focus;
@@ -20,6 +21,7 @@ mod settings;
 mod terminal;
 mod theme;
 mod tui;
+mod view;
 
 pub use crate::app::{App, Flow};
 pub use crate::config::{ConfigError, Settings};

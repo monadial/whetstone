@@ -14,6 +14,9 @@ workspace = true
 [dependencies]
 anyhow = "1"
 clap = { version = "4.6", features = ["derive"] }
+# `Paragraph::line_count` sizes wrapped text so no control is pushed off a
+# short screen. Ratatui exempts `unstable-*` features from semver, so check it
+# still builds when moving off the locked 0.30.x.
 ratatui = { version = "0.30", features = ["unstable-rendered-line-info"] }
 serde = { version = "1", features = ["derive"] }
 signal-hook = "0.3"

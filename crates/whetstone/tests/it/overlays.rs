@@ -200,7 +200,7 @@ fn the_palette_runs_the_selected_action() {
 
     // Help: key help for the screen the palette was opened on.
     let mut session = Session::plain(80, 24);
-    session.press("j <Enter> : j j <Enter>");
+    session.press("j <Enter> : j j j <Enter>");
     assert!(
         session.text().contains("Keys on Settings"),
         "{}",
@@ -247,7 +247,7 @@ fn help_run_from_the_palette_returns_focus_to_the_control_under_both() {
     session.press("j <Enter> j j");
     let settings = session.text();
 
-    session.press(": j j <Enter>");
+    session.press(": j j j <Enter>");
     session.press("<Esc>");
 
     assert_eq!(session.text(), settings);
@@ -259,4 +259,24 @@ fn ctrl_c_quits_from_the_palette() {
     session.press(":");
 
     assert_eq!(session.press("<C-c>"), Flow::Quit);
+}
+
+#[test]
+fn the_palette_on_settings_offers_back_first() {
+    let mut session = Session::plain(80, 24);
+    session.press("j <Enter> j :");
+
+    let rows = session.overlay_rows();
+    assert!(
+        rows.first().is_some_and(
+            |row| row.starts_with("> Back") && row.ends_with("Return to the screen before")
+        ),
+        "{rows:#?}"
+    );
+    session.press("<Enter>");
+    assert_eq!(
+        session.row_with("Settings"),
+        "> Settings",
+        "home, as it was left"
+    );
 }

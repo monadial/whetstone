@@ -130,7 +130,7 @@ fn settings_moves_focus_through_its_settings_and_explains_the_focused_one() {
     assert!(
         session
             .text()
-            .contains("Jev assesses your choice and each part of your reasoning"),
+            .contains("Jev is the evaluator: it returns typed decisions and probabilities"),
         "{}",
         session.text()
     );
