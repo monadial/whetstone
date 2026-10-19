@@ -1,0 +1,227 @@
+//! Pseudo-terminal smoke test: run the real binary in a pseudo-terminal, quit
+//! it, and check the terminal was left exactly as it was.
+//!
+//! A shell inside the pseudo-terminal records the terminal modes (`stty -a`)
+//! before and after `whetstone` runs, so the comparison sees what the next
+//! program in that terminal would see.
+#![cfg(unix)]
+
+use std::path::Path;
+use std::process::Command;
+
+use rexpect::session::{PtySession, spawn_command};
+use tempfile::TempDir;
+
+const TIMEOUT_MS: u64 = 10_000;
+
+/// Runs `whetstone` as `launch` says, between two records of the terminal
+/// modes.
+fn script(launch: &str) -> String {
+    format!(
+        r#"stty rows 24 cols 80
+echo "modes before:"; stty -a; echo "modes end"
+{launch}
+echo "exit code: $?"
+echo "modes after:"; stty -a; echo "modes end"
+"#
+    )
+}
+
+const IN_THE_TERMINAL: &str = r#""$WHETSTONE""#;
+
+const ENTER_ALTERNATE_SCREEN: &str = "\x1b[?1049h";
+const LEAVE_ALTERNATE_SCREEN: &str = "\x1b[?1049l";
+const HIDE_CURSOR: &str = "\x1b[?25l";
+const SHOW_CURSOR: &str = "\x1b[?25h";
+
+/// Everything the shell printed, from start to end of file.
+struct Transcript(String);
+
+/// Starts the script in a pseudo-terminal. `env` is the whole environment
+/// besides `PATH` and `TERM`, so the real home directory is never used.
+fn start(launch: &str, env: &[(&str, &Path)]) -> PtySession {
+    let mut command = Command::new("sh");
+    command
+        .args(["-c", &script(launch)])
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").expect("PATH is set"))
+        .env("TERM", "xterm-256color")
+        .env("WHETSTONE", env!("CARGO_BIN_EXE_whetstone"))
+        .envs(env.iter().copied());
+    spawn_command(command, Some(TIMEOUT_MS)).expect("spawn whetstone in a pseudo-terminal")
+}
+
+fn quit_with_q(session: &mut PtySession) -> Transcript {
+    quit_with(session, |session| {
+        session.send("q").expect("send q");
+        session.flush().expect("flush q");
+    })
+}
+
+/// Waits for the home screen, sends `keys`, and reads until the shell exits.
+fn quit_with(session: &mut PtySession, send_keys: impl FnOnce(&mut PtySession)) -> Transcript {
+    // Ratatui moves the cursor between words, so wait for a single word: the
+    // home screen's last action.
+    let until_home = session.exp_string("Quit").expect("home screen is drawn");
+    send_keys(session);
+    let rest = session.exp_eof().expect("shell exits");
+    Transcript(format!("{until_home}Quit{rest}"))
+}
+
+impl Transcript {
+    fn section(&self, start: &str) -> &str {
+        assert!(
+            self.0.contains(start),
+            "transcript has {start:?}:\n{:?}",
+            self.0
+        );
+        let (_, after) = self.0.split_once(start).expect("section starts");
+        after
+            .split_once("modes end")
+            .map(|(section, _)| section)
+            .expect("section ends")
+    }
+
+    fn assert_terminal_restored(&self) {
+        self.assert_modes_unchanged();
+
+        let tui = self
+            .0
+            .split_once(ENTER_ALTERNATE_SCREEN)
+            .map(|(_, tui)| tui)
+            .expect("whetstone entered the alternate screen");
+        assert!(tui.contains(HIDE_CURSOR), "whetstone hid the cursor");
+        let after_hide = tui.rsplit_once(HIDE_CURSOR).map_or("", |(_, rest)| rest);
+        assert!(
+            after_hide.contains(SHOW_CURSOR),
+            "the cursor is shown again"
+        );
+        assert!(
+            tui.contains(LEAVE_ALTERNATE_SCREEN),
+            "whetstone left the alternate screen"
+        );
+    }
+
+    fn assert_modes_unchanged(&self) {
+        let before = self.section("modes before:");
+        let after = self.section("modes after:");
+        assert!(
+            before.split_whitespace().any(|flag| flag == "icanon"),
+            "the terminal starts in canonical mode:\n{before}"
+        );
+        assert_eq!(before, after, "terminal modes are restored exactly");
+    }
+
+    fn assert_exit_code(&self, code: i32) {
+        assert!(
+            self.0.contains(&format!("exit code: {code}")),
+            "whetstone exits with {code}:\n{:?}",
+            self.0
+        );
+    }
+}
+
+#[test]
+fn q_quits_and_restores_the_terminal() {
+    let home = TempDir::new().expect("create a temporary home");
+    let mut session = start(IN_THE_TERMINAL, &[("HOME", home.path())]);
+
+    let transcript = quit_with_q(&mut session);
+
+    transcript.assert_exit_code(0);
+    transcript.assert_terminal_restored();
+}
+
+#[test]
+fn ctrl_c_quits_and_restores_the_terminal() {
+    let home = TempDir::new().expect("create a temporary home");
+    let mut session = start(IN_THE_TERMINAL, &[("HOME", home.path())]);
+
+    let transcript = quit_with(&mut session, |session| {
+        session.send_control('c').expect("send Ctrl+C");
+    });
+
+    transcript.assert_exit_code(0);
+    transcript.assert_terminal_restored();
+}
+
+#[test]
+fn logs_go_to_a_file_in_the_xdg_state_directory_and_never_to_the_screen() {
+    let home = TempDir::new().expect("create a temporary home");
+    let state = TempDir::new().expect("create a temporary state directory");
+    let mut session = start(
+        IN_THE_TERMINAL,
+        &[("HOME", home.path()), ("XDG_STATE_HOME", state.path())],
+    );
+
+    let transcript = quit_with_q(&mut session);
+
+    let log = std::fs::read_to_string(state.path().join("whetstone/whetstone.log"))
+        .expect("the log file is in the XDG state directory");
+    assert!(log.contains("whetstone started"), "log:\n{log}");
+    assert!(log.contains("whetstone quit"), "log:\n{log}");
+    assert!(
+        !transcript.0.contains("whetstone started"),
+        "nothing is logged to the screen"
+    );
+}
+
+#[test]
+fn without_xdg_variables_logs_go_under_the_home_directory() {
+    let home = TempDir::new().expect("create a temporary home");
+    let mut session = start(IN_THE_TERMINAL, &[("HOME", home.path())]);
+
+    quit_with_q(&mut session);
+
+    let log = std::fs::read_to_string(home.path().join(".local/state/whetstone/whetstone.log"))
+        .expect("the log file is in the default state directory");
+    assert!(log.contains("whetstone started"), "log:\n{log}");
+}
+
+#[test]
+fn with_stdout_redirected_it_refuses_without_touching_the_terminal() {
+    let home = TempDir::new().expect("create a temporary home");
+    let mut session = start(r#""$WHETSTONE" > "$HOME/stdout""#, &[("HOME", home.path())]);
+
+    let transcript = Transcript(session.exp_eof().expect("shell exits"));
+
+    transcript.assert_exit_code(1);
+    assert!(
+        transcript.0.contains(
+            "error: whetstone needs an interactive terminal, but stdout is not a terminal"
+        ),
+        "the refusal is on stderr, in the terminal:\n{:?}",
+        transcript.0
+    );
+    assert!(
+        !transcript.0.contains(ENTER_ALTERNATE_SCREEN),
+        "nothing is drawn"
+    );
+    assert_eq!(
+        std::fs::read_to_string(home.path().join("stdout")).expect("read redirected stdout"),
+        ""
+    );
+    transcript.assert_modes_unchanged();
+}
+
+#[test]
+fn with_stdin_redirected_it_refuses_without_touching_the_terminal() {
+    let home = TempDir::new().expect("create a temporary home");
+    let mut session = start(r#""$WHETSTONE" < /dev/null"#, &[("HOME", home.path())]);
+
+    let transcript = Transcript(session.exp_eof().expect("shell exits"));
+
+    transcript.assert_exit_code(1);
+    assert!(
+        transcript.0.contains(
+            "error: whetstone needs an interactive terminal, but stdin is not a terminal"
+        ),
+        "the refusal is on stderr, in the terminal:\n{:?}",
+        transcript.0
+    );
+    assert!(
+        !transcript.0.contains(ENTER_ALTERNATE_SCREEN),
+        "nothing is drawn"
+    );
+    transcript.assert_modes_unchanged();
+}
