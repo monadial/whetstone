@@ -1,0 +1,165 @@
+{
+  "version": "1.0",
+  "brandIdentityVersion": "2.0",
+  "referenceRatatuiVersion": "0.30.2",
+  "minimumRustVersion": "1.88",
+  "themes": {
+    "light": {
+      "canvas": "#F5F3ED",
+      "surface": "#FCFBF7",
+      "text": "#1B1E20",
+      "muted": "#596160",
+      "focus": "#3B5CCC",
+      "controlBorder": "#596160",
+      "rule": "#D8DDD9",
+      "selected": "#E6EBFA",
+      "supported": "#28644F",
+      "review": "#655095",
+      "error": "#A23B45",
+      "logo": {
+        "edge": "#9AABFF",
+        "body": "#3B5CCC",
+        "base": "#2F49A3"
+      }
+    },
+    "dark": {
+      "canvas": "#1B1E20",
+      "surface": "#252B2E",
+      "text": "#F5F3ED",
+      "muted": "#B2BCBC",
+      "focus": "#9AABFF",
+      "controlBorder": "#7E8B90",
+      "rule": "#3D4244",
+      "selected": "#30383C",
+      "supported": "#8BD2B5",
+      "review": "#C5B2ED",
+      "error": "#FFA6AD",
+      "logo": {
+        "edge": "#F5F3ED",
+        "body": "#9AABFF",
+        "base": "#3B5CCC"
+      }
+    }
+  },
+  "ansi256Dark": {
+    "canvas": 234,
+    "surface": 235,
+    "text": 255,
+    "muted": 250,
+    "focus": 111,
+    "controlBorder": 245,
+    "rule": 238,
+    "selected": 237,
+    "supported": 115,
+    "review": 183,
+    "error": 217,
+    "logo": {
+      "edge": 255,
+      "body": 111,
+      "base": 62
+    }
+  },
+  "ansi16": {
+    "canvas": "Reset",
+    "surface": "Reset",
+    "text": "Reset",
+    "muted": "Reset",
+    "focus": "LightBlue",
+    "controlBorder": "Reset",
+    "selected": "Reset",
+    "supported": "Green",
+    "review": "Magenta",
+    "error": "Red",
+    "note": "Terminal palette defines these colors. Text labels and focus markers are required."
+  },
+  "noColor": {
+    "foreground": "Reset",
+    "background": "Reset",
+    "modifiers": false,
+    "glyphMode": "ASCII",
+    "focusMarker": ">",
+    "selectedMarker": "(x)"
+  },
+  "logo": {
+    "profileCells": [
+      32,
+      4
+    ],
+    "compactCells": [
+      8,
+      4
+    ],
+    "routineHeader": "whetstone",
+    "fallback": "whetstone by Monadial",
+    "pixelTechnique": "Two vertical samples per cell using upper half block",
+    "cellAspectAssumption": "approximately 2:1 height to width",
+    "exactVectorAngleDegrees": 45
+  },
+  "layout": {
+    "wideMin": [
+      120,
+      32
+    ],
+    "mediumMin": [
+      100,
+      28
+    ],
+    "compactMin": [
+      80,
+      24
+    ],
+    "preservationMin": [
+      50,
+      12
+    ],
+    "belowMinimum": "Suspend editing and submission; retain draft",
+    "normalShell": {
+      "headerRows": 2,
+      "sourceTitleRows": 2,
+      "footerRows": 2,
+      "sideMarginCells": 2
+    },
+    "preservationShell": {
+      "headerRows": 1,
+      "footerRows": 2,
+      "sideMarginCells": 1
+    },
+    "paneBorderCells": 1,
+    "panePaddingCells": 1,
+    "wideEvidenceWidthCells": 40,
+    "wideGapCells": 2,
+    "resize": "Retain draft, cursor, selection, independent scroll and snapshot"
+  },
+  "states": {
+    "focus": "Current keyboard owner / > plus accent",
+    "selection": "Draft answer / (x)",
+    "saved": "Durable local write acknowledged",
+    "pending": "Awaiting evaluation / never incorrect by default",
+    "supported": "Choice or criterion assessment",
+    "review": "Uncertain, disputed or incomplete reasoning",
+    "error": "Failed operation with recovery"
+  },
+  "motion": {
+    "spinnerOnlyWhileWorking": true,
+    "reducedAnimation": "Static Working label",
+    "indeterminateProgressPercentage": false
+  },
+  "capabilitySelection": {
+    "explicitOverrideFirst": true,
+    "rgbOnlyIfSupported": true,
+    "noColorConvention": "NO_COLOR",
+    "nonTty": "Line-oriented plain output; no cursor controls"
+  },
+  "keyboard": {
+    "editorInterceptsPrintableKeys": true,
+    "enterInReasoning": "Newline",
+    "submitPortablePath": [
+      "Tab",
+      "Submit response",
+      "Enter"
+    ],
+    "ctrlEnter": "Optional alias",
+    "escape": "Keep draft; close editing or top layer; restore prior focus"
+  },
+  "scope": "Brand and rendering reference. No production input loop, persistence or model integrations."
+}
