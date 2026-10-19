@@ -27,7 +27,7 @@ Buffer {
         "    ( ) Run rustfmt over the HTTP layer                      infrastructure     ",
         "                                                                                ",
         "    Generate questions (arrives with Jev)                                       ",
-        "  ? keys  : actions  Space toggle  q back                                       ",
+        "  ? keys  : actions  Space toggle  Enter open  q back                           ",
         "                                                                                ",
     ],
     styles: [

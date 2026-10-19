@@ -60,6 +60,14 @@ pub struct Theme {
     pub(crate) muted: Style,
     /// The bands of the flat-stone mark.
     pub(crate) stone: Stone,
+    /// The cursor at the end of a text entry: reversed, so it shows without
+    /// colour.
+    pub(crate) cursor: Style,
+    /// Text a search found: underlined, so it shows without colour.
+    pub(crate) matched: Style,
+    /// The match a search landed on: reversed and bold, so it stands out
+    /// from the other matches without colour.
+    pub(crate) current_match: Style,
     /// The control that owns keyboard focus.
     focus: Style,
     /// The row of a selected choice.
@@ -190,6 +198,11 @@ impl Theme {
             title: Style::new().add_modifier(Modifier::BOLD),
             muted: Style::new().fg(palette.muted),
             stone: palette.stone,
+            cursor: Style::new().add_modifier(Modifier::REVERSED),
+            matched: Style::new()
+                .bg(palette.selected)
+                .add_modifier(Modifier::UNDERLINED),
+            current_match: Style::new().add_modifier(Modifier::REVERSED | Modifier::BOLD),
             focus: Style::new().fg(palette.focus).add_modifier(Modifier::BOLD),
             selected: Style::new().bg(palette.selected),
             disabled: Style::new()
@@ -233,6 +246,18 @@ impl Theme {
             line.style(self.selected)
         } else {
             line
+        }
+    }
+
+    /// The border of a pane: in the focus colour while the pane has focus.
+    /// Colour only adds to the focus marker inside the pane, which shows
+    /// focus at every colour level.
+    #[must_use]
+    pub(crate) fn border(&self, focused: bool) -> Style {
+        if focused {
+            Style::new().fg(self.focus.fg.unwrap_or_default())
+        } else {
+            self.muted
         }
     }
 }

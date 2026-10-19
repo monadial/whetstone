@@ -166,7 +166,7 @@ impl View for SettingsScreen {
         ACTIONS
     }
 
-    fn apply(&mut self, command: Command) -> Option<Command> {
+    fn apply(&mut self, command: Command, _area: Rect) -> Option<Command> {
         self.focus = self.focus.after(command, Control::ALL.len());
         // The settings are read-only; only Back does something.
         (command == Command::Activate && self.focused() == Control::Back).then_some(Command::Back)

@@ -17,3 +17,4 @@ mod showcase;
 mod support;
 mod terminal_guard;
 mod theme;
+mod viewer;

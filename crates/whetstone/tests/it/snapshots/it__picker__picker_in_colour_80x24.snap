@@ -27,7 +27,7 @@ Buffer {
         "    ( ) Run rustfmt over the HTTP layer                      infrastructure     ",
         "                                                                                ",
         "  > Generate questions (arrives with Jev)                                       ",
-        "  ? keys  : actions  Space toggle  q back                                       ",
+        "  ? keys  : actions  Space toggle  Enter open  q back                           ",
         "                                                                                ",
     ],
     styles: [
@@ -72,6 +72,6 @@ Buffer {
         x: 4, y: 21, fg: Rgb(178, 188, 188), bg: Rgb(27, 30, 32), underline: Reset, modifier: DIM | ITALIC,
         x: 41, y: 21, fg: Rgb(245, 243, 237), bg: Rgb(27, 30, 32), underline: Reset, modifier: NONE,
         x: 2, y: 22, fg: Rgb(178, 188, 188), bg: Rgb(27, 30, 32), underline: Reset, modifier: NONE,
-        x: 41, y: 22, fg: Rgb(245, 243, 237), bg: Rgb(27, 30, 32), underline: Reset, modifier: NONE,
+        x: 53, y: 22, fg: Rgb(245, 243, 237), bg: Rgb(27, 30, 32), underline: Reset, modifier: NONE,
     ]
 }

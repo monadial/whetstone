@@ -102,7 +102,7 @@ fn home_in_256_colours_uses_only_the_indexed_brand_tokens() {
 }
 
 /// The keys from home to each screen and overlay.
-const EVERY_VIEW: [&str; 9] = [
+const EVERY_VIEW: [&str; 13] = [
     "",
     "j <Enter>",
     "?",
@@ -113,6 +113,12 @@ const EVERY_VIEW: [&str; 9] = [
     "<Enter> j <Space> j j j j j <Space>",
     "<Enter> ?",
     "<Enter> :",
+    // The viewer on the fifth change: searched, with a match current.
+    "<Enter> j j j j j j j j j <Enter> l l / C h a r g e <Enter> n",
+    // Its Files pane, and the search box open.
+    "<Enter> j j j j j j j j j <Enter> h / x",
+    "<Enter> j j j j j j j j j <Enter> ?",
+    "<Enter> j j j j j j j j j <Enter> :",
 ];
 
 #[test]

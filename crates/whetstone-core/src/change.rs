@@ -70,6 +70,42 @@ impl Change {
     pub fn files(&self) -> &[TouchedFile] {
         &self.files
     }
+
+    /// The diff of each file the change touches, from its `diff --git` line
+    /// to the next, in the order of [`Change::files`]:
+    ///
+    /// ```
+    /// use whetstone_core::Change;
+    ///
+    /// let change = Change::new(
+    ///     "Tidy up".to_owned(),
+    ///     Vec::new(),
+    ///     "diff --git a/a b/a\n-x\n+y\ndiff --git a/b b/b\n+z\n".to_owned(),
+    ///     Vec::new(),
+    /// );
+    ///
+    /// assert_eq!(
+    ///     change.file_diffs().collect::<Vec<_>>(),
+    ///     ["diff --git a/a b/a\n-x\n+y\n", "diff --git a/b b/b\n+z\n"]
+    /// );
+    /// ```
+    pub fn file_diffs(&self) -> impl Iterator<Item = &str> {
+        const HEADER: &str = "\ndiff --git ";
+        let mut rest = self.diff.as_str();
+        std::iter::from_fn(move || {
+            if rest.is_empty() {
+                return None;
+            }
+            // Each file's diff ends with the newline before the next header.
+            let end = rest
+                .match_indices(HEADER)
+                .next()
+                .map_or(rest.len(), |(at, _)| at + 1);
+            let (file_diff, after) = rest.split_at(end);
+            rest = after;
+            Some(file_diff)
+        })
+    }
 }
 
 impl TouchedFile {

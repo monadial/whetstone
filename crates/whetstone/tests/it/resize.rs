@@ -97,6 +97,25 @@ fn key_help_scrolls_no_further_than_its_last_row() {
 }
 
 #[test]
+fn after_key_help_scrolled_to_its_end_grows_taller_one_k_scrolls_straight_back() {
+    // The change viewer's key help scrolls further than home's at 50x12.
+    let mut session = Session::plain(50, 12);
+    session.press("<Enter> j j j j j j j j j <Enter> ?");
+    session.press("j j j j j j j j j j j j");
+
+    session.resize(50, 14);
+    let end = session.frame();
+    assert!(
+        session.text().contains("Quit from anywhere"),
+        "{}",
+        session.text()
+    );
+    session.press("k");
+
+    assert_ne!(session.frame(), end, "k scrolled:\n{}", session.text());
+}
+
+#[test]
 fn resizing_between_usable_sizes_keeps_everything_too() {
     let mut session = Session::plain(120, 32);
     session.press("j <Enter> <Tab> <Tab> :");
@@ -131,7 +150,7 @@ fn ctrl_c_quits_while_the_window_is_too_small() {
 
 /// Each screen and overlay, the keys that reach it from home, and text that
 /// must all show when it fits whole: its first and last rows among them.
-const VIEWS: [(&str, &str, &[&str]); 9] = [
+const VIEWS: [(&str, &str, &[&str]); 12] = [
     (
         "home",
         "",
@@ -200,7 +219,7 @@ const VIEWS: [(&str, &str, &[&str]); 9] = [
             "( ) Model the payment lifecycle",
             "( ) Run rustfmt over the HTTP layer",
             "Generate questions (arrives with Jev)",
-            "? keys  : actions  Space toggle  q back",
+            "? keys  : actions  Space toggle  Enter open  q back",
         ],
     ),
     (
@@ -219,6 +238,42 @@ const VIEWS: [(&str, &str, &[&str]); 9] = [
         &[
             "Actions on Practice",
             "> Back",
+            "Leave Whetstone",
+            "Enter run",
+        ],
+    ),
+    (
+        "the viewer",
+        "<Enter> j j j j j j j j j <Enter> / r e f u n d <Enter>",
+        &[
+            "Preserve payment retry identity",
+            "domain",
+            "Files",
+            "(x) src/provider.rs",
+            "tests/api.rs",
+            "> (x) Diff   ( ) Before   ( ) After",
+            "diff --git a/src/provider.rs b/src/provider.rs",
+            "No match for \"refund\" in Diff",
+            "? keys  : actions  h/l panes  / search  q back",
+        ],
+    ),
+    (
+        "key help on the viewer",
+        "<Enter> j j j j j j j j j <Enter> ?",
+        &[
+            "Keys on Change",
+            "Move to the pane on the left or right",
+            "Quit from anywhere",
+            "Esc close",
+        ],
+    ),
+    (
+        "the palette on the viewer",
+        "<Enter> j j j j j j j j j <Enter> :",
+        &[
+            "Actions on Change",
+            "> Back",
+            "Previous match",
             "Leave Whetstone",
             "Enter run",
         ],

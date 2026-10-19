@@ -16,16 +16,19 @@ use crate::palette::Action;
 use crate::theme::{ControlKind, ControlState};
 use crate::view::{Context, Route, View};
 
-/// The picker's own keys. Space comes first: it is the key for a choice.
+/// The picker's own keys. Space makes a choice, and Enter also opens the
+/// chosen change.
 const KEYMAP: Keymap = &[
     keymap::MOVE,
     Binding {
-        keys: &[
-            (Press::char(' '), Command::Activate),
-            (Press::key(KeyCode::Enter), Command::Activate),
-        ],
+        keys: &[(Press::char(' '), Command::Activate)],
         does: "Toggle an area, or choose a change",
         hint: Some("Space toggle"),
+    },
+    Binding {
+        keys: &[(Press::key(KeyCode::Enter), Command::Open)],
+        does: "Toggle an area, or choose and open a change",
+        hint: Some("Enter open"),
     },
     keymap::BACK,
 ];
@@ -273,21 +276,25 @@ impl View for Picker {
         ACTIONS
     }
 
-    fn apply(&mut self, command: Command) -> Option<Command> {
+    fn apply(&mut self, command: Command, _area: Rect) -> Option<Command> {
         self.focus = self.focus.after(command, self.controls());
-        if command == Command::Activate {
-            match self.focused() {
-                Control::Area(index) => {
-                    if let Some(selected) = self.areas.get_mut(index) {
-                        *selected = !*selected;
-                    }
-                }
-                Control::Change(index) => self.chosen = Some(index),
-                // Disabled until Jev arrives, as it says.
-                Control::GenerateQuestions => {}
-            }
+        if !matches!(command, Command::Activate | Command::Open) {
+            return None;
         }
-        None
+        match self.focused() {
+            Control::Area(index) => {
+                if let Some(selected) = self.areas.get_mut(index) {
+                    *selected = !*selected;
+                }
+                None
+            }
+            Control::Change(index) => {
+                self.chosen = Some(index);
+                (command == Command::Open).then_some(Command::Go(Route::Viewer { change: index }))
+            }
+            // Disabled until Jev arrives, as it says.
+            Control::GenerateQuestions => None,
+        }
     }
 
     fn render(&self, context: &Context<'_>, frame: &mut Frame<'_>, area: Rect) {
