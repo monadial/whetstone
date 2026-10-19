@@ -2,7 +2,6 @@
 //! repository it runs in, the only time Whetstone writes into a
 //! repository.
 
-use std::ffi::OsStr;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
@@ -30,7 +29,7 @@ pub(crate) enum InitError {
     Unreadable {
         path: PathBuf,
         #[source]
-        source: repository::DiscoveryError,
+        source: repository::OpenError,
     },
     /// The areas directory already holds area files.
     #[error("{} already has area files, so nothing was written", .0.display())]
@@ -76,7 +75,7 @@ pub(crate) fn init(start: &Path) -> Result<Vec<PathBuf>, InitError> {
     fs::create_dir_all(&dir).map_err(directory)?;
     for entry in fs::read_dir(&dir).map_err(directory)? {
         let entry = entry.map_err(directory)?;
-        if Path::new(&entry.file_name()).extension() == Some(OsStr::new("md")) {
+        if repository::is_area_file_name(&entry.file_name().to_string_lossy()) {
             return Err(InitError::HasAreaFiles(dir));
         }
     }

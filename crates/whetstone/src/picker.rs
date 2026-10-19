@@ -17,19 +17,35 @@ use crate::repository::{Commit, HistoryError, Repository};
 use crate::theme::{ControlKind, ControlState, Theme};
 use crate::view::{ChangeIndex, Context, Project, Route, View};
 
-/// The picker's own keys. Space makes a choice, and Enter also opens the
-/// chosen change.
+/// Space on the picker: it makes a choice.
+const SPACE: Binding = Binding {
+    keys: &[(Press::char(' '), Command::Activate)],
+    does: "Toggle an area, or choose a change",
+    hint: Some("Space toggle"),
+};
+
+/// The showcase picker's own keys. Space makes a choice, and Enter also
+/// opens the chosen change.
 const KEYMAP: Keymap = &[
     keymap::MOVE,
-    Binding {
-        keys: &[(Press::char(' '), Command::Activate)],
-        does: "Toggle an area, or choose a change",
-        hint: Some("Space toggle"),
-    },
+    SPACE,
     Binding {
         keys: &[(Press::key(KeyCode::Enter), Command::Open)],
         does: "Toggle an area, or choose and open a change",
         hint: Some("Enter open"),
+    },
+    keymap::BACK,
+];
+
+/// The repository picker's own keys. Opening a commit in the change viewer
+/// is not built yet, so Enter only chooses it.
+const REPOSITORY_KEYMAP: Keymap = &[
+    keymap::MOVE,
+    SPACE,
+    Binding {
+        keys: &[(Press::key(KeyCode::Enter), Command::Activate)],
+        does: "Toggle an area, or choose a change",
+        hint: Some("Enter choose"),
     },
     keymap::BACK,
 ];
@@ -51,7 +67,7 @@ enum Control {
     /// What comes after choosing: "Generate questions" on the showcase
     /// project, once Jev arrives, and "Review what will be sent" on the
     /// learner's repository.
-    Next,
+    Proceed,
 }
 
 /// Whether an area can be chosen, and whether it is.
@@ -133,7 +149,7 @@ impl Picker {
         } else if index < self.areas.len() + self.changes {
             Control::Change(index - self.areas.len())
         } else {
-            Control::Next
+            Control::Proceed
         }
     }
 
@@ -182,7 +198,7 @@ impl Picker {
                             disabled: None,
                         },
                     ),
-                    Err(invalid_file) => invalid(theme, invalid_file.file_name(), focused),
+                    Err(invalid_file) => invalid_area(theme, invalid_file.file_name(), focused),
                 }
             })
             .collect();
@@ -275,7 +291,7 @@ impl Picker {
     }
 
     /// The control after the lists, and why it is disabled, if it is.
-    fn next(&self) -> (&'static str, Option<&'static str>) {
+    fn proceed(&self) -> (&'static str, Option<&'static str>) {
         match self.source {
             Source::Showcase => ("Generate questions", Some(GENERATE_QUESTIONS_UNAVAILABLE)),
             Source::Repository { .. } => (
@@ -291,8 +307,9 @@ impl Picker {
     }
 }
 
-/// An area that cannot be chosen, labelled `label`.
-fn invalid<'a>(theme: &Theme, label: &'a str, focused: bool) -> Line<'a> {
+/// The control of an invalid area file, labelled `label`: a choice that is
+/// disabled.
+fn invalid_area<'a>(theme: &Theme, label: &'a str, focused: bool) -> Line<'a> {
     theme.control(
         label,
         ControlState {
@@ -365,7 +382,7 @@ struct Parts {
     area_list: Rect,
     change_heading: Rect,
     change_list: Rect,
-    next: Rect,
+    proceed: Rect,
 }
 
 /// Where the picker's parts go in `area`, for lists of `area_rows` and
@@ -376,9 +393,9 @@ struct Parts {
 fn layout(area: Rect, area_rows: usize, change_rows: usize) -> Parts {
     const TITLE: u16 = 1;
     const HEADING: u16 = 1;
-    const NEXT: u16 = 1;
+    const PROCEED: u16 = 1;
     let rows = |count: usize| u16::try_from(count).unwrap_or(u16::MAX);
-    let mut left = area.height.saturating_sub(TITLE + 2 * HEADING + NEXT);
+    let mut left = area.height.saturating_sub(TITLE + 2 * HEADING + PROCEED);
     let area_rows = rows(area_rows).min(left.saturating_sub(rows(change_rows.min(1))));
     left -= area_rows;
     let change_rows = rows(change_rows).min(left);
@@ -389,7 +406,7 @@ fn layout(area: Rect, area_rows: usize, change_rows: usize) -> Parts {
         taken
     };
     let before_changes = take(1);
-    let before_next = take(1);
+    let before_proceed = take(1);
     let after_title = take(1);
     let [
         title,
@@ -400,7 +417,7 @@ fn layout(area: Rect, area_rows: usize, change_rows: usize) -> Parts {
         change_heading,
         change_list,
         _,
-        next,
+        proceed,
     ] = Layout::vertical([
         Constraint::Length(TITLE),
         Constraint::Length(after_title),
@@ -409,8 +426,8 @@ fn layout(area: Rect, area_rows: usize, change_rows: usize) -> Parts {
         Constraint::Length(before_changes),
         Constraint::Length(HEADING),
         Constraint::Length(change_rows),
-        Constraint::Length(before_next),
-        Constraint::Length(NEXT),
+        Constraint::Length(before_proceed),
+        Constraint::Length(PROCEED),
     ])
     .areas(area);
     Parts {
@@ -419,7 +436,7 @@ fn layout(area: Rect, area_rows: usize, change_rows: usize) -> Parts {
         area_list,
         change_heading,
         change_list,
-        next,
+        proceed,
     }
 }
 
@@ -451,7 +468,10 @@ impl View for Picker {
     }
 
     fn keymap(&self) -> Keymap {
-        KEYMAP
+        match self.source {
+            Source::Showcase => KEYMAP,
+            Source::Repository { .. } => REPOSITORY_KEYMAP,
+        }
     }
 
     fn actions(&self) -> &'static [Action] {
@@ -472,17 +492,12 @@ impl View for Picker {
             }
             Control::Change(index) => {
                 self.chosen = Some(index);
-                match self.source {
-                    Source::Showcase => (command == Command::Open)
-                        .then_some(Command::Go(Route::Viewer(ChangeIndex::new(index)))),
-                    // Opening a commit in the viewer is not built yet, so
-                    // Enter only chooses it.
-                    Source::Repository { .. } => None,
-                }
+                (command == Command::Open)
+                    .then_some(Command::Go(Route::Viewer(ChangeIndex::new(index))))
             }
             // "Generate questions" is disabled until Jev arrives, as it
             // says, and the outbound review is not built yet.
-            Control::Next => None,
+            Control::Proceed => None,
         }
     }
 
@@ -513,7 +528,7 @@ impl View for Picker {
         );
         let shown_area = match self.focused() {
             Control::Area(index) => Some(index),
-            Control::Change(_) | Control::Next => None,
+            Control::Change(_) | Control::Proceed => None,
         };
         render_list(frame, parts.area_list, area_items, shown_area);
         frame.render_widget(
@@ -523,20 +538,20 @@ impl View for Picker {
         // The focused change, or else the chosen one, stays in view.
         let shown_change = match self.focused() {
             Control::Change(index) => Some(index),
-            Control::Area(_) | Control::Next => self.chosen,
+            Control::Area(_) | Control::Proceed => self.chosen,
         };
         render_list(frame, parts.change_list, change_items, shown_change);
-        let (label, disabled) = self.next();
+        let (label, disabled) = self.proceed();
         frame.render_widget(
             theme.control(
                 label,
                 ControlState {
-                    focused: self.focused() == Control::Next,
+                    focused: self.focused() == Control::Proceed,
                     disabled,
                     ..ControlState::default()
                 },
             ),
-            parts.next,
+            parts.proceed,
         );
     }
 }
