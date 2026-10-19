@@ -9,6 +9,7 @@ use std::time::Duration;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm::event::{self, Event};
+use ratatui::crossterm::style;
 use signal_hook::SigId;
 use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
 
@@ -45,6 +46,10 @@ pub(crate) enum TuiError {
 /// Takes over the terminal, runs `app` until it quits or a signal stops it,
 /// then gives the terminal back exactly as it was.
 pub(crate) fn run(mut app: App) -> Result<Ending, TuiError> {
+    // The theme alone honours NO_COLOR. Under NO_COLOR crossterm 0.29 writes
+    // each colour, even a reset, as a bare `CSI m`, which also clears the
+    // bold and other attributes that mark focus without colour.
+    style::force_color_output(true);
     // Listen before taking over the terminal, so no signal can leave it in
     // raw mode.
     let stop = StopSignals::listen().map_err(TuiError::Signals)?;

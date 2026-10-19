@@ -3,6 +3,7 @@
 use ratatui::Frame;
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::layout::Margin;
+use ratatui::widgets::Block;
 
 use crate::home;
 use crate::theme::Theme;
@@ -57,6 +58,7 @@ impl App {
 
     /// Draws the current screen. Drawing never changes state.
     pub fn render(&self, frame: &mut Frame<'_>) {
+        frame.render_widget(Block::new().style(self.theme.canvas), frame.area());
         let area = frame.area().inner(Margin::new(2, 1));
         match self.screen {
             Screen::Home => home::render(&self.theme, frame, area),
