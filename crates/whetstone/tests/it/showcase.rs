@@ -135,3 +135,19 @@ fn an_embedded_change_keeps_its_whole_message_without_the_areas_trailer_and_its_
         ["src/http.rs"]
     );
 }
+
+#[test]
+fn each_file_an_embedded_change_touches_has_its_own_diff_in_the_same_order() {
+    for change in whetstone::embedded_showcase().changes() {
+        let headers: Vec<&str> = change
+            .file_diffs()
+            .map(|diff| diff.lines().next().unwrap_or_default())
+            .collect();
+        let expected: Vec<String> = change
+            .files()
+            .iter()
+            .map(|file| format!("diff --git a/{0} b/{0}", file.path()))
+            .collect();
+        assert_eq!(headers, expected, "{:?}", change.summary());
+    }
+}
