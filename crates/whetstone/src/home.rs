@@ -7,10 +7,13 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{List, Paragraph, Wrap};
 
+use std::error::Error as _;
+
 use crate::columns;
 use crate::focus::Position;
 use crate::keymap::{self, Command, Keymap};
 use crate::mark;
+use crate::repository::{self, Repository, Unavailable};
 use crate::theme::ControlState;
 use crate::view::{Context, Project, Route, View};
 
@@ -58,12 +61,12 @@ pub(crate) struct Home {
 }
 
 impl Home {
-    /// Home with its actions: Practice on the learner's repository first,
-    /// when `repository` is available, then on the showcase project,
-    /// Settings and Quit.
-    pub(crate) fn new(repository: bool) -> Self {
+    /// Home with its actions: Practice on the learner's `repository` first,
+    /// unless it is unavailable, then on the showcase project, Settings and
+    /// Quit.
+    pub(crate) fn new(repository: Result<&Repository, &Unavailable>) -> Self {
         let mut actions = Vec::new();
-        if repository {
+        if repository.is_ok() {
             actions.push(Action::Practice(Project::Repository));
         }
         actions.extend([
@@ -118,6 +121,41 @@ impl Home {
     }
 }
 
+/// Why Practice on the learner's repository is unavailable, as home says
+/// it.
+fn why(unavailable: &Unavailable) -> String {
+    match unavailable {
+        Unavailable::NotInRepository => {
+            "To practice on your own work, start Whetstone inside a Git repository.".to_owned()
+        }
+        Unavailable::Bare { name } => {
+            format!("{name} is a bare repository, so it has no working tree to practice on.")
+        }
+        Unavailable::NoCommits { name } => {
+            format!("{name} has no commits yet, so there is nothing to practice on.")
+        }
+        Unavailable::InvalidConfig { name, problem } => format!(
+            "Practice on {name} is unavailable because {} is invalid: {problem}.",
+            repository::CONFIG
+        ),
+        Unavailable::Unreadable {
+            name,
+            path,
+            problem,
+        } => format!(
+            "Practice on {name} is unavailable because {} cannot be read: {problem}.",
+            path.display()
+        ),
+        Unavailable::Unusable { name } => {
+            format!("{name} has a .git that Whetstone cannot open as a repository.")
+        }
+        Unavailable::Broken(error) => match error.source() {
+            Some(cause) => format!("Whetstone cannot open the repository here: {cause}."),
+            None => "Whetstone cannot open the repository here.".to_owned(),
+        },
+    }
+}
+
 impl View for Home {
     fn route(&self) -> Route {
         Route::Home
@@ -140,7 +178,7 @@ impl View for Home {
         let theme = context.theme;
         let mut notices = Vec::new();
         if let Err(unavailable) = context.repository {
-            notices.push(Line::styled(unavailable.to_string(), theme.muted));
+            notices.push(Line::styled(why(unavailable), theme.muted));
             notices.push(Line::default());
         }
         notices.push(Line::styled(OUTBOUND_NOTICE, theme.muted));

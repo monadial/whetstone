@@ -126,12 +126,13 @@ impl App {
         showcase: ShowcaseProject,
         repository: Result<Repository, Unavailable>,
     ) -> Self {
+        let home = Home::new(repository.as_ref());
         Self {
             theme,
             settings,
             showcase,
             screens: Screens {
-                home: Home::new(repository.is_ok()),
+                home,
                 above: Vec::new(),
             },
             repository,

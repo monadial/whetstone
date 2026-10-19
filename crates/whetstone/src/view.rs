@@ -108,7 +108,7 @@ impl Route {
         repository: Result<&Repository, &Unavailable>,
     ) -> Box<dyn View> {
         match self {
-            Self::Home => Box::new(Home::new(repository.is_ok())),
+            Self::Home => Box::new(Home::new(repository)),
             Self::Settings => Box::new(SettingsScreen::default()),
             Self::Picker(Project::Showcase) => Box::new(Picker::new(showcase)),
             Self::Picker(Project::Repository) => Box::new(Picker::for_repository(

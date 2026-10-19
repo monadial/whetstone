@@ -7,7 +7,6 @@
 //! call Whetstone makes is in this module, behind Whetstone's own types.
 
 use std::ffi::OsStr;
-use std::fmt;
 use std::fs::{self, File};
 use std::io::{self, Read as _};
 use std::path::{Path, PathBuf};
@@ -15,7 +14,7 @@ use std::path::{Path, PathBuf};
 use whetstone_core::{Area, InvalidAreaFile, RepositoryConfig, RepositoryConfigError};
 
 /// The repository's Whetstone config, relative to the Git root.
-const CONFIG: &str = ".whetstone/config.toml";
+pub(crate) const CONFIG: &str = ".whetstone/config.toml";
 /// The directory of the repository's area files, relative to the Git root.
 pub(crate) const AREAS: &str = ".whetstone/areas";
 
@@ -88,7 +87,7 @@ pub enum Unavailable {
         name: String,
     },
     /// A repository was found, but it cannot be opened or read.
-    Broken(DiscoveryError),
+    Broken(OpenError),
 }
 
 /// What looking for a repository from a directory found.
@@ -109,7 +108,7 @@ pub(crate) enum Discovery {
 /// A repository was found but cannot be opened.
 #[derive(Debug, thiserror::Error)]
 #[error("cannot open the repository")]
-pub struct DiscoveryError(#[source] gix::Error);
+pub struct OpenError(#[source] gix::Error);
 
 /// The commits could not be read from the repository.
 #[derive(Debug, thiserror::Error)]
@@ -124,7 +123,7 @@ pub(crate) struct HistoryError(#[from] gix::Error);
 /// isolated, too: it reads the repository's own config, but no system or
 /// global config and no environment variables, so the start directory
 /// alone decides what opens, and nothing in the learner's home changes it.
-pub(crate) fn discover(start: &Path) -> Result<Discovery, DiscoveryError> {
+pub(crate) fn discover(start: &Path) -> Result<Discovery, OpenError> {
     use gix::sec::trust::DefaultForLevel as _;
 
     let isolated = |trust| {
@@ -150,7 +149,7 @@ pub(crate) fn discover(start: &Path) -> Result<Discovery, DiscoveryError> {
                     Discovery::Unusable(dir.to_path_buf())
                 }));
         }
-        Err(error) => return Err(DiscoveryError(error)),
+        Err(error) => return Err(OpenError(error)),
     };
     if repository.is_bare() {
         return Ok(Discovery::Bare(repository.git_dir().to_path_buf()));
@@ -216,7 +215,7 @@ impl Repository {
         // A linked worktree is named after its own directory, as
         // `git rev-parse --show-toplevel` names its root.
         let name = name_of(&root);
-        let broken = |error| Unavailable::Broken(DiscoveryError(error));
+        let broken = |error| Unavailable::Broken(OpenError(error));
         // An unborn HEAD has no ID to ask for.
         if git.head().map_err(broken)?.is_unborn() {
             return Err(Unavailable::NoCommits { name });
@@ -231,21 +230,23 @@ impl Repository {
                 problem,
             }
         };
-        let config = match read_file(&root.join(CONFIG), usize::MAX).map_err(unreadable(CONFIG))? {
-            Some(contents) => RepositoryConfig::parse(&contents).map_err(|problem| {
-                Unavailable::InvalidConfig {
-                    name: name.clone(),
-                    problem,
-                }
-            })?,
-            None => RepositoryConfig::default(),
-        };
+        let config =
+            match read_file_if_any(&root.join(CONFIG), usize::MAX).map_err(unreadable(CONFIG))? {
+                Some(contents) => RepositoryConfig::parse(&contents).map_err(|problem| {
+                    Unavailable::InvalidConfig {
+                        name: name.clone(),
+                        problem,
+                    }
+                })?,
+                None => RepositoryConfig::default(),
+            };
         let area_files = read_area_files(&root.join(AREAS)).map_err(unreadable(AREAS))?;
-        let areas = Area::offered(
-            area_files
-                .iter()
-                .map(|(file_name, contents)| (file_name.as_str(), contents.as_slice())),
-        );
+        let areas = Area::offered(area_files.iter().map(|file| {
+            (
+                file.file_name.as_str(),
+                file.contents.as_deref().map_err(Clone::clone),
+            )
+        }));
         Ok(Self {
             root,
             name,
@@ -341,29 +342,52 @@ pub(crate) fn log(opened: &Result<Repository, Unavailable>) {
     }
 }
 
-/// The contents of the regular file at `path`, or of as much of it as
-/// `limit` bytes and one more, so a reader can tell it is larger. `None`
-/// if there is no file there. Anything else at `path`, such as a directory
-/// or a named pipe, is an error rather than read.
-fn read_file(path: &Path, limit: usize) -> io::Result<Option<Vec<u8>>> {
-    let metadata = match fs::metadata(path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error),
-    };
-    if !metadata.is_file() {
+/// The contents of the regular file at `path`, or `None` if there is no
+/// file there, as [`read_regular_file`] reads it.
+fn read_file_if_any(path: &Path, limit: usize) -> io::Result<Option<Vec<u8>>> {
+    match read_regular_file(path, limit) {
+        Ok(contents) => Ok(Some(contents)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+/// The contents of the regular file at `path`, following symlinks, or of as
+/// much of it as `limit` bytes and one more, so a reader can tell it is
+/// larger. Anything else at `path`, such as a directory or a named pipe, is
+/// an error rather than read.
+fn read_regular_file(path: &Path, limit: usize) -> io::Result<Vec<u8>> {
+    if !fs::metadata(path)?.is_file() {
         return Err(io::Error::other("it is not a file"));
     }
     let mut contents = Vec::new();
     File::open(path)?
         .take(u64::try_from(limit).unwrap_or(u64::MAX).saturating_add(1))
         .read_to_end(&mut contents)?;
-    Ok(Some(contents))
+    Ok(contents)
 }
 
-/// The area files in `dir`, each its file name and contents: the regular
-/// files whose names end in `.md`. None if there is no such directory.
-fn read_area_files(dir: &Path) -> io::Result<Vec<(String, Vec<u8>)>> {
+/// Whether `file_name` is an area file's: one that ends in `.md`, in any
+/// case, so that `Security.MD` is listed as an invalid area file rather
+/// than passed over.
+pub(crate) fn is_area_file_name(file_name: &str) -> bool {
+    Path::new(file_name)
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
+}
+
+/// An entry of `.whetstone/areas/` as read from the working tree.
+#[derive(Debug)]
+struct AreaFile {
+    file_name: String,
+    /// The file's contents, or why they could not be read.
+    contents: Result<Vec<u8>, String>,
+}
+
+/// The area files in `dir`: every entry whose name ends in `.md`, with its
+/// contents, or why they could not be read, as for a symlink to nothing or
+/// a directory. None if there is no such directory.
+fn read_area_files(dir: &Path) -> io::Result<Vec<AreaFile>> {
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -375,13 +399,15 @@ fn read_area_files(dir: &Path) -> io::Result<Vec<(String, Vec<u8>)>> {
         let Some(file_name) = path.file_name().map(OsStr::to_string_lossy) else {
             continue;
         };
-        if !file_name.ends_with(".md") || !fs::metadata(&path)?.is_file() {
+        if !is_area_file_name(&file_name) {
             continue;
         }
-        let file_name = file_name.into_owned();
-        if let Some(contents) = read_file(&path, Area::FILE_LIMIT)? {
-            files.push((file_name, contents));
-        }
+        let contents =
+            read_regular_file(&path, Area::FILE_LIMIT).map_err(|error| error.to_string());
+        files.push(AreaFile {
+            file_name: file_name.into_owned(),
+            contents,
+        });
     }
     Ok(files)
 }
@@ -404,47 +430,5 @@ impl Commit {
     /// The commit message's subject.
     pub(crate) fn summary(&self) -> &str {
         &self.summary
-    }
-}
-
-impl fmt::Display for Unavailable {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::NotInRepository => f.write_str(
-                "To practice on your own work, start Whetstone inside a Git repository.",
-            ),
-            Self::Bare { name } => write!(
-                f,
-                "{name} is a bare repository, so it has no working tree to practice on."
-            ),
-            Self::NoCommits { name } => {
-                write!(
-                    f,
-                    "{name} has no commits yet, so there is nothing to practice on."
-                )
-            }
-            Self::InvalidConfig { name, problem } => write!(
-                f,
-                "Practice on {name} is unavailable because {CONFIG} is invalid: {problem}."
-            ),
-            Self::Unreadable {
-                name,
-                path,
-                problem,
-            } => write!(
-                f,
-                "Practice on {name} is unavailable because {} cannot be read: {problem}.",
-                path.display()
-            ),
-            Self::Unusable { name } => {
-                write!(
-                    f,
-                    "{name} has a .git that Whetstone cannot open as a repository."
-                )
-            }
-            Self::Broken(error) => {
-                write!(f, "Whetstone cannot open the repository here: {}.", error.0)
-            }
-        }
     }
 }

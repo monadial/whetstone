@@ -90,6 +90,10 @@ pub enum AreaFileError {
         "the file name must be an area ID followed by `.md`: lowercase letters, digits and hyphens"
     )]
     InvalidFileName,
+    /// The file could not be read, for the reason given, such as a symlink
+    /// to nothing or a directory with an area file's name.
+    #[error("the file cannot be read: {0}")]
+    Unreadable(String),
     /// The file is larger than 16 KB, 16,000 bytes.
     #[error("the file is larger than {} KB", Area::FILE_LIMIT / 1000)]
     TooLarge,
@@ -244,10 +248,10 @@ impl Area {
     }
 
     /// The areas a repository offers when its area files are `files`, each a
-    /// file name and its contents. Any area file, valid or not, replaces the
-    /// defaults entirely; without any, the repository offers
-    /// [`Area::defaults`]. Either way the areas come in file-name order, and
-    /// an invalid file comes with the reason:
+    /// file name and its contents, or why they could not be read. Any area
+    /// file, valid or not, replaces the defaults entirely; without any, the
+    /// repository offers [`Area::defaults`]. Either way the areas come in
+    /// file-name order, and an invalid file comes with the reason:
     ///
     /// ```
     /// use whetstone_core::{Area, AreaFileError};
@@ -258,18 +262,21 @@ impl Area {
     ///                 +++\n\
     ///                 Look at who is trusted.\n";
     /// let offered = Area::offered([
-    ///     ("security.md", security.as_bytes()),
-    ///     ("accessibility.md", b"Who can use it".as_slice()),
+    ///     ("security.md", Ok(security.as_bytes())),
+    ///     ("accessibility.md", Ok(b"Who can use it".as_slice())),
+    ///     ("cost.md", Err("permission denied".to_owned())),
     /// ]);
     ///
     /// let invalid = offered[0].as_ref().expect_err("no front matter");
     /// assert_eq!(invalid.file_name(), "accessibility.md");
     /// assert_eq!(invalid.reason(), &AreaFileError::NoFrontMatter);
-    /// assert_eq!(offered[1].as_ref().map(Area::name), Ok("Security"));
+    /// let unreadable = offered[1].as_ref().expect_err("not read");
+    /// assert_eq!(unreadable.reason().to_string(), "the file cannot be read: permission denied");
+    /// assert_eq!(offered[2].as_ref().map(Area::name), Ok("Security"));
     /// ```
     #[must_use]
     pub fn offered<'a>(
-        files: impl IntoIterator<Item = (&'a str, &'a [u8])>,
+        files: impl IntoIterator<Item = (&'a str, Result<&'a [u8], String>)>,
     ) -> Vec<Result<Self, InvalidAreaFile>> {
         let mut files: Vec<_> = files.into_iter().collect();
         if files.is_empty() {
@@ -279,12 +286,13 @@ impl Area {
         files
             .into_iter()
             .map(|(file_name, contents)| {
-                Self::parse(file_name, contents, AreaSource::Repository).map_err(|reason| {
-                    InvalidAreaFile {
+                contents
+                    .map_err(AreaFileError::Unreadable)
+                    .and_then(|contents| Self::parse(file_name, contents, AreaSource::Repository))
+                    .map_err(|reason| InvalidAreaFile {
                         file_name: file_name.to_owned(),
                         reason,
-                    }
-                })
+                    })
             })
             .collect()
     }
@@ -723,10 +731,10 @@ mod tests {
     #[test]
     fn a_repositorys_area_files_replace_the_defaults_in_file_name_order_valid_or_not() {
         let offered = Area::offered([
-            ("security.md", VALID.as_bytes()),
-            ("Broken.md", VALID.as_bytes()),
-            ("accessibility.md", VALID.as_bytes()),
-            ("domain.md", b"no front matter".as_slice()),
+            ("security.md", Ok(VALID.as_bytes())),
+            ("Broken.md", Ok(VALID.as_bytes())),
+            ("accessibility.md", Ok(VALID.as_bytes())),
+            ("domain.md", Ok(b"no front matter".as_slice())),
         ]);
 
         assert_eq!(
@@ -752,7 +760,7 @@ mod tests {
 
     #[test]
     fn a_repository_whose_only_area_file_is_invalid_still_gets_no_defaults() {
-        let offered = Area::offered([("domain.md", b"".as_slice())]);
+        let offered = Area::offered([("domain.md", Ok(b"".as_slice()))]);
 
         assert_eq!(ids(&offered), ["domain.md"]);
     }

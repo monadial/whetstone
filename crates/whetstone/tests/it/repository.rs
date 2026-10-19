@@ -747,3 +747,49 @@ fn a_git_file_that_points_nowhere_is_named_rather_than_taken_for_no_repository()
         "payments has a .git that Whetstone cannot open as a repository."
     );
 }
+
+#[test]
+fn an_area_file_that_cannot_be_read_is_listed_with_the_reason_and_hides_no_other() {
+    let repo = payments();
+    repo.write(
+        ".whetstone/areas/security.md",
+        area_file("Security", "Who can do what"),
+    );
+    std::os::unix::fs::symlink("missing.md", repo.path(".whetstone/areas/gone.md"))
+        .expect("make a dangling symlink");
+    std::fs::create_dir(repo.path(".whetstone/areas/notes.md")).expect("make a directory");
+    let mut session = started_in(repo.root(), 120, 32);
+
+    assert_eq!(home_actions(&session)[0], "> Practice on payments");
+    session.press("<Enter>");
+
+    assert_eq!(
+        session.section(AREAS),
+        [
+            "> ( ) gone.md (invalid)   the file cannot be read: No such file or directory (os error 2)",
+            "( ) notes.md (invalid)  the file cannot be read: it is not a file",
+            "(x) Security            Who can do what",
+        ]
+    );
+}
+
+#[test]
+fn key_help_on_the_repository_picker_says_enter_chooses_a_change() {
+    let repo = payments();
+    let mut session = started_in(repo.root(), 80, 24);
+    session.press("<Enter>");
+    assert_eq!(
+        session.rows()[22].trim(),
+        "? keys  : actions  Space toggle  Enter choose  q back"
+    );
+
+    session.press("?");
+
+    let rows = session.overlay_rows();
+    assert!(
+        rows.iter()
+            .any(|row| row.starts_with("Enter")
+                && row.ends_with("Toggle an area, or choose a change")),
+        "{rows:#?}"
+    );
+}
