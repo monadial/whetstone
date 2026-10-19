@@ -6,7 +6,7 @@ Buffer {
     area: Rect { x: 0, y: 0, width: 80, height: 24 },
     content: [
         "                                                                                ",
-        "  Persist payments in an append-only file store                 infrastructure  ",
+        "  Persist payments in an append-only file store                 Infrastructure  ",
         "                                                                                ",
         "  ┌ Files ───────────────┐┌  (x) Diff   ( ) Before (new file)   ( ) After ───┐  ",
         "  │   ( ) Cargo.lock     ││ diff --git a/src/store.rs b/src/store.rs         │  ",

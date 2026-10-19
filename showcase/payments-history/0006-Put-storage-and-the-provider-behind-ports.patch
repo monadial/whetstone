@@ -14,7 +14,7 @@ the HTTP layer now depend only on the ports. FileStore and
 ProviderClient implement them, and main is the one place that picks
 the adapters. Behaviour is unchanged.
 
-Areas: system design
+Areas: system-design
 ---
  src/http.rs     | 22 +++++++++-------
  src/lib.rs      |  1 +

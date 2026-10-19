@@ -2,16 +2,18 @@
 //! needs no git and no showcase files at runtime.
 //!
 //! The history is the `git format-patch` series in
-//! `showcase/payments-history/`, and the project declares its areas in
-//! `showcase/payments/.whetstone/config.toml` (`showcase/README.md` describes
-//! both). This script replays the series in pure Rust, from an empty tree,
-//! and writes `$OUT_DIR/showcase.rs`, which `src/showcase.rs` includes: for
-//! each change its message, the areas its `Areas:` trailer declares, its diff,
-//! and each touched file before and after.
+//! `showcase/payments-history/` (`showcase/README.md` describes it). The
+//! project ships no area files, so it offers Whetstone's default areas, and
+//! each change's `Areas:` trailer names the IDs of default areas. This script
+//! replays the series in pure Rust, from an empty tree, and writes
+//! `$OUT_DIR/showcase.rs`, which `src/showcase.rs` includes: for each change
+//! its message, the area IDs its trailer names, its diff, and each touched
+//! file before and after.
 //!
-//! The output depends only on those files, so the build is deterministic. A
-//! hunk that does not apply exactly, an area the project does not offer, or
-//! anything else the replay does not understand fails the build.
+//! The output depends only on those files and the default areas, so the
+//! build is deterministic. A hunk that does not apply exactly, a trailer that
+//! names anything but a default area's ID, or anything else the replay does
+//! not understand fails the build.
 
 use std::collections::BTreeMap;
 use std::error::Error as _;
@@ -20,12 +22,10 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::{env, fs, io};
 
-use whetstone_core::Area;
+use whetstone_core::{Area, AreaId};
 
 /// The showcase project's patch series, relative to this crate.
 const HISTORY: &str = "../../showcase/payments-history";
-/// The showcase project's config, relative to this crate.
-const CONFIG: &str = "../../showcase/payments/.whetstone/config.toml";
 
 fn main() -> ExitCode {
     match embed() {
@@ -68,14 +68,6 @@ enum EmbedError {
         #[source]
         source: io::Error,
     },
-    #[error("{} is not valid TOML", path.display())]
-    Toml {
-        path: PathBuf,
-        #[source]
-        source: toml::de::Error,
-    },
-    #[error("`areas` in {} must be an array of area names", path.display())]
-    Areas { path: PathBuf },
     #[error("{}", path.display())]
     History {
         path: PathBuf,
@@ -95,12 +87,14 @@ fn malformed(problem: impl Into<String>) -> HistoryError {
 }
 
 fn embed() -> Result<(), EmbedError> {
-    tell_cargo(&[HISTORY, CONFIG]);
+    tell_cargo(&[HISTORY]);
     let out = PathBuf::from(env::var_os("OUT_DIR").ok_or(EmbedError::NoOutDir)?);
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let declared = read_areas(&crate_dir.join(CONFIG))?;
-    // A trailer may name only the areas a learner is offered.
-    let offered = Area::offered(declared.clone());
+    // A trailer may name only the areas a learner is offered: the defaults.
+    let offered: Vec<AreaId> = Area::defaults()
+        .iter()
+        .map(|area| area.id().clone())
+        .collect();
     let mut replay = Replay::default();
     for path in patch_files(&crate_dir.join(HISTORY))? {
         let text = read(&path)?;
@@ -110,8 +104,7 @@ fn embed() -> Result<(), EmbedError> {
             .map_err(|source| EmbedError::History { path, source })?;
     }
     let out = out.join("showcase.rs");
-    fs::write(&out, rust_source(&declared, &replay))
-        .map_err(|source| EmbedError::Write { path: out, source })
+    fs::write(&out, rust_source(&replay)).map_err(|source| EmbedError::Write { path: out, source })
 }
 
 /// Asks Cargo to run this script again when any of `paths` changes. A
@@ -151,32 +144,12 @@ fn patch_files(dir: &Path) -> Result<Vec<PathBuf>, EmbedError> {
     Ok(paths)
 }
 
-/// The areas the project's config declares: its `areas` array, or none.
-fn read_areas(config: &Path) -> Result<Vec<Area>, EmbedError> {
-    let table: toml::Table = read(config)?.parse().map_err(|source| EmbedError::Toml {
-        path: config.to_owned(),
-        source,
-    })?;
-    let invalid = || EmbedError::Areas {
-        path: config.to_owned(),
-    };
-    match table.get("areas") {
-        None => Ok(Vec::new()),
-        Some(areas) => areas
-            .as_array()
-            .ok_or_else(invalid)?
-            .iter()
-            .map(|area| area.as_str().map(Area::new).ok_or_else(invalid))
-            .collect(),
-    }
-}
-
 /// One file of the series: a change as `git format-patch` writes it.
 #[derive(Debug)]
 struct Patch<'a> {
     /// The commit message, without its `Areas:` trailer.
     message: String,
-    /// The areas the `Areas:` trailer declares.
+    /// The area IDs the `Areas:` trailer names.
     areas: Vec<&'a str>,
     /// Every file's diff, as the patch has it.
     diff: String,
@@ -265,15 +238,21 @@ impl<'a> Patch<'a> {
         })
     }
 
-    /// Fails unless every area the trailer declares is one of `offered`.
-    fn check_areas(&self, offered: &[Area]) -> Result<(), HistoryError> {
+    /// Fails unless every area the trailer names is the ID of one of
+    /// `offered`.
+    fn check_areas(&self, offered: &[AreaId]) -> Result<(), HistoryError> {
         match self
             .areas
             .iter()
-            .find(|area| !offered.contains(&Area::new(**area)))
+            .find(|area| !area.parse::<AreaId>().is_ok_and(|id| offered.contains(&id)))
         {
             Some(area) => Err(malformed(format!(
-                "the change declares the area {area:?}, which the showcase project does not offer"
+                "the `Areas:` trailer names {area:?}, which is not the ID of a default area: {}",
+                offered
+                    .iter()
+                    .map(AreaId::as_str)
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ))),
             None => Ok(()),
         }
@@ -315,7 +294,7 @@ fn subject(headers: &[&str]) -> Result<String, HistoryError> {
 }
 
 /// The commit message from `subject` and the `body` lines, without the
-/// `Areas:` trailer that ends it, and the areas that trailer declares. As in
+/// `Areas:` trailer that ends it, and the area IDs that trailer names. As in
 /// git, the trailer is a paragraph of its own.
 fn message<'a>(subject: &str, body: &[&'a str]) -> Result<(String, Vec<&'a str>), HistoryError> {
     let mut body = without_blank_lines_at_end(body);
@@ -616,19 +595,15 @@ fn apply_file_diff(before: Option<&str>, diff: &FileDiff) -> Result<Option<Strin
 /// Writing to a `String` cannot fail.
 const INFALLIBLE: &str = "writing to a String never fails";
 
-/// The Rust source `src/showcase.rs` includes: the `declared` areas and the
-/// replayed changes, built with `whetstone-core`'s constructors. Each
-/// version of a file is one entry of `CONTENTS`.
-fn rust_source(declared: &[Area], replay: &Replay) -> String {
+/// The Rust source `src/showcase.rs` includes: the replayed changes, built
+/// with `whetstone-core`'s constructors and its `area` function. Each version
+/// of a file is one entry of `CONTENTS`.
+fn rust_source(replay: &Replay) -> String {
     let mut source = String::from(
         "// @generated by crates/whetstone/build.rs from the showcase project's\n\
-         // patch series and config. Do not edit.\n\n\
-         fn declared_areas() -> Vec<Area> {\n    vec![",
+         // patch series. Do not edit.\n\n\
+         fn changes() -> Vec<Change> {\n    vec![\n",
     );
-    for area in declared {
-        write!(source, "Area::new({:?}), ", area.name()).expect(INFALLIBLE);
-    }
-    source.push_str("]\n}\n\nfn changes() -> Vec<Change> {\n    vec![\n");
     for change in &replay.changes {
         write_change(&mut source, change);
     }
@@ -649,7 +624,7 @@ fn write_change(source: &mut String, change: &ReplayedChange) {
     )
     .expect(INFALLIBLE);
     for area in &change.areas {
-        write!(source, "Area::new({area:?}), ").expect(INFALLIBLE);
+        write!(source, "area({area:?}), ").expect(INFALLIBLE);
     }
     write!(source, "], {:?}.to_owned(), vec![", change.diff).expect(INFALLIBLE);
     let contents = |index: usize| format!("CONTENTS[{index}].to_owned()");

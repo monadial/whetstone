@@ -1,4 +1,4 @@
 # Whetstone settings for this repository.
-
-# The areas Practice questions can focus on.
-areas = ["domain", "observability", "scalability", "infrastructure", "system design"]
+#
+# This repository has no area files in .whetstone/areas/, so Practice offers
+# Whetstone's default areas.

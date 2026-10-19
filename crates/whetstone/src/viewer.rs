@@ -9,7 +9,7 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, List, ListState, Padding, Paragraph, Wrap};
-use whetstone_core::{Area, Change, TouchedFile};
+use whetstone_core::{Change, TouchedFile};
 
 use crate::columns;
 use crate::entry::TextEntry;
@@ -642,16 +642,6 @@ struct Parts {
     status: Rect,
 }
 
-/// The areas `change` touches, as the viewer's title shows them.
-fn areas_of(change: &Change) -> String {
-    change
-        .areas()
-        .iter()
-        .map(Area::name)
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
 impl View for Viewer {
     fn route(&self) -> Route {
         Route::Viewer(self.index)
@@ -717,7 +707,7 @@ impl View for Viewer {
         // The summary, and the areas the change touches right-aligned, at
         // least two cells after it.
         let mut title = Line::from(Span::styled(self.change.summary(), theme.title));
-        let areas = areas_of(&self.change);
+        let areas = context.showcase.area_names(&self.change).join(", ");
         let areas_column = usize::from(parts.title.width)
             .saturating_sub(Line::raw(&areas).width())
             .max(title.width() + 2);

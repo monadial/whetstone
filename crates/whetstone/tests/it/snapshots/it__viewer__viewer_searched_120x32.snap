@@ -6,7 +6,7 @@ Buffer {
     area: Rect { x: 0, y: 0, width: 120, height: 32 },
     content: [
         "                                                                                                                        ",
-        "  Preserve payment retry identity                                                                               domain  ",
+        "  Preserve payment retry identity                                                                               Domain  ",
         "                                                                                                                        ",
         "  ┌ Files ────────────────┐┌  ( ) Diff   ( ) Before > (x) After ─────────────────────────────────────────────────────┐  ",
         "  │   (x) src/provider.rs ││  14 use crate::payment::{ChargeOutcome, OperationKey, Payment};                         │  ",

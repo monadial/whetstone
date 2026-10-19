@@ -3,9 +3,8 @@
 //! showcase project's curated history. "Generate questions" waits for Jev.
 
 use whetstone::Flow;
-use whetstone_core::{Area, ShowcaseProject};
 
-use crate::session::{NO_COLOR, Session, Setup};
+use crate::session::{Session, Setup};
 
 #[test]
 fn practice_on_the_showcase_project_opens_the_picker_from_home() {
@@ -35,96 +34,6 @@ fn section(session: &Session, heading: &str) -> Vec<String> {
         .collect()
 }
 
-#[test]
-fn every_area_the_showcase_project_declares_starts_selected() {
-    let mut session = Session::plain(80, 24);
-
-    session.press("<Enter>");
-
-    assert_eq!(
-        section(&session, AREAS),
-        [
-            "> (x) domain",
-            "(x) observability",
-            "(x) scalability",
-            "(x) infrastructure",
-            "(x) system design",
-        ]
-    );
-}
-
-/// The picker in an 80x24 terminal without colour, over `showcase`.
-fn picker_over(showcase: &ShowcaseProject) -> Session {
-    let mut session = Session::start(
-        Setup {
-            variables: NO_COLOR,
-            showcase: Some(showcase),
-            ..Setup::default()
-        },
-        80,
-        24,
-    );
-    session.press("<Enter>");
-    session
-}
-
-#[test]
-fn the_areas_are_the_ones_the_showcase_project_declares() {
-    let showcase = ShowcaseProject::new(
-        vec![Area::new("security"), Area::new("performance")],
-        whetstone::embedded_showcase().changes().to_vec(),
-    );
-
-    let session = picker_over(&showcase);
-
-    assert_eq!(
-        section(&session, AREAS),
-        ["> (x) security", "(x) performance"]
-    );
-}
-
-#[test]
-fn a_showcase_project_that_declares_no_areas_offers_the_five_defaults_all_selected() {
-    let showcase = ShowcaseProject::new(
-        Vec::new(),
-        whetstone::embedded_showcase().changes().to_vec(),
-    );
-
-    let session = picker_over(&showcase);
-
-    assert_eq!(
-        section(&session, AREAS),
-        [
-            "> (x) domain",
-            "(x) observability",
-            "(x) scalability",
-            "(x) infrastructure",
-            "(x) system design",
-        ]
-    );
-}
-
-#[test]
-fn space_and_enter_toggle_the_focused_area() {
-    let mut session = Session::plain(80, 24);
-    session.press("<Enter>");
-
-    session.press("<Space>");
-    assert_eq!(section(&session, AREAS)[0], "> ( ) domain");
-
-    session.press("j <Space>");
-    assert_eq!(
-        section(&session, AREAS)[..2],
-        ["( ) domain", "> ( ) observability"]
-    );
-
-    session.press("<Enter>");
-    assert_eq!(section(&session, AREAS)[1], "> (x) observability");
-}
-
-/// The heading above the changes.
-const CHANGES: &str = "Change to practice on";
-
 /// Each row of a section split into its columns, which are at least two
 /// cells apart.
 fn columns(rows: &[String]) -> Vec<Vec<&str>> {
@@ -139,6 +48,87 @@ fn columns(rows: &[String]) -> Vec<Vec<&str>> {
 }
 
 #[test]
+fn the_showcase_project_offers_the_five_default_areas_in_file_name_order_all_selected() {
+    let mut session = Session::plain(80, 24);
+
+    session.press("<Enter>");
+
+    assert_eq!(
+        columns(&section(&session, AREAS))
+            .into_iter()
+            .map(|row| row[0])
+            .collect::<Vec<_>>(),
+        [
+            "> (x) Domain",
+            "(x) Infrastructure",
+            "(x) Observability",
+            "(x) Scalability",
+            "(x) System design",
+        ]
+    );
+}
+
+#[test]
+fn each_area_shows_its_one_line_description_in_a_column_of_its_own() {
+    let mut session = Session::plain(120, 32);
+
+    session.press("<Enter>");
+
+    let descriptions = [
+        "The rules, concepts and language the work is about",
+        "Where the work runs and what it depends on",
+        "How you can tell what the work is doing and why",
+        "How the work holds up as use and data grow",
+        "How the parts fit together, and why this way",
+    ];
+    assert_eq!(
+        columns(&section(&session, AREAS))
+            .into_iter()
+            .map(|row| row[1..].join("  "))
+            .collect::<Vec<_>>(),
+        descriptions
+    );
+    let starts: Vec<usize> = descriptions
+        .iter()
+        .map(|description| {
+            session
+                .rows()
+                .iter()
+                .find_map(|row| row.find(description))
+                .expect("the description is shown")
+        })
+        .collect();
+    assert!(
+        starts.iter().all(|&start| start == starts[0]),
+        "the descriptions start in one column: {starts:?}\n{}",
+        session.text()
+    );
+}
+
+#[test]
+fn space_and_enter_toggle_the_focused_area() {
+    let mut session = Session::plain(80, 24);
+    session.press("<Enter>");
+
+    let area =
+        |session: &Session, index: usize| columns(&section(session, AREAS))[index][0].to_owned();
+    session.press("<Space>");
+    assert_eq!(area(&session, 0), "> ( ) Domain");
+
+    session.press("j <Space>");
+    assert_eq!(
+        [area(&session, 0), area(&session, 1)],
+        ["( ) Domain", "> ( ) Infrastructure"]
+    );
+
+    session.press("<Enter>");
+    assert_eq!(area(&session, 1), "> (x) Infrastructure");
+}
+
+/// The heading above the changes.
+const CHANGES: &str = "Change to practice on";
+
+#[test]
 fn the_change_list_shows_every_curated_change_with_its_message_and_areas() {
     let mut session = Session::plain(80, 24);
 
@@ -147,31 +137,31 @@ fn the_change_list_shows_every_curated_change_with_its_message_and_areas() {
     assert_eq!(
         columns(&section(&session, CHANGES)),
         [
-            ["( ) Model the payment lifecycle", "domain"],
+            ["( ) Model the payment lifecycle", "Domain"],
             [
                 "( ) Persist payments in an append-only file store",
-                "infrastructure"
+                "Infrastructure"
             ],
             [
                 "( ) Call the payment provider with timeouts and retries",
-                "infrastructure"
+                "Infrastructure"
             ],
-            ["( ) Serve payments over HTTP", "domain, infrastructure"],
-            ["( ) Preserve payment retry identity", "domain"],
+            ["( ) Serve payments over HTTP", "Domain, Infrastructure"],
+            ["( ) Preserve payment retry identity", "Domain"],
             [
                 "( ) Put storage and the provider behind ports",
-                "system design"
+                "System design"
             ],
             [
                 "( ) Trace requests and export payment metrics",
-                "observability"
+                "Observability"
             ],
             [
                 "( ) Cache payments per tenant",
-                "scalability, infrastructure"
+                "Scalability, Infrastructure"
             ],
-            ["( ) Rename ChargeOutcome to ProviderOutcome", "domain"],
-            ["( ) Run rustfmt over the HTTP layer", "infrastructure"],
+            ["( ) Rename ChargeOutcome to ProviderOutcome", "Domain"],
+            ["( ) Run rustfmt over the HTTP layer", "Infrastructure"],
         ]
     );
 }
@@ -315,7 +305,7 @@ fn the_picker_at_80x24() {
     insta::assert_debug_snapshot!("picker_80x24", session.frame());
 }
 
-/// From home: open the picker, deselect observability, choose the third
+/// From home: open the picker, deselect infrastructure, choose the third
 /// change, then move on to "Generate questions", the last control.
 const CHOICES: &str = "<Enter> j <Space> j j j j j j <Space> j j j j j j j j";
 

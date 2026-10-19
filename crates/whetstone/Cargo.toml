@@ -32,7 +32,6 @@ whetstone-core = { path = "../whetstone-core" }
 # build.rs replays the showcase project's patch series into embedded data.
 [build-dependencies]
 thiserror = "2"
-toml = { version = "1.1", default-features = false, features = ["parse", "serde", "std"] }
 whetstone-core = { path = "../whetstone-core" }
 
 [dev-dependencies]

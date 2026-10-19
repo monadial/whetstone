@@ -10,6 +10,6 @@ mod area;
 mod change;
 mod showcase;
 
-pub use crate::area::Area;
+pub use crate::area::{Area, AreaFileError, AreaId, AreaSource, InvalidAreaFile, InvalidAreaId};
 pub use crate::change::{Change, TouchedFile};
 pub use crate::showcase::ShowcaseProject;

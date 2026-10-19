@@ -1,13 +1,14 @@
 //! Changes: the commits a Practice is built from.
 
-use crate::area::Area;
+use crate::area::AreaId;
 
 /// The commit a Practice is built from: its message, the areas it touches,
-/// its diff and the code it touches, before and after.
+/// its diff and the code it touches, before and after. A showcase change
+/// names its areas; a commit from a repository has none.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Change {
     message: String,
-    areas: Vec<Area>,
+    areas: Vec<AreaId>,
     diff: String,
     files: Vec<TouchedFile>,
 }
@@ -29,10 +30,10 @@ enum Versions {
 }
 
 impl Change {
-    /// A change with its commit `message`, the `areas` it touches, its
-    /// unified `diff` and the `files` it touches.
+    /// A change with its commit `message`, the IDs of the `areas` it
+    /// touches, its unified `diff` and the `files` it touches.
     #[must_use]
-    pub fn new(message: String, areas: Vec<Area>, diff: String, files: Vec<TouchedFile>) -> Self {
+    pub fn new(message: String, areas: Vec<AreaId>, diff: String, files: Vec<TouchedFile>) -> Self {
         Self {
             message,
             areas,
@@ -53,9 +54,9 @@ impl Change {
         self.message.lines().next().unwrap_or_default()
     }
 
-    /// The areas the change touches.
+    /// The IDs of the areas the change touches.
     #[must_use]
-    pub fn areas(&self) -> &[Area] {
+    pub fn areas(&self) -> &[AreaId] {
         &self.areas
     }
 
