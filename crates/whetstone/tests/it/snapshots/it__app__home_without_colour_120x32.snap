@@ -1,6 +1,6 @@
 ---
 source: crates/whetstone/tests/it/app.rs
-expression: "draw(&app, 120, 32)"
+expression: session.frame()
 ---
 Buffer {
     area: Rect { x: 0, y: 0, width: 120, height: 32 },
@@ -11,7 +11,7 @@ Buffer {
         "  █████████████████████████████▄      Understand the code you ship.                                                     ",
         "  ███████████████████████████████▄                                                                                      ",
         "                                                                                                                        ",
-        "  > Practice on the showcase project                                                                                    ",
+        "  > Practice on the showcase project (arrives with the change picker)                                                   ",
         "    Settings                                                                                                            ",
         "    Quit                                                                                                                ",
         "                                                                                                                        ",
@@ -35,7 +35,7 @@ Buffer {
         "                                                                                                                        ",
         "                                                                                                                        ",
         "                                                                                                                        ",
-        "  q quit                                                                                                                ",
+        "  ? keys  : actions  q quit                                                                                             ",
         "                                                                                                                        ",
     ],
     styles: [
@@ -43,6 +43,7 @@ Buffer {
         x: 38, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
         x: 47, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 2, y: 6, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
-        x: 36, y: 6, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 4, y: 6, fg: Reset, bg: Reset, underline: Reset, modifier: DIM | ITALIC,
+        x: 69, y: 6, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
     ]
 }

@@ -25,6 +25,27 @@ cargo run
 
 It needs an interactive terminal. `whetstone --help` lists the options. Set `NO_COLOR` to turn colour off: focus and selection stay visible through markers and bold text.
 
+Everything works from the keyboard. `j`/`k` or the arrows move, Tab and Shift+Tab move focus, and Enter or Space activates. `q` goes back, and quits from home. `?` shows the keys for the current screen and `:` lists its actions. Ctrl+C quits from anywhere.
+
+## Configure it
+
+Settings shows what Practice will use. It is read-only: the values come from `config.toml` in Whetstone's config folder, `$XDG_CONFIG_HOME/whetstone/` (by default `~/.config/whetstone/`) on Linux and macOS. Every setting is optional, and without a file Whetstone uses these defaults and says so:
+
+```toml
+# The service Practice sends its requests to. OpenRouter is the only one so far.
+provider = "openrouter"
+
+# Jev assesses your choice and reasoning.
+[jev]
+model = "typesafe/jev-1.14"
+
+# The generator writes questions, explanations and hints.
+[generator]
+model = "anthropic/claude-sonnet-5.5"
+```
+
+The OpenRouter key never goes in the file. Set `OPENROUTER_API_KEY` in your shell; Settings shows only whether it is set. Whetstone writes nothing to disk except its log, in `$XDG_STATE_HOME/whetstone/` (by default `~/.local/state/whetstone/`).
+
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).

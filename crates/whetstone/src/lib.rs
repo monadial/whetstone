@@ -5,16 +5,24 @@
 
 mod app;
 mod cli;
+mod config;
 mod environment;
+mod focus;
+mod help;
 mod home;
+mod keymap;
 mod logging;
 mod mark;
 mod output;
+mod overlay;
+mod palette;
+mod settings;
 mod terminal;
 mod theme;
 mod tui;
 
 pub use crate::app::{App, Flow};
+pub use crate::config::{ConfigError, Settings};
 pub use crate::environment::{Dirs, Environment, NoHome};
 pub use crate::terminal::{ModeSwitch, TerminalGuard, TerminalMode};
 pub use crate::theme::{ColorSupport, ControlKind, ControlState, Theme};
@@ -50,7 +58,9 @@ fn launch(environment: &Environment) -> anyhow::Result<ExitCode> {
         config = %dirs.config.display(),
         "whetstone started"
     );
-    match tui::run(App::new(Theme::new(ColorSupport::detect(environment))))? {
+    let settings = Settings::load(&dirs.config, environment)?;
+    let theme = Theme::new(ColorSupport::detect(environment));
+    match tui::run(App::new(theme, settings))? {
         Ending::Quit => {
             tracing::info!("whetstone quit");
             Ok(ExitCode::SUCCESS)

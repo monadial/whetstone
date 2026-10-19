@@ -1,0 +1,53 @@
+---
+source: crates/whetstone/tests/it/overlays.rs
+expression: session.frame()
+---
+Buffer {
+    area: Rect { x: 0, y: 0, width: 120, height: 32 },
+    content: [
+        "                                                                                                                        ",
+        "  █████████████████████████▄                                                                                            ",
+        "  ███████████████████████████▄        whetstone by Monadial                                                             ",
+        "  █████████████████████████████▄      Understand the code you ship.                                                     ",
+        "  ███████████████████████████████▄                                                                                      ",
+        "                                                                                                                        ",
+        "  > Practice on the showcase project (arrives with the change picker)                                                   ",
+        "    Settings                                                                                                            ",
+        "    Quit                                                                                                                ",
+        "                                                                                                                        ",
+        "  Once AI arrives, Practice will send showcase excerpts and your answers to OpenRouter, paid with your credits.         ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                      ┌ Actions on Home ──────────────────────────┐                                     ",
+        "                                      │ > Home      Go to the home screen         │                                     ",
+        "                                      │   Settings  See what Practice will use    │                                     ",
+        "                                      │   Help      Show the keys for this screen │                                     ",
+        "                                      │   Quit      Leave Whetstone               │                                     ",
+        "                                      └ Enter run  Esc close ─────────────────────┘                                     ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "  ? keys  : actions  q quit                                                                                             ",
+        "                                                                                                                        ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 38, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 47, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 6, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 4, y: 6, fg: Reset, bg: Reset, underline: Reset, modifier: DIM | ITALIC,
+        x: 69, y: 6, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 39, y: 13, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 56, y: 13, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 40, y: 14, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 46, y: 14, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+    ]
+}
