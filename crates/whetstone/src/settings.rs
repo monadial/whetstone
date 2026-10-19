@@ -173,7 +173,9 @@ impl View for SettingsScreen {
     }
 
     fn render(&self, context: &Context<'_>, frame: &mut Frame<'_>, area: Rect) {
-        let Context { theme, settings } = *context;
+        let Context {
+            theme, settings, ..
+        } = *context;
         let note = Paragraph::new(Line::styled(file_note(&settings.file), theme.muted))
             .wrap(Wrap { trim: true });
         let [title, note_area, rows, back, about] = layout(area, note.line_count(area.width));

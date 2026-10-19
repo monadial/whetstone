@@ -131,14 +131,14 @@ fn ctrl_c_quits_while_the_window_is_too_small() {
 
 /// Each screen and overlay, the keys that reach it from home, and text that
 /// must all show when it fits whole: its first and last rows among them.
-const VIEWS: [(&str, &str, &[&str]); 6] = [
+const VIEWS: [(&str, &str, &[&str]); 9] = [
     (
         "home",
         "",
         &[
             "█",
             "whetstone by Monadial",
-            "> Practice on the showcase project (arrives with the change picker)",
+            "> Practice on the showcase project",
             "Quit",
             "your credits.",
             "? keys  : actions  q quit",
@@ -186,6 +186,38 @@ const VIEWS: [(&str, &str, &[&str]); 6] = [
         "j <Enter> :",
         &[
             "Actions on Settings",
+            "> Back",
+            "Leave Whetstone",
+            "Enter run",
+        ],
+    ),
+    (
+        "the picker",
+        "<Enter>",
+        &[
+            "Practice on the showcase project",
+            "> (x) domain",
+            "( ) Model the payment lifecycle",
+            "( ) Run rustfmt over the HTTP layer",
+            "Generate questions (arrives with Jev)",
+            "? keys  : actions  Space toggle  q back",
+        ],
+    ),
+    (
+        "key help on the picker",
+        "<Enter> ?",
+        &[
+            "Keys on Practice",
+            "Toggle an area, or choose a change",
+            "Quit from anywhere",
+            "Esc close",
+        ],
+    ),
+    (
+        "the palette on the picker",
+        "<Enter> :",
+        &[
+            "Actions on Practice",
             "> Back",
             "Leave Whetstone",
             "Enter run",

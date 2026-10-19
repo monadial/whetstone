@@ -6,11 +6,13 @@ use std::fmt;
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
+use whetstone_core::ShowcaseProject;
 
 use crate::config::Settings;
 use crate::home::Home;
 use crate::keymap::{Command, Keymap};
 use crate::palette::Action;
+use crate::picker::Picker;
 use crate::settings::SettingsScreen;
 use crate::theme::Theme;
 
@@ -44,6 +46,7 @@ pub(crate) trait View: fmt::Debug {
 pub(crate) struct Context<'a> {
     pub(crate) theme: &'a Theme,
     pub(crate) settings: &'a Settings,
+    pub(crate) showcase: &'a ShowcaseProject,
 }
 
 /// A screen a learner can go to.
@@ -51,14 +54,17 @@ pub(crate) struct Context<'a> {
 pub(crate) enum Route {
     Home,
     Settings,
+    /// The area and change picker.
+    Picker,
 }
 
 impl Route {
-    /// The screen at this route, as it first opens.
-    pub(crate) fn open(self) -> Box<dyn View> {
+    /// The screen at this route, as it first opens over `showcase`.
+    pub(crate) fn open(self, showcase: &ShowcaseProject) -> Box<dyn View> {
         match self {
             Self::Home => Box::new(Home::default()),
             Self::Settings => Box::new(SettingsScreen::default()),
+            Self::Picker => Box::new(Picker::new(showcase)),
         }
     }
 }

@@ -24,6 +24,13 @@ thiserror = "2"
 toml = { version = "1.1", default-features = false, features = ["parse", "serde", "std"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std"] }
+whetstone-core = { path = "../whetstone-core" }
+
+# build.rs replays the showcase project's patch series into embedded data.
+[build-dependencies]
+thiserror = "2"
+toml = { version = "1.1", default-features = false, features = ["parse", "serde", "std"] }
+whetstone-core = { path = "../whetstone-core" }
 
 [dev-dependencies]
 assert_cmd = "2.2"

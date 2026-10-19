@@ -12,6 +12,7 @@ use ratatui::crossterm::event::{Event, KeyEvent, KeyEventKind};
 use ratatui::layout::{Constraint, Layout, Margin, Size};
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Paragraph, Wrap};
+use whetstone_core::ShowcaseProject;
 
 use crate::config::Settings;
 use crate::help::KeyHelp;
@@ -27,6 +28,8 @@ use crate::view::{Context, Route, View};
 pub struct App {
     theme: Theme,
     settings: Settings,
+    /// The project Practice runs on.
+    showcase: ShowcaseProject,
     screens: Screens,
     /// The overlay over the current screen, if one is open.
     overlay: Option<Overlay>,
@@ -75,12 +78,13 @@ impl Screens {
     }
 
     /// Goes to `route`: home is always the one at the bottom, and any other
-    /// screen opens above the current one unless it is the current one.
-    fn go(&mut self, route: Route) {
+    /// screen opens above the current one, over `showcase`, unless it is the
+    /// current one.
+    fn go(&mut self, route: Route, showcase: &ShowcaseProject) {
         if route == Route::Home {
             self.above.clear();
         } else if route != self.current().route() {
-            self.above.push(route.open());
+            self.above.push(route.open(showcase));
         }
     }
 
@@ -91,13 +95,14 @@ impl Screens {
 }
 
 impl App {
-    /// Starts on the home screen, drawing with `theme` and showing
-    /// `settings` in Settings.
+    /// Starts on the home screen, drawing with `theme`, showing `settings` in
+    /// Settings and practicing on `showcase`.
     #[must_use]
-    pub fn new(theme: Theme, settings: Settings) -> Self {
+    pub fn new(theme: Theme, settings: Settings, showcase: ShowcaseProject) -> Self {
         Self {
             theme,
             settings,
+            showcase,
             screens: Screens {
                 home: Home::default(),
                 above: Vec::new(),
@@ -161,7 +166,7 @@ impl App {
             Command::Palette => {
                 self.overlay = Some(Overlay::Palette(Palette::new(self.screens.current())));
             }
-            Command::Go(route) => self.screens.go(route),
+            Command::Go(route) => self.screens.go(route, &self.showcase),
             Command::Back => self.screens.back(),
             command => {
                 if let Some(next) = self.screens.current_mut().apply(command) {
@@ -185,6 +190,7 @@ impl App {
         let context = Context {
             theme: &self.theme,
             settings: &self.settings,
+            showcase: &self.showcase,
         };
         screen.render(&context, frame, body);
         frame.render_widget(

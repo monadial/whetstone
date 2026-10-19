@@ -1,0 +1,50 @@
+---
+source: crates/whetstone/tests/it/picker.rs
+expression: session.frame()
+---
+Buffer {
+    area: Rect { x: 0, y: 0, width: 120, height: 32 },
+    content: [
+        "                                                                                                                        ",
+        "  Practice on the showcase project                                                                                      ",
+        "                                                                                                                        ",
+        "  Areas the questions focus on                                                                                          ",
+        "  > (x) domain                                                                                                          ",
+        "    (x) observability                                                                                                   ",
+        "    (x) scalability                                                                                                     ",
+        "    (x) infrastructure                                                                                                  ",
+        "    (x) system design                                                                                                   ",
+        "                                                                                                                        ",
+        "  Change to practice on                                                                                                 ",
+        "    ( ) Model the payment lifecycle                                  domain                                             ",
+        "    ( ) Persist payments in an append-only file store        infrastructure                                             ",
+        "    ( ) Call the payment provider with timeouts and retries  infrastructure                                             ",
+        "    ( ) Serve payments over HTTP                     domain, infrastructure                                             ",
+        "    ( ) Preserve payment retry identity                              domain                                             ",
+        "    ( ) Put storage and the provider behind ports             system design                                             ",
+        "    ( ) Trace requests and export payment metrics             observability                                             ",
+        "    ( ) Cache payments per tenant               scalability, infrastructure                                             ",
+        "    ( ) Rename ChargeOutcome to ProviderOutcome                      domain                                             ",
+        "    ( ) Run rustfmt over the HTTP layer                      infrastructure                                             ",
+        "                                                                                                                        ",
+        "    Generate questions (arrives with Jev)                                                                               ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "  ? keys  : actions  Space toggle  q back                                                                               ",
+        "                                                                                                                        ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 34, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 4, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 14, y: 4, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 4, y: 22, fg: Reset, bg: Reset, underline: Reset, modifier: DIM | ITALIC,
+        x: 41, y: 22, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+    ]
+}

@@ -34,6 +34,7 @@ fn xdg_config_home_chooses_where_the_config_file_is() {
         Setup {
             config: Some("[jev]\nmodel = \"typesafe/jev-1.13\"\n"),
             variables: &[("NO_COLOR", "1"), ("XDG_CONFIG_HOME", xdg_path)],
+            ..Setup::default()
         },
         120,
         32,
@@ -135,6 +136,7 @@ fn the_readme_documents_the_defaults() {
         values(Setup {
             config: Some(documented),
             variables: NO_COLOR,
+            ..Setup::default()
         }),
         values(Setup {
             variables: NO_COLOR,

@@ -31,23 +31,14 @@ impl Action {
         }
     }
 
-    /// What activating it does.
-    fn activation(self) -> Activation {
+    /// What activating it asks of the app.
+    fn command(self) -> Command {
         match self {
-            Self::Practice => Activation::Unavailable("arrives with the change picker"),
-            Self::Settings => Activation::Runs(Command::Go(Route::Settings)),
-            Self::Quit => Activation::Runs(Command::Quit),
+            Self::Practice => Command::Go(Route::Picker),
+            Self::Settings => Command::Go(Route::Settings),
+            Self::Quit => Command::Quit,
         }
     }
-}
-
-/// What activating a home action does.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Activation {
-    /// It asks this of the app.
-    Runs(Command),
-    /// Nothing yet, for this reason, which the action shows.
-    Unavailable(&'static str),
 }
 
 /// The brand's primary claim, beside the name.
@@ -89,10 +80,7 @@ impl View for Home {
 
     fn apply(&mut self, command: Command) -> Option<Command> {
         self.focus = self.focus.after(command, Action::ALL.len());
-        match (command, self.focused().activation()) {
-            (Command::Activate, Activation::Runs(next)) => Some(next),
-            _ => None,
-        }
+        (command == Command::Activate).then(|| self.focused().command())
     }
 
     fn render(&self, context: &Context<'_>, frame: &mut Frame<'_>, area: Rect) {
@@ -142,10 +130,6 @@ impl View for Home {
                     action.label(),
                     ControlState {
                         focused: action == self.focused(),
-                        disabled: match action.activation() {
-                            Activation::Unavailable(reason) => Some(reason),
-                            Activation::Runs(_) => None,
-                        },
                         ..ControlState::default()
                     },
                 )
