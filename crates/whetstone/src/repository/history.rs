@@ -26,12 +26,12 @@ pub(crate) struct History {
     /// How many digits short IDs show.
     short_len: usize,
     commits: Vec<Commit>,
-    end: End,
+    end: HistoryEnd,
 }
 
 /// What follows the commits read so far.
 #[derive(Debug)]
-pub(crate) enum End {
+pub(crate) enum HistoryEnd {
     /// More commits may follow.
     More,
     /// None: every commit reachable from HEAD has been read.
@@ -63,7 +63,10 @@ pub(crate) enum Availability {
 
 impl History {
     /// The history from `head`, with its first page read.
-    pub(super) fn from(git: &gix::Repository, head: gix::ObjectId) -> Result<Self, HistoryError> {
+    pub(super) fn read_from(
+        git: &gix::Repository,
+        head: gix::ObjectId,
+    ) -> Result<Self, HistoryError> {
         use gix::prelude::ObjectIdExt as _;
 
         // Shortening each ID would search all objects for every one, so
@@ -81,7 +84,7 @@ impl History {
             walk,
             short_len,
             commits: Vec::new(),
-            end: End::More,
+            end: HistoryEnd::More,
         };
         history.read_page();
         tracing::info!(
@@ -98,38 +101,38 @@ impl History {
     }
 
     /// What follows the commits read so far.
-    pub(crate) fn end(&self) -> &End {
+    pub(crate) fn end(&self) -> &HistoryEnd {
         &self.end
     }
 
     /// Reads up to a page more commits, unless every commit has been read
-    /// or reading failed. Returns whether it read any.
-    pub(crate) fn read_page(&mut self) -> bool {
+    /// or reading failed, as [`History::end`] then says.
+    pub(crate) fn read_page(&mut self) {
         let before = self.commits.len();
-        while matches!(self.end, End::More) && self.commits.len() < before + PAGE {
+        while matches!(self.end, HistoryEnd::More) && self.commits.len() < before + PAGE {
             match self.walk.next() {
-                None => self.end = End::Reached,
-                Some(Err(error)) => self.end = End::Failed(error.into()),
+                None => self.end = HistoryEnd::Reached,
+                Some(Err(error)) => self.end = HistoryEnd::Failed(error.into()),
                 Some(Ok(info)) => match self.commit(&info) {
                     Ok(commit) => self.commits.push(commit),
-                    Err(error) => self.end = End::Failed(error),
+                    Err(error) => self.end = HistoryEnd::Failed(error),
                 },
             }
         }
-        if let End::Failed(error) = &self.end {
+        if let HistoryEnd::Failed(error) = &self.end {
             tracing::warn!(%error, read = self.commits.len(), "cannot read further commits");
         }
-        self.commits.len() > before
     }
 
     /// The row of the commit the walk found as `info`.
     fn commit(&self, info: &gix::traverse::commit::Info) -> Result<Commit, HistoryError> {
         let found = self.git.find_commit(info.id)?;
         let message = found.message()?;
+        // Only the first parent is compared with, so only it must be there.
         let availability = if info
             .parent_ids
-            .iter()
-            .any(|parent| !self.git.has_object(parent))
+            .first()
+            .is_some_and(|parent| !self.git.has_object(parent))
         {
             Availability::ParentMissing
         } else {

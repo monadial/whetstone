@@ -9,17 +9,17 @@ use ratatui::crossterm::event::KeyCode;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{List, ListState, Paragraph};
-use whetstone_core::{Area, Comparison, InvalidAreaFile, ShowcaseProject};
+use whetstone_core::{Area, InvalidAreaFile, ShowcaseProject};
 
 use crate::columns;
 use crate::entry::TextEntry;
 use crate::focus::Position;
 use crate::keymap::{self, Binding, Command, Input, Keymap, Press};
 use crate::palette::Action;
-use crate::repository::{Availability, Commit, End, History, HistoryError, Repository};
+use crate::repository::{Availability, Commit, History, HistoryEnd, HistoryError, Repository};
 use crate::search::{self, Query};
 use crate::theme::{ControlKind, ControlState, Theme};
-use crate::view::{ChangeIndex, ChangeRef, Context, Project, Route, View};
+use crate::view::{ChangeIndex, ChangeRef, Context, Project, Route, View, comparison_label};
 
 /// Space on the picker: it makes a choice.
 const SPACE: Binding = Binding {
@@ -302,7 +302,10 @@ impl Picker {
             Source::Showcase { changes } => *changes,
             Source::Repository {
                 history: Ok(history),
-            } => history.commits().len() + usize::from(matches!(history.end(), End::Failed(_))),
+            } => {
+                history.commits().len()
+                    + usize::from(matches!(history.end(), HistoryEnd::Failed(_)))
+            }
             Source::Repository { history: Err(_) } => 1,
         }
     }
@@ -342,7 +345,7 @@ impl Picker {
                         Text::from(commit_row(context.theme, commit, state(index), width))
                     })
                     .collect();
-                if let End::Failed(error) = history.end()
+                if let HistoryEnd::Failed(error) = history.end()
                     && window.end > commits.len()
                 {
                     items.push(unavailable_row(context.theme, error));
@@ -374,8 +377,10 @@ impl Picker {
                 .commits()
                 .iter()
                 .any(|commit| is_match(&query, commit))
-                && history.read_page()
-            {}
+                && matches!(history.end(), HistoryEnd::More)
+            {
+                history.read_page();
+            }
         }
         let matches = self.matches(&query);
         let start = self.focused_change().unwrap_or_default();
@@ -397,15 +402,7 @@ impl Picker {
             Command::NextMatch => {
                 search::first_from(&matches, current.map_or(0, |index| index + 1))
             }
-            Command::PreviousMatch => {
-                let before = current.unwrap_or_default();
-                matches
-                    .iter()
-                    .rev()
-                    .find(|&&index| index < before)
-                    .or(matches.last())
-                    .copied()
-            }
+            Command::PreviousMatch => search::last_before(&matches, current.unwrap_or_default()),
             _ => None,
         };
         if let Some(index) = landing {
@@ -502,7 +499,7 @@ fn commit_row<'a>(theme: &Theme, commit: &Commit, state: ControlState<'a>, width
         .saturating_sub(
             state
                 .disabled
-                .map_or(0, |reason| Line::raw(reason).width() + 3),
+                .map_or(0, |reason| Line::raw(format!(" ({reason})")).width()),
         )
         .saturating_sub(label_width);
     let text = format!("{}  {}", commit.id().short(), commit.summary());
@@ -522,16 +519,6 @@ fn is_match(query: &Query, commit: &Commit) -> bool {
             .id()
             .full()
             .starts_with(&query.text().to_ascii_lowercase())
-}
-
-/// What a commit's row and the viewer's title say about what it was
-/// compared with, unless it was simply its parent.
-pub(crate) fn comparison_label(comparison: Comparison) -> Option<&'static str> {
-    match comparison {
-        Comparison::Parent => None,
-        Comparison::FirstParent => Some(MERGE_LABEL),
-        Comparison::EmptyTree => Some(FIRST_COMMIT_LABEL),
-    }
 }
 
 /// A muted row in a list saying why it cannot list more.
@@ -599,10 +586,6 @@ const AREA_HEADING: &str = "Areas the questions focus on";
 /// The heading above the changes.
 const CHANGE_HEADING: &str = "Change to practice on";
 
-/// After a merge commit: its change is the whole merged work.
-const MERGE_LABEL: &str = "merge · vs first parent";
-/// After a repository's first commit, which is compared with an empty tree.
-const FIRST_COMMIT_LABEL: &str = "first commit";
 /// Why a commit whose parent is missing, as at a shallow clone's boundary,
 /// cannot be chosen.
 const PARENT_MISSING: &str = "parent not in this clone";
@@ -628,9 +611,10 @@ struct Parts {
 }
 
 /// Where the picker's parts go in `area`, for lists of `area_rows` and
-/// `change_rows` rows, and `status_rows` at the bottom. The title, headings, lists and the control after them
-/// get their rows first, and the gaps between them share what is left, so a
-/// short terminal keeps every control. When even the lists do not fit, they
+/// `change_rows` rows, and `status_rows` at the bottom. The title,
+/// headings, lists and the control after them get their rows first, and
+/// the gaps between them share what is left, so a short terminal keeps
+/// every control. When even the lists do not fit, they
 /// scroll, and the change list always keeps at least one row.
 fn layout(area: Rect, area_rows: usize, change_rows: usize, status_rows: u16) -> Parts {
     const TITLE: u16 = 1;
@@ -735,17 +719,9 @@ impl View for Picker {
     }
 
     fn apply(&mut self, command: Command, _area: Rect) -> Option<Command> {
-        if let Some(search_box) = &mut self.search_box {
-            match command {
-                Command::Activate => {
-                    let query = Query::new(search_box.text());
-                    self.search_box = None;
-                    if let Some(query) = query {
-                        self.search(query);
-                    }
-                }
-                Command::Cancel => self.search_box = None,
-                command => search_box.apply(command),
+        if self.search_box.is_some() {
+            if let Some(query) = search::edit(&mut self.search_box, command) {
+                self.search(query);
             }
             return None;
         }

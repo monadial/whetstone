@@ -15,11 +15,10 @@ use crate::entry::TextEntry;
 use crate::focus::Position;
 use crate::keymap::{self, Binding, Command, Input, Keymap};
 use crate::palette::Action;
-use crate::picker::comparison_label;
 use crate::repository::LoadError;
 use crate::search::{self, Query};
 use crate::theme::{ControlKind, ControlState, Theme};
-use crate::view::{ChangeRef, Context, Route, View};
+use crate::view::{ChangeRef, Context, Route, View, comparison_label};
 
 /// The viewer's own keys.
 const KEYMAP: Keymap = &[
@@ -359,15 +358,7 @@ impl Viewer {
             Command::NextMatch => {
                 search::first_from(&matches, current.map_or(start, |line| line + 1))
             }
-            Command::PreviousMatch => {
-                let before = current.unwrap_or(start);
-                matches
-                    .iter()
-                    .rev()
-                    .find(|&&line| line < before)
-                    .or(matches.last())
-                    .copied()
-            }
+            Command::PreviousMatch => search::last_before(&matches, current.unwrap_or(start)),
             _ => None,
         };
         if let Some(line) = landing {
@@ -379,7 +370,7 @@ impl Viewer {
     fn matches(&self, query: &Query) -> Vec<usize> {
         match self.focus {
             Pane::Files => {
-                let names: Vec<String> = self.change.files().iter().map(file_name).collect();
+                let names: Vec<String> = self.change.files().iter().map(file_text).collect();
                 query.matching_lines(names.iter().map(String::as_str))
             }
             Pane::Code(_) => query.matching_lines(self.text().lines()),
@@ -538,8 +529,8 @@ impl Viewer {
                 if details.spans.is_empty() {
                     return Text::from(row);
                 }
-                if row.width() + DETAIL_GAP.len() + details.width() <= usize::from(width) {
-                    row.push_span(DETAIL_GAP);
+                if row.width() + DETAIL_GAP + details.width() <= usize::from(width) {
+                    row.push_span(" ".repeat(DETAIL_GAP));
                     row.spans.extend(details.spans);
                     return Text::from(row);
                 }
@@ -569,11 +560,7 @@ impl Viewer {
             .map(|file| {
                 let details = file_details(file, Style::new()).width();
                 Theme::control_width(file.path(), ControlKind::Choice { selected: true })
-                    + if details > 0 {
-                        DETAIL_GAP.len() + details
-                    } else {
-                        0
-                    }
+                    + if details > 0 { DETAIL_GAP + details } else { 0 }
             })
             .max()
             .unwrap_or_default()
@@ -606,16 +593,20 @@ impl Viewer {
     }
 }
 
-/// Between a touched file's path and its details, and between those.
-const DETAIL_GAP: &str = "  ";
+/// The cells between a touched file's path and its details, and between
+/// those.
+const DETAIL_GAP: usize = 2;
 
-/// What a search of the Files pane looks through for a touched file: its
-/// path, and where a rename moved it from.
-fn file_name(file: &TouchedFile) -> String {
-    match file.renamed_from() {
-        Some(from) => format!("{} ← {from}", file.path()),
-        None => file.path().to_owned(),
+/// What the Files pane shows of a touched file, as one line of text for a
+/// search to look through: its path, then its details.
+fn file_text(file: &TouchedFile) -> String {
+    let mut text = file.path().to_owned();
+    let details = file_details(file, Style::new());
+    if !details.spans.is_empty() {
+        text.push_str(&" ".repeat(DETAIL_GAP));
+        text.extend(details.spans.iter().map(|span| span.content.as_ref()));
     }
+    text
 }
 
 /// What the Files pane says of a touched file after its path, if anything:
@@ -630,10 +621,10 @@ fn file_details(file: &TouchedFile, muted: Style) -> Line<'_> {
         .after()
         .or_else(|| file.before())
         .filter(|content| content.text().is_none())
-        .map(|content| no_code(content).0);
+        .map(|content| Kind::of(content).word);
     if let Some(kind) = kind {
         if !details.spans.is_empty() {
-            details.push_span(DETAIL_GAP);
+            details.push_span(" ".repeat(DETAIL_GAP));
         }
         details.push_span(Span::styled(kind, muted));
     }
@@ -647,18 +638,30 @@ fn text_or(content: &FileContent, sentence: impl FnOnce(&str) -> String) -> Cont
         return Contents::Text(text);
     }
     Contents::Missing {
-        reason: sentence(no_code(content).1),
+        reason: sentence(Kind::of(content).phrase),
         disabled: None,
     }
 }
 
-/// What `content` is: in a word, and as a sentence names it.
-fn no_code(content: &FileContent) -> (&'static str, &'static str) {
-    match content {
-        FileContent::Text(_) => ("text", "text"),
-        FileContent::Binary { .. } => ("binary", "a binary file"),
-        FileContent::Submodule => ("submodule", "a submodule"),
-        FileContent::Symlink => ("symlink", "a symbolic link"),
+/// What one side of a touched file is, as the viewer names it.
+#[derive(Debug, Clone, Copy)]
+struct Kind {
+    /// In a word, as a Files row labels it.
+    word: &'static str,
+    /// As a sentence names it.
+    phrase: &'static str,
+}
+
+impl Kind {
+    /// What `content` is.
+    fn of(content: &FileContent) -> Self {
+        let (word, phrase) = match content {
+            FileContent::Text(_) => ("text", "text"),
+            FileContent::Binary { .. } => ("binary", "a binary file"),
+            FileContent::Submodule => ("submodule", "a submodule"),
+            FileContent::Symlink => ("symlink", "a symbolic link"),
+        };
+        Self { word, phrase }
     }
 }
 
@@ -726,17 +729,9 @@ impl View for Viewer {
 
     fn apply(&mut self, command: Command, area: Rect) -> Option<Command> {
         let page = self.page(area);
-        if let Some(search_box) = &mut self.search_box {
-            match command {
-                Command::Activate => {
-                    let query = Query::new(search_box.text());
-                    self.search_box = None;
-                    if let Some(query) = query {
-                        self.search(query, page);
-                    }
-                }
-                Command::Cancel => self.search_box = None,
-                command => search_box.apply(command),
+        if self.search_box.is_some() {
+            if let Some(query) = search::edit(&mut self.search_box, command) {
+                self.search(query, page);
             }
             return None;
         }
@@ -830,27 +825,29 @@ const UNREADABLE_ACTIONS: &[Action] = &[Action {
 /// one whose files are missing from a partial clone: which commit, and why.
 #[derive(Debug)]
 pub(crate) struct Unreadable {
-    at: ChangeRef,
     id: CommitId,
     /// Why it cannot be read, as gix says.
     problem: String,
 }
 
 impl Unreadable {
-    /// The screen for the commit `id`, the one `at` names, which cannot be
-    /// read because of `error`.
-    pub(crate) fn new(at: ChangeRef, id: CommitId, error: &LoadError) -> Self {
+    /// The screen for the commit `id`, which cannot be read because of
+    /// `error`.
+    pub(crate) fn new(id: CommitId, error: &LoadError) -> Self {
+        use std::error::Error as _;
+
         Self {
-            at,
             id,
-            problem: error.cause().to_string(),
+            problem: error
+                .source()
+                .map_or_else(|| error.to_string(), ToString::to_string),
         }
     }
 }
 
 impl View for Unreadable {
     fn route(&self) -> Route {
-        Route::Viewer(self.at)
+        Route::Viewer(ChangeRef::Commit(self.id))
     }
 
     fn name(&self) -> &'static str {

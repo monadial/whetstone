@@ -453,3 +453,80 @@ fn a_commit_that_cannot_be_read_at_80x24() {
 
     insta::assert_debug_snapshot!("commit_that_cannot_be_read_80x24", session.frame());
 }
+
+#[test]
+fn an_empty_file_renamed_is_one_entry_as_git_finds_it() {
+    let repo = TestRepo::new("payments");
+    repo.write("README.md", "# Payments\n")
+        .write("src/empty.rs", "");
+    repo.commit("Start the payments service");
+    repo.git(&["mv", "src/empty.rs", "src/blank.rs"]);
+    repo.commit("Rename the empty file");
+    let mut session = started_in(repo.root(), 120, 32);
+
+    session.press(OPEN_NEWEST);
+
+    assert_eq!(files(&session), ["(x) src/blank.rs  ← src/empty.rs"]);
+    let expected: Vec<String> = repo
+        .git(&["diff", "--no-color", "-M", "HEAD^", "HEAD"])
+        .lines()
+        .filter(|line| !line.starts_with("similarity index"))
+        .map(|line| line.trim().to_owned())
+        .collect();
+    assert!(expected.contains(&"rename from src/empty.rs".to_owned()));
+    assert_eq!(code_lines(&session), expected);
+}
+
+#[test]
+fn a_symbolic_link_made_a_file_is_a_deleted_link_and_a_new_file_as_git_shows_them() {
+    let repo = TestRepo::new("payments");
+    repo.write("README.md", "# Payments\n")
+        .symlink("docs", "README.md");
+    repo.commit("Start the payments service");
+    std::fs::remove_file(repo.path("docs")).expect("remove the link");
+    repo.write("docs", "See README.md.\n");
+    repo.commit("Make the docs link a file");
+    let mut session = started_in(repo.root(), 120, 32);
+
+    session.press(OPEN_NEWEST);
+
+    assert_eq!(files(&session), ["(x) docs  symlink", "( ) docs"]);
+    assert_eq!(code_lines(&session)[1], "deleted file mode 120000");
+    session.press("h j l");
+    let expected: Vec<String> = repo
+        .git(&["diff", "--no-color", "HEAD^", "HEAD"])
+        .lines()
+        .skip_while(|line| !line.starts_with("diff --git") || !line.ends_with("b/docs"))
+        .skip(1)
+        .skip_while(|line| !line.starts_with("diff --git"))
+        .map(|line| line.trim().to_owned())
+        .collect();
+    assert!(
+        expected.contains(&"+See README.md.".to_owned()),
+        "{expected:?}"
+    );
+    assert_eq!(code_lines(&session), expected);
+}
+
+#[test]
+fn a_merge_whose_second_parent_is_missing_still_opens_against_its_first() {
+    let repo = TestRepo::new("payments");
+    repo.write("README.md", "# Payments\n");
+    repo.commit("Start the payments service");
+    repo.git(&["switch", "--quiet", "-c", "refunds"]);
+    repo.write("src/refund.rs", "1\n");
+    let refunds = repo.commit("Add refunds");
+    repo.git(&["switch", "--quiet", "main"]);
+    repo.write("README.md", "# Payments\n\nTake payments.\n");
+    repo.commit("Describe the service");
+    repo.merge("refunds", "Merge refunds");
+    // As a shallow clone cut by date can leave a merge's second parent out.
+    repo.remove_object(&refunds);
+    let mut session = started_in(repo.root(), 120, 32);
+
+    session.press(OPEN_NEWEST);
+
+    let title = session.rows()[1].trim().to_owned();
+    assert!(title.ends_with("  merge · vs first parent"), "{title}");
+    assert_eq!(files(&session), ["(x) src/refund.rs"]);
+}
