@@ -1,0 +1,9 @@
+# cargo-nextest configuration. Reference: https://nexte.st/docs/configuration/
+
+# The profile CI runs with `cargo nextest run --profile ci`.
+[profile.ci]
+# Report every failing test, not only the first.
+fail-fast = false
+# Stop a hung test, such as a pseudo-terminal test waiting for output that
+# never comes, after two minutes rather than at the job's timeout.
+slow-timeout = { period = "30s", terminate-after = 4 }

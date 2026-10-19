@@ -1,0 +1,127 @@
+# Checks every pull request and every push to main. CODING_STANDARDS.md says
+# which of its rules these jobs enforce.
+#
+# Platform-independent checks (format, docs, cargo-deny, cargo-shear) run once
+# on Linux x86_64. Clippy, nextest (including the pseudo-terminal smoke test)
+# and doc tests run on Linux and macOS, each on x86_64 and arm64.
+#
+# The repository is private, so macOS minutes cost more: macOS runs only the
+# platform matrix, reuses a dependency cache, and is cancelled when a newer
+# commit is pushed to the same pull request.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  # A newer push to a pull request replaces its running checks. Every commit
+  # on main is checked to the end.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fmt:
+    name: Format
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned toolchain (rust-toolchain.toml)
+        run: rustup toolchain install --no-self-update
+      - run: cargo fmt --all --check
+
+  docs:
+    name: Docs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      RUSTDOCFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned toolchain (rust-toolchain.toml)
+        run: rustup toolchain install --no-self-update
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: cargo doc --workspace --all-features --no-deps --locked
+
+  deny:
+    name: cargo-deny
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned toolchain (rust-toolchain.toml)
+        run: rustup toolchain install --no-self-update
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+        with:
+          tool: cargo-deny@0.20.2
+      # deny.toml checks the graph for every supported platform at once.
+      - run: cargo deny --locked check
+
+  shear:
+    name: cargo-shear
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned toolchain (rust-toolchain.toml)
+        run: rustup toolchain install --no-self-update
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+        with:
+          tool: cargo-shear@1.14.0
+      - run: cargo shear --deny-warnings --locked
+
+  test:
+    name: Clippy and tests (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      # One failing platform cancels the rest, to save macOS minutes.
+      fail-fast: true
+      matrix:
+        include:
+          # Runner labels: https://docs.github.com/en/actions/reference/runners/github-hosted-runners
+          - platform: Linux x86_64
+            runner: ubuntu-24.04
+          - platform: Linux arm64
+            runner: ubuntu-24.04-arm
+          - platform: macOS x86_64
+            runner: macos-26-intel
+          - platform: macOS arm64
+            runner: macos-26
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned toolchain (rust-toolchain.toml)
+        run: rustup toolchain install --no-self-update
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+        with:
+          tool: cargo-nextest@0.9.148
+      - name: Clippy, warnings denied
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      # Includes the pseudo-terminal smoke test (crates/whetstone/tests/it/pty.rs).
+      # GitHub sets CI=true, so insta fails on a changed snapshot instead of
+      # writing a new one.
+      - name: Tests (nextest)
+        run: cargo nextest run --workspace --all-features --locked --profile ci
+      # nextest does not run doc tests.
+      - name: Doc tests
+        run: cargo test --workspace --all-features --locked --doc

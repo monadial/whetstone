@@ -1,0 +1,63 @@
+# cargo-deny checks the workspace's dependency graph for advisories, licenses,
+# bans and sources. CI runs `cargo deny check`; see CODING_STANDARDS.md rules 8
+# and 9. The showcase project is not a workspace member and is not checked here.
+# Reference: https://embarkstudios.github.io/cargo-deny/checks/cfg.html
+
+[graph]
+# Check only the platforms Whetstone supports: Linux and macOS, x86_64 and
+# arm64. Windows-only crates never ship, so they are left out of every check.
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+]
+all-features = true
+
+[advisories]
+# Vulnerability advisories always fail. Unmaintained and unsound advisories
+# fail too, for direct and transitive dependencies alike. A crate yanked from
+# crates.io fails until it is upgraded.
+unmaintained = "all"
+unsound = "all"
+yanked = "deny"
+# Each ignored advisory needs `{ id = "RUSTSEC-…", reason = "…" }` and a linked
+# issue to remove it.
+ignore = []
+
+[licenses]
+# Permissive licenses compatible with Whetstone's Apache-2.0. Anything else
+# needs a per-crate entry in `exceptions`, with a reason in the PR that adds it.
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-3-Clause",
+    "ISC",
+    "MIT",
+    "Unicode-3.0",
+    "Zlib",
+]
+# The list above is the reviewed allow-list, not the licenses in use today, so
+# an entry nothing uses yet is not a warning.
+unused-allowed-license = "allow"
+exceptions = []
+
+[bans]
+# Rig is likely to bring duplicate versions; report them without failing.
+multiple-versions = "warn"
+# No `*` version requirements, except path dependencies between the
+# unpublished workspace crates.
+wildcards = "deny"
+allow-wildcard-paths = true
+highlight = "all"
+deny = []
+skip = []
+skip-tree = []
+
+[sources]
+# Only crates.io. A git dependency (for example a pinned Rig revision) needs an
+# `allow-git` entry here, reviewed in its own PR.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
