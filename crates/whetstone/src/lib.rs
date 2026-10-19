@@ -8,6 +8,7 @@ mod cli;
 mod environment;
 mod home;
 mod logging;
+mod mark;
 mod output;
 mod terminal;
 mod theme;
@@ -16,7 +17,7 @@ mod tui;
 pub use crate::app::{App, Flow};
 pub use crate::environment::{Dirs, Environment, NoHome};
 pub use crate::terminal::{ModeSwitch, TerminalGuard, TerminalMode};
-pub use crate::theme::Theme;
+pub use crate::theme::{ColorSupport, ControlState, Theme};
 
 use std::ffi::OsString;
 use std::process::ExitCode;
@@ -49,7 +50,7 @@ fn launch(environment: &Environment) -> anyhow::Result<ExitCode> {
         config = %dirs.config.display(),
         "whetstone started"
     );
-    match tui::run(App::new(Theme::plain()))? {
+    match tui::run(App::new(Theme::new(ColorSupport::detect(environment))))? {
         Ending::Quit => {
             tracing::info!("whetstone quit");
             Ok(ExitCode::SUCCESS)

@@ -7,3 +7,4 @@ mod dirs;
 mod pty;
 mod support;
 mod terminal_guard;
+mod theme;
