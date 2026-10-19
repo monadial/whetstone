@@ -11,8 +11,13 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[dependencies]
+# Secret rules and exclude patterns compile to regular expressions. Every
+# pattern is ASCII, so the Unicode tables are left out to keep the binary
+# small; `perf` keeps scanning a 400 KB change fast.
+regex = { version = "1.13", default-features = false, features = ["std", "perf"] }
+# Each module that can fail has its own error type (CODING_STANDARDS.md rule 13).
+thiserror = "2"
 # Area files carry TOML front matter, as the config files do; the binary
 # already depends on both crates.
-[dependencies]
-thiserror = "2"
 toml = { version = "1.1", default-features = false, features = ["parse", "serde", "std"] }

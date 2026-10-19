@@ -8,8 +8,17 @@
 
 mod area;
 mod change;
+mod exclusion;
+mod secret;
 mod showcase;
 
 pub use crate::area::{Area, AreaFileError, AreaId, AreaSource, InvalidAreaFile, InvalidAreaId};
 pub use crate::change::{Change, TouchedFile};
+pub use crate::exclusion::{
+    DefaultExclusion, DefaultExclusionKind, ExcludePattern, ExcludePatternError,
+    ExcludePatternReason, ExcludePatterns,
+};
+pub use crate::secret::{
+    SECRET_RULES, SECRET_RULES_VERSION, SecretFinding, SecretRule, find_secrets,
+};
 pub use crate::showcase::ShowcaseProject;
