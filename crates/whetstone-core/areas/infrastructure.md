@@ -16,8 +16,8 @@ Look for:
   between environments, and what happens when something is missing or wrong.
 - Building, packaging, deploying and migrating: what must happen, and in
   what order, to ship the change safely and to roll it back.
-- The limits the environment imposes, such as disk, memory, connections and
-  quotas, and how close the change comes to them.
+- What the environment must provide, such as disk, network access,
+  credentials, permissions and quotas, and who provides it.
 
 Prefer consequences in a real environment over syntax or tool trivia.
 

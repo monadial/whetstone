@@ -91,7 +91,7 @@ fn embed() -> Result<(), EmbedError> {
     let out = PathBuf::from(env::var_os("OUT_DIR").ok_or(EmbedError::NoOutDir)?);
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     // A trailer may name only the areas a learner is offered: the defaults.
-    let offered: Vec<AreaId> = Area::defaults()
+    let defaults: Vec<AreaId> = Area::defaults()
         .iter()
         .map(|area| area.id().clone())
         .collect();
@@ -99,7 +99,7 @@ fn embed() -> Result<(), EmbedError> {
     for path in patch_files(&crate_dir.join(HISTORY))? {
         let text = read(&path)?;
         Patch::parse(&text)
-            .and_then(|patch| patch.check_areas(&offered).map(|()| patch))
+            .and_then(|patch| patch.check_areas(&defaults).map(|()| patch))
             .and_then(|patch| replay.apply(patch))
             .map_err(|source| EmbedError::History { path, source })?;
     }
@@ -238,17 +238,17 @@ impl<'a> Patch<'a> {
         })
     }
 
-    /// Fails unless every area the trailer names is the ID of one of
-    /// `offered`.
-    fn check_areas(&self, offered: &[AreaId]) -> Result<(), HistoryError> {
-        match self
-            .areas
-            .iter()
-            .find(|area| !area.parse::<AreaId>().is_ok_and(|id| offered.contains(&id)))
-        {
+    /// Fails unless every area the trailer names is the ID of one of the
+    /// `defaults`.
+    fn check_areas(&self, defaults: &[AreaId]) -> Result<(), HistoryError> {
+        match self.areas.iter().find(|area| {
+            !area
+                .parse::<AreaId>()
+                .is_ok_and(|id| defaults.contains(&id))
+        }) {
             Some(area) => Err(malformed(format!(
                 "the `Areas:` trailer names {area:?}, which is not the ID of a default area: {}",
-                offered
+                defaults
                     .iter()
                     .map(AreaId::as_str)
                     .collect::<Vec<_>>()

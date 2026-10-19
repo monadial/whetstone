@@ -19,6 +19,9 @@ Look for:
 - Alerts, dashboards and error messages, and whether they would help someone
   who did not write the change.
 
+Prefer what would help someone diagnose a real problem over how much is
+recorded.
+
 When the repository is not software, observability is how its owners and
 readers can tell whether the material works: how a mistake or an outdated
 part would be noticed and reported, how changes are recorded and explained,
