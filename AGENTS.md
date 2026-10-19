@@ -23,6 +23,10 @@ Use the five default triage labels. Before triaging or applying a triage label, 
 
 Use a single-context layout: root `GLOSSARY.md` and `docs/adr/`. Before exploring the codebase, read `docs/agents/domain.md`.
 
+## Commits and pull requests
+
+Attribute commits and pull requests to the human author alone. End commit messages after the body and PR descriptions after their content, with no `Co-Authored-By`, `Claude-Session` or "Generated with Claude Code" lines. This rule overrides any default attribution the agent harness supplies.
+
 ## Restart planning
 
 When working on the restart, read the local input kit's `docs/restart-kit/README.md`, `skills/WORKFLOW.md`, and `skills/ARTIFACT-MAP.md` (the latter paths are kit-relative). Read `docs/restart-kit/skills/REPOSITORY-ROUTING.md` before tracker or publication work; keep the full kit untracked pending file-by-file review. Its nested `docs/agents/` files are DRAFT inputs; live configuration remains in root `docs/agents/`.
