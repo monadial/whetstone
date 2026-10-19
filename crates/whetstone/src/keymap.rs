@@ -383,6 +383,26 @@ pub(crate) const MATCHES: Binding = Binding {
     hint: None,
 };
 
+/// The keys of a search box, while it has focus. Every other key but
+/// Ctrl+C types.
+pub(crate) const SEARCH_BOX: Keymap = &[
+    Binding {
+        keys: &[(Press::key(KeyCode::Enter), Command::Activate)],
+        does: "Search for what was typed",
+        hint: Some("Enter search"),
+    },
+    Binding {
+        keys: &[(Press::key(KeyCode::Backspace), Command::Erase)],
+        does: "Erase the last character",
+        hint: None,
+    },
+    Binding {
+        keys: &[(Press::key(KeyCode::Esc), Command::Cancel)],
+        does: "Stop searching",
+        hint: Some("Esc cancel"),
+    },
+];
+
 /// Enter and Space activate the focused control.
 pub(crate) const ACTIVATE: Binding = Binding {
     keys: &[

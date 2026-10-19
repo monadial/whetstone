@@ -4,21 +4,22 @@
 //! wrap, so every character shows at every supported size.
 
 use ratatui::Frame;
-use ratatui::crossterm::event::KeyCode;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::Style;
-use ratatui::text::{Line, Span};
+use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, List, ListState, Padding, Paragraph, Wrap};
-use whetstone_core::{Change, TouchedFile};
+use whetstone_core::{Change, CommitId, FileContent, Origin, TouchedFile};
 
 use crate::columns;
 use crate::entry::TextEntry;
 use crate::focus::Position;
-use crate::keymap::{self, Binding, Command, Input, Keymap, Press};
+use crate::keymap::{self, Binding, Command, Input, Keymap};
 use crate::palette::Action;
-use crate::search::Query;
+use crate::picker::comparison_label;
+use crate::repository::LoadError;
+use crate::search::{self, Query};
 use crate::theme::{ControlKind, ControlState, Theme};
-use crate::view::{ChangeIndex, Context, Route, View};
+use crate::view::{ChangeRef, Context, Route, View};
 
 /// The viewer's own keys.
 const KEYMAP: Keymap = &[
@@ -65,26 +66,6 @@ const ACTIONS: &[Action] = &[
         label: "Previous match",
         does: "Go to the previous match of the last search",
         command: Command::PreviousMatch,
-    },
-];
-
-/// The keys of the search box, while it has focus. Every other key but
-/// Ctrl+C types.
-const SEARCH_BOX: Keymap = &[
-    Binding {
-        keys: &[(Press::key(KeyCode::Enter), Command::Activate)],
-        does: "Search for what was typed",
-        hint: Some("Enter search"),
-    },
-    Binding {
-        keys: &[(Press::key(KeyCode::Backspace), Command::Erase)],
-        does: "Erase the last character",
-        hint: None,
-    },
-    Binding {
-        keys: &[(Press::key(KeyCode::Esc), Command::Cancel)],
-        does: "Stop searching",
-        hint: Some("Esc cancel"),
     },
 ];
 
@@ -157,8 +138,16 @@ impl Pane {
 enum Contents<'a> {
     /// The file's diff, or its code before or after the change.
     Text(&'a str),
-    /// No code, because the change creates or deletes the file, and why.
-    Missing(String),
+    /// No code, because the change creates or deletes the file, or that
+    /// side of it is not text.
+    Missing {
+        /// Why, in a sentence.
+        reason: String,
+        /// Why the pane is disabled in its title, if it is: only for a file
+        /// the change creates or deletes. A side that is not text is named
+        /// in the Files pane, and the title has no room to say so too.
+        disabled: Option<&'static str>,
+    },
 }
 
 /// How much of the code pane shows at once: its rows, and the cells across
@@ -182,8 +171,8 @@ struct CodeView {
 /// is chosen, which pane has focus, and what the learner searched for.
 #[derive(Debug, Clone)]
 pub(crate) struct Viewer {
-    /// Where the change is in the showcase project's history.
-    index: ChangeIndex,
+    /// Which change it is.
+    at: ChangeRef,
     change: Change,
     /// The touched file the code pane shows.
     chosen_file: Position,
@@ -199,16 +188,16 @@ pub(crate) struct Viewer {
 }
 
 impl Viewer {
-    /// The viewer on `change`, the showcase project's curated change at
-    /// `index`, as it first opens: on the diff of the first file it touches.
-    pub(crate) fn new(index: ChangeIndex, change: &Change) -> Self {
+    /// The viewer on `change`, the one `at` names, as it first opens: on
+    /// the diff of the first file it touches.
+    pub(crate) fn new(at: ChangeRef, change: Change) -> Self {
         Self {
-            index,
-            change: change.clone(),
+            at,
+            views: vec![[CodeView::default(); Code::ALL.len()]; change.files().len()],
+            change,
             chosen_file: Position::default(),
             focus: Pane::Code(Code::Diff),
             shown: Code::Diff,
-            views: vec![[CodeView::default(); Code::ALL.len()]; change.files().len()],
             search_box: None,
             query: None,
         }
@@ -221,11 +210,12 @@ impl Viewer {
 
     /// What `code` shows of the chosen file.
     fn contents(&self, code: Code) -> Contents<'_> {
-        let path = self
-            .touched_file()
-            .map(TouchedFile::path)
-            .unwrap_or_default();
-        let missing = |reason: String| move || Contents::Missing(reason);
+        let file = self.touched_file();
+        let path = file.map(TouchedFile::path).unwrap_or_default();
+        let missing = |reason: String, disabled| Contents::Missing {
+            reason,
+            disabled: Some(disabled),
+        };
         match code {
             Code::Diff => Contents::Text(
                 self.change
@@ -233,24 +223,25 @@ impl Viewer {
                     .nth(self.chosen_file.index())
                     .unwrap_or_default(),
             ),
-            Code::Before => self
-                .touched_file()
-                .and_then(TouchedFile::before)
-                .map_or_else(
-                    missing(format!(
-                        "This change creates {path}, so it has no code before."
-                    )),
-                    Contents::Text,
+            Code::Before => match file.and_then(TouchedFile::before) {
+                None => missing(
+                    format!("This change creates {path}, so it has no code before."),
+                    "new file",
                 ),
-            Code::After => self
-                .touched_file()
-                .and_then(TouchedFile::after)
-                .map_or_else(
-                    missing(format!(
-                        "This change deletes {path}, so it has no code after."
-                    )),
-                    Contents::Text,
+                Some(content) => text_or(content, |kind| {
+                    let path = file.and_then(TouchedFile::renamed_from).unwrap_or(path);
+                    format!("{path} was {kind} before this change, so it has no code to show.")
+                }),
+            },
+            Code::After => match file.and_then(TouchedFile::after) {
+                None => missing(
+                    format!("This change deletes {path}, so it has no code after."),
+                    "deleted",
                 ),
+                Some(content) => text_or(content, |kind| {
+                    format!("{path} is {kind}, so it has no code to show.")
+                }),
+            },
         }
     }
 
@@ -258,7 +249,7 @@ impl Viewer {
     fn text(&self) -> &str {
         match self.contents(self.shown) {
             Contents::Text(text) => text,
-            Contents::Missing(_) => "",
+            Contents::Missing { .. } => "",
         }
     }
 
@@ -346,7 +337,7 @@ impl Viewer {
         }
         let matches = self.matches(&query);
         self.query = Some(query);
-        if let Some(line) = first_from(&matches, self.search_start(page)) {
+        if let Some(line) = search::first_from(&matches, self.search_start(page)) {
             self.land_on(line, page);
         }
     }
@@ -365,7 +356,9 @@ impl Viewer {
         };
         let start = self.search_start(page);
         let landing = match command {
-            Command::NextMatch => first_from(&matches, current.map_or(start, |line| line + 1)),
+            Command::NextMatch => {
+                search::first_from(&matches, current.map_or(start, |line| line + 1))
+            }
             Command::PreviousMatch => {
                 let before = current.unwrap_or(start);
                 matches
@@ -385,7 +378,10 @@ impl Viewer {
     /// The lines of the focused pane that hold `query`.
     fn matches(&self, query: &Query) -> Vec<usize> {
         match self.focus {
-            Pane::Files => query.matching_lines(self.change.files().iter().map(TouchedFile::path)),
+            Pane::Files => {
+                let names: Vec<String> = self.change.files().iter().map(file_name).collect();
+                query.matching_lines(names.iter().map(String::as_str))
+            }
             Pane::Code(_) => query.matching_lines(self.text().lines()),
         }
     }
@@ -436,18 +432,11 @@ impl Viewer {
             Pane::Files => Some(self.chosen_file.index()),
             Pane::Code(_) => self.view().current_match,
         };
-        let text = query.text();
         let pane = match self.focus {
             Pane::Files => "Files",
             Pane::Code(code) => code.label(),
         };
-        let at = current.and_then(|current| matches.iter().position(|&line| line == current));
-        Some(match (matches.len(), at) {
-            (0, _) => format!("No match for \"{text}\" in {pane}"),
-            (count, Some(at)) => format!("Match {} of {count} for \"{text}\"", at + 1),
-            (1, None) => format!("1 match for \"{text}\""),
-            (count, None) => format!("{count} matches for \"{text}\""),
-        })
+        Some(search::status(query, &matches, current, pane))
     }
 
     /// The line number in front of the line at `index` of code whose last
@@ -501,14 +490,13 @@ impl Viewer {
 
     /// The code pane's title: each code pane, a choice, the shown one
     /// chosen. Before and After are disabled, saying why, for a file the
-    /// change creates or deletes.
+    /// change creates or deletes, or a side that is not text.
     fn code_title(&self, theme: &Theme) -> Line<'static> {
         let mut title = Line::default();
         for code in Code::ALL {
-            let disabled = match (code, self.contents(code)) {
-                (Code::Before, Contents::Missing(_)) => Some("new file"),
-                (Code::After, Contents::Missing(_)) => Some("deleted"),
-                _ => None,
+            let disabled = match self.contents(code) {
+                Contents::Missing { disabled, .. } => disabled,
+                Contents::Text(_) => None,
             };
             title.spans.extend(
                 theme
@@ -529,22 +517,35 @@ impl Viewer {
         title
     }
 
-    /// The touched files, each a choice.
-    fn file_rows<'a>(&'a self, theme: &Theme) -> Vec<Line<'a>> {
+    /// The touched files as items `width` cells wide, each a choice
+    /// showing its path, then where a rename moved it from and what it
+    /// holds if that is not text. When those do not fit after the path,
+    /// they go on a line of their own under it, so the path keeps the row.
+    fn file_rows<'a>(&'a self, theme: &Theme, width: u16) -> Vec<Text<'a>> {
         self.change
             .files()
             .iter()
             .enumerate()
             .map(|(index, file)| {
                 let chosen = index == self.chosen_file.index();
-                theme.control(
-                    file.path(),
-                    ControlState {
-                        focused: chosen && self.focus == Pane::Files,
-                        kind: ControlKind::Choice { selected: chosen },
-                        disabled: None,
-                    },
-                )
+                let state = ControlState {
+                    focused: chosen && self.focus == Pane::Files,
+                    kind: ControlKind::Choice { selected: chosen },
+                    disabled: None,
+                };
+                let mut row = theme.control(file.path(), state);
+                let details = file_details(file, theme.muted);
+                if details.spans.is_empty() {
+                    return Text::from(row);
+                }
+                if row.width() + DETAIL_GAP.len() + details.width() <= usize::from(width) {
+                    row.push_span(DETAIL_GAP);
+                    row.spans.extend(details.spans);
+                    return Text::from(row);
+                }
+                let mut below = Line::raw(" ".repeat(Theme::control_width("", state.kind)));
+                below.spans.extend(details.spans);
+                Text::from(vec![row, below])
             })
             .collect()
     }
@@ -565,7 +566,15 @@ impl Viewer {
             .change
             .files()
             .iter()
-            .map(|file| Theme::control_width(file.path(), ControlKind::Choice { selected: true }))
+            .map(|file| {
+                let details = file_details(file, Style::new()).width();
+                Theme::control_width(file.path(), ControlKind::Choice { selected: true })
+                    + if details > 0 {
+                        DETAIL_GAP.len() + details
+                    } else {
+                        0
+                    }
+            })
             .max()
             .unwrap_or_default()
             + 4;
@@ -597,19 +606,65 @@ impl Viewer {
     }
 }
 
+/// Between a touched file's path and its details, and between those.
+const DETAIL_GAP: &str = "  ";
+
+/// What a search of the Files pane looks through for a touched file: its
+/// path, and where a rename moved it from.
+fn file_name(file: &TouchedFile) -> String {
+    match file.renamed_from() {
+        Some(from) => format!("{} ← {from}", file.path()),
+        None => file.path().to_owned(),
+    }
+}
+
+/// What the Files pane says of a touched file after its path, if anything:
+/// where a rename moved it from, and, styled `muted`, what it holds after
+/// the change, or before it if the change deletes it, if that is not text.
+fn file_details(file: &TouchedFile, muted: Style) -> Line<'_> {
+    let mut details = Line::default();
+    if let Some(from) = file.renamed_from() {
+        details.push_span(format!("← {from}"));
+    }
+    let kind = file
+        .after()
+        .or_else(|| file.before())
+        .filter(|content| content.text().is_none())
+        .map(|content| no_code(content).0);
+    if let Some(kind) = kind {
+        if !details.spans.is_empty() {
+            details.push_span(DETAIL_GAP);
+        }
+        details.push_span(Span::styled(kind, muted));
+    }
+    details
+}
+
+/// What a code pane shows of `content`: its text, or why it has none, in a
+/// sentence that `sentence` makes from what it is.
+fn text_or(content: &FileContent, sentence: impl FnOnce(&str) -> String) -> Contents<'_> {
+    if let FileContent::Text(text) = content {
+        return Contents::Text(text);
+    }
+    Contents::Missing {
+        reason: sentence(no_code(content).1),
+        disabled: None,
+    }
+}
+
+/// What `content` is: in a word, and as a sentence names it.
+fn no_code(content: &FileContent) -> (&'static str, &'static str) {
+    match content {
+        FileContent::Text(_) => ("text", "text"),
+        FileContent::Binary { .. } => ("binary", "a binary file"),
+        FileContent::Submodule => ("submodule", "a submodule"),
+        FileContent::Symlink => ("symlink", "a symbolic link"),
+    }
+}
+
 /// How many digits the last line number of `text` has.
 fn digits(text: &str) -> usize {
     text.lines().count().to_string().len()
-}
-
-/// The first of `matches`, line numbers in order, at or after `start`,
-/// wrapping around to the first.
-fn first_from(matches: &[usize], start: usize) -> Option<usize> {
-    matches
-        .iter()
-        .find(|&&line| line >= start)
-        .or(matches.first())
-        .copied()
 }
 
 /// `line` in spans, with each occurrence of `query` styled `found`.
@@ -644,7 +699,7 @@ struct Parts {
 
 impl View for Viewer {
     fn route(&self) -> Route {
-        Route::Viewer(self.index)
+        Route::Viewer(self.at)
     }
 
     fn name(&self) -> &'static str {
@@ -653,7 +708,7 @@ impl View for Viewer {
 
     fn keymap(&self) -> Keymap {
         match self.search_box {
-            Some(_) => SEARCH_BOX,
+            Some(_) => keymap::SEARCH_BOX,
             None => KEYMAP,
         }
     }
@@ -704,18 +759,28 @@ impl View for Viewer {
     fn render(&self, context: &Context<'_>, frame: &mut Frame<'_>, area: Rect) {
         let theme = context.theme;
         let parts = self.layout(area);
-        // The summary, and the areas the change touches right-aligned, at
-        // least two cells after it.
-        let mut title = Line::from(Span::styled(self.change.summary(), theme.title));
-        let areas = context.showcase.area_names(&self.change).join(", ");
-        let areas_column = usize::from(parts.title.width)
-            .saturating_sub(Line::raw(&areas).width())
+        // The summary, and right-aligned at least two cells after it the
+        // areas a showcase change touches, or what a commit was compared
+        // with. A commit's summary follows its short ID.
+        let (summary, aside) = match self.change.origin() {
+            Origin::Showcase { .. } => (
+                self.change.summary().to_owned(),
+                context.showcase.area_names(&self.change).join(", "),
+            ),
+            Origin::Commit { id, comparison } => (
+                format!("{}  {}", id.short(), self.change.summary()),
+                comparison_label(*comparison).unwrap_or_default().to_owned(),
+            ),
+        };
+        let mut title = Line::from(Span::styled(summary, theme.title));
+        let aside_column = usize::from(parts.title.width)
+            .saturating_sub(Line::raw(&aside).width())
             .max(title.width() + 2);
-        columns::pad_to(&mut title, areas_column);
-        title.push_span(Span::styled(areas, theme.muted));
+        columns::pad_to(&mut title, aside_column);
+        title.push_span(Span::styled(aside, theme.muted));
         frame.render_widget(Paragraph::new(title), parts.title);
         frame.render_stateful_widget(
-            List::new(self.file_rows(theme)).block(
+            List::new(self.file_rows(theme, parts.files.width.saturating_sub(4))).block(
                 Block::bordered()
                     .border_style(theme.border(self.focus == Pane::Files))
                     .title(Span::styled(" Files ", theme.title))
@@ -729,7 +794,7 @@ impl View for Viewer {
             Contents::Text(text) => {
                 Paragraph::new(self.code_lines(theme, text, self.top(page), page.rows))
             }
-            Contents::Missing(reason) => Paragraph::new(Line::styled(reason, theme.muted)),
+            Contents::Missing { reason, .. } => Paragraph::new(Line::styled(reason, theme.muted)),
         };
         frame.render_widget(
             code.wrap(Wrap { trim: false }).block(
@@ -748,5 +813,81 @@ impl View for Viewer {
         } else if let Some(status) = self.search_status() {
             frame.render_widget(Paragraph::new(status), parts.status);
         }
+    }
+}
+
+/// The keys where a commit cannot be read: only back.
+const UNREADABLE_KEYMAP: Keymap = &[keymap::BACK];
+
+/// The actions where a commit cannot be read: only back.
+const UNREADABLE_ACTIONS: &[Action] = &[Action {
+    label: "Back",
+    does: "Return to the picker",
+    command: Command::Back,
+}];
+
+/// What the change viewer shows instead of a commit it cannot read, such as
+/// one whose files are missing from a partial clone: which commit, and why.
+#[derive(Debug)]
+pub(crate) struct Unreadable {
+    at: ChangeRef,
+    id: CommitId,
+    /// Why it cannot be read, as gix says.
+    problem: String,
+}
+
+impl Unreadable {
+    /// The screen for the commit `id`, the one `at` names, which cannot be
+    /// read because of `error`.
+    pub(crate) fn new(at: ChangeRef, id: CommitId, error: &LoadError) -> Self {
+        Self {
+            at,
+            id,
+            problem: error.cause().to_string(),
+        }
+    }
+}
+
+impl View for Unreadable {
+    fn route(&self) -> Route {
+        Route::Viewer(self.at)
+    }
+
+    fn name(&self) -> &'static str {
+        "Change"
+    }
+
+    fn keymap(&self) -> Keymap {
+        UNREADABLE_KEYMAP
+    }
+
+    fn actions(&self) -> &'static [Action] {
+        UNREADABLE_ACTIONS
+    }
+
+    fn apply(&mut self, _command: Command, _area: Rect) -> Option<Command> {
+        None
+    }
+
+    fn render(&self, context: &Context<'_>, frame: &mut Frame<'_>, area: Rect) {
+        let theme = context.theme;
+        let [title, _, reason] = Layout::vertical([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Fill(1),
+        ])
+        .areas(area);
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                format!("Whetstone cannot read commit {}", self.id.short()),
+                theme.title,
+            )),
+            title,
+        );
+        frame.render_widget(
+            Paragraph::new(Line::styled(self.problem.as_str(), theme.muted))
+                .wrap(Wrap { trim: true }),
+            reason,
+        );
     }
 }

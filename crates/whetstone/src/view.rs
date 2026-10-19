@@ -6,7 +6,7 @@ use std::fmt;
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use whetstone_core::{Change, ShowcaseProject};
+use whetstone_core::{Change, CommitId, ShowcaseProject};
 
 use crate::config::Settings;
 use crate::home::Home;
@@ -16,7 +16,7 @@ use crate::picker::Picker;
 use crate::repository::{Repository, Unavailable};
 use crate::settings::SettingsScreen;
 use crate::theme::Theme;
-use crate::viewer::Viewer;
+use crate::viewer::{Unreadable, Viewer};
 
 /// A screen: its name, its keys and actions, how commands change it, and
 /// how it is drawn.
@@ -77,9 +77,18 @@ pub(crate) enum Route {
     Settings,
     /// The area and change picker over a project.
     Picker(Project),
-    /// The change viewer, showing one of the showcase project's curated
-    /// changes.
-    Viewer(ChangeIndex),
+    /// The change viewer, showing one change.
+    Viewer(ChangeRef),
+}
+
+/// A change the viewer can show.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ChangeRef {
+    /// One of the showcase project's curated changes, by its place in the
+    /// history.
+    Showcase(ChangeIndex),
+    /// A commit from the learner's repository, by its ID.
+    Commit(CommitId),
 }
 
 /// One of the showcase project's curated changes, by its place in the
@@ -114,12 +123,21 @@ impl Route {
             Self::Picker(Project::Repository) => Box::new(Picker::for_repository(
                 repository.expect("home offers the repository only when it is available"),
             )),
-            Self::Viewer(index) => Box::new(Viewer::new(
-                index,
+            Self::Viewer(at @ ChangeRef::Showcase(index)) => Box::new(Viewer::new(
+                at,
                 index
                     .of(showcase)
-                    .expect("only the picker opens a change, and only one it lists"),
+                    .expect("only the picker opens a change, and only one it lists")
+                    .clone(),
             )),
+            Self::Viewer(at @ ChangeRef::Commit(id)) => {
+                let repository =
+                    repository.expect("only the repository's picker opens one of its commits");
+                match repository.load(id) {
+                    Ok(change) => Box::new(Viewer::new(at, change)),
+                    Err(error) => Box::new(Unreadable::new(at, id, &error)),
+                }
+            }
         }
     }
 }

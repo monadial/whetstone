@@ -87,6 +87,46 @@ impl TestRepo {
         self
     }
 
+    /// Makes `path` in the working tree a symbolic link to `target`.
+    pub(crate) fn symlink(&self, path: &str, target: &str) -> &Self {
+        std::os::unix::fs::symlink(target, self.path(path)).expect("make a symbolic link");
+        self
+    }
+
+    /// Adds a submodule at `path`: a repository beside this one, named
+    /// after the last part of `path`, with one commit. Its URL is relative,
+    /// so commit IDs stay the same wherever the test runs.
+    pub(crate) fn add_submodule(&self, path: &str) -> &Self {
+        let name = Path::new(path)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .expect("a submodule path ends in a UTF-8 name");
+        let submodule = self.beside(name);
+        self.git_in(
+            self.dir.path(),
+            &[
+                "init",
+                "--quiet",
+                "--initial-branch=main",
+                submodule.to_str().expect("a UTF-8 path"),
+            ],
+        );
+        fs::write(submodule.join("README.md"), format!("# {name}\n"))
+            .expect("write the submodule's readme");
+        self.git_in(&submodule, &["add", "--all"]);
+        self.dated_in(&submodule, &["commit", "--quiet", "--message", "Start"]);
+        self.git(&[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "--quiet",
+            &format!("../{name}"),
+            path,
+        ]);
+        self
+    }
+
     /// Commits everything in the working tree with `message`, and returns
     /// the commit's full ID.
     pub(crate) fn commit(&self, message: &str) -> String {
@@ -102,6 +142,35 @@ impl TestRepo {
         self.head()
     }
 
+    /// A shallow clone of the repository beside it, called `name`, with
+    /// only the newest `depth` commits, so the oldest of them has its
+    /// parent missing. Returns its root.
+    pub(crate) fn shallow_clone(&self, name: &str, depth: usize) -> PathBuf {
+        let clone = self.beside(name);
+        // Git clones shallow only over a transport, `file://` here.
+        let url = format!("file://{}", self.root.display());
+        self.git_in(
+            self.dir.path(),
+            &[
+                "clone",
+                "--quiet",
+                "--depth",
+                &depth.to_string(),
+                &url,
+                clone.to_str().expect("a UTF-8 path"),
+            ],
+        );
+        clone
+    }
+
+    /// Removes the loose object `id` from the repository, as a partial
+    /// clone lacks the files it has not fetched.
+    pub(crate) fn remove_object(&self, id: &str) {
+        let (directory, file) = id.split_at(2);
+        fs::remove_file(self.path(&format!(".git/objects/{directory}/{file}")))
+            .expect("remove a loose object");
+    }
+
     /// The full ID of the commit HEAD points to.
     pub(crate) fn head(&self) -> String {
         self.git(&["rev-parse", "HEAD"]).trim().to_owned()
@@ -110,11 +179,17 @@ impl TestRepo {
     /// Runs `git` with `args`, which make a commit, dated a minute after
     /// the commit before.
     fn dated(&self, args: &[&str]) {
+        self.dated_in(&self.root, args);
+    }
+
+    /// Runs `git` with `args` in `dir`, which make a commit, dated a minute
+    /// after the commit before.
+    fn dated_in(&self, dir: &Path, args: &[&str]) {
         let made = self.commits.get();
         self.commits.set(made + 1);
         let at = format!("@{} +0000", FIRST_COMMIT_AT + 60 * made);
         self.git_with(
-            &self.root,
+            dir,
             args,
             &[("GIT_AUTHOR_DATE", &at), ("GIT_COMMITTER_DATE", &at)],
         );

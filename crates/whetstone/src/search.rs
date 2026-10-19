@@ -71,6 +71,11 @@ impl Query {
             .collect()
     }
 
+    /// Whether `text` holds the query.
+    pub(crate) fn is_in(&self, text: &str) -> bool {
+        !self.occurrences(text).is_empty()
+    }
+
     /// The indexes of the `lines` that hold the query.
     pub(crate) fn matching_lines<'a>(&self, lines: impl Iterator<Item = &'a str>) -> Vec<usize> {
         lines
@@ -78,5 +83,34 @@ impl Query {
             .filter(|(_, line)| !self.occurrences(line).is_empty())
             .map(|(index, _)| index)
             .collect()
+    }
+}
+
+/// The first of `matches`, indexes in order, at or after `start`, wrapping
+/// around to the first.
+pub(crate) fn first_from(matches: &[usize], start: usize) -> Option<usize> {
+    matches
+        .iter()
+        .find(|&&index| index >= start)
+        .or(matches.first())
+        .copied()
+}
+
+/// What a search for `query` found, for the row that says so: which of the
+/// `matches` is `current`, if one is, or how many there are, or that there
+/// are none in `place`.
+pub(crate) fn status(
+    query: &Query,
+    matches: &[usize],
+    current: Option<usize>,
+    place: &str,
+) -> String {
+    let text = query.text();
+    let at = current.and_then(|current| matches.iter().position(|&index| index == current));
+    match (matches.len(), at) {
+        (0, _) => format!("No match for \"{text}\" in {place}"),
+        (count, Some(at)) => format!("Match {} of {count} for \"{text}\"", at + 1),
+        (1, None) => format!("1 match for \"{text}\""),
+        (count, None) => format!("{count} matches for \"{text}\""),
     }
 }
