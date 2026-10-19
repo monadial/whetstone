@@ -24,6 +24,7 @@ use std::process::ExitCode;
 use clap::Parser as _;
 
 use crate::cli::Cli;
+use crate::tui::Ending;
 
 /// Runs Whetstone with the given command-line arguments, the first of which
 /// is the program name, in the given environment.
@@ -35,23 +36,30 @@ where
     if let Err(outcome) = Cli::try_parse_from(args) {
         return output::clap_outcome(&outcome);
     }
-    match launch(environment) {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(error) => output::failure(&error),
-    }
+    launch(environment).unwrap_or_else(|error| output::failure(&error))
 }
 
 /// Opens the TUI. A refusal happens before anything is drawn or written.
-fn launch(environment: &Environment) -> anyhow::Result<()> {
+fn launch(environment: &Environment) -> anyhow::Result<ExitCode> {
     terminal::require_interactive()?;
     let dirs = Dirs::resolve(environment)?;
-    logging::init(&dirs.state, environment)?;
+    logging::init(&dirs.state)?;
     tracing::info!(
         version = env!("CARGO_PKG_VERSION"),
         config = %dirs.config.display(),
         "whetstone started"
     );
-    tui::run(App::new(Theme::plain()))?;
-    tracing::info!("whetstone quit");
-    Ok(())
+    match tui::run(App::new(Theme::plain()))? {
+        Ending::Quit => {
+            tracing::info!("whetstone quit");
+            Ok(ExitCode::SUCCESS)
+        }
+        Ending::Stopped { signal } => {
+            tracing::info!(signal, "whetstone stopped by a signal");
+            // The shell convention for a process ended by a signal.
+            Ok(ExitCode::from(
+                u8::try_from(128 + signal).unwrap_or(output::FAILURE),
+            ))
+        }
+    }
 }

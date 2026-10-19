@@ -66,36 +66,57 @@ pub struct Dirs {
 
 /// Neither an XDG variable nor `HOME` says where a directory is.
 #[derive(Debug, thiserror::Error)]
-#[error("cannot find the {kind} directory: set HOME or {xdg_variable} to an absolute path")]
+#[error(
+    "cannot find the {} directory: set HOME or {} to an absolute path",
+    .dir.name,
+    .dir.xdg_variable
+)]
 pub struct NoHome {
-    kind: &'static str,
-    xdg_variable: &'static str,
+    dir: BaseDir,
 }
 
 impl Dirs {
     /// Resolves the directories from `environment`.
     pub fn resolve(environment: &Environment) -> Result<Self, NoHome> {
         Ok(Self {
-            config: user_dir(environment, "config", "XDG_CONFIG_HOME", ".config")?,
-            state: user_dir(environment, "state", "XDG_STATE_HOME", ".local/state")?,
+            config: BaseDir::CONFIG.resolve(environment)?,
+            state: BaseDir::STATE.resolve(environment)?,
         })
     }
 }
 
-fn user_dir(
-    environment: &Environment,
-    kind: &'static str,
+/// One XDG base directory: where its variable points, or its place under
+/// `HOME`.
+#[derive(Debug, Clone, Copy)]
+struct BaseDir {
+    name: &'static str,
     xdg_variable: &'static str,
-    under_home: &str,
-) -> Result<PathBuf, NoHome> {
-    let base = environment
-        .absolute_path(xdg_variable)
-        .map(Path::to_path_buf)
-        .or_else(|| {
-            environment
-                .absolute_path("HOME")
-                .map(|home| home.join(under_home))
-        })
-        .ok_or(NoHome { kind, xdg_variable })?;
-    Ok(base.join("whetstone"))
+    under_home: &'static str,
+}
+
+impl BaseDir {
+    const CONFIG: Self = Self {
+        name: "config",
+        xdg_variable: "XDG_CONFIG_HOME",
+        under_home: ".config",
+    };
+    const STATE: Self = Self {
+        name: "state",
+        xdg_variable: "XDG_STATE_HOME",
+        under_home: ".local/state",
+    };
+
+    /// Whetstone's folder inside this base directory.
+    fn resolve(self, environment: &Environment) -> Result<PathBuf, NoHome> {
+        let base = environment
+            .absolute_path(self.xdg_variable)
+            .map(Path::to_path_buf)
+            .or_else(|| {
+                environment
+                    .absolute_path("HOME")
+                    .map(|home| home.join(self.under_home))
+            })
+            .ok_or(NoHome { dir: self })?;
+        Ok(base.join("whetstone"))
+    }
 }

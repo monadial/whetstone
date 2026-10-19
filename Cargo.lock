@@ -1992,6 +1992,7 @@ dependencies = [
  "insta",
  "ratatui",
  "rexpect",
+ "signal-hook",
  "tempfile",
  "thiserror 2.0.21",
  "tracing",

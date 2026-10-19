@@ -1,5 +1,5 @@
 ---
-source: crates/whetstone/tests/app.rs
+source: crates/whetstone/tests/it/app.rs
 expression: "draw(&app, 120, 32)"
 ---
 "                                                                                                                        "

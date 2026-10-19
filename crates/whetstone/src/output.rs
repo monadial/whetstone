@@ -24,4 +24,5 @@ pub(crate) fn failure(error: &anyhow::Error) -> ExitCode {
     ExitCode::from(FAILURE)
 }
 
-const FAILURE: u8 = 1;
+/// The exit code for a run that failed after its arguments were accepted.
+pub(crate) const FAILURE: u8 = 1;
