@@ -18,13 +18,15 @@ use super::LoadError;
 const INFALLIBLE: &str = "writing to a String never fails";
 
 /// Git's rename detection, as `git diff -M` does it by default: renames
-/// only, no copies, at 50% similarity or more. gix compares every source
-/// with every destination only while there are at most `limit` pairs, and
-/// Git while there are at most `diff.renameLimit` squared, 1000 × 1000, so
-/// the limit is squared here to find what Git finds.
+/// only, no copies, at 50% similarity or more, empty files included. gix
+/// compares every source with every destination only while there are at
+/// most `limit` pairs, and Git while there are at most `diff.renameLimit`
+/// squared, 1000 × 1000, so the limit is squared here to find what Git
+/// finds.
 fn rewrites() -> gix::diff::Rewrites {
     gix::diff::Rewrites {
         limit: 1000 * 1000,
+        track_empty: true,
         ..gix::diff::Rewrites::default()
     }
 }
@@ -83,10 +85,19 @@ pub(super) fn load(git: &gix::Repository, id: CommitId) -> Result<Change, LoadEr
                 previous_id,
                 entry_mode,
                 id,
-            } => (
-                side(git, &location, previous_entry_mode, previous_id)?,
-                side(git, &location, entry_mode, id)?,
-            ),
+            } => {
+                let before = side(git, &location, previous_entry_mode, previous_id)?;
+                let after = side(git, &location, entry_mode, id)?;
+                // A file that becomes a symbolic link or a submodule, or the
+                // other way round, is a deletion and an addition, as Git
+                // shows it, so the text on either side is not hidden.
+                if kind_changes(previous_entry_mode.kind(), entry_mode.kind()) {
+                    files.extend(touched_file(before, None, short_len));
+                    (None, after)
+                } else {
+                    (before, after)
+                }
+            }
             ChangeDetached::Rewrite {
                 source_location,
                 source_entry_mode,
@@ -107,11 +118,10 @@ pub(super) fn load(git: &gix::Repository, id: CommitId) -> Result<Change, LoadEr
                 side(git, &location, entry_mode, id)?,
             ),
         };
-        if let Some(file) = touched_file(before, after, short_len) {
-            files.push(file);
-        }
+        files.extend(touched_file(before, after, short_len));
     }
-    // In path order, as `git diff` lists files.
+    // In path order, as `git diff` lists files. The sort is stable, so a
+    // deletion stays before an addition at the same path.
     files.sort_by(|(a, _), (b, _): &(TouchedFile, String)| a.path().cmp(b.path()));
     let (files, diffs): (Vec<TouchedFile>, Vec<String>) = files.into_iter().unzip();
     let message = commit
@@ -177,6 +187,19 @@ fn touched_file(
         }
     };
     Some((file, diff))
+}
+
+/// Whether an entry of `before` becoming one of `after` changes what kind
+/// of entry it is: a file, a symbolic link, a submodule or a directory. An
+/// executable bit is only a mode.
+fn kind_changes(before: EntryKind, after: EntryKind) -> bool {
+    let class = |kind| match kind {
+        EntryKind::Blob | EntryKind::BlobExecutable => 0,
+        EntryKind::Link => 1,
+        EntryKind::Commit => 2,
+        EntryKind::Tree => 3,
+    };
+    class(before) != class(after)
 }
 
 /// The file mode Git writes for an entry of `kind`.

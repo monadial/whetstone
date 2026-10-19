@@ -6,7 +6,7 @@ use std::fmt;
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use whetstone_core::{Change, CommitId, ShowcaseProject};
+use whetstone_core::{Change, CommitId, Comparison, ShowcaseProject};
 
 use crate::config::Settings;
 use crate::home::Home;
@@ -108,6 +108,17 @@ impl ChangeIndex {
     }
 }
 
+/// What a commit's row in the picker and its title in the viewer say about
+/// what it was compared with, unless it was simply its parent.
+pub(crate) fn comparison_label(comparison: Comparison) -> Option<&'static str> {
+    match comparison {
+        Comparison::Parent => None,
+        // Its change is the whole merged work.
+        Comparison::FirstParent => Some("merge · vs first parent"),
+        Comparison::EmptyTree => Some("first commit"),
+    }
+}
+
 impl Route {
     /// The screen at this route, as it first opens over `showcase` or
     /// `repository`.
@@ -135,7 +146,7 @@ impl Route {
                     repository.expect("only the repository's picker opens one of its commits");
                 match repository.load(id) {
                     Ok(change) => Box::new(Viewer::new(at, change)),
-                    Err(error) => Box::new(Unreadable::new(at, id, &error)),
+                    Err(error) => Box::new(Unreadable::new(id, &error)),
                 }
             }
         }

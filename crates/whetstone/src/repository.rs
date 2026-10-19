@@ -21,7 +21,7 @@ use whetstone_core::{
 mod history;
 mod load;
 
-pub(crate) use history::{Availability, Commit, End, History};
+pub(crate) use history::{Availability, Commit, History, HistoryEnd};
 
 /// The repository's Whetstone config, relative to the Git root.
 pub(crate) const CONFIG: &str = ".whetstone/config.toml";
@@ -110,13 +110,6 @@ pub struct OpenError(#[source] gix::Error);
 #[derive(Debug, thiserror::Error)]
 #[error("cannot read the commit")]
 pub(crate) struct LoadError(#[from] gix::Error);
-
-impl LoadError {
-    /// What went wrong, as gix says it.
-    pub(crate) fn cause(&self) -> &(dyn std::error::Error + 'static) {
-        &self.0
-    }
-}
 
 /// The commits could not be read from the repository.
 #[derive(Debug, thiserror::Error)]
@@ -296,7 +289,7 @@ impl Repository {
     /// The commits reachable from HEAD as it was at startup, newest first,
     /// in `git log` order, with the first page read.
     pub(crate) fn history(&self) -> Result<History, HistoryError> {
-        History::from(&self.git, self.head)
+        History::read_from(&self.git, self.head)
     }
 }
 

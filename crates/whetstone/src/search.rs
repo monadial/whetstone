@@ -4,6 +4,9 @@ use std::ops::Range;
 
 use unicode_segmentation::UnicodeSegmentation as _;
 
+use crate::entry::TextEntry;
+use crate::keymap::Command;
+
 /// What a search looks for: text that is not empty. A query with no
 /// capital letters ignores the case of ASCII letters, as `smartcase` does in
 /// vim; one with a capital matches exactly. It matches whole characters as
@@ -94,6 +97,35 @@ pub(crate) fn first_from(matches: &[usize], start: usize) -> Option<usize> {
         .find(|&&index| index >= start)
         .or(matches.first())
         .copied()
+}
+
+/// The last of `matches`, indexes in order, before `before`, wrapping
+/// around to the last.
+pub(crate) fn last_before(matches: &[usize], before: usize) -> Option<usize> {
+    matches
+        .iter()
+        .rev()
+        .find(|&&index| index < before)
+        .or(matches.last())
+        .copied()
+}
+
+/// Applies `command` to `search_box`, the search box the learner is typing
+/// into, if one is open. Enter closes it and returns what to search for,
+/// unless nothing was typed; Esc closes it; any other command edits it.
+pub(crate) fn edit(search_box: &mut Option<TextEntry>, command: Command) -> Option<Query> {
+    let entry = search_box.as_mut()?;
+    match command {
+        Command::Activate => search_box.take().and_then(|entry| Query::new(entry.text())),
+        Command::Cancel => {
+            *search_box = None;
+            None
+        }
+        command => {
+            entry.apply(command);
+            None
+        }
+    }
 }
 
 /// What a search for `query` found, for the row that says so: which of the
