@@ -19,6 +19,8 @@ Look for:
   up compared with them.
 - How easy the result is to test, replace, extend and reason about.
 
+Prefer the reasons behind the shape over a description of it.
+
 When the repository is not software, its system design is how the material
 is organised: how it is divided into parts, what each part is responsible
 for, how the parts refer to and build on one another, and why it is arranged

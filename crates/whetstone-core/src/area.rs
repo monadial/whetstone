@@ -79,7 +79,7 @@ const DEFAULT_FILES: [(&str, &[u8]); 5] = [
 const DESCRIPTION_LIMIT: usize = 200;
 
 /// The keys an area file's front matter has, and the only ones it may have.
-const KEYS: [&str; 2] = ["name", "description"];
+const FRONT_MATTER_KEYS: [&str; 2] = ["name", "description"];
 
 /// Text that is not an [`AreaId`].
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -93,9 +93,9 @@ pub enum AreaFileError {
     #[error(
         "the file name must be an area ID followed by `.md`: lowercase letters, digits and hyphens"
     )]
-    FileName,
+    InvalidFileName,
     /// The file is larger than 16 KB, 16,000 bytes.
-    #[error("the file is larger than 16 KB")]
+    #[error("the file is larger than {} KB", FILE_LIMIT / 1000)]
     TooLarge,
     /// The file is not UTF-8 text.
     #[error("the file is not UTF-8 text")]
@@ -122,10 +122,13 @@ pub enum AreaFileError {
     UnknownKey(String),
     /// `name` or `description` is not a string.
     #[error("`{0}` in the front matter must be a string")]
-    NotText(&'static str),
+    NotAString(&'static str),
     /// `name` is empty.
     #[error("`name` is empty")]
     EmptyName,
+    /// `name` is more than one line.
+    #[error("`name` must be one line")]
+    MultilineName,
     /// `description` is empty.
     #[error("`description` is empty")]
     EmptyDescription,
@@ -133,7 +136,7 @@ pub enum AreaFileError {
     #[error("`description` must be one line")]
     MultilineDescription,
     /// `description` is longer than 200 characters.
-    #[error("`description` is longer than 200 characters")]
+    #[error("`description` is longer than {DESCRIPTION_LIMIT} characters")]
     LongDescription,
     /// Nothing follows the front matter.
     #[error("the area prompt after the front matter is empty")]
@@ -156,7 +159,7 @@ impl Area {
         let id = file_name
             .strip_suffix(".md")
             .and_then(|id| id.parse().ok())
-            .ok_or(AreaFileError::FileName)?;
+            .ok_or(AreaFileError::InvalidFileName)?;
         if contents.len() > FILE_LIMIT {
             return Err(AreaFileError::TooLarge);
         }
@@ -174,7 +177,10 @@ impl Area {
                 message: error.message().trim().to_owned(),
             }
         })?;
-        if let Some(key) = table.keys().find(|key| !KEYS.contains(&key.as_str())) {
+        if let Some(key) = table
+            .keys()
+            .find(|key| !FRONT_MATTER_KEYS.contains(&key.as_str()))
+        {
             return Err(AreaFileError::UnknownKey(key.clone()));
         }
         let text_of = |key: &'static str| {
@@ -182,11 +188,14 @@ impl Area {
                 .get(key)
                 .ok_or(AreaFileError::MissingKey(key))?
                 .as_str()
-                .ok_or(AreaFileError::NotText(key))
+                .ok_or(AreaFileError::NotAString(key))
         };
         let name = text_of("name")?.trim();
         if name.is_empty() {
             return Err(AreaFileError::EmptyName);
+        }
+        if name.contains(['\n', '\r']) {
+            return Err(AreaFileError::MultilineName);
         }
         let description = text_of("description")?.trim();
         if description.is_empty() {
@@ -451,7 +460,7 @@ mod tests {
         ] {
             assert_eq!(
                 reason(file_name, VALID),
-                AreaFileError::FileName,
+                AreaFileError::InvalidFileName,
                 "{file_name:?}"
             );
         }
@@ -474,10 +483,9 @@ mod tests {
         let at_the_limit = format!("{VALID}{}", "x".repeat(16_000 - VALID.len()));
         assert!(parse("domain.md", &at_the_limit).is_ok());
 
-        assert_eq!(
-            reason("domain.md", &format!("{at_the_limit}x")),
-            AreaFileError::TooLarge
-        );
+        let reason = reason("domain.md", &format!("{at_the_limit}x"));
+        assert_eq!(reason, AreaFileError::TooLarge);
+        assert_eq!(reason.to_string(), "the file is larger than 16 KB");
     }
 
     #[test]
@@ -577,14 +585,14 @@ mod tests {
                 "domain.md",
                 &with_front_matter("name = 3\ndescription = \"The rules\"")
             ),
-            AreaFileError::NotText("name")
+            AreaFileError::NotAString("name")
         );
         assert_eq!(
             reason(
                 "domain.md",
                 &with_front_matter("name = \"Domain\"\ndescription = [\"The rules\"]")
             ),
-            AreaFileError::NotText("description")
+            AreaFileError::NotAString("description")
         );
     }
 
@@ -600,6 +608,17 @@ mod tests {
                 "{name:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_name_of_more_than_one_line_is_invalid() {
+        assert_eq!(
+            reason(
+                "domain.md",
+                &with_front_matter("name = \"Domain\\nmodel\"\ndescription = \"The rules\"")
+            ),
+            AreaFileError::MultilineName
+        );
     }
 
     /// Why an area file with `description` is invalid.
@@ -641,9 +660,11 @@ mod tests {
             .is_ok()
         );
 
+        let reason = description_reason(&format!("{at_the_limit}e"));
+        assert_eq!(reason, AreaFileError::LongDescription);
         assert_eq!(
-            description_reason(&format!("{at_the_limit}e")),
-            AreaFileError::LongDescription
+            reason.to_string(),
+            "`description` is longer than 200 characters"
         );
     }
 
@@ -720,7 +741,7 @@ mod tests {
                     .map_err(InvalidAreaFile::reason))
                 .collect::<Vec<_>>(),
             [
-                Err(&AreaFileError::FileName),
+                Err(&AreaFileError::InvalidFileName),
                 Ok(AreaSource::Repository),
                 Err(&AreaFileError::NoFrontMatter),
                 Ok(AreaSource::Repository),

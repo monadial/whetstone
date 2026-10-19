@@ -2,6 +2,7 @@
 //! because it replaces the process-wide panic hook.
 
 mod app;
+mod areas;
 mod cli;
 mod colors;
 mod config;
