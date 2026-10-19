@@ -1,6 +1,7 @@
 # cargo-deny checks the workspace's dependency graph for advisories, licenses,
-# bans and sources. CI runs `cargo deny check`; see CODING_STANDARDS.md rules 8
-# and 9. The showcase project is not a workspace member and is not checked here.
+# bans and sources. CI runs `cargo deny --locked check`; see
+# CODING_STANDARDS.md rules 8 and 9. The showcase project is not a workspace
+# member and is not checked here.
 # Reference: https://embarkstudios.github.io/cargo-deny/checks/cfg.html
 
 [graph]
@@ -46,13 +47,10 @@ exceptions = []
 # Rig is likely to bring duplicate versions; report them without failing.
 multiple-versions = "warn"
 # No `*` version requirements, except path dependencies between the
-# unpublished workspace crates.
+# unpublished workspace crates (for when `whetstone` depends on
+# `whetstone-core`).
 wildcards = "deny"
 allow-wildcard-paths = true
-highlight = "all"
-deny = []
-skip = []
-skip-tree = []
 
 [sources]
 # Only crates.io. A git dependency (for example a pinned Rig revision) needs an
