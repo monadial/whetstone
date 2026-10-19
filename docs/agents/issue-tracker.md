@@ -2,6 +2,12 @@
 
 Issues and specs for this repo live in GitHub Issues at https://github.com/monadial/whetstone/issues. Use the `gh` CLI for tracker operations.
 
+## Repository scope
+
+This tracker covers the CLI and narrowly reviewed public client contracts. Company portal, website, and internal commercial planning belong in their own verified private repositories. A full cross-product map requires a private planning tracker or the user's explicit choice of a public summary.
+
+Before publication, verify the active repository and its current visibility, and fetch any referenced issues. When the local restart kit is present, read `docs/restart-kit/skills/REPOSITORY-ROUTING.md`. Keep the full kit untracked until its file-by-file public subset is reviewed.
+
 ## Conventions
 
 Run commands inside this checkout so `gh` infers the repository from the Git remote. Outside the checkout, pass `--repo monadial/whetstone` (or use the explicit repository path for `gh api`).
