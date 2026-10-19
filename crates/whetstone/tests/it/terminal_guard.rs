@@ -1,24 +1,17 @@
 //! The terminal guard restores every mode it enabled, through its own
-//! interface. Panic restore lives in `panic_restore.rs`, because a panic hook
-//! is global to the test process.
-
-mod support;
+//! interface. Panic restore lives in `tests/panic_restore.rs`, because a
+//! panic hook is global to the test process.
 
 use whetstone::{TerminalGuard, TerminalMode};
 
 use crate::support::{Log, RecordingSwitch};
 
-const ALL: [TerminalMode; 3] = [
-    TerminalMode::Raw,
-    TerminalMode::AlternateScreen,
-    TerminalMode::HiddenCursor,
-];
-
 #[test]
 fn dropping_the_guard_restores_every_mode_in_reverse_order() {
     let log = Log::default();
 
-    let guard = TerminalGuard::enable(RecordingSwitch::new(&log), &ALL).expect("enable modes");
+    let guard = TerminalGuard::enable(RecordingSwitch::new(&log), &TerminalMode::TUI)
+        .expect("enable modes");
     drop(guard);
 
     assert_eq!(
@@ -38,7 +31,8 @@ fn dropping_the_guard_restores_every_mode_in_reverse_order() {
 fn an_explicit_restore_happens_once() {
     let log = Log::default();
 
-    let guard = TerminalGuard::enable(RecordingSwitch::new(&log), &ALL).expect("enable modes");
+    let guard = TerminalGuard::enable(RecordingSwitch::new(&log), &TerminalMode::TUI)
+        .expect("enable modes");
     guard.restore().expect("restore modes");
 
     assert_eq!(
@@ -60,7 +54,7 @@ fn a_mode_that_fails_to_enable_restores_the_modes_already_enabled() {
         ..RecordingSwitch::new(&log)
     };
 
-    let error = TerminalGuard::enable(switch, &ALL).expect_err("enabling fails");
+    let error = TerminalGuard::enable(switch, &TerminalMode::TUI).expect_err("enabling fails");
 
     assert_eq!(error.to_string(), "HiddenCursor unsupported");
     assert_eq!(

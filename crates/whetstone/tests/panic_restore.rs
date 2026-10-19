@@ -1,6 +1,7 @@
 //! A panic restores the terminal before the panic message prints. This file
 //! holds a single test because it replaces the process-wide panic hook.
 
+#[path = "it/support.rs"]
 mod support;
 
 use std::panic;
@@ -16,15 +17,8 @@ fn a_panic_restores_every_mode_before_the_panic_message_prints() {
     let message_log = log.clone();
     panic::set_hook(Box::new(move |_| message_log.push("panic message printed")));
 
-    let guard = TerminalGuard::enable(
-        RecordingSwitch::new(&log),
-        &[
-            TerminalMode::Raw,
-            TerminalMode::AlternateScreen,
-            TerminalMode::HiddenCursor,
-        ],
-    )
-    .expect("enable modes");
+    let guard = TerminalGuard::enable(RecordingSwitch::new(&log), &TerminalMode::TUI)
+        .expect("enable modes");
     let outcome = panic::catch_unwind(|| panic!("boom"));
     drop(guard);
 

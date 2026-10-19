@@ -45,7 +45,7 @@ pub enum TerminalMode {
 
 impl TerminalMode {
     /// Every mode the TUI uses, in the order it enables them.
-    pub(crate) const TUI: [Self; 3] = [Self::Raw, Self::AlternateScreen, Self::HiddenCursor];
+    pub const TUI: [Self; 3] = [Self::Raw, Self::AlternateScreen, Self::HiddenCursor];
 }
 
 /// Turns terminal modes on and off for a [`TerminalGuard`].
@@ -136,8 +136,10 @@ impl Session {
 fn install_panic_hook(session: Arc<Mutex<Session>>) {
     let previous = panic::take_hook();
     panic::set_hook(Box::new(move |info| {
-        // Never block or panic in here: skip the restore if the session is
-        // busy on another thread, and keep the panic message either way.
+        // Never block or panic in here. If the session is busy, a mode switch
+        // is mid-call (perhaps the one panicking): skip the restore and let
+        // the guard's drop do it while unwinding. Print the message either
+        // way.
         let session = match session.try_lock() {
             Ok(session) => Some(session),
             Err(TryLockError::Poisoned(poisoned)) => Some(poisoned.into_inner()),

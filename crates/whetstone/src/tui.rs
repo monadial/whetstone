@@ -1,26 +1,137 @@
 //! The single UI loop: it owns the terminal while the app runs.
 
+use std::ffi::c_int;
 use std::io;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
 
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
-use ratatui::crossterm::event;
+use ratatui::crossterm::event::{self, Event};
+use signal_hook::SigId;
+use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
 
 use crate::app::{App, Flow};
 use crate::terminal::{CrosstermSwitch, TerminalGuard, TerminalMode};
 
-/// Takes over the terminal, runs `app` until it quits, then gives the
-/// terminal back exactly as it was.
-pub(crate) fn run(mut app: App) -> io::Result<()> {
-    let guard = TerminalGuard::enable(CrosstermSwitch::new(io::stdout()), &TerminalMode::TUI)?;
-    let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
+/// How long the loop waits for input before checking for a stop signal.
+const SIGNAL_CHECK_INTERVAL: Duration = Duration::from_millis(100);
+
+/// Why the UI loop ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Ending {
+    /// The learner quit.
+    Quit,
+    /// A signal from outside the terminal stopped the app.
+    Stopped { signal: c_int },
+}
+
+/// The terminal could not be used.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum TuiError {
+    #[error("cannot listen for stop signals")]
+    Signals(#[source] io::Error),
+    #[error("cannot take over the terminal")]
+    Enable(#[source] io::Error),
+    #[error("cannot draw to the terminal")]
+    Draw(#[source] io::Error),
+    #[error("cannot read terminal input")]
+    Input(#[source] io::Error),
+    #[error("cannot restore the terminal")]
+    Restore(#[source] io::Error),
+}
+
+/// Takes over the terminal, runs `app` until it quits or a signal stops it,
+/// then gives the terminal back exactly as it was.
+pub(crate) fn run(mut app: App) -> Result<Ending, TuiError> {
+    // Listen before taking over the terminal, so no signal can leave it in
+    // raw mode.
+    let stop = StopSignals::listen().map_err(TuiError::Signals)?;
+    let guard = TerminalGuard::enable(CrosstermSwitch::new(io::stdout()), &TerminalMode::TUI)
+        .map_err(TuiError::Enable)?;
+    let mut terminal =
+        Terminal::new(CrosstermBackend::new(io::stdout())).map_err(TuiError::Draw)?;
+    let ending = loop {
+        terminal
+            .draw(|frame| app.render(frame))
+            .map_err(TuiError::Draw)?;
+        match next_input(&stop)? {
+            Input::Event(event) => {
+                if app.handle(&event) == Flow::Quit {
+                    break Ending::Quit;
+                }
+            }
+            Input::Stop { signal } => break Ending::Stopped { signal },
+        }
+    };
+    drop(terminal);
+    guard.restore().map_err(TuiError::Restore)?;
+    Ok(ending)
+}
+
+enum Input {
+    Event(Event),
+    Stop { signal: c_int },
+}
+
+/// Waits for the next terminal event, the loop's only input source, or for a
+/// stop signal.
+fn next_input(stop: &StopSignals) -> Result<Input, TuiError> {
     loop {
-        terminal.draw(|frame| app.render(frame))?;
-        // The only input source. Each event is applied before the next draw.
-        if app.handle(&event::read()?) == Flow::Quit {
-            break;
+        if let Some(signal) = stop.received() {
+            return Ok(Input::Stop { signal });
+        }
+        match event::poll(SIGNAL_CHECK_INTERVAL) {
+            Ok(true) => return event::read().map(Input::Event).map_err(TuiError::Input),
+            Ok(false) => {}
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(TuiError::Input(error)),
         }
     }
-    drop(terminal);
-    guard.restore()
+}
+
+/// Signals from outside the terminal that stop the app the way Ctrl+C does.
+/// In raw mode Ctrl+C is a key, so SIGINT can only come from outside.
+#[derive(Debug)]
+struct StopSignals {
+    /// The last stop signal received, or 0.
+    received: Arc<AtomicUsize>,
+    registrations: Vec<SigId>,
+}
+
+impl StopSignals {
+    const SIGNALS: [c_int; 3] = [SIGHUP, SIGINT, SIGTERM];
+
+    fn listen() -> io::Result<Self> {
+        let received = Arc::new(AtomicUsize::new(0));
+        let mut stop = Self {
+            received,
+            registrations: Vec::with_capacity(Self::SIGNALS.len()),
+        };
+        for signal in Self::SIGNALS {
+            let value = usize::try_from(signal).expect("signal numbers are positive");
+            stop.registrations.push(signal_hook::flag::register_usize(
+                signal,
+                Arc::clone(&stop.received),
+                value,
+            )?);
+        }
+        Ok(stop)
+    }
+
+    fn received(&self) -> Option<c_int> {
+        match self.received.load(Ordering::Relaxed) {
+            0 => None,
+            signal => c_int::try_from(signal).ok(),
+        }
+    }
+}
+
+impl Drop for StopSignals {
+    fn drop(&mut self) {
+        for registration in self.registrations.drain(..) {
+            signal_hook::low_level::unregister(registration);
+        }
+    }
 }

@@ -8,6 +8,8 @@
 
 use std::path::Path;
 use std::process::Command;
+use std::thread;
+use std::time::Duration;
 
 use rexpect::session::{PtySession, spawn_command};
 use tempfile::TempDir;
@@ -27,7 +29,15 @@ echo "modes after:"; stty -a; echo "modes end"
     )
 }
 
-const IN_THE_TERMINAL: &str = r#""$WHETSTONE""#;
+/// Runs `whetstone` in the foreground, attached to the terminal.
+const LAUNCH: &str = r#""$WHETSTONE""#;
+
+/// Runs `whetstone` in the background, still attached to the terminal, and
+/// waits for it. Its process ID goes to `$HOME/pid` so the test can signal it.
+const LAUNCH_IN_BACKGROUND: &str = r#"exec 3<&0
+"$WHETSTONE" <&3 3<&- &
+echo $! > "$HOME/pid"
+wait $!"#;
 
 const ENTER_ALTERNATE_SCREEN: &str = "\x1b[?1049h";
 const LEAVE_ALTERNATE_SCREEN: &str = "\x1b[?1049l";
@@ -124,7 +134,7 @@ impl Transcript {
 #[test]
 fn q_quits_and_restores_the_terminal() {
     let home = TempDir::new().expect("create a temporary home");
-    let mut session = start(IN_THE_TERMINAL, &[("HOME", home.path())]);
+    let mut session = start(LAUNCH, &[("HOME", home.path())]);
 
     let transcript = quit_with_q(&mut session);
 
@@ -135,7 +145,7 @@ fn q_quits_and_restores_the_terminal() {
 #[test]
 fn ctrl_c_quits_and_restores_the_terminal() {
     let home = TempDir::new().expect("create a temporary home");
-    let mut session = start(IN_THE_TERMINAL, &[("HOME", home.path())]);
+    let mut session = start(LAUNCH, &[("HOME", home.path())]);
 
     let transcript = quit_with(&mut session, |session| {
         session.send_control('c').expect("send Ctrl+C");
@@ -146,11 +156,43 @@ fn ctrl_c_quits_and_restores_the_terminal() {
 }
 
 #[test]
+fn a_termination_signal_from_outside_quits_and_restores_the_terminal() {
+    let home = TempDir::new().expect("create a temporary home");
+    let mut session = start(LAUNCH_IN_BACKGROUND, &[("HOME", home.path())]);
+
+    let transcript = quit_with(&mut session, |_| {
+        let pid = read_pid(&home.path().join("pid")).expect("whetstone's process ID");
+        let kill = Command::new("kill")
+            .args(["-TERM", &pid])
+            .status()
+            .expect("run kill");
+        assert!(kill.success(), "kill -TERM {pid}");
+    });
+
+    // The shell convention for a process ended by SIGTERM: 128 + 15.
+    transcript.assert_exit_code(143);
+    transcript.assert_terminal_restored();
+}
+
+/// Reads a process ID the shell writes right after starting the process.
+fn read_pid(path: &Path) -> Option<String> {
+    for _ in 0..50 {
+        if let Ok(pid) = std::fs::read_to_string(path)
+            && !pid.trim().is_empty()
+        {
+            return Some(pid.trim().to_owned());
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    None
+}
+
+#[test]
 fn logs_go_to_a_file_in_the_xdg_state_directory_and_never_to_the_screen() {
     let home = TempDir::new().expect("create a temporary home");
     let state = TempDir::new().expect("create a temporary state directory");
     let mut session = start(
-        IN_THE_TERMINAL,
+        LAUNCH,
         &[("HOME", home.path()), ("XDG_STATE_HOME", state.path())],
     );
 
@@ -169,7 +211,7 @@ fn logs_go_to_a_file_in_the_xdg_state_directory_and_never_to_the_screen() {
 #[test]
 fn without_xdg_variables_logs_go_under_the_home_directory() {
     let home = TempDir::new().expect("create a temporary home");
-    let mut session = start(IN_THE_TERMINAL, &[("HOME", home.path())]);
+    let mut session = start(LAUNCH, &[("HOME", home.path())]);
 
     quit_with_q(&mut session);
 
