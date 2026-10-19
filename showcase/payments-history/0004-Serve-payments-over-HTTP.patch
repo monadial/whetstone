@@ -1,0 +1,757 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tomas Mihalicka <tomas@mihalicka.com>
+Date: Tue, 13 Oct 2026 16:48:00 +0200
+Subject: [PATCH 04/10] Serve payments over HTTP
+
+Expose the service to tenants. POST /v1/tenants/{tenant}/payments takes
+an amount and currency plus an Idempotency-Key header, charges the
+payment through the provider and returns it, and
+GET /v1/tenants/{tenant}/payments/{id} looks one up. Every lookup is
+scoped to the tenant in the path, so a tenant can never read another
+tenant's payment.
+
+Repeating a request with the same idempotency key returns the original
+payment instead of charging again. If the payment's outcome is still
+unknown, it is charged again. Reusing a key for a different amount is
+a conflict.
+
+The payment is saved before it is charged, so a crash mid-charge
+leaves a record for the client's retry to pick up. The store refuses a
+second payment under a key that is already taken, so two concurrent
+requests with one key cannot both create a payment.
+
+The binary reads its listen address and data directory from the
+environment and shuts down gracefully on Ctrl+C.
+
+Areas: domain, infrastructure
+---
+ .gitignore     |   1 +
+ Cargo.lock     | 124 +++++++++++++++++++++++++++++++++++++++++++++++++
+ Cargo.toml     |   5 +-
+ README.md      |  33 +++++++++++++
+ src/config.rs  |   7 +++
+ src/http.rs    |  94 +++++++++++++++++++++++++++++++++++++
+ src/lib.rs     |   2 +
+ src/main.rs    |  33 +++++++++++++
+ src/payment.rs |   6 +++
+ src/service.rs |  73 +++++++++++++++++++++++++++++
+ src/store.rs   |  10 ++++
+ tests/api.rs   | 107 ++++++++++++++++++++++++++++++++++++++++++
+ 12 files changed, 493 insertions(+), 2 deletions(-)
+ create mode 100644 src/http.rs
+ create mode 100644 src/main.rs
+ create mode 100644 src/service.rs
+ create mode 100644 tests/api.rs
+
+diff --git a/.gitignore b/.gitignore
+index ea8c4bf..a727c0a 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -1 +1,2 @@
+ /target
++/data
+diff --git a/Cargo.lock b/Cargo.lock
+index b9fb10f..28e759c 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -8,6 +8,58 @@ version = "1.1.2"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
+ 
++[[package]]
++name = "axum"
++version = "0.8.9"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "31b698c5f9a010f6573133b09e0de5408834d0c82f8d7475a89fc1867a71cd90"
++dependencies = [
++ "axum-core",
++ "bytes",
++ "form_urlencoded",
++ "futures-util",
++ "http",
++ "http-body",
++ "http-body-util",
++ "hyper",
++ "hyper-util",
++ "itoa",
++ "matchit",
++ "memchr",
++ "mime",
++ "percent-encoding",
++ "pin-project-lite",
++ "serde_core",
++ "serde_json",
++ "serde_path_to_error",
++ "serde_urlencoded",
++ "sync_wrapper",
++ "tokio",
++ "tower",
++ "tower-layer",
++ "tower-service",
++ "tracing",
++]
++
++[[package]]
++name = "axum-core"
++version = "0.5.6"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "08c78f31d7b1291f7ee735c1c6780ccde7785daae9a9206026862dab7d8792d1"
++dependencies = [
++ "bytes",
++ "futures-core",
++ "http",
++ "http-body",
++ "http-body-util",
++ "mime",
++ "pin-project-lite",
++ "sync_wrapper",
++ "tower-layer",
++ "tower-service",
++ "tracing",
++]
++
+ [[package]]
+ name = "base64"
+ version = "0.23.1"
+@@ -49,6 +101,16 @@ dependencies = [
+  "syn",
+ ]
+ 
++[[package]]
++name = "errno"
++version = "0.3.14"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
++dependencies = [
++ "libc",
++ "windows-sys",
++]
++
+ [[package]]
+ name = "form_urlencoded"
+ version = "1.2.2"
+@@ -130,6 +192,12 @@ version = "1.10.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "6dbf3de79e51f3d586ab4cb9d5c3e2c14aa28ed23d180cf89b4df0454a69cc87"
+ 
++[[package]]
++name = "httpdate"
++version = "1.0.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
++
+ [[package]]
+ name = "hyper"
+ version = "1.12.0"
+@@ -142,6 +210,7 @@ dependencies = [
+  "http",
+  "http-body",
+  "httparse",
++ "httpdate",
+  "itoa",
+  "pin-project-lite",
+  "smallvec",
+@@ -318,12 +387,24 @@ version = "0.4.34"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
+ 
++[[package]]
++name = "matchit"
++version = "0.8.4"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
++
+ [[package]]
+ name = "memchr"
+ version = "2.8.3"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
+ 
++[[package]]
++name = "mime"
++version = "0.3.17"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "6877bb514081ee2a7ff5ef9de3281f14a4dd4bceac4c09388074a6b5df8a139a"
++
+ [[package]]
+ name = "mio"
+ version = "1.2.4"
+@@ -345,6 +426,7 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
+ name = "payments"
+ version = "0.1.0"
+ dependencies = [
++ "axum",
+  "reqwest",
+  "serde",
+  "serde_json",
+@@ -428,6 +510,12 @@ version = "1.0.23"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
+ 
++[[package]]
++name = "ryu"
++version = "1.0.23"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
++
+ [[package]]
+ name = "serde"
+ version = "1.0.229"
+@@ -471,6 +559,39 @@ dependencies = [
+  "zmij",
+ ]
+ 
++[[package]]
++name = "serde_path_to_error"
++version = "0.1.20"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "10a9ff822e371bb5403e391ecd83e182e0e77ba7f6fe0160b795797109d1b457"
++dependencies = [
++ "itoa",
++ "serde",
++ "serde_core",
++]
++
++[[package]]
++name = "serde_urlencoded"
++version = "0.7.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "d3491c14715ca2294c4d6a88f15e84739788c1d030eed8c110436aafdaa2f3fd"
++dependencies = [
++ "form_urlencoded",
++ "itoa",
++ "ryu",
++ "serde",
++]
++
++[[package]]
++name = "signal-hook-registry"
++version = "1.4.8"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "c4db69cba1110affc0e9f7bcd48bbf87b3f4fc7c61fc9155afd4c469eb3d6c1b"
++dependencies = [
++ "errno",
++ "libc",
++]
++
+ [[package]]
+ name = "slab"
+ version = "0.4.12"
+@@ -569,6 +690,7 @@ dependencies = [
+  "libc",
+  "mio",
+  "pin-project-lite",
++ "signal-hook-registry",
+  "socket2",
+  "tokio-macros",
+  "windows-sys",
+@@ -598,6 +720,7 @@ dependencies = [
+  "tokio",
+  "tower-layer",
+  "tower-service",
++ "tracing",
+ ]
+ 
+ [[package]]
+@@ -636,6 +759,7 @@ version = "0.1.44"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "63e71662fa4b2a2c3a26f570f037eb95bb1f85397f3cd8076caed2f026a6d100"
+ dependencies = [
++ "log",
+  "pin-project-lite",
+  "tracing-core",
+ ]
+diff --git a/Cargo.toml b/Cargo.toml
+index 3aedea5..3963642 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -11,15 +11,16 @@ publish = false
+ [workspace]
+ 
+ [dependencies]
++axum = "0.8.9"
+ # Plain HTTP only: TLS to the provider terminates at the egress proxy.
+ reqwest = { version = "0.13.5", default-features = false, features = ["json"] }
+ serde = { version = "1.0.229", features = ["derive"] }
+ serde_json = "1.0.154"
+ thiserror = "2.0.21"
+-tokio = { version = "1.53.2", features = ["time"] }
++tokio = { version = "1.53.2", features = ["macros", "net", "rt-multi-thread", "signal", "time"] }
+ 
+ [dev-dependencies]
+-tokio = { version = "1.53.2", features = ["macros", "rt", "test-util"] }
++tokio = { version = "1.53.2", features = ["test-util"] }
+ 
+ [lints.rust]
+ unsafe_code = "forbid"
+diff --git a/README.md b/README.md
+index 5956810..b2b1134 100644
+--- a/README.md
++++ b/README.md
+@@ -4,6 +4,39 @@ A small multi-tenant payments service. Tenants create payments, the service
+ charges them through an external payment provider, and a payment whose outcome
+ is unknown can be retried safely.
+ 
++## Running
++
++```sh
++PAYMENTS_PROVIDER_URL=http://localhost:9000 cargo run
++```
++
++| Variable | Default | Meaning |
++| --- | --- | --- |
++| `PAYMENTS_LISTEN_ADDR` | `127.0.0.1:8080` | Address the API listens on |
++| `PAYMENTS_DATA_DIR` | `data` | Directory holding the payment log |
++| `PAYMENTS_PROVIDER_URL` | required | Base URL of the payment provider |
++| `PAYMENTS_PROVIDER_TIMEOUT_MS` | `2000` | Timeout for each attempt of a charge |
++| `PAYMENTS_PROVIDER_MAX_ATTEMPTS` | `3` | Attempts per charge |
++| `PAYMENTS_PROVIDER_BACKOFF_MS` | `100` | Wait before the first retry; it doubles each time |
++
++## API
++
++```sh
++curl -X POST localhost:8080/v1/tenants/acme/payments \
++  -H 'Content-Type: application/json' \
++  -H 'Idempotency-Key: order-1042' \
++  -d '{"amount_minor": 1250, "currency": "EUR"}'
++
++curl localhost:8080/v1/tenants/acme/payments/pay_...
++```
++
++Repeating a `POST` with the same `Idempotency-Key` returns the same payment.
++
++## Tests
++
++`cargo test` runs offline. The API tests talk to a fake provider on
++localhost.
++
+ ## License
+ 
+ Licensed under the [Apache License, Version 2.0](LICENSE).
+diff --git a/src/config.rs b/src/config.rs
+index fdb63ad..7df7259 100644
+--- a/src/config.rs
++++ b/src/config.rs
+@@ -1,5 +1,7 @@
+ //! Service configuration, read from `PAYMENTS_*` environment variables.
+ 
++use std::net::SocketAddr;
++use std::path::PathBuf;
+ use std::str::FromStr;
+ use std::time::Duration;
+ 
+@@ -7,6 +9,8 @@ use crate::provider::RetryPolicy;
+ 
+ #[derive(Debug, Clone, PartialEq, Eq)]
+ pub struct Config {
++    pub listen_addr: SocketAddr,
++    pub data_dir: PathBuf,
+     pub provider_url: String,
+     pub provider_retry: RetryPolicy,
+ }
+@@ -29,6 +33,8 @@ impl Config {
+     pub fn from_lookup(lookup: impl Fn(&str) -> Option<String>) -> Result<Self, ConfigError> {
+         let required = |name| lookup(name).ok_or(ConfigError::Missing(name));
+         Ok(Self {
++            listen_addr: parsed(&lookup, "PAYMENTS_LISTEN_ADDR", "127.0.0.1:8080")?,
++            data_dir: parsed(&lookup, "PAYMENTS_DATA_DIR", "data")?,
+             provider_url: required("PAYMENTS_PROVIDER_URL")?,
+             provider_retry: RetryPolicy {
+                 attempt_timeout: millis(&lookup, "PAYMENTS_PROVIDER_TIMEOUT_MS", 2_000)?,
+@@ -71,6 +77,7 @@ mod tests {
+     fn defaults_apply_when_only_the_provider_url_is_set() {
+         let config = load(&[("PAYMENTS_PROVIDER_URL", "http://provider.internal")]).unwrap();
+ 
++        assert_eq!(config.listen_addr, "127.0.0.1:8080".parse().unwrap());
+         assert_eq!(config.provider_url, "http://provider.internal");
+         assert_eq!(
+             config.provider_retry.attempt_timeout,
+diff --git a/src/http.rs b/src/http.rs
+new file mode 100644
+index 0000000..0bad79d
+--- /dev/null
++++ b/src/http.rs
+@@ -0,0 +1,94 @@
++//! The HTTP API.
++
++use std::sync::Arc;
++
++use axum::extract::{Path, State};
++use axum::http::{HeaderMap, StatusCode};
++use axum::response::{IntoResponse, Response};
++use axum::routing::{get, post};
++use axum::{Json, Router};
++use serde::{Deserialize, Serialize};
++
++use crate::payment::{
++    Currency, IdempotencyKey, Money, Payment, PaymentId, PaymentStatus, TenantId,
++};
++use crate::provider::Transport;
++use crate::service::{PaymentService, ServiceError};
++
++type Service<T> = State<Arc<PaymentService<T>>>;
++
++pub fn router<T: Transport + 'static>(service: Arc<PaymentService<T>>) -> Router {
++    Router::new()
++        .route("/healthz", get(|| async { "ok" }))
++        .route("/v1/tenants/{tenant}/payments", post(create::<T>))
++        .route("/v1/tenants/{tenant}/payments/{id}", get(fetch::<T>))
++        .with_state(service)
++}
++
++#[derive(Deserialize)]
++struct CreatePayment {
++    amount_minor: u64,
++    currency: String,
++}
++
++/// A payment as clients see it.
++#[derive(Serialize)]
++struct PaymentView {
++    id: String,
++    amount_minor: u64,
++    currency: String,
++    status: PaymentStatus,
++}
++
++impl From<Payment> for PaymentView {
++    fn from(payment: Payment) -> Self {
++        Self {
++            id: payment.id().to_string(),
++            amount_minor: payment.amount().amount_minor(),
++            currency: payment.amount().currency().as_str().to_owned(),
++            status: payment.status().clone(),
++        }
++    }
++}
++
++async fn create<T: Transport>(
++    State(service): Service<T>,
++    Path(tenant): Path<String>,
++    headers: HeaderMap,
++    Json(body): Json<CreatePayment>,
++) -> Result<Json<PaymentView>, ServiceError> {
++    let tenant = TenantId::parse(&tenant)?;
++    let key = headers
++        .get("idempotency-key")
++        .and_then(|value| value.to_str().ok());
++    let key = IdempotencyKey::parse(key.unwrap_or_default())?;
++    let amount = Money::new(body.amount_minor, Currency::parse(&body.currency)?)?;
++    let payment = service.pay(tenant, key, amount).await?;
++    Ok(Json(payment.into()))
++}
++
++async fn fetch<T: Transport>(
++    State(service): Service<T>,
++    Path((tenant, id)): Path<(String, String)>,
++) -> Result<Json<PaymentView>, ServiceError> {
++    let tenant = TenantId::parse(&tenant)?;
++    let payment = service.get(&tenant, &PaymentId::from_raw(id))?;
++    Ok(Json(payment.into()))
++}
++
++impl IntoResponse for ServiceError {
++    fn into_response(self) -> Response {
++        let status = match self {
++            Self::Invalid(_) => StatusCode::BAD_REQUEST,
++            Self::KeyReused => StatusCode::CONFLICT,
++            Self::NotFound => StatusCode::NOT_FOUND,
++            Self::Store(_) => StatusCode::INTERNAL_SERVER_ERROR,
++        };
++        let message = if status.is_server_error() {
++            "internal error".to_owned()
++        } else {
++            self.to_string()
++        };
++        (status, Json(serde_json::json!({ "error": message }))).into_response()
++    }
++}
+diff --git a/src/lib.rs b/src/lib.rs
+index 0c91bca..964288a 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,6 +1,8 @@
+ //! A small multi-tenant payments service.
+ 
+ pub mod config;
++pub mod http;
+ pub mod payment;
+ pub mod provider;
++pub mod service;
+ pub mod store;
+diff --git a/src/main.rs b/src/main.rs
+new file mode 100644
+index 0000000..4a0dbb3
+--- /dev/null
++++ b/src/main.rs
+@@ -0,0 +1,33 @@
++//! Runs the payments service: reads its configuration from the environment,
++//! serves the HTTP API and shuts down gracefully on Ctrl+C.
++
++use std::error::Error;
++use std::sync::Arc;
++
++use payments::config::Config;
++use payments::provider::{HttpTransport, ProviderClient};
++use payments::service::PaymentService;
++use payments::store::FileStore;
++
++#[tokio::main]
++async fn main() -> Result<(), Box<dyn Error>> {
++    let config = Config::from_env()?;
++    std::fs::create_dir_all(&config.data_dir)?;
++    let store = FileStore::open(&config.data_dir.join("payments.log"))?;
++    let provider = ProviderClient::new(
++        HttpTransport::new(&config.provider_url)?,
++        config.provider_retry,
++    );
++    let app = payments::http::router(Arc::new(PaymentService::new(store, provider)));
++
++    let listener = tokio::net::TcpListener::bind(config.listen_addr).await?;
++    axum::serve(listener, app)
++        .with_graceful_shutdown(async {
++            // If the signal handler cannot be installed, keep serving.
++            if tokio::signal::ctrl_c().await.is_err() {
++                std::future::pending::<()>().await;
++            }
++        })
++        .await?;
++    Ok(())
++}
+diff --git a/src/payment.rs b/src/payment.rs
+index 7fdac2e..1660d72 100644
+--- a/src/payment.rs
++++ b/src/payment.rs
+@@ -66,6 +66,12 @@ impl PaymentId {
+     pub fn generate() -> Self {
+         Self(format!("pay_{}", unique_token()))
+     }
++
++    /// Wraps an id from a request. An id that was never issued simply
++    /// matches no payment.
++    pub fn from_raw(raw: String) -> Self {
++        Self(raw)
++    }
+ }
+ 
+ impl fmt::Display for PaymentId {
+diff --git a/src/service.rs b/src/service.rs
+new file mode 100644
+index 0000000..a33a21f
+--- /dev/null
++++ b/src/service.rs
+@@ -0,0 +1,73 @@
++//! The payment use cases behind the HTTP API: paying and looking payments up.
++
++use crate::payment::{
++    IdempotencyKey, Money, OperationKey, Payment, PaymentError, PaymentId, TenantId,
++};
++use crate::provider::{ChargeRequest, ProviderClient, Transport};
++use crate::store::{FileStore, StoreError};
++
++#[derive(Debug, thiserror::Error)]
++pub enum ServiceError {
++    #[error(transparent)]
++    Invalid(#[from] PaymentError),
++    #[error("idempotency key is already used by a different payment")]
++    KeyReused,
++    #[error("payment not found")]
++    NotFound,
++    #[error(transparent)]
++    Store(#[from] StoreError),
++}
++
++#[derive(Debug)]
++pub struct PaymentService<T> {
++    store: FileStore,
++    provider: ProviderClient<T>,
++}
++
++impl<T: Transport> PaymentService<T> {
++    pub fn new(store: FileStore, provider: ProviderClient<T>) -> Self {
++        Self { store, provider }
++    }
++
++    /// Creates a payment and charges it.
++    ///
++    /// Repeating a request with the same idempotency key returns the same
++    /// payment. It is charged again only while its outcome is still unknown.
++    pub async fn pay(
++        &self,
++        tenant: TenantId,
++        idempotency_key: IdempotencyKey,
++        amount: Money,
++    ) -> Result<Payment, ServiceError> {
++        let mut payment = match self
++            .store
++            .find_by_idempotency_key(&tenant, &idempotency_key)?
++        {
++            Some(existing) if existing.amount() != &amount => return Err(ServiceError::KeyReused),
++            Some(existing) if existing.is_settled() => return Ok(existing),
++            Some(existing) => existing,
++            None => {
++                let payment = Payment::new(tenant, idempotency_key, amount);
++                // Saved before charging, so a crash mid-charge leaves a record to retry.
++                self.store.save(&payment).map_err(|error| match error {
++                    StoreError::DuplicateKey => ServiceError::KeyReused,
++                    other => ServiceError::Store(other),
++                })?;
++                payment
++            }
++        };
++        // A fresh key stops the provider rejecting the retry as a duplicate.
++        let key = OperationKey::generate();
++        let outcome = self
++            .provider
++            .charge(&ChargeRequest::new(&payment, key))
++            .await;
++        payment.record(outcome)?;
++        self.store.save(&payment)?;
++        Ok(payment)
++    }
++
++    pub fn get(&self, tenant: &TenantId, id: &PaymentId) -> Result<Payment, ServiceError> {
++        self.store.get(tenant, id)?.ok_or(ServiceError::NotFound)
++    }
++}
+diff --git a/src/store.rs b/src/store.rs
+index 0052901..7cb44ba 100644
+--- a/src/store.rs
++++ b/src/store.rs
+@@ -19,6 +19,8 @@ pub enum StoreError {
+         offset: u64,
+         source: serde_json::Error,
+     },
++    #[error("idempotency key is already used by another payment")]
++    DuplicateKey,
+ }
+ 
+ #[derive(Debug)]
+@@ -74,6 +76,14 @@ impl FileStore {
+         let mut line = serde_json::to_string(payment).expect("a payment always encodes as JSON");
+         line.push('\n');
+         let mut log = self.lock();
++        let key = (payment.tenant().clone(), payment.idempotency_key().clone());
++        if log
++            .by_idempotency_key
++            .get(&key)
++            .is_some_and(|id| id != payment.id())
++        {
++            return Err(StoreError::DuplicateKey);
++        }
+         let offset = log.file.seek(SeekFrom::End(0))?;
+         log.file.write_all(line.as_bytes())?;
+         log.file.sync_data()?;
+diff --git a/tests/api.rs b/tests/api.rs
+new file mode 100644
+index 0000000..50d8ed7
+--- /dev/null
++++ b/tests/api.rs
+@@ -0,0 +1,107 @@
++//! Drives the HTTP API end to end against a fake provider on localhost.
++
++use std::sync::{Arc, Mutex};
++use std::time::Duration;
++
++use axum::Router;
++use axum::extract::State;
++use axum::http::{HeaderMap, StatusCode};
++use axum::response::{IntoResponse, Response};
++use axum::routing::post;
++use payments::provider::{HttpTransport, ProviderClient, RetryPolicy};
++use payments::service::PaymentService;
++use payments::store::FileStore;
++use serde_json::{Value, json};
++
++/// Records the operation key of every charge and fails the first few.
++#[derive(Clone, Default)]
++struct FakeProvider {
++    keys: Arc<Mutex<Vec<String>>>,
++    failures: Arc<Mutex<usize>>,
++}
++
++async fn charge(State(fake): State<FakeProvider>, headers: HeaderMap) -> Response {
++    let key = headers["idempotency-key"].to_str().unwrap().to_owned();
++    fake.keys.lock().unwrap().push(key);
++    let mut failures = fake.failures.lock().unwrap();
++    if *failures > 0 {
++        *failures -= 1;
++        return StatusCode::SERVICE_UNAVAILABLE.into_response();
++    }
++    axum::Json(json!({ "status": "succeeded", "id": "ch_1" })).into_response()
++}
++
++async fn serve(router: Router) -> String {
++    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
++    let address = listener.local_addr().unwrap();
++    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
++    format!("http://{address}")
++}
++
++/// Starts the service with a fresh payment log and returns its base URL.
++async fn start(fake: &FakeProvider, name: &str) -> String {
++    let routes = Router::new().route("/v1/charges", post(charge));
++    let provider = serve(routes.with_state(fake.clone())).await;
++    let log = std::env::temp_dir().join(format!("payments-api-{}-{name}.log", std::process::id()));
++    std::fs::remove_file(&log).ok();
++    let policy = RetryPolicy {
++        attempt_timeout: Duration::from_secs(1),
++        max_attempts: 2.try_into().unwrap(),
++        backoff: Duration::from_millis(1),
++    };
++    let client = ProviderClient::new(HttpTransport::new(&provider).unwrap(), policy);
++    let service = PaymentService::new(FileStore::open(&log).unwrap(), client);
++    serve(payments::http::router(Arc::new(service))).await
++}
++
++async fn pay(api: &str, tenant: &str, key: &str) -> reqwest::Response {
++    reqwest::Client::new()
++        .post(format!("{api}/v1/tenants/{tenant}/payments"))
++        .header("Idempotency-Key", key)
++        .json(&json!({ "amount_minor": 1250, "currency": "EUR" }))
++        .send()
++        .await
++        .unwrap()
++}
++
++#[tokio::test]
++async fn repeating_a_request_returns_the_same_payment_without_charging_again() {
++    let fake = FakeProvider::default();
++    let api = start(&fake, "repeat").await;
++
++    let first: Value = pay(&api, "acme", "order-1").await.json().await.unwrap();
++    let second: Value = pay(&api, "acme", "order-1").await.json().await.unwrap();
++
++    assert_eq!(
++        first["status"],
++        json!({ "succeeded": { "provider_ref": "ch_1" } })
++    );
++    assert_eq!(second, first);
++    assert_eq!(fake.keys.lock().unwrap().len(), 1);
++}
++
++#[tokio::test]
++async fn a_tenant_cannot_read_another_tenants_payment() {
++    let api = start(&FakeProvider::default(), "tenants").await;
++    let payment: Value = pay(&api, "acme", "order-1").await.json().await.unwrap();
++    let id = payment["id"].as_str().unwrap();
++
++    let own = reqwest::get(format!("{api}/v1/tenants/acme/payments/{id}"))
++        .await
++        .unwrap();
++    let other = reqwest::get(format!("{api}/v1/tenants/globex/payments/{id}"))
++        .await
++        .unwrap();
++
++    assert_eq!(own.status(), StatusCode::OK);
++    assert_eq!(other.status(), StatusCode::NOT_FOUND);
++}
++
++#[tokio::test]
++async fn a_request_without_an_idempotency_key_is_rejected() {
++    let api = start(&FakeProvider::default(), "no-key").await;
++
++    let response = pay(&api, "acme", "").await;
++
++    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
++}

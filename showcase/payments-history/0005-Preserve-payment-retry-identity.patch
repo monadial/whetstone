@@ -1,0 +1,110 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tomas Mihalicka <tomas@mihalicka.com>
+Date: Wed, 14 Oct 2026 11:12:00 +0200
+Subject: [PATCH 05/10] Preserve payment retry identity
+
+When a payment's outcome was unknown, repeating the request charged it
+again under a freshly generated operation key. The provider
+deduplicates charges on that key, so it saw the retry as a brand-new
+charge. If the first charge had in fact gone through before the
+timeout, the customer was charged twice.
+
+Build the charge request from the payment alone, so it always carries
+the operation key the payment was created with and no caller can pass
+another one. Every attempt for a payment now carries the same key,
+whether it is a retry inside the provider client or a retry of the
+whole request, and the provider applies the charge at most once.
+
+Areas: domain
+---
+ src/provider.rs |  9 +++++----
+ src/service.rs  | 11 ++---------
+ tests/api.rs    | 22 ++++++++++++++++++++++
+ 3 files changed, 29 insertions(+), 13 deletions(-)
+
+diff --git a/src/provider.rs b/src/provider.rs
+index 5db6a15..acfa7ef 100644
+--- a/src/provider.rs
++++ b/src/provider.rs
+@@ -24,9 +24,11 @@ pub struct ChargeRequest {
+ }
+ 
+ impl ChargeRequest {
+-    pub fn new(payment: &Payment, operation_key: OperationKey) -> Self {
++    /// Builds the charge for a payment. It always carries the operation key
++    /// the payment was created with, so every retry is the same charge.
++    pub fn new(payment: &Payment) -> Self {
+         Self {
+-            operation_key,
++            operation_key: payment.operation_key().clone(),
+             reference: payment.id().to_string(),
+             amount_minor: payment.amount().amount_minor(),
+             currency: payment.amount().currency().as_str().to_owned(),
+@@ -202,8 +204,7 @@ mod tests {
+     }
+ 
+     fn request() -> ChargeRequest {
+-        let payment = Payment::sample("acme", "order-7");
+-        ChargeRequest::new(&payment, payment.operation_key().clone())
++        ChargeRequest::new(&Payment::sample("acme", "order-7"))
+     }
+ 
+     fn client(transport: &Scripted) -> ProviderClient<&Scripted> {
+diff --git a/src/service.rs b/src/service.rs
+index a33a21f..4aa82c0 100644
+--- a/src/service.rs
++++ b/src/service.rs
+@@ -1,8 +1,6 @@
+ //! The payment use cases behind the HTTP API: paying and looking payments up.
+ 
+-use crate::payment::{
+-    IdempotencyKey, Money, OperationKey, Payment, PaymentError, PaymentId, TenantId,
+-};
++use crate::payment::{IdempotencyKey, Money, Payment, PaymentError, PaymentId, TenantId};
+ use crate::provider::{ChargeRequest, ProviderClient, Transport};
+ use crate::store::{FileStore, StoreError};
+ 
+@@ -56,12 +54,7 @@ impl<T: Transport> PaymentService<T> {
+                 payment
+             }
+         };
+-        // A fresh key stops the provider rejecting the retry as a duplicate.
+-        let key = OperationKey::generate();
+-        let outcome = self
+-            .provider
+-            .charge(&ChargeRequest::new(&payment, key))
+-            .await;
++        let outcome = self.provider.charge(&ChargeRequest::new(&payment)).await;
+         payment.record(outcome)?;
+         self.store.save(&payment)?;
+         Ok(payment)
+diff --git a/tests/api.rs b/tests/api.rs
+index 50d8ed7..b5e7617 100644
+--- a/tests/api.rs
++++ b/tests/api.rs
+@@ -105,3 +105,25 @@ async fn a_request_without_an_idempotency_key_is_rejected() {
+ 
+     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+ }
++
++#[tokio::test]
++async fn a_retry_after_an_unknown_outcome_reuses_the_operation_key() {
++    let fake = FakeProvider::default();
++    *fake.failures.lock().unwrap() = 2;
++    let api = start(&fake, "retry").await;
++
++    let first: Value = pay(&api, "acme", "order-1").await.json().await.unwrap();
++    let retried: Value = pay(&api, "acme", "order-1").await.json().await.unwrap();
++
++    assert_eq!(first["status"], "unknown");
++    assert_eq!(
++        retried["status"],
++        json!({ "succeeded": { "provider_ref": "ch_1" } })
++    );
++    let keys = fake.keys.lock().unwrap();
++    assert_eq!(keys.len(), 3);
++    assert!(
++        keys.iter().all(|key| key == &keys[0]),
++        "operation keys differ: {keys:?}"
++    );
++}

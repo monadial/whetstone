@@ -1,0 +1,253 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tomas Mihalicka <tomas@mihalicka.com>
+Date: Fri, 16 Oct 2026 09:31:00 +0200
+Subject: [PATCH 09/10] Rename ChargeOutcome to ProviderOutcome
+
+ChargeOutcome reads like the outcome of the payment, which is what
+PaymentStatus describes. The type is only the provider's answer to one
+charge, so name it after the provider. No behaviour change.
+
+Areas: domain
+---
+ src/cache.rs    |  4 ++--
+ src/payment.rs  | 20 +++++++++++---------
+ src/ports.rs    |  6 +++---
+ src/provider.rs | 24 ++++++++++++------------
+ src/store.rs    |  4 ++--
+ 5 files changed, 30 insertions(+), 28 deletions(-)
+
+diff --git a/src/cache.rs b/src/cache.rs
+index 2ed4eed..7b222d2 100644
+--- a/src/cache.rs
++++ b/src/cache.rs
+@@ -73,7 +73,7 @@ impl TenantCache {
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+-    use crate::payment::ChargeOutcome;
++    use crate::payment::ProviderOutcome;
+ 
+     #[test]
+     fn a_busy_tenant_cannot_evict_another_tenants_payments() {
+@@ -96,7 +96,7 @@ mod tests {
+         let cache = TenantCache::new(2);
+         let stale = Payment::sample("acme", "order");
+         let mut fresh = stale.clone();
+-        fresh.record(ChargeOutcome::Unknown).unwrap();
++        fresh.record(ProviderOutcome::Unknown).unwrap();
+ 
+         cache.update(&fresh);
+         cache.fill(&stale);
+diff --git a/src/payment.rs b/src/payment.rs
+index 1660d72..bc11634 100644
+--- a/src/payment.rs
++++ b/src/payment.rs
+@@ -154,7 +154,7 @@ impl Money {
+ /// The provider's answer to one charge submission. `Unknown` means the
+ /// provider did not answer, so the charge may or may not have happened.
+ #[derive(Debug, Clone, PartialEq, Eq)]
+-pub enum ChargeOutcome {
++pub enum ProviderOutcome {
+     Succeeded { provider_ref: String },
+     Declined { reason: String },
+     Unknown,
+@@ -230,14 +230,16 @@ impl Payment {
+     }
+ 
+     /// Records the outcome of one submission to the provider.
+-    pub fn record(&mut self, outcome: ChargeOutcome) -> Result<(), PaymentError> {
++    pub fn record(&mut self, outcome: ProviderOutcome) -> Result<(), PaymentError> {
+         if self.is_settled() {
+             return Err(PaymentError::AlreadySettled(self.id.clone()));
+         }
+         self.status = match outcome {
+-            ChargeOutcome::Succeeded { provider_ref } => PaymentStatus::Succeeded { provider_ref },
+-            ChargeOutcome::Declined { reason } => PaymentStatus::Declined { reason },
+-            ChargeOutcome::Unknown => PaymentStatus::Unknown,
++            ProviderOutcome::Succeeded { provider_ref } => {
++                PaymentStatus::Succeeded { provider_ref }
++            }
++            ProviderOutcome::Declined { reason } => PaymentStatus::Declined { reason },
++            ProviderOutcome::Unknown => PaymentStatus::Unknown,
+         };
+         Ok(())
+     }
+@@ -266,10 +268,10 @@ mod tests {
+         let key = payment.operation_key().clone();
+         assert_eq!(payment.status(), &PaymentStatus::Pending);
+ 
+-        payment.record(ChargeOutcome::Unknown).unwrap();
++        payment.record(ProviderOutcome::Unknown).unwrap();
+         assert_eq!(payment.status(), &PaymentStatus::Unknown);
+         payment
+-            .record(ChargeOutcome::Succeeded {
++            .record(ProviderOutcome::Succeeded {
+                 provider_ref: "ch_1".into(),
+             })
+             .unwrap();
+@@ -287,12 +289,12 @@ mod tests {
+     fn a_settled_payment_rejects_another_outcome() {
+         let mut payment = Payment::sample("acme", "order-42");
+         payment
+-            .record(ChargeOutcome::Declined {
++            .record(ProviderOutcome::Declined {
+                 reason: "insufficient_funds".into(),
+             })
+             .unwrap();
+ 
+-        let result = payment.record(ChargeOutcome::Succeeded {
++        let result = payment.record(ProviderOutcome::Succeeded {
+             provider_ref: "ch_2".into(),
+         });
+ 
+diff --git a/src/ports.rs b/src/ports.rs
+index 8aaf0b0..7eaf1a6 100644
+--- a/src/ports.rs
++++ b/src/ports.rs
+@@ -8,7 +8,7 @@ use std::io;
+ 
+ use serde::Serialize;
+ 
+-use crate::payment::{ChargeOutcome, IdempotencyKey, OperationKey, Payment, PaymentId, TenantId};
++use crate::payment::{IdempotencyKey, OperationKey, Payment, PaymentId, ProviderOutcome, TenantId};
+ 
+ /// Keeps payments.
+ pub trait PaymentStore: Send + Sync {
+@@ -41,8 +41,8 @@ pub enum StoreError {
+ /// Charges payments.
+ pub trait PaymentProvider: Send + Sync {
+     /// Charges the request. It never fails outright: a charge that got no
+-    /// answer is `ChargeOutcome::Unknown`.
+-    fn charge(&self, request: &ChargeRequest) -> impl Future<Output = ChargeOutcome> + Send;
++    /// answer is `ProviderOutcome::Unknown`.
++    fn charge(&self, request: &ChargeRequest) -> impl Future<Output = ProviderOutcome> + Send;
+ }
+ 
+ /// One charge, as the provider sees it.
+diff --git a/src/provider.rs b/src/provider.rs
+index f555670..b71c0fe 100644
+--- a/src/provider.rs
++++ b/src/provider.rs
+@@ -11,7 +11,7 @@ use std::time::Duration;
+ use reqwest::StatusCode;
+ use serde::Deserialize;
+ 
+-use crate::payment::ChargeOutcome;
++use crate::payment::ProviderOutcome;
+ use crate::ports::{ChargeRequest, PaymentProvider};
+ 
+ /// Why a single attempt failed.
+@@ -30,7 +30,7 @@ pub trait Transport: Send + Sync {
+     fn send(
+         &self,
+         request: &ChargeRequest,
+-    ) -> impl Future<Output = Result<ChargeOutcome, AttemptError>> + Send;
++    ) -> impl Future<Output = Result<ProviderOutcome, AttemptError>> + Send;
+ }
+ 
+ #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+@@ -59,7 +59,7 @@ impl<T: Transport> PaymentProvider for ProviderClient<T> {
+     /// When no attempt gets an answer, the charge may still have happened,
+     /// so the outcome is `Unknown` rather than declined.
+     #[tracing::instrument(skip_all, fields(operation_key = request.operation_key.as_str()))]
+-    async fn charge(&self, request: &ChargeRequest) -> ChargeOutcome {
++    async fn charge(&self, request: &ChargeRequest) -> ProviderOutcome {
+         let mut backoff = self.policy.backoff;
+         for attempt in 1..=self.policy.max_attempts.get() {
+             let sent =
+@@ -68,7 +68,7 @@ impl<T: Transport> PaymentProvider for ProviderClient<T> {
+                 Ok(Ok(outcome)) => return outcome,
+                 Ok(Err(AttemptError::Rejected(reason))) => {
+                     tracing::warn!(%reason, "provider rejected the charge");
+-                    return ChargeOutcome::Declined { reason };
++                    return ProviderOutcome::Declined { reason };
+                 }
+                 Ok(Err(AttemptError::Retryable(reason))) => reason,
+                 Err(_) => "attempt timed out".to_owned(),
+@@ -80,7 +80,7 @@ impl<T: Transport> PaymentProvider for ProviderClient<T> {
+             }
+         }
+         tracing::error!("no charge attempt got an answer, outcome unknown");
+-        ChargeOutcome::Unknown
++        ProviderOutcome::Unknown
+     }
+ }
+ 
+@@ -108,7 +108,7 @@ enum ChargeResponse {
+ }
+ 
+ impl Transport for HttpTransport {
+-    async fn send(&self, request: &ChargeRequest) -> Result<ChargeOutcome, AttemptError> {
++    async fn send(&self, request: &ChargeRequest) -> Result<ProviderOutcome, AttemptError> {
+         let response = self
+             .client
+             .post(&self.charges_url)
+@@ -133,8 +133,8 @@ impl Transport for HttpTransport {
+             .await
+             .map_err(|error| AttemptError::Retryable(error.to_string()))?;
+         Ok(match body {
+-            ChargeResponse::Succeeded { id } => ChargeOutcome::Succeeded { provider_ref: id },
+-            ChargeResponse::Declined { reason } => ChargeOutcome::Declined { reason },
++            ChargeResponse::Succeeded { id } => ProviderOutcome::Succeeded { provider_ref: id },
++            ChargeResponse::Declined { reason } => ProviderOutcome::Declined { reason },
+         })
+     }
+ }
+@@ -150,7 +150,7 @@ mod tests {
+     enum Reply {
+         Hang,
+         Reject,
+-        Answer(ChargeOutcome),
++        Answer(ProviderOutcome),
+     }
+ 
+     /// A provider that answers each attempt from a script and remembers the
+@@ -170,7 +170,7 @@ mod tests {
+     }
+ 
+     impl Transport for &Scripted {
+-        async fn send(&self, request: &ChargeRequest) -> Result<ChargeOutcome, AttemptError> {
++        async fn send(&self, request: &ChargeRequest) -> Result<ProviderOutcome, AttemptError> {
+             self.keys
+                 .lock()
+                 .unwrap()
+@@ -204,7 +204,7 @@ mod tests {
+ 
+     #[tokio::test(start_paused = true)]
+     async fn a_timed_out_attempt_is_retried_with_the_same_operation_key() {
+-        let succeeded = ChargeOutcome::Succeeded {
++        let succeeded = ProviderOutcome::Succeeded {
+             provider_ref: "ch_1".into(),
+         };
+         let provider = Scripted::new([Reply::Hang, Reply::Answer(succeeded.clone())]);
+@@ -227,7 +227,7 @@ mod tests {
+ 
+         assert_eq!(
+             outcome,
+-            ChargeOutcome::Declined {
++            ProviderOutcome::Declined {
+                 reason: "400 Bad Request".into()
+             }
+         );
+diff --git a/src/store.rs b/src/store.rs
+index edaa579..97db9bf 100644
+--- a/src/store.rs
++++ b/src/store.rs
+@@ -136,7 +136,7 @@ mod tests {
+     use super::*;
+     use std::path::PathBuf;
+ 
+-    use crate::payment::{ChargeOutcome, TenantId};
++    use crate::payment::{ProviderOutcome, TenantId};
+ 
+     fn log_path(name: &str) -> PathBuf {
+         let path = std::env::temp_dir().join(format!("payments-{}-{name}.log", std::process::id()));
+@@ -151,7 +151,7 @@ mod tests {
+         let store = FileStore::open(&path).unwrap();
+         store.save(&payment).unwrap();
+         payment
+-            .record(ChargeOutcome::Succeeded {
++            .record(ProviderOutcome::Succeeded {
+                 provider_ref: "ch_1".into(),
+             })
+             .unwrap();

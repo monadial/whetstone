@@ -1,0 +1,295 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tomas Mihalicka <tomas@mihalicka.com>
+Date: Thu, 15 Oct 2026 16:05:00 +0200
+Subject: [PATCH 08/10] Cache payments per tenant
+
+Every payment lookup takes the payment log's lock and reads from disk,
+so a lookup waits for other tenants' disk reads and for every save's
+sync to disk. Clients poll a payment right after creating it, so most
+of those reads are for a few recent payments.
+
+Keep recently saved and read payments in memory, behind a lock that is
+only ever held for in-memory work. Each tenant gets its own bounded
+space, sized by PAYMENTS_CACHE_PER_TENANT, so one busy tenant cannot
+evict another tenant's payments; within a tenant the oldest entry goes
+first. Saves write through to the cache. A payment read from the log is
+cached only if no copy is there yet, so a read racing a save cannot put
+an older state back.
+
+Areas: scalability, infrastructure
+---
+ README.md      |   1 +
+ src/cache.rs   | 106 +++++++++++++++++++++++++++++++++++++++++++++++++
+ src/config.rs  |   2 +
+ src/lib.rs     |   1 +
+ src/main.rs    |   4 +-
+ src/service.rs |  24 +++++++++--
+ tests/api.rs   |   3 +-
+ 7 files changed, 135 insertions(+), 6 deletions(-)
+ create mode 100644 src/cache.rs
+
+diff --git a/README.md b/README.md
+index 1d2a878..ba36ac0 100644
+--- a/README.md
++++ b/README.md
+@@ -19,6 +19,7 @@ PAYMENTS_PROVIDER_URL=http://localhost:9000 cargo run
+ | `PAYMENTS_PROVIDER_TIMEOUT_MS` | `2000` | Timeout for each attempt of a charge |
+ | `PAYMENTS_PROVIDER_MAX_ATTEMPTS` | `3` | Attempts per charge |
+ | `PAYMENTS_PROVIDER_BACKOFF_MS` | `100` | Wait before the first retry; it doubles each time |
++| `PAYMENTS_CACHE_PER_TENANT` | `1024` | Payments each tenant keeps in the in-memory cache |
+ 
+ ## API
+ 
+diff --git a/src/cache.rs b/src/cache.rs
+new file mode 100644
+index 0000000..2ed4eed
+--- /dev/null
++++ b/src/cache.rs
+@@ -0,0 +1,106 @@
++//! Keeps recent payments in memory, with a separate bounded space for each
++//! tenant so that one busy tenant cannot evict another tenant's payments.
++
++use std::collections::{HashMap, VecDeque};
++use std::sync::{Mutex, MutexGuard};
++
++use crate::payment::{Payment, PaymentId, TenantId};
++
++#[derive(Debug)]
++pub struct TenantCache {
++    capacity_per_tenant: usize,
++    tenants: Mutex<HashMap<TenantId, Entries>>,
++}
++
++#[derive(Debug, Default)]
++struct Entries {
++    /// Oldest first: the front is evicted next.
++    order: VecDeque<PaymentId>,
++    payments: HashMap<PaymentId, Payment>,
++}
++
++impl TenantCache {
++    pub fn new(capacity_per_tenant: usize) -> Self {
++        Self {
++            capacity_per_tenant,
++            tenants: Mutex::default(),
++        }
++    }
++
++    pub fn get(&self, tenant: &TenantId, id: &PaymentId) -> Option<Payment> {
++        self.lock().get(tenant)?.payments.get(id).cloned()
++    }
++
++    /// Caches a payment that was just saved, replacing any older copy.
++    pub fn update(&self, payment: &Payment) {
++        self.insert(payment, true);
++    }
++
++    /// Caches a payment read from storage, unless a copy is already cached.
++    /// That copy may come from a save that raced this read, so it wins.
++    pub fn fill(&self, payment: &Payment) {
++        self.insert(payment, false);
++    }
++
++    fn insert(&self, payment: &Payment, replace: bool) {
++        let mut tenants = self.lock();
++        let entries = tenants.entry(payment.tenant().clone()).or_default();
++        if let Some(cached) = entries.payments.get_mut(payment.id()) {
++            if replace {
++                cached.clone_from(payment);
++            }
++            return;
++        }
++        let id = payment.id().clone();
++        entries.payments.insert(id.clone(), payment.clone());
++        entries.order.push_back(id);
++        if entries.order.len() > self.capacity_per_tenant
++            && let Some(oldest) = entries.order.pop_front()
++        {
++            entries.payments.remove(&oldest);
++        }
++    }
++
++    fn lock(&self) -> MutexGuard<'_, HashMap<TenantId, Entries>> {
++        // A panic mid-update costs at most one entry that is never evicted,
++        // so keep serving rather than fail every later request.
++        self.tenants
++            .lock()
++            .unwrap_or_else(std::sync::PoisonError::into_inner)
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::payment::ChargeOutcome;
++
++    #[test]
++    fn a_busy_tenant_cannot_evict_another_tenants_payments() {
++        let cache = TenantCache::new(2);
++        let quiet = Payment::sample("quiet", "order");
++        cache.update(&quiet);
++        let busy: Vec<_> = (0..3).map(|_| Payment::sample("busy", "order")).collect();
++        busy.iter().for_each(|payment| cache.update(payment));
++
++        assert_eq!(cache.get(quiet.tenant(), quiet.id()), Some(quiet));
++        assert_eq!(cache.get(busy[0].tenant(), busy[0].id()), None);
++        assert_eq!(
++            cache.get(busy[2].tenant(), busy[2].id()),
++            Some(busy[2].clone())
++        );
++    }
++
++    #[test]
++    fn a_read_never_replaces_a_newer_cached_copy() {
++        let cache = TenantCache::new(2);
++        let stale = Payment::sample("acme", "order");
++        let mut fresh = stale.clone();
++        fresh.record(ChargeOutcome::Unknown).unwrap();
++
++        cache.update(&fresh);
++        cache.fill(&stale);
++
++        assert_eq!(cache.get(fresh.tenant(), fresh.id()), Some(fresh));
++    }
++}
+diff --git a/src/config.rs b/src/config.rs
+index 3bed3fc..63a290d 100644
+--- a/src/config.rs
++++ b/src/config.rs
+@@ -16,6 +16,7 @@ pub struct Config {
+     pub log_level: Level,
+     pub provider_url: String,
+     pub provider_retry: RetryPolicy,
++    pub cache_per_tenant: usize,
+ }
+ 
+ #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+@@ -45,6 +46,7 @@ impl Config {
+                 max_attempts: parsed(&lookup, "PAYMENTS_PROVIDER_MAX_ATTEMPTS", "3")?,
+                 backoff: millis(&lookup, "PAYMENTS_PROVIDER_BACKOFF_MS", 100)?,
+             },
++            cache_per_tenant: parsed(&lookup, "PAYMENTS_CACHE_PER_TENANT", "1024")?,
+         })
+     }
+ }
+diff --git a/src/lib.rs b/src/lib.rs
+index ec87274..819c0f1 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,5 +1,6 @@
+ //! A small multi-tenant payments service.
+ 
++pub mod cache;
+ pub mod config;
+ pub mod http;
+ pub mod payment;
+diff --git a/src/main.rs b/src/main.rs
+index 0e4210b..c5911c0 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -4,6 +4,7 @@
+ use std::error::Error;
+ use std::sync::Arc;
+ 
++use payments::cache::TenantCache;
+ use payments::config::Config;
+ use payments::provider::{HttpTransport, ProviderClient};
+ use payments::service::PaymentService;
+@@ -21,7 +22,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
+         HttpTransport::new(&config.provider_url)?,
+         config.provider_retry,
+     );
+-    let app = payments::http::router(Arc::new(PaymentService::new(store, provider)));
++    let cache = TenantCache::new(config.cache_per_tenant);
++    let app = payments::http::router(Arc::new(PaymentService::new(store, provider, cache)));
+ 
+     let listener = tokio::net::TcpListener::bind(config.listen_addr).await?;
+     tracing::info!(address = %config.listen_addr, "listening");
+diff --git a/src/service.rs b/src/service.rs
+index da2c962..7c673aa 100644
+--- a/src/service.rs
++++ b/src/service.rs
+@@ -1,5 +1,6 @@
+ //! The payment use cases behind the HTTP API: paying and looking payments up.
+ 
++use crate::cache::TenantCache;
+ use crate::payment::{IdempotencyKey, Money, Payment, PaymentError, PaymentId, TenantId};
+ use crate::ports::{ChargeRequest, PaymentProvider, PaymentStore, StoreError};
+ use crate::telemetry::Metrics;
+@@ -20,14 +21,16 @@ pub enum ServiceError {
+ pub struct PaymentService<S, P> {
+     store: S,
+     provider: P,
++    cache: TenantCache,
+     metrics: Metrics,
+ }
+ 
+ impl<S: PaymentStore, P: PaymentProvider> PaymentService<S, P> {
+-    pub fn new(store: S, provider: P) -> Self {
++    pub fn new(store: S, provider: P, cache: TenantCache) -> Self {
+         Self {
+             store,
+             provider,
++            cache,
+             metrics: Metrics::default(),
+         }
+     }
+@@ -57,7 +60,7 @@ impl<S: PaymentStore, P: PaymentProvider> PaymentService<S, P> {
+             None => {
+                 let payment = Payment::new(tenant, idempotency_key, amount);
+                 // Saved before charging, so a crash mid-charge leaves a record to retry.
+-                self.store.save(&payment).map_err(|error| match error {
++                self.save(&payment).map_err(|error| match error {
+                     StoreError::DuplicateKey => ServiceError::KeyReused,
+                     other => ServiceError::Store(other),
+                 })?;
+@@ -67,13 +70,26 @@ impl<S: PaymentStore, P: PaymentProvider> PaymentService<S, P> {
+         };
+         let outcome = self.provider.charge(&ChargeRequest::new(&payment)).await;
+         payment.record(outcome)?;
+-        self.store.save(&payment)?;
++        self.save(&payment)?;
+         self.metrics.charge_finished(payment.status());
+         tracing::info!(payment = %payment.id(), status = ?payment.status(), "payment charged");
+         Ok(payment)
+     }
+ 
+     pub fn get(&self, tenant: &TenantId, id: &PaymentId) -> Result<Payment, ServiceError> {
+-        self.store.get(tenant, id)?.ok_or(ServiceError::NotFound)
++        if let Some(payment) = self.cache.get(tenant, id) {
++            return Ok(payment);
++        }
++        let payment = self.store.get(tenant, id)?.ok_or(ServiceError::NotFound)?;
++        self.cache.fill(&payment);
++        Ok(payment)
++    }
++
++    /// Saves through to the cache, so a cached payment is never older than
++    /// the stored one.
++    fn save(&self, payment: &Payment) -> Result<(), StoreError> {
++        self.store.save(payment)?;
++        self.cache.update(payment);
++        Ok(())
+     }
+ }
+diff --git a/tests/api.rs b/tests/api.rs
+index 1d5e58f..d1925b7 100644
+--- a/tests/api.rs
++++ b/tests/api.rs
+@@ -8,6 +8,7 @@ use axum::extract::State;
+ use axum::http::{HeaderMap, StatusCode};
+ use axum::response::{IntoResponse, Response};
+ use axum::routing::post;
++use payments::cache::TenantCache;
+ use payments::provider::{HttpTransport, ProviderClient, RetryPolicy};
+ use payments::service::PaymentService;
+ use payments::store::FileStore;
+@@ -50,7 +51,7 @@ async fn start(fake: &FakeProvider, name: &str) -> String {
+         backoff: Duration::from_millis(1),
+     };
+     let client = ProviderClient::new(HttpTransport::new(&provider).unwrap(), policy);
+-    let service = PaymentService::new(FileStore::open(&log).unwrap(), client);
++    let service = PaymentService::new(FileStore::open(&log).unwrap(), client, TenantCache::new(8));
+     serve(payments::http::router(Arc::new(service))).await
+ }
+ 
