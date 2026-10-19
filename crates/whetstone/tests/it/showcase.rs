@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use whetstone_core::{Area, AreaId, TouchedFile};
+use whetstone_core::{Area, AreaId, FileContent, TouchedFile};
 
 #[test]
 fn the_embedded_showcase_has_all_ten_curated_changes_with_the_area_ids_their_trailers_name() {
@@ -82,12 +82,12 @@ fn replaying_every_embedded_change_rebuilds_the_showcase_projects_files_exactly(
         for file in change.files() {
             assert_eq!(
                 replayed.get(file.path()).map(String::as_str),
-                file.before(),
+                file.before().and_then(FileContent::text),
                 "{} before {:?}",
                 file.path(),
                 change.summary()
             );
-            match file.after() {
+            match file.after().and_then(FileContent::text) {
                 Some(after) => replayed.insert(file.path().to_owned(), after.to_owned()),
                 None => replayed.remove(file.path()),
             };

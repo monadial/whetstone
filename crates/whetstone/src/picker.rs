@@ -2,20 +2,24 @@
 //! the areas questions focus on and one change, from the showcase project's
 //! curated history or from the commits of their own repository.
 
+use std::ops::Range;
+
 use ratatui::Frame;
 use ratatui::crossterm::event::KeyCode;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{List, ListState, Paragraph};
-use whetstone_core::{Area, InvalidAreaFile, ShowcaseProject};
+use whetstone_core::{Area, Comparison, InvalidAreaFile, ShowcaseProject};
 
 use crate::columns;
+use crate::entry::TextEntry;
 use crate::focus::Position;
-use crate::keymap::{self, Binding, Command, Keymap, Press};
+use crate::keymap::{self, Binding, Command, Input, Keymap, Press};
 use crate::palette::Action;
-use crate::repository::{Commit, HistoryError, Repository};
+use crate::repository::{Availability, Commit, End, History, HistoryError, Repository};
+use crate::search::{self, Query};
 use crate::theme::{ControlKind, ControlState, Theme};
-use crate::view::{ChangeIndex, Context, Project, Route, View};
+use crate::view::{ChangeIndex, ChangeRef, Context, Project, Route, View};
 
 /// Space on the picker: it makes a choice.
 const SPACE: Binding = Binding {
@@ -24,29 +28,28 @@ const SPACE: Binding = Binding {
     hint: Some("Space toggle"),
 };
 
+/// Enter on the picker: it makes a choice, and opens a chosen change.
+const OPEN: Binding = Binding {
+    keys: &[(Press::key(KeyCode::Enter), Command::Open)],
+    does: "Toggle an area, or choose and open a change",
+    hint: Some("Enter open"),
+};
+
 /// The showcase picker's own keys. Space makes a choice, and Enter also
 /// opens the chosen change.
-const KEYMAP: Keymap = &[
-    keymap::MOVE,
-    SPACE,
-    Binding {
-        keys: &[(Press::key(KeyCode::Enter), Command::Open)],
-        does: "Toggle an area, or choose and open a change",
-        hint: Some("Enter open"),
-    },
-    keymap::BACK,
-];
+const KEYMAP: Keymap = &[keymap::MOVE, SPACE, OPEN, keymap::BACK];
 
-/// The repository picker's own keys. Opening a commit in the change viewer
-/// is not built yet, so Enter only chooses it.
+/// The repository picker's own keys: the showcase picker's, and `/` to
+/// search the commits, with `n` and `N` for the matches.
 const REPOSITORY_KEYMAP: Keymap = &[
     keymap::MOVE,
     SPACE,
+    OPEN,
     Binding {
-        keys: &[(Press::key(KeyCode::Enter), Command::Activate)],
-        does: "Toggle an area, or choose a change",
-        hint: Some("Enter choose"),
+        does: "Search the commits by message or ID",
+        ..keymap::SEARCH
     },
+    keymap::MATCHES,
     keymap::BACK,
 ];
 
@@ -56,6 +59,27 @@ const ACTIONS: &[Action] = &[Action {
     does: "Return to the screen before",
     command: Command::Back,
 }];
+
+/// The repository picker's own actions in the palette: the picker's, and
+/// searching the commits.
+const REPOSITORY_ACTIONS: &[Action] = &[
+    ACTIONS[0],
+    Action {
+        label: "Search",
+        does: "Search the commits by message or ID",
+        command: Command::Search,
+    },
+    Action {
+        label: "Next match",
+        does: "Go to the next commit the last search matched",
+        command: Command::NextMatch,
+    },
+    Action {
+        label: "Previous match",
+        does: "Go to the previous commit the last search matched",
+        command: Command::PreviousMatch,
+    },
+];
 
 /// The picker's controls, in focus order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,15 +103,16 @@ enum AreaChoice {
     Invalid,
 }
 
-/// What the picker practices on, and what it read of it on opening.
+/// What the picker practices on, and what it read of it.
 #[derive(Debug)]
 enum Source {
-    /// The showcase project's curated changes.
-    Showcase,
-    /// The learner's repository, with the first commits reachable from
-    /// HEAD, newest first, or why they could not be read.
+    /// The showcase project, with this many curated changes.
+    Showcase { changes: usize },
+    /// The learner's repository, with the commits reachable from HEAD read
+    /// so far, newest first, or why they could not be read. The history
+    /// holds the repository it reads, so it is boxed.
     Repository {
-        commits: Result<Vec<Commit>, HistoryError>,
+        history: Result<Box<History>, HistoryError>,
     },
 }
 
@@ -98,29 +123,33 @@ pub(crate) struct Picker {
     source: Source,
     /// Whether each area can be chosen and is, in the order offered.
     areas: Vec<AreaChoice>,
-    /// How many changes the picker lists.
-    changes: usize,
     /// The index of the chosen change, once the learner chooses one.
     chosen: Option<usize>,
     focus: Position,
+    /// The search box, while the learner types a search of the commits.
+    search_box: Option<TextEntry>,
+    /// What the last search of the commits looked for.
+    query: Option<Query>,
 }
 
 impl Picker {
     /// The picker over `showcase`, as it first opens: every area selected.
     pub(crate) fn new(showcase: &ShowcaseProject) -> Self {
         Self {
-            source: Source::Showcase,
+            source: Source::Showcase {
+                changes: showcase.changes().len(),
+            },
             areas: vec![AreaChoice::Valid { selected: true }; showcase.areas().len()],
-            changes: showcase.changes().len(),
             chosen: None,
             focus: Position::default(),
+            search_box: None,
+            query: None,
         }
     }
 
     /// The picker over the learner's `repository`, as it first opens: every
     /// valid area selected, and its first commits read.
     pub(crate) fn for_repository(repository: &Repository) -> Self {
-        let commits = repository.first_commits();
         Self {
             areas: repository
                 .areas()
@@ -130,23 +159,45 @@ impl Picker {
                     Err(_) => AreaChoice::Invalid,
                 })
                 .collect(),
-            changes: commits.as_ref().map_or(0, Vec::len),
-            source: Source::Repository { commits },
+            source: Source::Repository {
+                history: repository.history().map(Box::new),
+            },
             chosen: None,
             focus: Position::default(),
+            search_box: None,
+            query: None,
+        }
+    }
+
+    /// The commits read so far, newest first, if the picker is over the
+    /// learner's repository and they could be read.
+    fn commits(&self) -> &[Commit] {
+        match &self.source {
+            Source::Repository {
+                history: Ok(history),
+            } => history.commits(),
+            Source::Showcase { .. } | Source::Repository { history: Err(_) } => &[],
+        }
+    }
+
+    /// How many changes the picker lists.
+    fn changes(&self) -> usize {
+        match self.source {
+            Source::Showcase { changes } => changes,
+            Source::Repository { .. } => self.commits().len(),
         }
     }
 
     /// How many controls the picker has.
     fn controls(&self) -> usize {
-        self.areas.len() + self.changes + 1
+        self.areas.len() + self.changes() + 1
     }
 
     /// The control at `index` in focus order.
     fn control(&self, index: usize) -> Control {
         if index < self.areas.len() {
             Control::Area(index)
-        } else if index < self.areas.len() + self.changes {
+        } else if index < self.areas.len() + self.changes() {
             Control::Change(index - self.areas.len())
         } else {
             Control::Proceed
@@ -165,7 +216,7 @@ impl Picker {
     /// The areas the picker offers, each valid or an invalid area file.
     fn offered<'a>(&self, context: &Context<'a>) -> Vec<Result<&'a Area, &'a InvalidAreaFile>> {
         match self.source {
-            Source::Showcase => context.showcase.areas().iter().map(Ok).collect(),
+            Source::Showcase { .. } => context.showcase.areas().iter().map(Ok).collect(),
             Source::Repository { .. } => context
                 .repository
                 .map(|repository| repository.areas().iter().map(Result::as_ref).collect())
@@ -244,8 +295,27 @@ impl Picker {
             .collect()
     }
 
-    /// The changes as list items `width` cells wide, each a choice.
-    fn change_items<'a>(&'a self, context: &Context<'a>, width: u16) -> Vec<Text<'a>> {
+    /// How many rows the changes take: one each, and one for why no more
+    /// commits could be read, if none or not all could.
+    fn change_rows(&self) -> usize {
+        match &self.source {
+            Source::Showcase { changes } => *changes,
+            Source::Repository {
+                history: Ok(history),
+            } => history.commits().len() + usize::from(matches!(history.end(), End::Failed(_))),
+            Source::Repository { history: Err(_) } => 1,
+        }
+    }
+
+    /// The changes in `window`, by index, as list items `width` cells wide,
+    /// each a choice. Only these are built, so a long history read whole
+    /// draws as fast as its first page.
+    fn change_items<'a>(
+        &'a self,
+        context: &Context<'a>,
+        width: u16,
+        window: Range<usize>,
+    ) -> Vec<Text<'a>> {
         let state = |index| ControlState {
             focused: self.focused() == Control::Change(index),
             kind: ControlKind::Choice {
@@ -253,47 +323,150 @@ impl Picker {
             },
             disabled: None,
         };
-        match &self.source {
-            Source::Showcase => showcase_rows(context, width, state)
+        let items: Vec<Text<'a>> = match &self.source {
+            // The column of areas depends on every row, so all are built.
+            Source::Showcase { .. } => showcase_rows(context, width, state)
                 .into_iter()
                 .map(Text::from)
                 .collect(),
             Source::Repository {
-                commits: Ok(commits),
+                history: Ok(history),
             } => {
-                // Past the focus and choice markers.
-                let room = usize::from(width).saturating_sub(Theme::control_width(
-                    "",
-                    ControlKind::Choice { selected: false },
-                ));
-                commits
+                let commits = history.commits();
+                let mut items: Vec<Text<'a>> = commits
+                    .get(window.start.min(commits.len())..window.end.min(commits.len()))
+                    .unwrap_or_default()
                     .iter()
-                    .enumerate()
-                    .map(|(index, commit)| {
-                        let label = format!("{}  {}", commit.short_id(), commit.summary());
-                        Text::from(
-                            context
-                                .theme
-                                .control(columns::truncate(&label, room), state(index)),
-                        )
+                    .zip(window.start..)
+                    .map(|(commit, index)| {
+                        Text::from(commit_row(context.theme, commit, state(index), width))
                     })
-                    .collect()
+                    .collect();
+                if let End::Failed(error) = history.end()
+                    && window.end > commits.len()
+                {
+                    items.push(unavailable_row(context.theme, error));
+                }
+                return items;
             }
             Source::Repository {
-                commits: Err(error),
+                history: Err(error),
             } => {
-                vec![Text::styled(
-                    format!("{UNAVAILABLE_INDENT}{error}"),
-                    context.theme.muted,
-                )]
+                vec![unavailable_row(context.theme, error)]
             }
+        };
+        items
+            .into_iter()
+            .skip(window.start)
+            .take(window.len())
+            .collect()
+    }
+
+    /// Searches the commits for `query`, from the focused one, or from the
+    /// first if none has focus, and moves focus to the first match. While
+    /// none of the commits read so far matches, it reads further.
+    fn search(&mut self, query: Query) {
+        if let Source::Repository {
+            history: Ok(history),
+        } = &mut self.source
+        {
+            while !history
+                .commits()
+                .iter()
+                .any(|commit| is_match(&query, commit))
+                && history.read_page()
+            {}
+        }
+        let matches = self.matches(&query);
+        let start = self.focused_change().unwrap_or_default();
+        self.query = Some(query);
+        if let Some(index) = search::first_from(&matches, start) {
+            self.focus_change(index);
+        }
+    }
+
+    /// Moves focus to the next or previous match of the last search, as
+    /// `command` asks, wrapping around at either end.
+    fn go_to_match(&mut self, command: Command) {
+        let Some(query) = &self.query else {
+            return;
+        };
+        let matches = self.matches(query);
+        let current = self.focused_change();
+        let landing = match command {
+            Command::NextMatch => {
+                search::first_from(&matches, current.map_or(0, |index| index + 1))
+            }
+            Command::PreviousMatch => {
+                let before = current.unwrap_or_default();
+                matches
+                    .iter()
+                    .rev()
+                    .find(|&&index| index < before)
+                    .or(matches.last())
+                    .copied()
+            }
+            _ => None,
+        };
+        if let Some(index) = landing {
+            self.focus_change(index);
+        }
+    }
+
+    /// The indexes of the commits read so far that `query` matches.
+    fn matches(&self, query: &Query) -> Vec<usize> {
+        self.commits()
+            .iter()
+            .enumerate()
+            .filter(|(_, commit)| is_match(query, commit))
+            .map(|(index, _)| index)
+            .collect()
+    }
+
+    /// What the last search found, for the row under the picker.
+    fn search_status(&self) -> Option<String> {
+        let query = self.query.as_ref()?;
+        Some(search::status(
+            query,
+            &self.matches(query),
+            self.focused_change(),
+            "the commits",
+        ))
+    }
+
+    /// The index of the focused change, if a change has focus.
+    fn focused_change(&self) -> Option<usize> {
+        match self.focused() {
+            Control::Change(index) => Some(index),
+            Control::Area(_) | Control::Proceed => None,
+        }
+    }
+
+    /// Moves focus to the change at `index`.
+    fn focus_change(&mut self, index: usize) {
+        self.focus = Position::at(self.areas.len() + index);
+        self.read_ahead();
+    }
+
+    /// Reads more commits if the focused one is the last read, so the next
+    /// is there to move to.
+    fn read_ahead(&mut self) {
+        let Control::Change(index) = self.focused() else {
+            return;
+        };
+        if let Source::Repository {
+            history: Ok(history),
+        } = &mut self.source
+            && index + 1 == history.commits().len()
+        {
+            history.read_page();
         }
     }
 
     /// The control after the lists, and why it is disabled, if it is.
     fn proceed(&self) -> (&'static str, Option<&'static str>) {
         match self.source {
-            Source::Showcase => ("Generate questions", Some(GENERATE_QUESTIONS_UNAVAILABLE)),
+            Source::Showcase { .. } => ("Generate questions", Some(GENERATE_QUESTIONS_UNAVAILABLE)),
             Source::Repository { .. } => (
                 "Review what will be sent",
                 match (self.chosen.is_some(), self.has_area()) {
@@ -305,6 +478,65 @@ impl Picker {
             ),
         }
     }
+}
+
+/// A commit's row `width` cells wide: a choice in `state`, showing its
+/// short ID and summary, then what it is compared with if that is not
+/// simply its parent. A commit that cannot be opened is disabled, saying
+/// why. The summary is cut to fit.
+fn commit_row<'a>(theme: &Theme, commit: &Commit, state: ControlState<'a>, width: u16) -> Line<'a> {
+    let (state, label) = match commit.availability() {
+        Availability::Compared(comparison) => (state, comparison_label(comparison)),
+        Availability::ParentMissing => (
+            ControlState {
+                disabled: Some(PARENT_MISSING),
+                ..state
+            },
+            None,
+        ),
+    };
+    let label_width = label.map_or(0, |label| COLUMN_GAP + Line::raw(label).width());
+    // Past the focus and choice markers, and why it is disabled.
+    let room = usize::from(width)
+        .saturating_sub(Theme::control_width("", state.kind))
+        .saturating_sub(
+            state
+                .disabled
+                .map_or(0, |reason| Line::raw(reason).width() + 3),
+        )
+        .saturating_sub(label_width);
+    let text = format!("{}  {}", commit.id().short(), commit.summary());
+    let mut line = theme.control(columns::truncate(&text, room), state);
+    if let Some(label) = label {
+        line.push_span(" ".repeat(COLUMN_GAP));
+        line.push_span(Span::styled(label, theme.muted));
+    }
+    line
+}
+
+/// Whether `query` matches `commit`: its whole message, or the start of its
+/// ID.
+fn is_match(query: &Query, commit: &Commit) -> bool {
+    query.is_in(commit.message())
+        || commit
+            .id()
+            .full()
+            .starts_with(&query.text().to_ascii_lowercase())
+}
+
+/// What a commit's row and the viewer's title say about what it was
+/// compared with, unless it was simply its parent.
+pub(crate) fn comparison_label(comparison: Comparison) -> Option<&'static str> {
+    match comparison {
+        Comparison::Parent => None,
+        Comparison::FirstParent => Some(MERGE_LABEL),
+        Comparison::EmptyTree => Some(FIRST_COMMIT_LABEL),
+    }
+}
+
+/// A muted row in a list saying why it cannot list more.
+fn unavailable_row<'a>(theme: &Theme, error: &HistoryError) -> Text<'a> {
+    Text::styled(format!("{UNAVAILABLE_INDENT}{error}"), theme.muted)
 }
 
 /// The control of an invalid area file, labelled `label`: a choice that is
@@ -367,6 +599,14 @@ const AREA_HEADING: &str = "Areas the questions focus on";
 /// The heading above the changes.
 const CHANGE_HEADING: &str = "Change to practice on";
 
+/// After a merge commit: its change is the whole merged work.
+const MERGE_LABEL: &str = "merge · vs first parent";
+/// After a repository's first commit, which is compared with an empty tree.
+const FIRST_COMMIT_LABEL: &str = "first commit";
+/// Why a commit whose parent is missing, as at a shallow clone's boundary,
+/// cannot be chosen.
+const PARENT_MISSING: &str = "parent not in this clone";
+
 /// Why "Generate questions" cannot be used yet.
 const GENERATE_QUESTIONS_UNAVAILABLE: &str = "arrives with Jev";
 
@@ -383,17 +623,21 @@ struct Parts {
     change_heading: Rect,
     change_list: Rect,
     proceed: Rect,
+    /// The row at the bottom, for the search box and what a search found.
+    status: Rect,
 }
 
 /// Where the picker's parts go in `area`, for lists of `area_rows` and
-/// `change_rows` rows. The title, headings, lists and the control after them
+/// `change_rows` rows, and `status_rows` at the bottom. The title, headings, lists and the control after them
 /// get their rows first, and the gaps between them share what is left, so a
 /// short terminal keeps every control. When even the lists do not fit, they
 /// scroll, and the change list always keeps at least one row.
-fn layout(area: Rect, area_rows: usize, change_rows: usize) -> Parts {
+fn layout(area: Rect, area_rows: usize, change_rows: usize, status_rows: u16) -> Parts {
     const TITLE: u16 = 1;
     const HEADING: u16 = 1;
     const PROCEED: u16 = 1;
+    let [area, status] =
+        Layout::vertical([Constraint::Fill(1), Constraint::Length(status_rows)]).areas(area);
     let rows = |count: usize| u16::try_from(count).unwrap_or(u16::MAX);
     let mut left = area.height.saturating_sub(TITLE + 2 * HEADING + PROCEED);
     let area_rows = rows(area_rows).min(left.saturating_sub(rows(change_rows.min(1))));
@@ -437,6 +681,7 @@ fn layout(area: Rect, area_rows: usize, change_rows: usize) -> Parts {
         change_heading,
         change_list,
         proceed,
+        status,
     }
 }
 
@@ -458,7 +703,7 @@ fn render_list(frame: &mut Frame<'_>, area: Rect, items: Vec<Text<'_>>, shown: O
 impl View for Picker {
     fn route(&self) -> Route {
         Route::Picker(match self.source {
-            Source::Showcase => Project::Showcase,
+            Source::Showcase { .. } => Project::Showcase,
             Source::Repository { .. } => Project::Repository,
         })
     }
@@ -468,18 +713,55 @@ impl View for Picker {
     }
 
     fn keymap(&self) -> Keymap {
-        match self.source {
-            Source::Showcase => KEYMAP,
-            Source::Repository { .. } => REPOSITORY_KEYMAP,
+        match (&self.source, &self.search_box) {
+            (_, Some(_)) => keymap::SEARCH_BOX,
+            (Source::Showcase { .. }, None) => KEYMAP,
+            (Source::Repository { .. }, None) => REPOSITORY_KEYMAP,
+        }
+    }
+
+    fn input(&self) -> Input {
+        match self.search_box {
+            Some(_) => Input::Text,
+            None => Input::Commands,
         }
     }
 
     fn actions(&self) -> &'static [Action] {
-        ACTIONS
+        match self.source {
+            Source::Showcase { .. } => ACTIONS,
+            Source::Repository { .. } => REPOSITORY_ACTIONS,
+        }
     }
 
     fn apply(&mut self, command: Command, _area: Rect) -> Option<Command> {
+        if let Some(search_box) = &mut self.search_box {
+            match command {
+                Command::Activate => {
+                    let query = Query::new(search_box.text());
+                    self.search_box = None;
+                    if let Some(query) = query {
+                        self.search(query);
+                    }
+                }
+                Command::Cancel => self.search_box = None,
+                command => search_box.apply(command),
+            }
+            return None;
+        }
+        match command {
+            Command::Search => {
+                self.search_box = Some(TextEntry::default());
+                return None;
+            }
+            Command::NextMatch | Command::PreviousMatch => {
+                self.go_to_match(command);
+                return None;
+            }
+            _ => {}
+        }
         self.focus = self.focus.after(command, self.controls());
+        self.read_ahead();
         if !matches!(command, Command::Activate | Command::Open) {
             return None;
         }
@@ -491,9 +773,17 @@ impl View for Picker {
                 None
             }
             Control::Change(index) => {
+                let change = match self.source {
+                    Source::Showcase { .. } => ChangeRef::Showcase(ChangeIndex::new(index)),
+                    Source::Repository { .. } => match self.commits().get(index) {
+                        Some(commit) if commit.availability() != Availability::ParentMissing => {
+                            ChangeRef::Commit(commit.id())
+                        }
+                        _ => return None,
+                    },
+                };
                 self.chosen = Some(index);
-                (command == Command::Open)
-                    .then_some(Command::Go(Route::Viewer(ChangeIndex::new(index))))
+                (command == Command::Open).then_some(Command::Go(Route::Viewer(change)))
             }
             // "Generate questions" is disabled until Jev arrives, as it
             // says, and the outbound review is not built yet.
@@ -504,8 +794,11 @@ impl View for Picker {
     fn render(&self, context: &Context<'_>, frame: &mut Frame<'_>, area: Rect) {
         let theme = context.theme;
         let area_items = self.area_items(context, area.width);
-        let change_items = self.change_items(context, area.width);
-        let parts = layout(area, height(&area_items), height(&change_items));
+        let status_rows = match self.source {
+            Source::Showcase { .. } => 0,
+            Source::Repository { .. } => 1,
+        };
+        let parts = layout(area, height(&area_items), self.change_rows(), status_rows);
         let title = match (&self.source, context.repository) {
             (Source::Repository { .. }, Ok(repository)) => {
                 format!("Practice on {}", repository.name())
@@ -540,7 +833,16 @@ impl View for Picker {
             Control::Change(index) => Some(index),
             Control::Area(_) | Control::Proceed => self.chosen,
         };
-        render_list(frame, parts.change_list, change_items, shown_change);
+        // Scrolled as a list scrolls to show an item: to where it is the
+        // last row in view.
+        let rows = usize::from(parts.change_list.height);
+        let offset = shown_change.map_or(0, |shown| (shown + 1).saturating_sub(rows));
+        render_list(
+            frame,
+            parts.change_list,
+            self.change_items(context, area.width, offset..offset + rows),
+            shown_change.and_then(|shown| shown.checked_sub(offset)),
+        );
         let (label, disabled) = self.proceed();
         frame.render_widget(
             theme.control(
@@ -553,5 +855,13 @@ impl View for Picker {
             ),
             parts.proceed,
         );
+        if let Some(search_box) = &self.search_box {
+            frame.render_widget(
+                Paragraph::new(search_box.line(theme, "/", usize::from(parts.status.width))),
+                parts.status,
+            );
+        } else if let Some(status) = self.search_status() {
+            frame.render_widget(Paragraph::new(status), parts.status);
+        }
     }
 }

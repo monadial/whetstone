@@ -35,7 +35,7 @@ fn shows(session: &Session, needle: &str) -> bool {
 }
 
 /// The rows of the code pane, the second of the two side by side, trimmed.
-fn code(session: &Session) -> Vec<String> {
+pub(crate) fn code(session: &Session) -> Vec<String> {
     session
         .rows()
         .iter()
@@ -430,13 +430,13 @@ fn in_the_files_pane_ctrl_d_and_ctrl_u_move_half_a_page_of_files() {
 
 /// The row under the panes, where the search box and what a search found
 /// show, trimmed.
-fn status(session: &Session) -> String {
+pub(crate) fn status(session: &Session) -> String {
     let rows = session.rows();
     rows[rows.len() - 3].trim().to_owned()
 }
 
 /// The footer's hints, trimmed.
-fn footer(session: &Session) -> String {
+pub(crate) fn footer(session: &Session) -> String {
     let rows = session.rows();
     rows[rows.len() - 2].trim().to_owned()
 }
@@ -479,7 +479,7 @@ fn slash_opens_a_search_box_where_every_key_but_ctrl_c_is_text() {
 }
 
 /// The keys that type `text` into the search box.
-fn typing(text: &str) -> String {
+pub(crate) fn typing(text: &str) -> String {
     text.chars()
         .map(|c| {
             if c == ' ' {

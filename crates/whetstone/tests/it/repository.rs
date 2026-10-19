@@ -11,7 +11,7 @@ use crate::session::{NO_COLOR, Session, Setup, columns};
 
 /// Starts the app without colour in `start`, in a `width` by `height`
 /// terminal.
-fn started_in(start: &Path, width: u16, height: u16) -> Session {
+pub(crate) fn started_in(start: &Path, width: u16, height: u16) -> Session {
     Session::start(
         Setup {
             variables: NO_COLOR,
@@ -603,18 +603,21 @@ fn the_picker_lists_the_commits_reachable_from_head_newest_first_with_short_ids_
         .map(str::to_owned)
         .collect();
     assert_eq!(expected.len(), 5);
-    assert_eq!(session.section(CHANGES), expected);
+    let rows = session.section(CHANGES);
+    for (row, expected) in rows.iter().zip(&expected) {
+        assert!(row.starts_with(expected), "{row:?} is {expected:?}");
+    }
     assert_eq!(
-        columns(&session.section(CHANGES))
+        columns(&rows)
             .into_iter()
-            .map(|row| row[1])
+            .map(|row| row[1..].join("  "))
             .collect::<Vec<_>>(),
         [
-            "Merge refunds",
+            "Merge refunds  merge · vs first parent",
             "Describe the service",
             "Add refunds",
             "Model a payment",
-            "Start the payments service",
+            "Start the payments service  first commit",
         ]
     );
 }
@@ -652,22 +655,6 @@ fn with_a_commit_chosen_review_what_will_be_sent_still_waits_for_an_area() {
     assert_eq!(
         session.row_with(REVIEW),
         "Review what will be sent (choose an area)"
-    );
-}
-
-#[test]
-fn enter_on_a_repository_commit_only_chooses_it() {
-    let repo = with_history();
-    let mut session = started_in(repo.root(), 120, 32);
-
-    session.press(TO_THE_NEWEST_COMMIT);
-    session.press("<Enter>");
-
-    assert_eq!(session.rows()[1].trim(), "Practice on payments");
-    assert!(
-        session.section(CHANGES)[0].starts_with("> (x) "),
-        "{}",
-        session.text()
     );
 }
 
@@ -774,22 +761,27 @@ fn an_area_file_that_cannot_be_read_is_listed_with_the_reason_and_hides_no_other
 }
 
 #[test]
-fn key_help_on_the_repository_picker_says_enter_chooses_a_change() {
+fn key_help_on_the_repository_picker_says_enter_opens_a_change_and_slash_searches() {
     let repo = payments();
     let mut session = started_in(repo.root(), 80, 24);
     session.press("<Enter>");
     assert_eq!(
         session.rows()[22].trim(),
-        "? keys  : actions  Space toggle  Enter choose  q back"
+        "? keys  : actions  Space toggle  Enter open  / search  q back"
     );
 
     session.press("?");
 
     let rows = session.overlay_rows();
-    assert!(
-        rows.iter()
-            .any(|row| row.starts_with("Enter")
-                && row.ends_with("Toggle an area, or choose a change")),
-        "{rows:#?}"
-    );
+    for (key, does) in [
+        ("Enter", "Toggle an area, or choose and open a change"),
+        ("/", "Search the commits by message or ID"),
+        ("n, N", "Next or previous match"),
+    ] {
+        assert!(
+            rows.iter()
+                .any(|row| row.starts_with(key) && row.ends_with(does)),
+            "{key}: {rows:#?}"
+        );
+    }
 }

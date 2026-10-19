@@ -1,0 +1,44 @@
+---
+source: crates/whetstone/tests/it/commit_viewer.rs
+expression: session.frame()
+---
+Buffer {
+    area: Rect { x: 0, y: 0, width: 80, height: 24 },
+    content: [
+        "                                                                                ",
+        "  d0ef903  Add assets, a link and the ledger                                    ",
+        "                                                                                ",
+        "  ┌ Files ────────────────┐┌  ( ) Diff   ( ) Before (new file) > (x) After ──┐  ",
+        "  │   ( ) .gitmodules     ││ docs/logo.png is a binary file, so it has no    │  ",
+        "  │   ( ) docs/latin1.txt ││ code to show.                                   │  ",
+        "  │       binary          ││                                                 │  ",
+        "  │   (x) docs/logo.png   ││                                                 │  ",
+        "  │       binary          ││                                                 │  ",
+        "  │   ( ) docs/readme     ││                                                 │  ",
+        "  │       symlink         ││                                                 │  ",
+        "  │   ( ) vendor/ledger   ││                                                 │  ",
+        "  │       submodule       ││                                                 │  ",
+        "  │                       ││                                                 │  ",
+        "  │                       ││                                                 │  ",
+        "  │                       ││                                                 │  ",
+        "  │                       ││                                                 │  ",
+        "  │                       ││                                                 │  ",
+        "  │                       ││                                                 │  ",
+        "  │                       ││                                                 │  ",
+        "  └───────────────────────┘└─────────────────────────────────────────────────┘  ",
+        "                                                                                ",
+        "  ? keys  : actions  h/l panes  / search  q back                                ",
+        "                                                                                ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 44, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 3, y: 3, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 10, y: 3, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 45, y: 3, fg: Reset, bg: Reset, underline: Reset, modifier: DIM | ITALIC,
+        x: 62, y: 3, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 63, y: 3, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 74, y: 3, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+    ]
+}

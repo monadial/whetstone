@@ -3,23 +3,30 @@
 //! unavailable.
 //!
 //! Opening reads `.whetstone/config.toml` and `.whetstone/areas/*.md` from
-//! the working tree at the Git root, and never writes anything. Every `gix`
-//! call Whetstone makes is in this module, behind Whetstone's own types.
+//! the working tree at the Git root, and never writes anything. From there,
+//! [`History`] lists the commits reachable from HEAD a page at a time, and
+//! [`Repository::load`] reads one of them as a change from Git's object
+//! store. Every `gix` call Whetstone makes is in this module and those it
+//! holds, behind Whetstone's own types.
 
 use std::ffi::OsStr;
 use std::fs::{self, File};
 use std::io::{self, Read as _};
 use std::path::{Path, PathBuf};
 
-use whetstone_core::{Area, InvalidAreaFile, RepositoryConfig, RepositoryConfigError};
+use whetstone_core::{
+    Area, Change, CommitId, InvalidAreaFile, RepositoryConfig, RepositoryConfigError,
+};
+
+mod history;
+mod load;
+
+pub(crate) use history::{Availability, Commit, End, History};
 
 /// The repository's Whetstone config, relative to the Git root.
 pub(crate) const CONFIG: &str = ".whetstone/config.toml";
 /// The directory of the repository's area files, relative to the Git root.
 pub(crate) const AREAS: &str = ".whetstone/areas";
-
-/// How many commits the picker reads when it opens.
-const FIRST_PAGE: usize = 50;
 
 /// The learner's repository as opened at startup.
 #[derive(Debug)]
@@ -38,17 +45,6 @@ pub struct Repository {
     /// What HEAD pointed to at startup. Commits are listed from here, so
     /// switching branches while Whetstone is open changes nothing.
     head: gix::ObjectId,
-}
-
-/// A commit as the picker lists it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Commit {
-    /// The full commit ID.
-    id: gix::ObjectId,
-    /// The ID shortened as `git log --oneline` shortens it.
-    short_id: String,
-    /// The commit message's subject, as `git log --oneline` shows it.
-    summary: String,
 }
 
 /// Why Practice on the learner's repository is unavailable.
@@ -109,6 +105,18 @@ pub(crate) enum Discovery {
 #[derive(Debug, thiserror::Error)]
 #[error("cannot open the repository")]
 pub struct OpenError(#[source] gix::Error);
+
+/// A commit could not be read from the repository.
+#[derive(Debug, thiserror::Error)]
+#[error("cannot read the commit")]
+pub(crate) struct LoadError(#[from] gix::Error);
+
+impl LoadError {
+    /// What went wrong, as gix says it.
+    pub(crate) fn cause(&self) -> &(dyn std::error::Error + 'static) {
+        &self.0
+    }
+}
 
 /// The commits could not be read from the repository.
 #[derive(Debug, thiserror::Error)]
@@ -277,33 +285,24 @@ impl Repository {
         &self.config
     }
 
-    /// The first commits reachable from HEAD as it was at startup, newest
-    /// first, in `git log` order.
-    pub(crate) fn first_commits(&self) -> Result<Vec<Commit>, HistoryError> {
-        use gix::prelude::ObjectIdExt as _;
-        use gix::revision::walk::Sorting;
-        use gix::traverse::commit::simple::CommitTimeOrder;
-
-        // Shortening each ID would search all objects for every one, so
-        // the length is found once, for HEAD, and used for each row.
-        let hex_len = self.head.attach(&self.git).shorten()?.hex_len();
-        let walk = self
-            .git
-            .rev_walk([self.head])
-            .sorting(Sorting::ByCommitTime(CommitTimeOrder::NewestFirst))
-            .all()?;
-        let mut commits = Vec::new();
-        for info in walk.take(FIRST_PAGE) {
-            let info = info?;
-            commits.push(Commit {
-                id: info.id,
-                short_id: info.id.to_hex_with_len(hex_len).to_string(),
-                summary: info.object()?.message()?.summary().to_string(),
-            });
-        }
-        tracing::info!(commits = commits.len(), head = %self.head, "read the first commits");
-        Ok(commits)
+    /// The commit `id` as a change, read from Git's object store at that
+    /// commit, never from the working tree.
+    pub(crate) fn load(&self, id: CommitId) -> Result<Change, LoadError> {
+        load::load(&self.git, id).inspect_err(|error| {
+            tracing::warn!(commit = id.full(), error = %error.0, "cannot read a commit");
+        })
     }
+
+    /// The commits reachable from HEAD as it was at startup, newest first,
+    /// in `git log` order, with the first page read.
+    pub(crate) fn history(&self) -> Result<History, HistoryError> {
+        History::from(&self.git, self.head)
+    }
+}
+
+/// The commit `id`, with a short ID of `short_len` digits.
+fn commit_id(id: gix::ObjectId, short_len: usize) -> CommitId {
+    CommitId::new(&id.to_string(), short_len).expect("gix writes object IDs as lowercase hex")
 }
 
 /// Records in the log how opening the learner's repository went: its Git
@@ -410,25 +409,4 @@ fn read_area_files(dir: &Path) -> io::Result<Vec<AreaFile>> {
         });
     }
     Ok(files)
-}
-
-impl Commit {
-    /// The commit's full ID.
-    #[expect(
-        dead_code,
-        reason = "opening a commit in the change viewer loads it by its ID"
-    )]
-    pub(crate) fn id(&self) -> gix::ObjectId {
-        self.id
-    }
-
-    /// The commit's ID, shortened as `git log --oneline` shortens it.
-    pub(crate) fn short_id(&self) -> &str {
-        &self.short_id
-    }
-
-    /// The commit message's subject.
-    pub(crate) fn summary(&self) -> &str {
-        &self.summary
-    }
 }

@@ -1,0 +1,52 @@
+---
+source: crates/whetstone/tests/it/commits.rs
+expression: session.frame()
+---
+Buffer {
+    area: Rect { x: 0, y: 0, width: 120, height: 32 },
+    content: [
+        "                                                                                                                        ",
+        "  Practice on payments-shallow                                                                                          ",
+        "                                                                                                                        ",
+        "  Areas the questions focus on                                                                                          ",
+        "    (x) Domain          The rules, concepts and language the work is about                                              ",
+        "    (x) Infrastructure  Where the work runs and what it depends on                                                      ",
+        "    (x) Observability   How you can tell what the work is doing and why                                                 ",
+        "    (x) Scalability     How the work holds up as use and data grow                                                      ",
+        "    (x) System design   How the parts fit together, and why this way                                                    ",
+        "                                                                                                                        ",
+        "  Change to practice on                                                                                                 ",
+        "    ( ) a83025c  Merge refunds  merge · vs first parent                                                                 ",
+        "  > ( ) 01cfa23  Bump the counter to 4                                                                                  ",
+        "    ( ) 10daf72  Add refunds                                                                                            ",
+        "    ( ) 4d7751c  Bump the counter to 3 (parent not in this clone)                                                       ",
+        "                                                                                                                        ",
+        "    Review what will be sent (choose a change)                                                                          ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "  Match 1 of 2 for "counter"                                                                                            ",
+        "  ? keys  : actions  Space toggle  Enter open  / search  q back                                                         ",
+        "                                                                                                                        ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 30, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 12, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 38, y: 12, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 8, y: 14, fg: Reset, bg: Reset, underline: Reset, modifier: DIM | ITALIC,
+        x: 65, y: 14, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 4, y: 16, fg: Reset, bg: Reset, underline: Reset, modifier: DIM | ITALIC,
+        x: 46, y: 16, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+    ]
+}

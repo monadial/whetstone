@@ -6,6 +6,8 @@ mod areas;
 mod areas_init;
 mod cli;
 mod colors;
+mod commit_viewer;
+mod commits;
 mod config;
 mod dirs;
 mod navigation;
