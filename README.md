@@ -5,7 +5,7 @@
   </picture>
 </p>
 
-# Whetstone
+# Whetstone by Monadial
 
 **Understand the code you ship.**
 
