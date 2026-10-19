@@ -6,7 +6,7 @@ Buffer {
     area: Rect { x: 0, y: 0, width: 120, height: 32 },
     content: [
         "                                                                                                                        ",
-        "  Preserve payment retry identity                                                                               domain  ",
+        "  Preserve payment retry identity                                                                               Domain  ",
         "                                                                                                                        ",
         "  ┌ Files ────────────────┐┌> (x) Diff   ( ) Before   ( ) After ─────────────────────────────────────────────────────┐  ",
         "  │   (x) src/provider.rs ││ diff --git a/src/provider.rs b/src/provider.rs                                          │  ",

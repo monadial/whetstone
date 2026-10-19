@@ -7,7 +7,7 @@ use ratatui::crossterm::event::KeyCode;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{List, ListState, Paragraph};
-use whetstone_core::{Area, Change, ShowcaseProject};
+use whetstone_core::ShowcaseProject;
 
 use crate::columns;
 use crate::focus::Position;
@@ -96,11 +96,11 @@ impl Picker {
         self.control(self.focus.index())
     }
 
-    /// The areas, each a choice.
+    /// The areas, each a choice showing its name, with its one-line
+    /// description in a column after the widest name.
     fn area_rows<'a>(&self, context: &Context<'a>) -> Vec<Line<'a>> {
-        context
-            .showcase
-            .areas()
+        let areas = context.showcase.areas();
+        let rows: Vec<Line<'a>> = areas
             .iter()
             .zip(&self.areas)
             .enumerate()
@@ -113,6 +113,15 @@ impl Picker {
                         disabled: None,
                     },
                 )
+            })
+            .collect();
+        let column = rows.iter().map(Line::width).max().unwrap_or_default() + COLUMN_GAP;
+        rows.into_iter()
+            .zip(areas)
+            .map(|(mut line, area)| {
+                columns::pad_to(&mut line, column);
+                line.push_span(Span::styled(area.description(), context.theme.muted));
+                line
             })
             .collect()
     }
@@ -137,7 +146,7 @@ impl Picker {
                         disabled: None,
                     },
                 );
-                (line, areas_of(change))
+                (line, context.showcase.area_names(change).join(", "))
             })
             .collect();
         let areas_width = |areas: &str| Line::raw(areas).width();
@@ -168,18 +177,9 @@ const CHANGE_HEADING: &str = "Change to practice on";
 /// Why "Generate questions" cannot be used yet.
 const GENERATE_QUESTIONS_UNAVAILABLE: &str = "arrives with Jev";
 
-/// The cells between a change's summary and its areas, at least.
+/// The cells between an area's name and its description, and between a
+/// change's summary and its areas, at least.
 const COLUMN_GAP: usize = 2;
-
-/// The areas `change` touches, as the change list shows them.
-fn areas_of(change: &Change) -> String {
-    change
-        .areas()
-        .iter()
-        .map(Area::name)
-        .collect::<Vec<_>>()
-        .join(", ")
-}
 
 /// Where the picker's parts go, top to bottom.
 #[derive(Debug)]

@@ -2,7 +2,7 @@
 //! diff and the code before and after the change for each file it touches.
 
 use whetstone::Flow;
-use whetstone_core::{Area, Change, ShowcaseProject, TouchedFile};
+use whetstone_core::{Change, ShowcaseProject, TouchedFile};
 
 use crate::session::{NO_COLOR, Session, Setup};
 
@@ -80,7 +80,7 @@ fn enter_on_a_change_opens_it_on_the_diff_of_the_first_file_it_touches() {
 fn q_and_esc_return_to_the_picker_with_its_areas_the_chosen_change_and_focus_intact() {
     for back in ["q", "<Esc>"] {
         let mut session = Session::plain(80, 24);
-        // Deselect observability, then open the change from there.
+        // Deselect infrastructure, then open the change from there.
         session.press("<Enter> j <Space> j j j j j j j j <Enter>");
         assert!(
             session.rows()[1]
@@ -94,10 +94,10 @@ fn q_and_esc_return_to_the_picker_with_its_areas_the_chosen_change_and_focus_int
 
         let text = session.text();
         assert!(
-            text.contains("  ( ) observability"),
+            text.contains("  ( ) Infrastructure"),
             "after {back}:\n{text}"
         );
-        assert!(text.contains("  (x) domain"), "after {back}:\n{text}");
+        assert!(text.contains("  (x) Domain"), "after {back}:\n{text}");
         assert!(
             text.contains("> (x) Preserve payment retry identity"),
             "after {back}:\n{text}"
@@ -961,12 +961,12 @@ fn the_viewer_in_colour_at_80x24() {
 fn in_a_narrow_window_the_title_keeps_a_gap_between_the_summary_and_its_areas() {
     let mut session = Session::plain(50, 12);
 
-    // "Put storage and the provider behind ports", in system design.
+    // "Put storage and the provider behind ports", in System design.
     session.press(&open(5));
 
     assert_eq!(
         session.rows()[1].trim(),
-        "Put storage and the provider behind ports  sys",
+        "Put storage and the provider behind ports  Sys",
         "{}",
         session.text()
     );
@@ -1013,11 +1013,9 @@ fn long_lines_wrap_so_their_ends_show_at_80x24() {
 #[test]
 fn a_search_matches_whole_characters_only() {
     // A change whose code holds `café`, its `é` an `e` and a combining accent.
-    let showcase = ShowcaseProject::new(
-        vec![Area::new("domain")],
-        vec![Change::new(
-            "Name the café".to_owned(),
-            vec![Area::new("domain")],
+    let showcase = ShowcaseProject::new(vec![Change::new(
+        "Name the café".to_owned(),
+        vec!["domain".parse().expect("an area ID")],
             "diff --git a/menu.txt b/menu.txt\n--- a/menu.txt\n+++ b/menu.txt\n@@ -1 +1 @@\n-cafe\n+cafe\u{301}\n"
                 .to_owned(),
             vec![TouchedFile::modified(
@@ -1025,8 +1023,7 @@ fn a_search_matches_whole_characters_only() {
                 "cafe\n".to_owned(),
                 "cafe\u{301}\n".to_owned(),
             )],
-        )],
-    );
+    )]);
     let mut session = Session::start(
         Setup {
             variables: NO_COLOR,
@@ -1036,8 +1033,8 @@ fn a_search_matches_whole_characters_only() {
         80,
         24,
     );
-    // Past its one area, onto the change.
-    session.press("<Enter> j <Enter>");
+    // Past the five areas, onto the change.
+    session.press("<Enter> j j j j j <Enter>");
 
     session.press(&format!("/ {} <Enter>", typing("cafe")));
     assert_eq!(

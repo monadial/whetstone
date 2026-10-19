@@ -215,7 +215,7 @@ const VIEWS: [(&str, &str, &[&str]); 12] = [
         "<Enter>",
         &[
             "Practice on the showcase project",
-            "> (x) domain",
+            "> (x) Domain",
             "( ) Model the payment lifecycle",
             "( ) Run rustfmt over the HTTP layer",
             "Generate questions (arrives with Jev)",
@@ -247,7 +247,7 @@ const VIEWS: [(&str, &str, &[&str]); 12] = [
         "<Enter> j j j j j j j j j <Enter> / r e f u n d <Enter>",
         &[
             "Preserve payment retry identity",
-            "domain",
+            "Domain",
             "Files",
             "(x) src/provider.rs",
             "tests/api.rs",

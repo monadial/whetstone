@@ -5,10 +5,10 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use whetstone_core::{Area, TouchedFile};
+use whetstone_core::{Area, AreaId, TouchedFile};
 
 #[test]
-fn the_embedded_showcase_has_all_ten_curated_changes_with_the_areas_their_trailers_declare() {
+fn the_embedded_showcase_has_all_ten_curated_changes_with_the_area_ids_their_trailers_name() {
     let showcase = whetstone::embedded_showcase();
 
     let changes: Vec<(&str, Vec<&str>)> = showcase
@@ -17,7 +17,7 @@ fn the_embedded_showcase_has_all_ten_curated_changes_with_the_areas_their_traile
         .map(|change| {
             (
                 change.summary(),
-                change.areas().iter().map(Area::name).collect(),
+                change.areas().iter().map(AreaId::as_str).collect(),
             )
         })
         .collect();
@@ -37,7 +37,7 @@ fn the_embedded_showcase_has_all_ten_curated_changes_with_the_areas_their_traile
             ("Preserve payment retry identity", vec!["domain"]),
             (
                 "Put storage and the provider behind ports",
-                vec!["system design"]
+                vec!["system-design"]
             ),
             (
                 "Trace requests and export payment metrics",
@@ -59,24 +59,20 @@ fn project() -> PathBuf {
 }
 
 #[test]
-fn the_embedded_showcase_offers_the_areas_its_config_declares() {
+fn the_showcase_project_ships_no_area_files_and_offers_the_defaults() {
     let config: toml::Table = fs::read_to_string(project().join(".whetstone/config.toml"))
         .expect("read the showcase project's config")
         .parse()
         .expect("the config is TOML");
-    let declared: Vec<&str> = config["areas"]
-        .as_array()
-        .expect("the config declares areas")
-        .iter()
-        .map(|area| area.as_str().expect("an area name"))
-        .collect();
+    assert!(config.is_empty(), "the config sets nothing: {config:#?}");
+    assert!(
+        !project().join(".whetstone/areas").exists(),
+        "the showcase project has no area files"
+    );
 
     let showcase = whetstone::embedded_showcase();
 
-    assert_eq!(
-        showcase.areas().iter().map(Area::name).collect::<Vec<_>>(),
-        declared
-    );
+    assert_eq!(showcase.areas(), Area::defaults());
 }
 
 #[test]

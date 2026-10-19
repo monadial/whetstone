@@ -8,7 +8,7 @@ built from.
 | Path | What it is |
 | --- | --- |
 | `payments/` | The project's code, exactly as the history builds it. It is its own Cargo workspace with its own lockfile and is never a member of the CLI workspace. |
-| `payments/.whetstone/config.toml` | The areas Practice questions can focus on. |
+| `payments/.whetstone/config.toml` | Whetstone's settings for the project. It sets nothing, and the project has no area files, so Practice offers Whetstone's default areas. |
 | `payments-history/` | The curated history: a `git format-patch` series that builds `payments/` from an empty tree. |
 | `check-history.sh` | Replays the series onto an empty tree and checks that it reproduces `payments/` exactly. CI runs it. |
 
@@ -22,19 +22,20 @@ cargo test --locked
 
 ## Areas trailer
 
-Every change declares the areas it touches in one trailer at the end of its
+Every change names the areas it touches in one trailer at the end of its
 commit message:
 
 ```text
 Areas: scalability, infrastructure
 ```
 
-The value is a comma-separated list of area names exactly as
-`payments/.whetstone/config.toml` declares them, so a name may contain a space
-(`system design`). Git reads it with
-`git log --format='%(trailers:key=Areas,valueonly)'`. `check-history.sh` fails
-when a change has no `Areas:` trailer, names an area the config does not
-declare, or when some declared area is covered by no change.
+The value is a comma-separated list of area IDs: the file names, without
+`.md`, of Whetstone's default area files in `crates/whetstone-core/areas/`,
+such as `system-design`. Git reads it with
+`git log --format='%(trailers:key=Areas,valueonly)'`. The build and
+`check-history.sh` both fail when a change has no `Areas:` trailer or names
+anything but a default area's ID, and `check-history.sh` also fails when some
+default area is covered by no change.
 
 Two changes are deliberately trivial, a rename and a formatting pass, so that
 Practice also meets changes with nothing worth asking about.

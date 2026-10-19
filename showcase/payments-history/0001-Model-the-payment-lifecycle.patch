@@ -43,14 +43,14 @@ index 0000000..ea8c4bf
 +/target
 diff --git a/.whetstone/config.toml b/.whetstone/config.toml
 new file mode 100644
-index 0000000..21572b7
+index 0000000..818ce78
 --- /dev/null
 +++ b/.whetstone/config.toml
 @@ -0,0 +1,4 @@
 +# Whetstone settings for this repository.
-+
-+# The areas Practice questions can focus on.
-+areas = ["domain", "observability", "scalability", "infrastructure", "system design"]
++#
++# This repository has no area files in .whetstone/areas/, so Practice offers
++# Whetstone's default areas.
 diff --git a/Cargo.lock b/Cargo.lock
 new file mode 100644
 index 0000000..e3900ee

@@ -3,9 +3,10 @@
 #
 # Replays the patch series in payments-history/ onto an empty tree and fails
 # unless the result matches payments/ exactly. It also checks that every
-# change declares its Areas in an `Areas:` trailer, that each of those areas
-# is declared in payments/.whetstone/config.toml, and that the changes
-# together cover every declared area.
+# change names its areas in an `Areas:` trailer, that each of those is the ID
+# of one of Whetstone's default areas (the file names, without `.md`, in
+# crates/whetstone-core/areas/), and that the changes together cover every
+# default area.
 #
 # Usage: showcase/check-history.sh [--keep DIR]
 #   --keep DIR  replay into the new directory DIR and keep it as a git
@@ -15,7 +16,7 @@ set -euo pipefail
 showcase=$(cd "$(dirname "$0")" && pwd)
 project="$showcase/payments"
 patches="$showcase/payments-history"
-config="$project/.whetstone/config.toml"
+defaults="$showcase/../crates/whetstone-core/areas"
 
 fail() {
   echo "check-history: $*" >&2
@@ -55,10 +56,14 @@ if ! git diff --no-index --exit-code "$expected" "$actual"; then
 fi
 files=$(git -C "$replay" ls-files | wc -l | tr -d ' ')
 
-# Read the declared areas: every quoted string in the `areas = [...]` array.
-declared=$(awk '/^areas *= *\[/ { grab = 1 } grab { print } grab && /\]/ { exit }' "$config" |
-  grep -o '"[^"]*"' | tr -d '"')
-[ -n "$declared" ] || fail "$config declares no areas"
+# The default area IDs: the default area files' names without `.md`, in
+# file-name order.
+ids=""
+for file in "$defaults"/*.md; do
+  [ -e "$file" ] || fail "$defaults has no area files"
+  ids=$(printf '%s\n%s' "$ids" "$(basename "$file" .md)")
+done
+ids=${ids#$'\n'}
 
 covered=""
 changes=0
@@ -70,8 +75,8 @@ while read -r sha; do
   IFS=',' read -r -a areas <<<"$trailer"
   for area in "${areas[@]}"; do
     area=$(echo "$area" | sed 's/^ *//; s/ *$//')
-    echo "$declared" | grep -Fqx -- "$area" ||
-      fail "\"$subject\" declares area \"$area\", which $config does not declare"
+    echo "$ids" | grep -Fqx -- "$area" ||
+      fail "\"$subject\" names the area \"$area\", which is not the ID of a default area in $defaults"
     covered=$(printf '%s\n%s' "$covered" "$area")
   done
   printf '  %02d  %-55s %s\n' "$changes" "$subject" "$trailer"
@@ -79,10 +84,10 @@ done < <(git -C "$replay" rev-list --reverse HEAD)
 
 while read -r area; do
   echo "$covered" | grep -Fqx -- "$area" || fail "no change covers the area \"$area\""
-done <<<"$declared"
+done <<<"$ids"
 
 echo "ok: $changes changes reproduce showcase/payments exactly ($files files)"
-echo "ok: every change declares its areas, and together they cover: $(echo "$declared" | paste -sd, - | sed 's/,/, /g')"
+echo "ok: every change names default area IDs, and together they cover: $(echo "$ids" | paste -sd, - | sed 's/,/, /g')"
 if [ "$replay" != "$work/replay" ]; then
   echo "kept the replayed repository in $replay"
 fi
