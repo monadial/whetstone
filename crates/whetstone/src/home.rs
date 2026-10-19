@@ -78,7 +78,7 @@ impl View for Home {
         KEYMAP
     }
 
-    fn apply(&mut self, command: Command) -> Option<Command> {
+    fn apply(&mut self, command: Command, _area: Rect) -> Option<Command> {
         self.focus = self.focus.after(command, Action::ALL.len());
         (command == Command::Activate).then(|| self.focused().command())
     }

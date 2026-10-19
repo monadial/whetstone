@@ -2,14 +2,15 @@
 //!
 //! A key goes first to the reserved Ctrl+C, which quits from anywhere. Under
 //! the "window too small" notice no other key acts. Otherwise the open
-//! overlay takes every key, or else the current screen's keymap and then the
-//! keys that work everywhere turn it into a command. The command changes the
-//! current screen, or the app itself when it opens an overlay, changes
-//! screens or quits.
+//! overlay takes every key. Without one, while a text entry on the screen
+//! has focus, the key types into it, or the screen's keymap edits or leaves
+//! it. Otherwise the screen's keymap and then the keys that work everywhere
+//! turn it into a command. The command changes the current screen, or the
+//! app itself when it opens an overlay, changes screens or quits.
 
 use ratatui::Frame;
 use ratatui::crossterm::event::{Event, KeyEvent, KeyEventKind};
-use ratatui::layout::{Constraint, Layout, Margin, Size};
+use ratatui::layout::{Constraint, Layout, Margin, Position, Rect, Size};
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Paragraph, Wrap};
 use whetstone_core::ShowcaseProject;
@@ -17,7 +18,7 @@ use whetstone_core::ShowcaseProject;
 use crate::config::Settings;
 use crate::help::KeyHelp;
 use crate::home::Home;
-use crate::keymap::{self, Command};
+use crate::keymap::{self, Command, Input};
 use crate::overlay::{Outcome, Overlay};
 use crate::palette::Palette;
 use crate::theme::Theme;
@@ -33,6 +34,8 @@ pub struct App {
     screens: Screens,
     /// The overlay over the current screen, if one is open.
     overlay: Option<Overlay>,
+    /// The first key of a two-key sequence, waiting for the second.
+    pending: keymap::Pending,
     /// The terminal's size as the UI loop last reported it. Layout never
     /// uses it (drawing measures the frame); it only tells key handling
     /// whether the notice is showing and how far key help can scroll.
@@ -55,6 +58,13 @@ const MINIMUM: Size = Size::new(50, 12);
 /// Whether a terminal of `size` is big enough for the screens.
 fn fits(size: Size) -> bool {
     size.width >= MINIMUM.width && size.height >= MINIMUM.height
+}
+
+/// Where the current screen and the footer under it go in a terminal of
+/// `area`.
+fn screen_and_footer(area: Rect) -> [Rect; 2] {
+    Layout::vertical([Constraint::Fill(1), Constraint::Length(1)])
+        .areas(area.inner(Margin::new(2, 1)))
 }
 
 /// The screens a learner went through to reach the current one, home first.
@@ -108,6 +118,7 @@ impl App {
                 above: Vec::new(),
             },
             overlay: None,
+            pending: keymap::Pending::default(),
             viewport: None,
         }
     }
@@ -149,8 +160,17 @@ impl App {
                 }
             };
         }
-        let command = keymap::command(self.screens.current().keymap(), key)
-            .or_else(|| keymap::command(keymap::EVERYWHERE, key));
+        let screen = self.screens.current();
+        let command = match screen.input() {
+            // Rule 29: while a text entry has focus, every key but Ctrl+C
+            // types, before any binding.
+            Input::Text => keymap::typed(key)
+                .map(Command::Type)
+                .or_else(|| keymap::command(screen.keymap(), key)),
+            Input::Commands => self
+                .pending
+                .command(&[screen.keymap(), keymap::EVERYWHERE], key),
+        };
         match command {
             Some(command) => self.run(command),
             None => Flow::Continue,
@@ -169,7 +189,11 @@ impl App {
             Command::Go(route) => self.screens.go(route, &self.showcase),
             Command::Back => self.screens.back(),
             command => {
-                if let Some(next) = self.screens.current_mut().apply(command) {
+                // Until the loop reports a size, assume the smallest the
+                // screens are drawn in.
+                let size = self.viewport.unwrap_or(MINIMUM);
+                let [screen, _] = screen_and_footer(Rect::from((Position::ORIGIN, size)));
+                if let Some(next) = self.screens.current_mut().apply(command, screen) {
                     return self.run(next);
                 }
             }
@@ -184,8 +208,7 @@ impl App {
             self.render_too_small(frame);
             return;
         }
-        let [body, footer] = Layout::vertical([Constraint::Fill(1), Constraint::Length(1)])
-            .areas(frame.area().inner(Margin::new(2, 1)));
+        let [body, footer] = screen_and_footer(frame.area());
         let screen = self.screens.current();
         let context = Context {
             theme: &self.theme,
@@ -193,11 +216,13 @@ impl App {
             showcase: &self.showcase,
         };
         screen.render(&context, frame, body);
+        // While a text entry has focus, the keys that work everywhere type.
+        let hints = match screen.input() {
+            Input::Text => keymap::hints(&[screen.keymap()]),
+            Input::Commands => keymap::hints(&[keymap::EVERYWHERE, screen.keymap()]),
+        };
         frame.render_widget(
-            Paragraph::new(Line::styled(
-                keymap::hints(&[keymap::EVERYWHERE, screen.keymap()]),
-                self.theme.muted,
-            )),
+            Paragraph::new(Line::styled(hints, self.theme.muted)),
             footer,
         );
         if let Some(overlay) = &self.overlay {

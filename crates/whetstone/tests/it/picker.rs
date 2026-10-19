@@ -177,7 +177,7 @@ fn the_change_list_shows_every_curated_change_with_its_message_and_areas() {
 }
 
 #[test]
-fn space_or_enter_on_a_change_chooses_it_and_only_it() {
+fn space_on_a_change_chooses_it_and_only_it() {
     let mut session = Session::plain(80, 24);
     session.press("<Enter>");
 
@@ -192,7 +192,7 @@ fn space_or_enter_on_a_change_chooses_it_and_only_it() {
     };
     assert_eq!(chosen(&session), ["> (x) Model the payment lifecycle"]);
 
-    session.press("j j <Enter>");
+    session.press("j j <Space>");
     assert_eq!(
         chosen(&session),
         ["> (x) Call the payment provider with timeouts and retries"]
@@ -227,7 +227,7 @@ fn generate_questions_is_visible_but_disabled_until_jev_arrives() {
 }
 
 #[test]
-fn key_help_on_the_picker_says_space_toggles_an_area_and_q_goes_back() {
+fn key_help_on_the_picker_says_space_toggles_an_area_enter_opens_a_change_and_q_goes_back() {
     let mut session = Session::plain(80, 24);
     session.press("<Enter> ?");
 
@@ -239,7 +239,8 @@ fn key_help_on_the_picker_says_space_toggles_an_area_and_q_goes_back() {
     let rows = session.overlay_rows();
     for (keys, does) in [
         ("j, Down, k, Up", "Move down or up"),
-        ("Space, Enter", "Toggle an area, or choose a change"),
+        ("Space", "Toggle an area, or choose a change"),
+        ("Enter", "Toggle an area, or choose and open a change"),
         ("q, Esc", "Back"),
         ("Tab, Shift+Tab", "Next or previous control"),
     ] {
@@ -273,13 +274,13 @@ fn the_palette_on_the_picker_offers_back_first_and_runs_it() {
 }
 
 #[test]
-fn the_footer_reminds_that_space_toggles_and_q_goes_back() {
+fn the_footer_reminds_that_space_toggles_enter_opens_and_q_goes_back() {
     let mut session = Session::plain(80, 24);
     session.press("<Enter>");
 
     assert_eq!(
         session.rows()[22].trim(),
-        "? keys  : actions  Space toggle  q back"
+        "? keys  : actions  Space toggle  Enter open  q back"
     );
 }
 

@@ -24,6 +24,9 @@ thiserror = "2"
 toml = { version = "1.1", default-features = false, features = ["parse", "serde", "std"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std"] }
+# Typed text is edited by grapheme (CODING_STANDARDS.md rule 31). Ratatui
+# already depends on it.
+unicode-segmentation = "1.13"
 whetstone-core = { path = "../whetstone-core" }
 
 # build.rs replays the showcase project's patch series into embedded data.

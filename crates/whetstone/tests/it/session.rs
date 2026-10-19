@@ -85,8 +85,9 @@ impl Session {
 
     /// Presses each key in `script`, separated by spaces: a character such
     /// as `j`, `?` or `:`, or a named key such as `<Enter>`, `<Space>`,
-    /// `<Tab>`, `<S-Tab>`, `<Esc>`, `<Up>`, `<Down>` or `<C-c>`. Returns what
-    /// the last key asked of the loop, and stops at a quit, as the loop does.
+    /// `<Tab>`, `<S-Tab>`, `<Esc>`, `<BS>` (Backspace), `<Up>`, `<Down>`,
+    /// `<Left>`, `<Right>`, `<C-c>`, `<C-d>` or `<C-u>`. Returns what the
+    /// last key asked of the loop, and stops at a quit, as the loop does.
     pub(crate) fn press(&mut self, script: &str) -> Flow {
         let mut flow = Flow::Continue;
         for name in script.split_whitespace() {
@@ -150,6 +151,40 @@ impl Session {
             .collect()
     }
 
+    /// The rows inside the box whose top border starts with `title`, between
+    /// its side borders, trimmed. Unlike [`Session::overlay_rows`], it finds
+    /// the box among others side by side, such as the change viewer's
+    /// panes.
+    pub(crate) fn box_rows(&self, title: &str) -> Vec<String> {
+        let rows: Vec<Vec<char>> = self
+            .rows()
+            .iter()
+            .map(|row| row.chars().collect())
+            .collect();
+        let corner: Vec<char> = format!("┌ {title}").chars().collect();
+        let top = rows.iter().enumerate().find_map(|(y, row)| {
+            let x = row
+                .windows(corner.len())
+                .position(|cells| cells == corner)?;
+            let width = row.iter().skip(x).position(|&cell| cell == '┐')?;
+            Some((y, x, width))
+        });
+        assert!(top.is_some(), "no box titled {title:?}:\n{}", self.text());
+        let (y, x, width) = top.unwrap_or_default();
+        rows.iter()
+            .skip(y + 1)
+            .take_while(|row| row.get(x) == Some(&'│'))
+            .map(|row| {
+                row.iter()
+                    .skip(x + 1)
+                    .take(width - 1)
+                    .collect::<String>()
+                    .trim()
+                    .to_owned()
+            })
+            .collect()
+    }
+
     /// The row showing `needle`, trimmed.
     pub(crate) fn row_with(&self, needle: &str) -> String {
         let rows = self.rows();
@@ -167,9 +202,14 @@ fn key(name: &str) -> KeyEvent {
         // Terminals report Shift+Tab as a back tab with Shift held.
         "<S-Tab>" => (KeyCode::BackTab, KeyModifiers::SHIFT),
         "<Esc>" => (KeyCode::Esc, KeyModifiers::NONE),
+        "<BS>" => (KeyCode::Backspace, KeyModifiers::NONE),
         "<Up>" => (KeyCode::Up, KeyModifiers::NONE),
         "<Down>" => (KeyCode::Down, KeyModifiers::NONE),
+        "<Left>" => (KeyCode::Left, KeyModifiers::NONE),
+        "<Right>" => (KeyCode::Right, KeyModifiers::NONE),
         "<C-c>" => (KeyCode::Char('c'), KeyModifiers::CONTROL),
+        "<C-d>" => (KeyCode::Char('d'), KeyModifiers::CONTROL),
+        "<C-u>" => (KeyCode::Char('u'), KeyModifiers::CONTROL),
         // Terminals report `?` with Shift held.
         "?" => (KeyCode::Char('?'), KeyModifiers::SHIFT),
         _ => {

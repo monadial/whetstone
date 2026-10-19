@@ -13,7 +13,7 @@ Whetstone helps you examine your understanding of real code through questions an
 
 ## Status
 
-Early. `whetstone` opens a terminal home screen offering Practice on the showcase project (a small sample codebase that ships with Whetstone), Settings and Quit. Practice starts by choosing the areas questions focus on and one change from the showcase project's history, which is built into the binary. Questions and feedback need AI, which isn't connected yet. Once it is, Practice will send showcase excerpts and your answers to [OpenRouter](https://openrouter.ai), paid with your own credits. Nothing is sent today.
+Early. `whetstone` opens a terminal home screen offering Practice on the showcase project (a small sample codebase that ships with Whetstone), Settings and Quit. Practice starts by choosing the areas questions focus on and one change from the showcase project's history, which is built into the binary. Enter opens the change to read its diff and each file it touches, before and after. Questions and feedback need AI, which isn't connected yet. Once it is, Practice will send showcase excerpts and your answers to [OpenRouter](https://openrouter.ai), paid with your own credits. Nothing is sent today.
 
 ## Run it
 
@@ -26,6 +26,8 @@ cargo run
 It needs an interactive terminal. `whetstone --help` lists the options. Set `NO_COLOR` to turn colour off: focus and selection stay visible through markers and bold text.
 
 Everything works from the keyboard. `j`/`k` or the arrows move, Tab and Shift+Tab move focus, and Enter or Space activates. `q` goes back, and quits from home. `?` shows the keys for the current screen and `:` lists its actions. Ctrl+C quits from anywhere.
+
+In a change, `h`/`l` switch between the files and the diff, before and after panes. `gg`/`G` and Ctrl+D/Ctrl+U jump and scroll, and each pane keeps its place. `/` searches the focused pane, and `n`/`N` move to the next and previous match.
 
 ## Configure it
 

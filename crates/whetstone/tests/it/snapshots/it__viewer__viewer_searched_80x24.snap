@@ -1,0 +1,46 @@
+---
+source: crates/whetstone/tests/it/viewer.rs
+expression: session.frame()
+---
+Buffer {
+    area: Rect { x: 0, y: 0, width: 80, height: 24 },
+    content: [
+        "                                                                                ",
+        "  Preserve payment retry identity                                       domain  ",
+        "                                                                                ",
+        "  ┌ Files ────────────────┐┌  ( ) Diff   ( ) Before > (x) After ─────────────┐  ",
+        "  │   (x) src/provider.rs ││  18 pub struct ChargeRequest {                  │  ",
+        "  │   ( ) src/service.rs  ││  19     #[serde(skip)]                          │  ",
+        "  │   ( ) tests/api.rs    ││  20     pub operation_key: OperationKey,        │  ",
+        "  │                       ││  21     pub reference: String,                  │  ",
+        "  │                       ││  22     pub amount_minor: u64,                  │  ",
+        "  │                       ││  23     pub currency: String,                   │  ",
+        "  │                       ││  24 }                                           │  ",
+        "  │                       ││  25                                             │  ",
+        "  │                       ││  26 impl ChargeRequest {                        │  ",
+        "  │                       ││  27     /// Builds the charge for a payment. It │  ",
+        "  │                       ││  28     /// the payment was created with, so ev │  ",
+        "  │                       ││  29     pub fn new(payment: &Payment) -> Self { │  ",
+        "  │                       ││  30         Self {                              │  ",
+        "  │                       ││  31             operation_key: payment.operatio │  ",
+        "  │                       ││  32             reference: payment.id().to_stri │  ",
+        "  │                       ││  33             amount_minor: payment.amount(). │  ",
+        "  └───────────────────────┘└─────────────────────────────────────────────────┘  ",
+        "  Match 2 of 8 for "ChargeRequest"                                              ",
+        "  ? keys  : actions  h/l panes  / search  q back                                ",
+        "                                                                                ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 33, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 3, y: 3, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 10, y: 3, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 52, y: 3, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 63, y: 3, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 44, y: 4, fg: Reset, bg: Reset, underline: Reset, modifier: UNDERLINED,
+        x: 57, y: 4, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 38, y: 12, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD | REVERSED,
+        x: 51, y: 12, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+    ]
+}

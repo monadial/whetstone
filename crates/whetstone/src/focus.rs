@@ -9,6 +9,11 @@ use crate::keymap::Command;
 pub(crate) struct Position(usize);
 
 impl Position {
+    /// The position of the item at `index`.
+    pub(crate) const fn at(index: usize) -> Self {
+        Self(index)
+    }
+
     /// Where `command` moves this position in a list of `len` items: `j`/`k`
     /// stop at either end, and Tab and Shift+Tab wrap around. Any other
     /// command leaves it where it is.
@@ -19,6 +24,28 @@ impl Position {
             Command::Up => self.up(),
             Command::NextControl => self.next(len),
             Command::PreviousControl => self.previous(len),
+            _ => self,
+        }
+    }
+
+    /// Where `command` scrolls this position when it can go from the first
+    /// item to `last` and `rows` items show at once: `j`/`k` move it by
+    /// one, `Ctrl-d`/`Ctrl-u` by half of `rows`, and `gg`/`G` to either end.
+    /// It stops at either end, and starts from no further than `last`, which
+    /// shrinks when a window grows, so the first `k` always moves what shows.
+    /// Any other command leaves it where it is, even past `last`, so a window
+    /// resized back shows what it showed before.
+    #[must_use]
+    pub(crate) fn scrolled(self, command: Command, last: usize, rows: usize) -> Self {
+        let at = self.0.min(last);
+        let half_page = (rows / 2).max(1);
+        match command {
+            Command::Down => Self((at + 1).min(last)),
+            Command::Up => Self(at.saturating_sub(1)),
+            Command::HalfPageDown => Self((at + half_page).min(last)),
+            Command::HalfPageUp => Self(at.saturating_sub(half_page)),
+            Command::Top => Self(0),
+            Command::Bottom => Self(last),
             _ => self,
         }
     }
