@@ -102,7 +102,18 @@ fn home_in_256_colours_uses_only_the_indexed_brand_tokens() {
 }
 
 /// The keys from home to each screen and overlay.
-const EVERY_VIEW: [&str; 6] = ["", "j <Enter>", "?", "j <Enter> ?", ":", "j <Enter> : j"];
+const EVERY_VIEW: [&str; 9] = [
+    "",
+    "j <Enter>",
+    "?",
+    "j <Enter> ?",
+    ":",
+    "j <Enter> : j",
+    // The picker with an area deselected and a change chosen.
+    "<Enter> j <Space> j j j j j <Space>",
+    "<Enter> ?",
+    "<Enter> :",
+];
 
 #[test]
 fn every_screen_and_overlay_in_24_bit_colour_uses_only_the_dark_brand_tokens() {

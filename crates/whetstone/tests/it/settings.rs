@@ -95,6 +95,7 @@ fn with_a_config_file_settings_shows_its_values_and_where_they_come_from() {
         Setup {
             config: Some(FULL_CONFIG),
             variables: NO_COLOR,
+            ..Setup::default()
         },
         80,
         24,
@@ -127,6 +128,7 @@ fn settings_names_the_default_for_whatever_the_config_file_leaves_out() {
         Setup {
             config: Some("[generator]\nmodel = \"anthropic/claude-haiku-5.5\"\n"),
             variables: NO_COLOR,
+            ..Setup::default()
         },
         80,
         24,
@@ -192,6 +194,7 @@ fn settings_with_config_and_key_at_120x32() {
         Setup {
             config: Some(FULL_CONFIG),
             variables: &[("NO_COLOR", "1"), ("OPENROUTER_API_KEY", SECRET)],
+            ..Setup::default()
         },
         120,
         32,
@@ -206,6 +209,7 @@ fn settings_with_config_and_key_at_80x24() {
         Setup {
             config: Some(FULL_CONFIG),
             variables: &[("NO_COLOR", "1"), ("OPENROUTER_API_KEY", SECRET)],
+            ..Setup::default()
         },
         80,
         24,

@@ -13,7 +13,7 @@ Whetstone helps you examine your understanding of real code through questions an
 
 ## Status
 
-Early. `whetstone` opens a terminal home screen offering Practice on the showcase project (a small sample codebase that ships with Whetstone), Settings and Quit. Questions and feedback need AI, which isn't connected yet. Once it is, Practice will send showcase excerpts and your answers to [OpenRouter](https://openrouter.ai), paid with your own credits. Nothing is sent today.
+Early. `whetstone` opens a terminal home screen offering Practice on the showcase project (a small sample codebase that ships with Whetstone), Settings and Quit. Practice starts by choosing the areas questions focus on and one change from the showcase project's history, which is built into the binary. Questions and feedback need AI, which isn't connected yet. Once it is, Practice will send showcase excerpts and your answers to [OpenRouter](https://openrouter.ai), paid with your own credits. Nothing is sent today.
 
 ## Run it
 

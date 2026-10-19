@@ -12,7 +12,7 @@ fn j_and_k_move_focus_between_the_home_actions() {
     let mut session = Session::plain(80, 24);
     assert_eq!(
         session.row_with("Practice"),
-        "> Practice on the showcase project (arrives with the change picker)"
+        "> Practice on the showcase project"
     );
 
     session.press("j");
@@ -71,15 +71,6 @@ fn enter_and_space_activate_the_focused_control() {
 
     let mut session = Session::plain(80, 24);
     assert_eq!(session.press("j j <Enter>"), Flow::Quit, "Quit quits");
-}
-
-#[test]
-fn a_disabled_action_does_nothing_when_activated() {
-    let mut session = Session::plain(80, 24);
-    let home = session.text();
-
-    assert_eq!(session.press("<Enter> <Space>"), Flow::Continue);
-    assert_eq!(session.text(), home);
 }
 
 #[test]

@@ -10,14 +10,17 @@ use ratatui::buffer::{Buffer, Cell};
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use tempfile::TempDir;
 use whetstone::{App, ColorSupport, Dirs, Environment, Flow, Settings, Theme};
+use whetstone_core::ShowcaseProject;
 
-/// What the app starts from: a global config file, if any, and the
-/// environment variables besides `HOME`.
+/// What the app starts from: a global config file, if any, the environment
+/// variables besides `HOME`, and the showcase project.
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct Setup<'a> {
     /// The contents of `config.toml` in the global config directory.
     pub(crate) config: Option<&'a str>,
     pub(crate) variables: &'a [(&'a str, &'a str)],
+    /// The showcase project to practice on, if not the embedded one.
+    pub(crate) showcase: Option<&'a ShowcaseProject>,
 }
 
 /// A terminal with colour turned off: snapshots then list only text
@@ -51,7 +54,14 @@ impl Session {
         }
         let settings = Settings::load(&dirs.config, &environment).expect("the config loads");
         let mut session = Self {
-            app: App::new(Theme::new(ColorSupport::detect(&environment)), settings),
+            app: App::new(
+                Theme::new(ColorSupport::detect(&environment)),
+                settings,
+                setup
+                    .showcase
+                    .cloned()
+                    .unwrap_or_else(whetstone::embedded_showcase),
+            ),
             width,
             height,
             _home: home,

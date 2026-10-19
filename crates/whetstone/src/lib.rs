@@ -17,7 +17,9 @@ mod mark;
 mod output;
 mod overlay;
 mod palette;
+mod picker;
 mod settings;
+mod showcase;
 mod terminal;
 mod theme;
 mod tui;
@@ -26,6 +28,7 @@ mod view;
 pub use crate::app::{App, Flow};
 pub use crate::config::{ConfigError, Settings};
 pub use crate::environment::{Dirs, Environment, NoHome};
+pub use crate::showcase::embedded_showcase;
 pub use crate::terminal::{ModeSwitch, TerminalGuard, TerminalMode};
 pub use crate::theme::{ColorSupport, ControlKind, ControlState, Theme};
 
@@ -62,7 +65,7 @@ fn launch(environment: &Environment) -> anyhow::Result<ExitCode> {
     );
     let settings = Settings::load(&dirs.config, environment)?;
     let theme = Theme::new(ColorSupport::detect(environment));
-    match tui::run(App::new(theme, settings))? {
+    match tui::run(App::new(theme, settings, embedded_showcase()))? {
         Ending::Quit => {
             tracing::info!("whetstone quit");
             Ok(ExitCode::SUCCESS)
