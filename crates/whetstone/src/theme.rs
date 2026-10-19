@@ -6,6 +6,7 @@
 //! show. Colour only ever adds to markers and text attributes, which stay
 //! the same at every colour level, so meaning never depends on colour.
 
+use std::borrow::Cow;
 use std::ffi::OsStr;
 
 use ratatui::style::{Color, Modifier, Style};
@@ -227,7 +228,7 @@ impl Theme {
     /// attributes are the same at every colour level, so no state depends on
     /// colour.
     #[must_use]
-    pub fn control<'a>(&self, label: &'a str, state: ControlState<'a>) -> Line<'a> {
+    pub fn control<'a>(&self, label: impl Into<Cow<'a, str>>, state: ControlState<'a>) -> Line<'a> {
         let emphasis = if state.focused {
             self.focus
         } else {

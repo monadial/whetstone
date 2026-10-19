@@ -4,6 +4,7 @@
 //! as an exit code. `main.rs` only passes in the process's inputs.
 
 mod app;
+mod areas;
 mod cli;
 mod columns;
 mod config;
@@ -19,6 +20,7 @@ mod output;
 mod overlay;
 mod palette;
 mod picker;
+mod repository;
 mod search;
 mod settings;
 mod showcase;
@@ -31,6 +33,7 @@ mod viewer;
 pub use crate::app::{App, Flow};
 pub use crate::config::{ConfigError, Settings};
 pub use crate::environment::{Dirs, Environment, NoHome};
+pub use crate::repository::{Repository, Unavailable};
 pub use crate::showcase::embedded_showcase;
 pub use crate::terminal::{ModeSwitch, TerminalGuard, TerminalMode};
 pub use crate::theme::{ColorSupport, ControlKind, ControlState, Theme};
@@ -40,7 +43,7 @@ use std::process::ExitCode;
 
 use clap::Parser as _;
 
-use crate::cli::Cli;
+use crate::cli::{AreasCommand, Cli, Command};
 use crate::tui::Ending;
 
 /// Runs Whetstone with the given command-line arguments, the first of which
@@ -50,10 +53,22 @@ where
     I: IntoIterator<Item = T>,
     T: Into<OsString> + Clone,
 {
-    if let Err(outcome) = Cli::try_parse_from(args) {
-        return output::clap_outcome(&outcome);
+    let cli = match Cli::try_parse_from(args) {
+        Ok(cli) => cli,
+        Err(outcome) => return output::clap_outcome(&outcome),
+    };
+    match cli.command {
+        None => launch(environment),
+        Some(Command::Areas(AreasCommand::Init)) => init_areas(environment),
     }
-    launch(environment).unwrap_or_else(|error| output::failure(&error))
+    .unwrap_or_else(|error| output::failure(&error))
+}
+
+/// Writes the default area files into the repository Whetstone runs in.
+fn init_areas(environment: &Environment) -> anyhow::Result<ExitCode> {
+    let written = areas::init(environment.current_dir())?;
+    output::written(&written);
+    Ok(ExitCode::SUCCESS)
 }
 
 /// Opens the TUI. A refusal happens before anything is drawn or written.
@@ -68,7 +83,9 @@ fn launch(environment: &Environment) -> anyhow::Result<ExitCode> {
     );
     let settings = Settings::load(&dirs.config, environment)?;
     let theme = Theme::new(ColorSupport::detect(environment));
-    match tui::run(App::new(theme, settings, embedded_showcase()))? {
+    let repository = Repository::open(environment.current_dir());
+    repository::log(&repository);
+    match tui::run(App::new(theme, settings, embedded_showcase(), repository))? {
         Ending::Quit => {
             tracing::info!("whetstone quit");
             Ok(ExitCode::SUCCESS)

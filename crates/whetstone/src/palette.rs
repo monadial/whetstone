@@ -11,7 +11,7 @@ use crate::focus::Position;
 use crate::keymap::{self, Binding, Command, Keymap, Press};
 use crate::overlay::{self, Outcome};
 use crate::theme::{ControlState, Theme};
-use crate::view::{Route, View};
+use crate::view::{Project, Route, View};
 
 /// Something the palette can run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,7 +32,7 @@ pub(crate) const EVERYWHERE: &[Action] = &[
     Action {
         label: "Practice",
         does: "Choose areas and a change",
-        command: Command::Go(Route::Picker),
+        command: Command::Go(Route::Picker(Project::Showcase)),
     },
     Action {
         label: "Settings",

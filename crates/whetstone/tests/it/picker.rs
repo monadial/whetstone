@@ -4,7 +4,7 @@
 
 use whetstone::Flow;
 
-use crate::session::{Session, Setup};
+use crate::session::{Session, Setup, columns};
 
 #[test]
 fn practice_on_the_showcase_project_opens_the_picker_from_home() {
@@ -18,35 +18,6 @@ fn practice_on_the_showcase_project_opens_the_picker_from_home() {
 /// The heading above the areas.
 const AREAS: &str = "Areas the questions focus on";
 
-/// The rows under `heading`, trimmed, up to the next blank row.
-fn section(session: &Session, heading: &str) -> Vec<String> {
-    let rows = session.rows();
-    let start = rows.iter().position(|row| row.trim() == heading);
-    assert!(
-        start.is_some(),
-        "no {heading:?} heading:\n{}",
-        session.text()
-    );
-    rows.iter()
-        .skip(start.unwrap_or_default() + 1)
-        .map(|row| row.trim().to_owned())
-        .take_while(|row| !row.is_empty())
-        .collect()
-}
-
-/// Each row of a section split into its columns, which are at least two
-/// cells apart.
-fn columns(rows: &[String]) -> Vec<Vec<&str>> {
-    rows.iter()
-        .map(|row| {
-            row.split("  ")
-                .map(str::trim)
-                .filter(|column| !column.is_empty())
-                .collect()
-        })
-        .collect()
-}
-
 #[test]
 fn the_showcase_project_offers_the_five_default_areas_in_file_name_order_all_selected() {
     let mut session = Session::plain(80, 24);
@@ -54,7 +25,7 @@ fn the_showcase_project_offers_the_five_default_areas_in_file_name_order_all_sel
     session.press("<Enter>");
 
     assert_eq!(
-        columns(&section(&session, AREAS))
+        columns(&session.section(AREAS))
             .into_iter()
             .map(|row| row[0])
             .collect::<Vec<_>>(),
@@ -82,7 +53,7 @@ fn each_area_shows_its_one_line_description_in_a_column_of_its_own() {
         "How the parts fit together, and why this way",
     ];
     assert_eq!(
-        columns(&section(&session, AREAS))
+        columns(&session.section(AREAS))
             .into_iter()
             .map(|row| row[1..].join("  "))
             .collect::<Vec<_>>(),
@@ -111,7 +82,7 @@ fn space_and_enter_toggle_the_focused_area() {
     session.press("<Enter>");
 
     let area =
-        |session: &Session, index: usize| columns(&section(session, AREAS))[index][0].to_owned();
+        |session: &Session, index: usize| columns(&session.section(AREAS))[index][0].to_owned();
     session.press("<Space>");
     assert_eq!(area(&session, 0), "> ( ) Domain");
 
@@ -135,7 +106,7 @@ fn the_change_list_shows_every_curated_change_with_its_message_and_areas() {
     session.press("<Enter>");
 
     assert_eq!(
-        columns(&section(&session, CHANGES)),
+        columns(&session.section(CHANGES)),
         [
             ["( ) Model the payment lifecycle", "Domain"],
             [
@@ -174,7 +145,7 @@ fn space_on_a_change_chooses_it_and_only_it() {
     // Past the five areas, onto the first change.
     session.press("j j j j j <Space>");
     let chosen = |session: &Session| -> Vec<String> {
-        columns(&section(session, CHANGES))
+        columns(&session.section(CHANGES))
             .into_iter()
             .map(|row| row[0].to_owned())
             .filter(|row| row.contains("(x)"))

@@ -6,17 +6,30 @@ use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-/// A snapshot of environment variables.
+/// A snapshot of environment variables, and the directory Whetstone
+/// started in.
 #[derive(Clone, Default)]
 pub struct Environment {
     vars: BTreeMap<OsString, OsString>,
+    current_dir: PathBuf,
 }
 
 impl Environment {
-    /// Captures the current process's environment.
+    /// Captures the current process's environment and current directory.
+    /// A current directory that cannot be read, because it was removed,
+    /// counts as `.`.
     #[must_use]
     pub fn from_process() -> Self {
-        std::env::vars_os().collect()
+        Self {
+            current_dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+            ..std::env::vars_os().collect()
+        }
+    }
+
+    /// The directory Whetstone started in.
+    #[must_use]
+    pub fn current_dir(&self) -> &Path {
+        &self.current_dir
     }
 
     /// The value of `name`, if it is set.
@@ -41,6 +54,7 @@ impl<K: Into<OsString>, V: Into<OsString>> FromIterator<(K, V)> for Environment 
                 .into_iter()
                 .map(|(name, value)| (name.into(), value.into()))
                 .collect(),
+            current_dir: PathBuf::new(),
         }
     }
 }
@@ -48,7 +62,10 @@ impl<K: Into<OsString>, V: Into<OsString>> FromIterator<(K, V)> for Environment 
 /// Lists variable names only: values may be secrets.
 impl fmt::Debug for Environment {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_set().entries(self.vars.keys()).finish()
+        f.debug_struct("Environment")
+            .field("vars", &self.vars.keys().collect::<Vec<_>>())
+            .field("current_dir", &self.current_dir)
+            .finish()
     }
 }
 

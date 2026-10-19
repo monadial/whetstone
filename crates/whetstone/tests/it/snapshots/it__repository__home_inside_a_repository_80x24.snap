@@ -1,0 +1,40 @@
+---
+source: crates/whetstone/tests/it/repository.rs
+expression: session.frame()
+---
+Buffer {
+    area: Rect { x: 0, y: 0, width: 80, height: 24 },
+    content: [
+        "                                                                                ",
+        "  █████████████████████████▄                                                    ",
+        "  ███████████████████████████▄        whetstone by Monadial                     ",
+        "  █████████████████████████████▄      Understand the code you ship.             ",
+        "  ███████████████████████████████▄                                              ",
+        "                                                                                ",
+        "  > Practice on payments                                                        ",
+        "      Nothing leaves this machine until you review what will be sent.           ",
+        "    Practice on the showcase project                                            ",
+        "    Settings                                                                    ",
+        "    Quit                                                                        ",
+        "                                                                                ",
+        "  Once AI arrives, Practice will send showcase excerpts and your answers to     ",
+        "  OpenRouter, paid with your credits.                                           ",
+        "                                                                                ",
+        "                                                                                ",
+        "                                                                                ",
+        "                                                                                ",
+        "                                                                                ",
+        "                                                                                ",
+        "                                                                                ",
+        "                                                                                ",
+        "  ? keys  : actions  q quit                                                     ",
+        "                                                                                ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 38, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 47, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 6, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 24, y: 6, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+    ]
+}
