@@ -36,9 +36,10 @@ pub struct App {
     overlay: Option<Overlay>,
     /// The first key of a two-key sequence, waiting for the second.
     pending: keymap::Pending,
-    /// The terminal's size as the UI loop last reported it. Layout never
-    /// uses it (drawing measures the frame); it only tells key handling
-    /// whether the notice is showing and how far key help can scroll.
+    /// The terminal's size as the UI loop last reported it. Drawing never
+    /// uses it (it measures the frame). Key handling uses it to know whether
+    /// the notice is showing, how far key help can scroll, and how far a
+    /// page goes on the current screen.
     viewport: Option<Size>,
 }
 

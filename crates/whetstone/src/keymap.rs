@@ -171,8 +171,8 @@ impl Press {
     }
 
     /// This press followed by the character `c`: a two-key sequence, such
-    /// as `Press::char('g').then('g')` for `gg`.
-    pub(crate) const fn then(self, c: char) -> Self {
+    /// as `Press::char('g').followed_by('g')` for `gg`.
+    pub(crate) const fn followed_by(self, c: char) -> Self {
         Self {
             then: Some(Key {
                 code: KeyCode::Char(c),
@@ -349,7 +349,7 @@ pub(crate) const PANES: Binding = Binding {
 /// `gg` and `G` go to the top or bottom.
 pub(crate) const ENDS: Binding = Binding {
     keys: &[
-        (Press::char('g').then('g'), Command::Top),
+        (Press::char('g').followed_by('g'), Command::Top),
         (Press::char('G'), Command::Bottom),
     ],
     does: "Go to the top or bottom",

@@ -6,7 +6,7 @@ use std::fmt;
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use whetstone_core::ShowcaseProject;
+use whetstone_core::{Change, ShowcaseProject};
 
 use crate::config::Settings;
 use crate::home::Home;
@@ -65,11 +65,26 @@ pub(crate) enum Route {
     Settings,
     /// The area and change picker.
     Picker,
-    /// The change viewer, showing the showcase project's curated change at
-    /// this index.
-    Viewer {
-        change: usize,
-    },
+    /// The change viewer, showing one of the showcase project's curated
+    /// changes.
+    Viewer(ChangeIndex),
+}
+
+/// One of the showcase project's curated changes, by its place in the
+/// history, oldest first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ChangeIndex(usize);
+
+impl ChangeIndex {
+    /// The change at `index` in the history, oldest first.
+    pub(crate) const fn new(index: usize) -> Self {
+        Self(index)
+    }
+
+    /// The change in `showcase`, if it has one here.
+    pub(crate) fn of(self, showcase: &ShowcaseProject) -> Option<&Change> {
+        showcase.changes().get(self.0)
+    }
 }
 
 impl Route {
@@ -79,11 +94,10 @@ impl Route {
             Self::Home => Box::new(Home::default()),
             Self::Settings => Box::new(SettingsScreen::default()),
             Self::Picker => Box::new(Picker::new(showcase)),
-            Self::Viewer { change } => Box::new(Viewer::new(
-                change,
-                showcase
-                    .changes()
-                    .get(change)
+            Self::Viewer(index) => Box::new(Viewer::new(
+                index,
+                index
+                    .of(showcase)
                     .expect("only the picker opens a change, and only one it lists"),
             )),
         }

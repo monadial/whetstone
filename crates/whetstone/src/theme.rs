@@ -98,6 +98,15 @@ pub enum ControlKind {
     Choice { selected: bool },
 }
 
+/// What marks the control with focus, in front of its label.
+const FOCUSED: &str = "> ";
+/// What stands in front of the other controls' labels, as wide.
+const UNFOCUSED: &str = "  ";
+/// What marks a selected choice, after the focus marker.
+const SELECTED: &str = "(x) ";
+/// What marks a choice not selected, as wide.
+const UNSELECTED: &str = "( ) ";
+
 /// The colours of the flat-stone mark's three bands. Equal colours draw as
 /// one solid shape.
 #[derive(Debug, Clone, Copy)]
@@ -225,12 +234,12 @@ impl Theme {
             Style::new()
         };
         let mut spans = vec![Span::styled(
-            if state.focused { "> " } else { "  " },
+            if state.focused { FOCUSED } else { UNFOCUSED },
             emphasis,
         )];
         if let ControlKind::Choice { selected } = state.kind {
             spans.push(Span::styled(
-                if selected { "(x) " } else { "( ) " },
+                if selected { SELECTED } else { UNSELECTED },
                 emphasis,
             ));
         }
@@ -247,6 +256,17 @@ impl Theme {
         } else {
             line
         }
+    }
+
+    /// How many cells [`Theme::control`] takes for a control of `kind`
+    /// labelled `label` that is not disabled, focused or not.
+    #[must_use]
+    pub(crate) fn control_width(label: &str, kind: ControlKind) -> usize {
+        let choice = match kind {
+            ControlKind::Action => "",
+            ControlKind::Choice { .. } => SELECTED,
+        };
+        Line::raw(format!("{UNFOCUSED}{choice}{label}")).width()
     }
 
     /// The border of a pane: in the focus colour while the pane has focus.

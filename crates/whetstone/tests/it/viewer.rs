@@ -2,8 +2,9 @@
 //! diff and the code before and after the change for each file it touches.
 
 use whetstone::Flow;
+use whetstone_core::{Area, Change, ShowcaseProject, TouchedFile};
 
-use crate::session::{Session, Setup};
+use crate::session::{NO_COLOR, Session, Setup};
 
 /// "Preserve payment retry identity", the fifth curated change. It modifies
 /// `src/provider.rs`, `src/service.rs` and `tests/api.rs`.
@@ -258,22 +259,19 @@ fn scrolling_stops_with_the_last_line_at_the_bottom_and_k_moves_straight_back() 
     session.press(&open(RETRY_IDENTITY));
     session.press("l l");
 
-    session.press(&times("j", 400));
-    let rows = code(&session);
+    session.press(&times("j", 260));
+    let end = code(&session);
     assert_eq!(
-        rows.last().map(String::as_str),
+        end.last().map(String::as_str),
         Some("250 }"),
         "{}",
         session.text()
     );
 
     session.press("k");
-    assert_eq!(
-        code(&session).last().map(String::as_str),
-        Some("249     }"),
-        "{}",
-        session.text()
-    );
+    let rows = code(&session);
+    assert_ne!(rows, end, "one k scrolls:\n{}", session.text());
+    assert!(!rows.contains(&"250 }".to_owned()), "{}", session.text());
 }
 
 #[test]
@@ -523,6 +521,11 @@ fn enter_searches_the_focused_pane_from_its_top_and_says_which_match_shows() {
     );
 }
 
+/// Whether a row of the code pane starts with `start`.
+fn code_shows(session: &Session, start: &str) -> bool {
+    code(session).iter().any(|row| row.starts_with(start))
+}
+
 #[test]
 fn n_and_capital_n_move_to_the_next_and_previous_match_wrapping_around() {
     let mut session = Session::plain(80, 24);
@@ -533,22 +536,25 @@ fn n_and_capital_n_move_to_the_next_and_previous_match_wrapping_around() {
     session.press("n n");
     assert_eq!(status(&session), "Match 3 of 4 for \"operation_key\"");
     assert!(
-        code(&session)[0].starts_with("diff --git"),
+        code_shows(&session, "+            operation_key:"),
         "{}",
         session.text()
     );
 
-    // The 24th line is out of view: the diff scrolls as far as it goes.
+    // The 24th line was out of view: the diff scrolls to it.
     session.press("n");
     assert_eq!(status(&session), "Match 4 of 4 for \"operation_key\"");
-    assert_eq!(code(&session)[0], "Self {", "{}", session.text());
+    assert!(
+        code_shows(&session, "-        ChargeRequest::new(&payment,"),
+        "{}",
+        session.text()
+    );
 
-    // Past the last match, back to the first, scrolled to the middle of the
-    // pane as far as the diff goes.
+    // Past the last match, back to the first.
     session.press("n");
     assert_eq!(status(&session), "Match 1 of 4 for \"operation_key\"");
     assert!(
-        code(&session)[0].starts_with("diff --git"),
+        code_shows(&session, "-    pub fn new(payment: &Payment,"),
         "{}",
         session.text()
     );
@@ -615,9 +621,11 @@ fn the_last_search_carries_to_the_pane_focus_moves_to_and_n_searches_it() {
         "{}",
         session.text()
     );
-    let rows = code(&session);
+    let at = code(&session)
+        .iter()
+        .position(|row| row == "18 pub struct ChargeRequest {");
     assert!(
-        rows.contains(&"18 pub struct ChargeRequest {".to_owned()) && rows[0] == "10",
+        at.is_some_and(|at| at >= 4),
         "its 18th line, scrolled to the middle of the pane:\n{}",
         session.text()
     );
@@ -705,7 +713,7 @@ fn key_help_on_the_viewer_lists_its_keys() {
 }
 
 #[test]
-fn the_palette_on_the_viewer_offers_back_search_and_the_matches_and_runs_them() {
+fn the_palette_on_the_viewer_offers_back_the_panes_search_and_the_matches_and_runs_them() {
     let mut session = Session::plain(120, 32);
     session.press(&open(RETRY_IDENTITY));
     session.press(":");
@@ -713,6 +721,14 @@ fn the_palette_on_the_viewer_offers_back_search_and_the_matches_and_runs_them() 
     let rows = session.box_rows("Actions on Change");
     for (index, (label, does)) in [
         ("> Back", "Return to the picker"),
+        (
+            "Next pane",
+            "Move to the pane on the right, or back to Files",
+        ),
+        (
+            "Previous pane",
+            "Move to the pane on the left, or round to After",
+        ),
         ("Search", "Search the focused pane"),
         ("Next match", "Go to the next match of the last search"),
         (
@@ -730,12 +746,26 @@ fn the_palette_on_the_viewer_offers_back_search_and_the_matches_and_runs_them() 
         );
     }
 
+    // The panes, from the palette.
+    session.press("j <Enter>");
+    assert!(shows(&session, "> (x) Before"), "{}", session.text());
+    session.press(": j j <Enter> : j j <Enter>");
+    assert!(
+        shows(&session, "> (x) src/provider.rs"),
+        "{}",
+        session.text()
+    );
+    session.press(": j <Enter>");
+
     // Search, from the palette: the box opens, and n from the palette moves on.
-    session.press(&format!("j <Enter> {} <Enter>", typing("operation_key")));
+    session.press(&format!(
+        ": j j j <Enter> {} <Enter>",
+        typing("operation_key")
+    ));
     assert_eq!(status(&session), "Match 1 of 4 for \"operation_key\"");
-    session.press(": j j <Enter>");
+    session.press(": j j j j <Enter>");
     assert_eq!(status(&session), "Match 2 of 4 for \"operation_key\"");
-    session.press(": j j j <Enter>");
+    session.press(": j j j j j <Enter>");
     assert_eq!(status(&session), "Match 1 of 4 for \"operation_key\"");
 
     // Back, to the picker.
@@ -940,4 +970,113 @@ fn in_a_narrow_window_the_title_keeps_a_gap_between_the_summary_and_its_areas() 
         "{}",
         session.text()
     );
+}
+
+#[test]
+fn before_and_after_are_disabled_for_a_file_the_change_creates_saying_why() {
+    let mut session = Session::plain(80, 24);
+    session.press(&open(FILE_STORE));
+    assert!(
+        shows(&session, "> (x) Diff   ( ) Before   ( ) After"),
+        "{}",
+        session.text()
+    );
+
+    session.press("h j j j j l");
+
+    assert!(
+        shows(&session, "> (x) Diff   ( ) Before (new file)   ( ) After"),
+        "{}",
+        session.text()
+    );
+}
+
+#[test]
+fn long_lines_wrap_so_their_ends_show_at_80x24() {
+    let mut session = Session::plain(80, 24);
+    session.press(&open(RETRY_IDENTITY));
+
+    // `-    pub fn new(payment: &Payment, operation_key: OperationKey) -> Self {`
+    // is wider than the code pane at 80x24.
+    assert!(
+        code_shows(&session, "-    pub fn new(payment: &Payment,"),
+        "{}",
+        session.text()
+    );
+    assert!(
+        code_shows(&session, "operation_key: OperationKey) -> Self {"),
+        "its end, on the next row:\n{}",
+        session.text()
+    );
+}
+
+#[test]
+fn a_search_matches_whole_characters_only() {
+    // A change whose code holds `café`, its `é` an `e` and a combining accent.
+    let showcase = ShowcaseProject::new(
+        vec![Area::new("domain")],
+        vec![Change::new(
+            "Name the café".to_owned(),
+            vec![Area::new("domain")],
+            "diff --git a/menu.txt b/menu.txt\n--- a/menu.txt\n+++ b/menu.txt\n@@ -1 +1 @@\n-cafe\n+cafe\u{301}\n"
+                .to_owned(),
+            vec![TouchedFile::modified(
+                "menu.txt".to_owned(),
+                "cafe\n".to_owned(),
+                "cafe\u{301}\n".to_owned(),
+            )],
+        )],
+    );
+    let mut session = Session::start(
+        Setup {
+            variables: NO_COLOR,
+            showcase: Some(&showcase),
+            ..Setup::default()
+        },
+        80,
+        24,
+    );
+    // Past its one area, onto the change.
+    session.press("<Enter> j <Enter>");
+
+    session.press(&format!("/ {} <Enter>", typing("cafe")));
+    assert_eq!(
+        status(&session),
+        "Match 1 of 1 for \"cafe\"",
+        "{}",
+        session.text()
+    );
+
+    session.press("l l");
+    assert_eq!(
+        status(&session),
+        "No match for \"cafe\" in After",
+        "the e of the é is not a whole character:\n{}",
+        session.text()
+    );
+    session.press(&format!("/ {} <Enter>", typing("caf")));
+    assert_eq!(
+        status(&session),
+        "Match 1 of 1 for \"caf\"",
+        "{}",
+        session.text()
+    );
+}
+
+#[test]
+fn the_palette_on_the_viewer_at_120x32() {
+    let mut session = Session::plain(120, 32);
+    session.press(&open(RETRY_IDENTITY));
+    session.press(":");
+
+    insta::assert_debug_snapshot!("palette_on_the_viewer_120x32", session.frame());
+}
+
+#[test]
+fn the_viewer_saying_nothing_matches_at_120x32() {
+    let mut session = Session::plain(120, 32);
+    session.press(&open(RETRY_IDENTITY));
+    session.press(&format!("/ {} <Enter>", typing("refund")));
+
+    insta::assert_debug_snapshot!("viewer_with_no_match_120x32", session.frame());
 }

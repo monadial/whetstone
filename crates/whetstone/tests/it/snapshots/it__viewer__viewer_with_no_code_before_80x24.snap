@@ -8,7 +8,7 @@ Buffer {
         "                                                                                ",
         "  Persist payments in an append-only file store                 infrastructure  ",
         "                                                                                ",
-        "  ┌ Files ───────────────┐┌  ( ) Diff > (x) Before   ( ) After ──────────────┐  ",
+        "  ┌ Files ───────────────┐┌  ( ) Diff > (x) Before (new file)   ( ) After ───┐  ",
         "  │   ( ) Cargo.lock     ││ This change creates src/store.rs, so it has no   │  ",
         "  │   ( ) Cargo.toml     ││ code before.                                     │  ",
         "  │   ( ) src/lib.rs     ││                                                  │  ",
@@ -37,6 +37,7 @@ Buffer {
         x: 3, y: 3, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
         x: 10, y: 3, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 38, y: 3, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
-        x: 50, y: 3, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 44, y: 3, fg: Reset, bg: Reset, underline: Reset, modifier: DIM | ITALIC,
+        x: 61, y: 3, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
     ]
 }

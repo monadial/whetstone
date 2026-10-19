@@ -14,7 +14,7 @@ use crate::focus::Position;
 use crate::keymap::{self, Binding, Command, Keymap, Press};
 use crate::palette::Action;
 use crate::theme::{ControlKind, ControlState};
-use crate::view::{Context, Route, View};
+use crate::view::{ChangeIndex, Context, Route, View};
 
 /// The picker's own keys. Space makes a choice, and Enter also opens the
 /// chosen change.
@@ -290,7 +290,8 @@ impl View for Picker {
             }
             Control::Change(index) => {
                 self.chosen = Some(index);
-                (command == Command::Open).then_some(Command::Go(Route::Viewer { change: index }))
+                (command == Command::Open)
+                    .then_some(Command::Go(Route::Viewer(ChangeIndex::new(index))))
             }
             // Disabled until Jev arrives, as it says.
             Control::GenerateQuestions => None,
