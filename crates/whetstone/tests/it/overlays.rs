@@ -127,7 +127,7 @@ fn ctrl_c_quits_from_key_help() {
 }
 
 #[test]
-fn the_palette_lists_home_settings_help_and_quit() {
+fn the_palette_lists_home_practice_settings_help_and_quit() {
     let mut session = Session::plain(80, 24);
     session.press(":");
 
@@ -139,6 +139,7 @@ fn the_palette_lists_home_settings_help_and_quit() {
     let rows = session.overlay_rows();
     for (label, does) in [
         ("> Home", "Go to the home screen"),
+        ("Practice", "Choose areas and a change"),
         ("Settings", "See what Practice will use"),
         ("Help", "Show the keys for this screen"),
         ("Quit", "Leave Whetstone"),
@@ -187,7 +188,7 @@ fn the_palette_on_settings_at_80x24() {
 fn the_palette_runs_the_selected_action() {
     // Settings.
     let mut session = Session::plain(80, 24);
-    session.press(": j <Enter>");
+    session.press(": j j <Enter>");
     assert_eq!(session.rows()[1].trim(), "Settings", "Settings is open");
 
     // Home, from Settings, with Space: focus is where home left it.
@@ -200,7 +201,7 @@ fn the_palette_runs_the_selected_action() {
 
     // Help: key help for the screen the palette was opened on.
     let mut session = Session::plain(80, 24);
-    session.press("j <Enter> : j j j <Enter>");
+    session.press("j <Enter> : j j j j <Enter>");
     assert!(
         session.text().contains("Keys on Settings"),
         "{}",
@@ -247,7 +248,7 @@ fn help_run_from_the_palette_returns_focus_to_the_control_under_both() {
     session.press("j <Enter> j j");
     let settings = session.text();
 
-    session.press(": j j j <Enter>");
+    session.press(": j j j j <Enter>");
     session.press("<Esc>");
 
     assert_eq!(session.text(), settings);

@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use whetstone_core::Area;
+use whetstone_core::{Area, TouchedFile};
 
 #[test]
 fn the_embedded_showcase_has_all_ten_curated_changes_with_the_areas_their_trailers_declare() {
@@ -80,7 +80,7 @@ fn the_embedded_showcase_offers_the_areas_its_config_declares() {
 }
 
 #[test]
-fn replaying_every_embedded_change_rebuilds_the_showcase_project_exactly() {
+fn replaying_every_embedded_change_rebuilds_the_showcase_projects_files_exactly() {
     let mut replayed = BTreeMap::new();
     for change in whetstone::embedded_showcase().changes() {
         for file in change.files() {
@@ -98,39 +98,40 @@ fn replaying_every_embedded_change_rebuilds_the_showcase_project_exactly() {
         }
     }
 
-    let project = project();
-    let mut on_disk = BTreeMap::new();
-    read_tree(&project, &project, &mut on_disk);
-    assert_eq!(
-        replayed.keys().collect::<Vec<_>>(),
-        on_disk.keys().collect::<Vec<_>>()
-    );
-    for (path, contents) in &on_disk {
-        assert!(
-            replayed[path] == *contents,
-            "{path} differs from the project"
-        );
+    // `showcase/check-history.sh` checks that the tree has no other files.
+    assert!(replayed.contains_key("src/payment.rs"), "{replayed:#?}");
+    for (path, contents) in &replayed {
+        let on_disk = fs::read_to_string(project().join(path))
+            .unwrap_or_else(|error| panic!("read {path} in the showcase project: {error}"));
+        assert!(*contents == on_disk, "{path} differs from the project");
     }
 }
 
-/// Reads every file under `dir` into `files`, keyed by its path relative to
-/// `root`, leaving out what the project's `.gitignore` ignores.
-fn read_tree(root: &Path, dir: &Path, files: &mut BTreeMap<String, String>) {
-    for entry in fs::read_dir(dir).expect("read the showcase project") {
-        let path = entry.expect("read the showcase project").path();
-        let relative = path
-            .strip_prefix(root)
-            .expect("under the project")
-            .to_str()
-            .expect("a UTF-8 path")
-            .to_owned();
-        if ["target", "data"].contains(&relative.as_str()) {
-            continue;
-        }
-        if path.is_dir() {
-            read_tree(root, &path, files);
-        } else {
-            files.insert(relative, fs::read_to_string(&path).expect("a text file"));
-        }
-    }
+#[test]
+fn an_embedded_change_keeps_its_whole_message_without_the_areas_trailer_and_its_diff() {
+    let showcase = whetstone::embedded_showcase();
+    let rustfmt = showcase.changes().last().expect("ten changes");
+
+    assert_eq!(
+        rustfmt.message(),
+        "Run rustfmt over the HTTP layer\n\n\
+         The metrics handler and the error response went in without cargo fmt.\n\
+         Format them. No code changes."
+    );
+    let patch = fs::read_to_string(
+        project().join("../payments-history/0010-Run-rustfmt-over-the-HTTP-layer.patch"),
+    )
+    .expect("read the change's patch");
+    let (_, diff) = patch
+        .split_once("\n\ndiff --git ")
+        .expect("the patch has a diff after its diffstat");
+    assert_eq!(rustfmt.diff(), format!("diff --git {diff}"));
+    assert_eq!(
+        rustfmt
+            .files()
+            .iter()
+            .map(TouchedFile::path)
+            .collect::<Vec<_>>(),
+        ["src/http.rs"]
+    );
 }

@@ -388,3 +388,38 @@ fn in_the_smallest_window_the_chosen_change_stays_in_view_when_focus_moves_on() 
     );
     assert!(text.contains("> Generate questions"), "{text}");
 }
+
+#[test]
+fn the_palette_opens_the_picker_from_any_screen() {
+    let mut session = Session::plain(80, 24);
+    session.press(": j <Enter>");
+    assert_eq!(session.rows()[1].trim(), "Practice on the showcase project");
+
+    // From Settings, past its own Back and then Home.
+    let mut session = Session::plain(80, 24);
+    session.press("j <Enter> : j j");
+    assert!(
+        session
+            .overlay_rows()
+            .iter()
+            .any(|row| row.starts_with("> Practice") && row.ends_with("Choose areas and a change")),
+        "{:#?}",
+        session.overlay_rows()
+    );
+    session.press("<Enter>");
+    assert_eq!(session.rows()[1].trim(), "Practice on the showcase project");
+}
+
+#[test]
+fn with_no_area_selected_the_picker_asks_for_at_least_one() {
+    let mut session = Session::plain(80, 24);
+    session.press("<Enter> <Space> j <Space> j <Space> j <Space> j <Space>");
+
+    assert_eq!(
+        session.row_with(AREAS),
+        "Areas the questions focus on: choose at least one"
+    );
+
+    session.press("<Space>");
+    assert_eq!(session.row_with(AREAS), AREAS);
+}
