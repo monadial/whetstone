@@ -1,0 +1,30 @@
+# Clippy reads only the nearest clippy.toml, so repeat the workspace settings.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-print-in-tests = true
+
+# whetstone-core does no I/O.
+disallowed-types = [
+    { path = "std::fs::File", reason = "whetstone-core does no I/O" },
+    { path = "std::fs::OpenOptions", reason = "whetstone-core does no I/O" },
+    { path = "std::net::TcpListener", reason = "whetstone-core does no I/O" },
+    { path = "std::net::TcpStream", reason = "whetstone-core does no I/O" },
+    { path = "std::net::UdpSocket", reason = "whetstone-core does no I/O" },
+    { path = "std::process::Command", reason = "whetstone-core does no I/O" },
+]
+disallowed-methods = [
+    { path = "std::env::args_os", reason = "whetstone-core does no I/O" },
+    { path = "std::env::current_dir", reason = "whetstone-core does no I/O" },
+    { path = "std::env::var", reason = "whetstone-core does no I/O" },
+    { path = "std::env::var_os", reason = "whetstone-core does no I/O" },
+    { path = "std::env::vars_os", reason = "whetstone-core does no I/O" },
+    { path = "std::fs::create_dir_all", reason = "whetstone-core does no I/O" },
+    { path = "std::fs::read", reason = "whetstone-core does no I/O" },
+    { path = "std::fs::read_dir", reason = "whetstone-core does no I/O" },
+    { path = "std::fs::read_to_string", reason = "whetstone-core does no I/O" },
+    { path = "std::fs::write", reason = "whetstone-core does no I/O" },
+    { path = "std::io::stderr", reason = "whetstone-core does no I/O" },
+    { path = "std::io::stdin", reason = "whetstone-core does no I/O" },
+    { path = "std::io::stdout", reason = "whetstone-core does no I/O" },
+]

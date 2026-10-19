@@ -1,0 +1,49 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+# The showcase project is a standalone Cargo project with its own lockfile.
+exclude = ["showcase"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99.1"
+license = "Apache-2.0"
+repository = "https://github.com/monadial/whetstone"
+publish = false
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+rust_2018_idioms = { level = "warn", priority = -1 }
+let_underscore_drop = "warn"
+unreachable_pub = "warn"
+unused_qualifications = "warn"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+module_name_repetitions = "allow"
+unwrap_used = "warn"
+panic = "warn"
+todo = "warn"
+unimplemented = "warn"
+dbg_macro = "warn"
+print_stdout = "warn"
+print_stderr = "warn"
+exit = "warn"
+mem_forget = "warn"
+string_slice = "warn"
+allow_attributes = "warn"
+allow_attributes_without_reason = "warn"
+await_holding_lock = "deny"
+await_holding_refcell_ref = "deny"
+
+[profile.release]
+overflow-checks = true
+# The terminal guard restores the terminal from `Drop` and its panic hook.
+panic = "unwind"
+
+[profile.dev.package]
+insta.opt-level = 3
+similar.opt-level = 3
