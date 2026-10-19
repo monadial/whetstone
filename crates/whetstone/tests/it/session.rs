@@ -26,6 +26,7 @@ pub(crate) const NO_COLOR: &[(&str, &str)] = &[("NO_COLOR", "1")];
 
 /// A running app in a terminal of a given size. Its home directory is a
 /// fresh temporary directory, so the real one is never read.
+#[derive(Debug)]
 pub(crate) struct Session {
     app: App,
     width: u16,

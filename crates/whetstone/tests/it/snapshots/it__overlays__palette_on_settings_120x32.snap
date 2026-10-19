@@ -19,12 +19,12 @@ Buffer {
         "  Where Practice will send its requests once AI arrives. OpenRouter is the only provider so far.                        ",
         "  In config.toml: provider = "openrouter"                                                                               ",
         "                                      ┌ Actions on Settings ──────────────────────┐                                     ",
-        "                                      │   Home      Go to the home screen         │                                     ",
-        "                                      │ > Settings  See what Practice will use    │                                     ",
+        "                                      │   Back      Return to the screen before   │                                     ",
+        "                                      │ > Home      Go to the home screen         │                                     ",
+        "                                      │   Settings  See what Practice will use    │                                     ",
         "                                      │   Help      Show the keys for this screen │                                     ",
         "                                      │   Quit      Leave Whetstone               │                                     ",
         "                                      └ Enter run  Esc close ─────────────────────┘                                     ",
-        "                                                                                                                        ",
         "                                                                                                                        ",
         "                                                                                                                        ",
         "                                                                                                                        ",
@@ -47,6 +47,6 @@ Buffer {
         x: 39, y: 13, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
         x: 60, y: 13, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 40, y: 15, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
-        x: 50, y: 15, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 46, y: 15, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
     ]
 }

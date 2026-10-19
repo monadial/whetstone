@@ -35,7 +35,7 @@ Settings shows what Practice will use. It is read-only: the values come from `co
 # The service Practice sends its requests to. OpenRouter is the only one so far.
 provider = "openrouter"
 
-# Jev assesses your choice and reasoning.
+# Jev, the evaluator: it returns decisions and probabilities, never prose.
 [jev]
 model = "typesafe/jev-1.14"
 

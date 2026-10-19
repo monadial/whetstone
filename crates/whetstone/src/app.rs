@@ -1,8 +1,10 @@
 //! The app: all UI state, the events that change it, and how it is drawn.
 //!
-//! A key goes first to the reserved Ctrl+C, then to the current screen's
-//! keymap, then to the keys that work everywhere. Whatever command it sends
-//! is applied to the current screen, or to the app itself when it changes
+//! A key goes first to the reserved Ctrl+C, which quits from anywhere. Under
+//! the "window too small" notice no other key acts. Otherwise the open
+//! overlay takes every key, or else the current screen's keymap and then the
+//! keys that work everywhere turn it into a command. The command changes the
+//! current screen, or the app itself when it opens an overlay, changes
 //! screens or quits.
 
 use ratatui::Frame;
@@ -13,12 +15,12 @@ use ratatui::widgets::{Block, Paragraph, Wrap};
 
 use crate::config::Settings;
 use crate::help::KeyHelp;
-use crate::home::{self, Home};
-use crate::keymap::{self, Command, Keymap};
+use crate::home::Home;
+use crate::keymap::{self, Command};
 use crate::overlay::{Outcome, Overlay};
-use crate::palette::{Action, Palette};
-use crate::settings::{self, SettingsScreen};
+use crate::palette::Palette;
 use crate::theme::Theme;
+use crate::view::{Context, Route, View};
 
 /// The Whetstone TUI, independent of any real terminal.
 #[derive(Debug)]
@@ -28,7 +30,9 @@ pub struct App {
     screens: Screens,
     /// The overlay over the current screen, if one is open.
     overlay: Option<Overlay>,
-    /// The terminal's size, once the UI loop has reported it.
+    /// The terminal's size as the UI loop last reported it. Layout never
+    /// uses it (drawing measures the frame); it only tells key handling
+    /// whether the notice is showing and how far key help can scroll.
     viewport: Option<Size>,
 }
 
@@ -50,69 +54,22 @@ fn fits(size: Size) -> bool {
     size.width >= MINIMUM.width && size.height >= MINIMUM.height
 }
 
-/// A screen a learner can go to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Route {
-    Home,
-    Settings,
-}
-
-/// A screen and its state.
-#[derive(Debug, Clone)]
-enum Screen {
-    Home(Home),
-    Settings(SettingsScreen),
-}
-
-impl Screen {
-    /// The screen's name, as key help titles it.
-    fn name(&self) -> &'static str {
-        match self {
-            Self::Home(_) => "Home",
-            Self::Settings(_) => "Settings",
-        }
-    }
-
-    /// The screen's own actions, which the palette lists before the ones
-    /// every screen has.
-    fn actions(&self) -> &'static [Action] {
-        match self {
-            Self::Home(_) | Self::Settings(_) => &[],
-        }
-    }
-
-    /// The screen's own keys.
-    fn keymap(&self) -> Keymap {
-        match self {
-            Self::Home(_) => home::KEYMAP,
-            Self::Settings(_) => settings::KEYMAP,
-        }
-    }
-
-    fn apply(&mut self, command: Command) -> Option<Command> {
-        match self {
-            Self::Home(home) => home.apply(command),
-            Self::Settings(settings) => settings.apply(command),
-        }
-    }
-}
-
 /// The screens a learner went through to reach the current one, home first.
 /// Going back returns to the one before, as it was left.
 #[derive(Debug)]
 struct Screens {
-    home: Screen,
-    above: Vec<Screen>,
+    home: Home,
+    above: Vec<Box<dyn View>>,
 }
 
 impl Screens {
-    fn current(&self) -> &Screen {
-        self.above.last().unwrap_or(&self.home)
+    fn current(&self) -> &dyn View {
+        self.above.last().map_or(&self.home, AsRef::as_ref)
     }
 
-    fn current_mut(&mut self) -> &mut Screen {
+    fn current_mut(&mut self) -> &mut dyn View {
         match self.above.last_mut() {
-            Some(screen) => screen,
+            Some(screen) => screen.as_mut(),
             None => &mut self.home,
         }
     }
@@ -120,10 +77,10 @@ impl Screens {
     /// Goes to `route`: home is always the one at the bottom, and any other
     /// screen opens above the current one unless it is the current one.
     fn go(&mut self, route: Route) {
-        match (route, self.current()) {
-            (Route::Home, _) => self.above.clear(),
-            (Route::Settings, Screen::Settings(_)) => {}
-            (Route::Settings, _) => self.above.push(Screen::Settings(SettingsScreen::default())),
+        if route == Route::Home {
+            self.above.clear();
+        } else if route != self.current().route() {
+            self.above.push(route.open());
         }
     }
 
@@ -142,7 +99,7 @@ impl App {
             theme,
             settings,
             screens: Screens {
-                home: Screen::Home(Home::default()),
+                home: Home::default(),
                 above: Vec::new(),
             },
             overlay: None,
@@ -163,9 +120,6 @@ impl App {
         }
     }
 
-    /// Sends a key to the reserved Ctrl+C, then to the open overlay, which
-    /// takes every key, or else to the current screen and then the keys that
-    /// work everywhere.
     fn press(&mut self, key: &KeyEvent) -> Flow {
         if keymap::command(&[keymap::INTERRUPT], key).is_some() {
             return Flow::Quit;
@@ -202,18 +156,10 @@ impl App {
         match command {
             Command::Quit => return Flow::Quit,
             Command::KeyHelp => {
-                let screen = self.screens.current();
-                self.overlay = Some(Overlay::KeyHelp(KeyHelp::new(
-                    screen.name(),
-                    screen.keymap(),
-                )));
+                self.overlay = Some(Overlay::KeyHelp(KeyHelp::new(self.screens.current())));
             }
             Command::Palette => {
-                let screen = self.screens.current();
-                self.overlay = Some(Overlay::Palette(Palette::new(
-                    screen.name(),
-                    screen.actions(),
-                )));
+                self.overlay = Some(Overlay::Palette(Palette::new(self.screens.current())));
             }
             Command::Go(route) => self.screens.go(route),
             Command::Back => self.screens.back(),
@@ -236,11 +182,18 @@ impl App {
         let [body, footer] = Layout::vertical([Constraint::Fill(1), Constraint::Length(1)])
             .areas(frame.area().inner(Margin::new(2, 1)));
         let screen = self.screens.current();
-        match screen {
-            Screen::Home(home) => home.render(&self.theme, frame, body),
-            Screen::Settings(screen) => screen.render(&self.theme, &self.settings, frame, body),
-        }
-        frame.render_widget(self.footer(screen.keymap()), footer);
+        let context = Context {
+            theme: &self.theme,
+            settings: &self.settings,
+        };
+        screen.render(&context, frame, body);
+        frame.render_widget(
+            Paragraph::new(Line::styled(
+                keymap::hints(&[keymap::EVERYWHERE, screen.keymap()]),
+                self.theme.muted,
+            )),
+            footer,
+        );
         if let Some(overlay) = &self.overlay {
             overlay.render(&self.theme, frame);
         }
@@ -265,15 +218,5 @@ impl App {
             .wrap(Wrap { trim: true }),
             area.inner(Margin::new(1, 0)),
         );
-    }
-
-    /// Reminders of the keys that matter most on a screen with `keymap`.
-    fn footer(&self, keymap: Keymap) -> Paragraph<'static> {
-        let hints: Vec<&str> = keymap::EVERYWHERE
-            .iter()
-            .chain(keymap)
-            .filter_map(|binding| binding.hint)
-            .collect();
-        Paragraph::new(Line::styled(hints.join("  "), self.theme.muted))
     }
 }

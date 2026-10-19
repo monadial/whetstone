@@ -186,7 +186,7 @@ const VIEWS: [(&str, &str, &[&str]); 6] = [
         "j <Enter> :",
         &[
             "Actions on Settings",
-            "> Home",
+            "> Back",
             "Leave Whetstone",
             "Enter run",
         ],

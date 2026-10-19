@@ -3,13 +3,15 @@
 
 use ratatui::Frame;
 use ratatui::crossterm::event::KeyCode;
-use ratatui::layout::{Position, Rect, Size};
+use ratatui::layout::{Rect, Size};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
+use crate::columns;
 use crate::keymap::{self, Binding, Command, Keymap, Press};
 use crate::overlay::{self, Outcome};
 use crate::theme::Theme;
+use crate::view::View;
 
 /// Key help for one screen: its own keys, then the ones that work
 /// everywhere. It scrolls when the terminal is too short to show them all.
@@ -41,26 +43,26 @@ impl KeyHelp {
         },
     ];
 
-    /// Key help for the screen called `screen`, whose own keys are
-    /// `keymap`.
-    pub(crate) fn new(screen: &'static str, keymap: Keymap) -> Self {
+    /// Key help for `screen`.
+    pub(crate) fn new(screen: &dyn View) -> Self {
         Self {
-            screen,
-            keymap,
+            screen: screen.name(),
+            keymap: screen.keymap(),
             scroll: 0,
         }
     }
 
+    /// Applies `command` in a terminal of `viewport` size. Scrolling starts
+    /// from what that terminal shows, which after a resize can be less than
+    /// the scroll kept for a smaller one.
     pub(crate) fn apply(&mut self, command: Command, viewport: Option<Size>) -> Outcome {
+        let rows = self.rows();
+        let last = viewport.map_or(rows.len().saturating_sub(1), |size| {
+            last_scroll(Rect::new(0, 0, size.width, size.height), &rows)
+        });
         match command {
-            Command::Down => {
-                let rows = self.rows();
-                let last = viewport.map_or(rows.len().saturating_sub(1), |size| {
-                    last_scroll(Rect::from((Position::ORIGIN, size)), &rows)
-                });
-                self.scroll = (self.scroll + 1).min(last);
-            }
-            Command::Up => self.scroll = self.scroll.saturating_sub(1),
+            Command::Down => self.scroll = (self.scroll + 1).min(last),
+            Command::Up => self.scroll = self.scroll.min(last).saturating_sub(1),
             Command::Back => return Outcome::Close,
             _ => {}
         }
@@ -81,7 +83,8 @@ impl KeyHelp {
         let rows = self.rows();
         let (outer, body) = layout(frame.area(), &rows);
         let keys_width = Row::keys_width(&rows);
-        // A smaller terminal than the one it was scrolled in shows the end.
+        // A taller terminal than the one it was scrolled in needs less
+        // scrolling to show the end.
         let scroll = self.scroll.min(last_scroll(frame.area(), &rows));
         overlay::draw_box(
             theme,
@@ -128,16 +131,16 @@ enum Row {
 }
 
 impl Row {
-    /// The widest list of keys in `rows`, plus the gap after it.
+    /// Where the column saying what the keys do starts.
     fn keys_width(rows: &[Self]) -> usize {
-        rows.iter()
+        let names: Vec<String> = rows
+            .iter()
             .filter_map(|row| match row {
-                Self::Keys(binding) => Some(Line::raw(binding.key_names()).width()),
+                Self::Keys(binding) => Some(binding.key_names()),
                 Self::Blank | Self::Heading(_) => None,
             })
-            .max()
-            .unwrap_or_default()
-            + 2
+            .collect();
+        columns::next_column(names.iter().map(String::as_str))
     }
 
     fn width(self, keys_width: usize) -> usize {
@@ -151,13 +154,10 @@ impl Row {
     fn line(self, theme: &Theme, keys_width: usize) -> Line<'static> {
         match self {
             Self::Keys(binding) => {
-                let keys = binding.key_names();
-                let gap = keys_width.saturating_sub(Line::raw(keys.as_str()).width());
-                Line::from(vec![
-                    Span::styled(keys, theme.title),
-                    Span::raw(" ".repeat(gap)),
-                    Span::raw(binding.does),
-                ])
+                let mut line = Line::from(Span::styled(binding.key_names(), theme.title));
+                columns::pad_to(&mut line, keys_width);
+                line.push_span(binding.does);
+                line
             }
             Self::Blank => Line::default(),
             Self::Heading(heading) => Line::styled(heading, theme.muted),
