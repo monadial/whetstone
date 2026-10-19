@@ -9,6 +9,7 @@
 mod area;
 mod change;
 mod exclusion;
+mod repository_config;
 mod secret;
 mod showcase;
 
@@ -18,6 +19,7 @@ pub use crate::exclusion::{
     DefaultExclusion, DefaultExclusionKind, ExcludePattern, ExcludePatternError,
     ExcludePatternProblem, ExcludePatterns,
 };
+pub use crate::repository_config::{RepositoryConfig, RepositoryConfigError};
 pub use crate::secret::{
     SECRET_RULES, SECRET_RULES_VERSION, SecretFinding, SecretRule, find_secrets,
 };

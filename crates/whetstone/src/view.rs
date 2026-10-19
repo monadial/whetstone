@@ -13,6 +13,7 @@ use crate::home::Home;
 use crate::keymap::{Command, Input, Keymap};
 use crate::palette::Action;
 use crate::picker::Picker;
+use crate::repository::{Repository, Unavailable};
 use crate::settings::SettingsScreen;
 use crate::theme::Theme;
 use crate::viewer::Viewer;
@@ -56,6 +57,17 @@ pub(crate) struct Context<'a> {
     pub(crate) theme: &'a Theme,
     pub(crate) settings: &'a Settings,
     pub(crate) showcase: &'a ShowcaseProject,
+    /// The learner's repository, or why Practice on it is unavailable.
+    pub(crate) repository: Result<&'a Repository, &'a Unavailable>,
+}
+
+/// What Practice runs on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Project {
+    /// The showcase project that ships with Whetstone.
+    Showcase,
+    /// The learner's repository, opened at startup.
+    Repository,
 }
 
 /// A screen a learner can go to.
@@ -63,8 +75,8 @@ pub(crate) struct Context<'a> {
 pub(crate) enum Route {
     Home,
     Settings,
-    /// The area and change picker.
-    Picker,
+    /// The area and change picker over a project.
+    Picker(Project),
     /// The change viewer, showing one of the showcase project's curated
     /// changes.
     Viewer(ChangeIndex),
@@ -88,12 +100,20 @@ impl ChangeIndex {
 }
 
 impl Route {
-    /// The screen at this route, as it first opens over `showcase`.
-    pub(crate) fn open(self, showcase: &ShowcaseProject) -> Box<dyn View> {
+    /// The screen at this route, as it first opens over `showcase` or
+    /// `repository`.
+    pub(crate) fn open(
+        self,
+        showcase: &ShowcaseProject,
+        repository: Result<&Repository, &Unavailable>,
+    ) -> Box<dyn View> {
         match self {
-            Self::Home => Box::new(Home::default()),
+            Self::Home => Box::new(Home::new(repository.is_ok())),
             Self::Settings => Box::new(SettingsScreen::default()),
-            Self::Picker => Box::new(Picker::new(showcase)),
+            Self::Picker(Project::Showcase) => Box::new(Picker::new(showcase)),
+            Self::Picker(Project::Repository) => Box::new(Picker::for_repository(
+                repository.expect("home offers the repository only when it is available"),
+            )),
             Self::Viewer(index) => Box::new(Viewer::new(
                 index,
                 index

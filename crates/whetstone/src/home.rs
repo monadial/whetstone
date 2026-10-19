@@ -1,45 +1,42 @@
 //! The home screen: the flat-stone mark, the actions a learner starts from,
-//! and what Practice will send once AI arrives.
+//! why Practice on their repository is unavailable when it is, and what
+//! Practice will send once AI arrives.
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{List, Paragraph, Wrap};
 
+use crate::columns;
 use crate::focus::Position;
 use crate::keymap::{self, Command, Keymap};
 use crate::mark;
 use crate::theme::ControlState;
-use crate::view::{Context, Route, View};
+use crate::view::{Context, Project, Route, View};
 
 /// What a learner can start from home.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Action {
-    Practice,
+    Practice(Project),
     Settings,
     Quit,
 }
 
 impl Action {
-    const ALL: [Self; 3] = [Self::Practice, Self::Settings, Self::Quit];
-
-    fn label(self) -> &'static str {
-        match self {
-            Self::Practice => "Practice on the showcase project",
-            Self::Settings => "Settings",
-            Self::Quit => "Quit",
-        }
-    }
-
     /// What activating it asks of the app.
     fn command(self) -> Command {
         match self {
-            Self::Practice => Command::Go(Route::Picker),
+            Self::Practice(project) => Command::Go(Route::Picker(project)),
             Self::Settings => Command::Go(Route::Settings),
             Self::Quit => Command::Quit,
         }
     }
 }
+
+/// Said under "Practice on" the learner's repository.
+const REPOSITORY_NOTICE: &str = "Nothing leaves this machine until you review what will be sent.";
+/// How far the repository notice is indented, past the focus marker.
+const NOTICE_INDENT: usize = 4;
 
 /// The brand's primary claim, beside the name.
 const CLAIM: &str = "Understand the code you ship.";
@@ -53,15 +50,71 @@ const OUTBOUND_NOTICE: &str = "Once AI arrives, Practice will send showcase exce
 /// Home's own keys: `q` quits from here.
 const KEYMAP: Keymap = &[keymap::MOVE, keymap::ACTIVATE, keymap::QUIT];
 
-/// The home screen's state: which action has focus.
-#[derive(Debug, Clone, Default)]
+/// The home screen's state: its actions, and which has focus.
+#[derive(Debug, Clone)]
 pub(crate) struct Home {
+    actions: Vec<Action>,
     focus: Position,
 }
 
 impl Home {
+    /// Home with its actions: Practice on the learner's repository first,
+    /// when `repository` is available, then on the showcase project,
+    /// Settings and Quit.
+    pub(crate) fn new(repository: bool) -> Self {
+        let mut actions = Vec::new();
+        if repository {
+            actions.push(Action::Practice(Project::Repository));
+        }
+        actions.extend([
+            Action::Practice(Project::Showcase),
+            Action::Settings,
+            Action::Quit,
+        ]);
+        Self {
+            actions,
+            focus: Position::default(),
+        }
+    }
+
     fn focused(&self) -> Action {
-        Action::ALL[self.focus.index()]
+        self.actions[self.focus.index()]
+    }
+
+    /// The actions as rows `width` cells wide: each control, and under the
+    /// learner's repository the notice that nothing is sent before review.
+    fn action_rows<'a>(&self, context: &Context<'a>, width: u16) -> Vec<Line<'a>> {
+        let theme = context.theme;
+        let mut rows = Vec::new();
+        for &action in &self.actions {
+            let state = ControlState {
+                focused: action == self.focused(),
+                ..ControlState::default()
+            };
+            match action {
+                Action::Practice(Project::Repository) => {
+                    let name = context
+                        .repository
+                        .map_or("", |repository| repository.name());
+                    rows.push(theme.control(format!("Practice on {name}"), state));
+                    let indent = " ".repeat(NOTICE_INDENT);
+                    rows.extend(
+                        columns::wrap(
+                            REPOSITORY_NOTICE,
+                            usize::from(width).saturating_sub(NOTICE_INDENT),
+                        )
+                        .into_iter()
+                        .map(|line| Line::styled(format!("{indent}{line}"), theme.muted)),
+                    );
+                }
+                Action::Practice(Project::Showcase) => {
+                    rows.push(theme.control("Practice on the showcase project", state));
+                }
+                Action::Settings => rows.push(theme.control("Settings", state)),
+                Action::Quit => rows.push(theme.control("Quit", state)),
+            }
+        }
+        rows
     }
 }
 
@@ -79,15 +132,21 @@ impl View for Home {
     }
 
     fn apply(&mut self, command: Command, _area: Rect) -> Option<Command> {
-        self.focus = self.focus.after(command, Action::ALL.len());
+        self.focus = self.focus.after(command, self.actions.len());
         (command == Command::Activate).then(|| self.focused().command())
     }
 
     fn render(&self, context: &Context<'_>, frame: &mut Frame<'_>, area: Rect) {
         let theme = context.theme;
-        let outbound =
-            Paragraph::new(Line::styled(OUTBOUND_NOTICE, theme.muted)).wrap(Wrap { trim: true });
-        let actions_rows = u16::try_from(Action::ALL.len()).unwrap_or(u16::MAX);
+        let mut notices = Vec::new();
+        if let Err(unavailable) = context.repository {
+            notices.push(Line::styled(unavailable.to_string(), theme.muted));
+            notices.push(Line::default());
+        }
+        notices.push(Line::styled(OUTBOUND_NOTICE, theme.muted));
+        let outbound = Paragraph::new(notices).wrap(Wrap { trim: true });
+        let action_lines = self.action_rows(context, area.width);
+        let actions_rows = u16::try_from(action_lines.len()).unwrap_or(u16::MAX);
         let outbound_rows = u16::try_from(outbound.line_count(area.width)).unwrap_or(u16::MAX);
         let name = Line::from(vec![
             Span::styled("whetstone", theme.title),
@@ -124,18 +183,7 @@ impl View for Home {
             // A short or narrow window keeps the name: the brand's text fallback.
             frame.render_widget(Paragraph::new(name), brand);
         }
-        frame.render_widget(
-            List::new(Action::ALL.map(|action| {
-                theme.control(
-                    action.label(),
-                    ControlState {
-                        focused: action == self.focused(),
-                        ..ControlState::default()
-                    },
-                )
-            })),
-            actions,
-        );
+        frame.render_widget(List::new(action_lines), actions);
         frame.render_widget(outbound, outbound_area);
     }
 }

@@ -3,17 +3,19 @@
 //! on ratatui's test backend.
 
 use std::fs;
+use std::path::Path;
 
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::{Buffer, Cell};
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use tempfile::TempDir;
-use whetstone::{App, ColorSupport, Dirs, Environment, Flow, Settings, Theme};
+use whetstone::{App, ColorSupport, Dirs, Environment, Flow, Repository, Settings, Theme};
 use whetstone_core::ShowcaseProject;
 
 /// What the app starts from: a global config file, if any, the environment
-/// variables besides `HOME`, and the showcase project.
+/// variables besides `HOME`, the showcase project, and the directory
+/// Whetstone starts in.
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct Setup<'a> {
     /// The contents of `config.toml` in the global config directory.
@@ -21,6 +23,10 @@ pub(crate) struct Setup<'a> {
     pub(crate) variables: &'a [(&'a str, &'a str)],
     /// The showcase project to practice on, if not the embedded one.
     pub(crate) showcase: Option<&'a ShowcaseProject>,
+    /// The directory Whetstone starts in, where it looks for the learner's
+    /// repository. Without one it starts in the session's home directory,
+    /// outside any repository.
+    pub(crate) start: Option<&'a Path>,
 }
 
 /// A terminal with colour turned off: snapshots then list only text
@@ -53,6 +59,7 @@ impl Session {
             fs::write(dirs.config.join("config.toml"), config).expect("write the config file");
         }
         let settings = Settings::load(&dirs.config, &environment).expect("the config loads");
+        let repository = Repository::open(setup.start.unwrap_or(home.path()));
         let mut session = Self {
             app: App::new(
                 Theme::new(ColorSupport::detect(&environment)),
@@ -61,6 +68,7 @@ impl Session {
                     .showcase
                     .cloned()
                     .unwrap_or_else(whetstone::embedded_showcase),
+                repository,
             ),
             width,
             height,
@@ -185,6 +193,18 @@ impl Session {
             .collect()
     }
 
+    /// The rows under `heading`, trimmed, up to the next blank row.
+    pub(crate) fn section(&self, heading: &str) -> Vec<String> {
+        let rows = self.rows();
+        let start = rows.iter().position(|row| row.trim() == heading);
+        assert!(start.is_some(), "no {heading:?} heading:\n{}", self.text());
+        rows.iter()
+            .skip(start.unwrap_or_default() + 1)
+            .map(|row| row.trim().to_owned())
+            .take_while(|row| !row.is_empty())
+            .collect()
+    }
+
     /// The row showing `needle`, trimmed.
     pub(crate) fn row_with(&self, needle: &str) -> String {
         let rows = self.rows();
@@ -192,6 +212,19 @@ impl Session {
         assert!(found.is_some(), "no row shows {needle:?}:\n{}", self.text());
         found.map(|row| row.trim().to_owned()).unwrap_or_default()
     }
+}
+
+/// Each of `rows` split into its columns, which are at least two cells
+/// apart.
+pub(crate) fn columns(rows: &[String]) -> Vec<Vec<&str>> {
+    rows.iter()
+        .map(|row| {
+            row.split("  ")
+                .map(str::trim)
+                .filter(|column| !column.is_empty())
+                .collect()
+        })
+        .collect()
 }
 
 fn key(name: &str) -> KeyEvent {

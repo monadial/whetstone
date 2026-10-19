@@ -21,6 +21,7 @@ use crate::home::Home;
 use crate::keymap::{self, Command, Input};
 use crate::overlay::{Outcome, Overlay};
 use crate::palette::Palette;
+use crate::repository::{Repository, Unavailable};
 use crate::theme::Theme;
 use crate::view::{Context, Route, View};
 
@@ -31,6 +32,9 @@ pub struct App {
     settings: Settings,
     /// The project Practice runs on.
     showcase: ShowcaseProject,
+    /// The learner's repository as opened at startup, or why Practice on it
+    /// is unavailable.
+    repository: Result<Repository, Unavailable>,
     screens: Screens,
     /// The overlay over the current screen, if one is open.
     overlay: Option<Overlay>,
@@ -89,13 +93,18 @@ impl Screens {
     }
 
     /// Goes to `route`: home is always the one at the bottom, and any other
-    /// screen opens above the current one, over `showcase`, unless it is the
-    /// current one.
-    fn go(&mut self, route: Route, showcase: &ShowcaseProject) {
+    /// screen opens above the current one, over `showcase` or `repository`,
+    /// unless it is the current one.
+    fn go(
+        &mut self,
+        route: Route,
+        showcase: &ShowcaseProject,
+        repository: Result<&Repository, &Unavailable>,
+    ) {
         if route == Route::Home {
             self.above.clear();
         } else if route != self.current().route() {
-            self.above.push(route.open(showcase));
+            self.above.push(route.open(showcase, repository));
         }
     }
 
@@ -107,17 +116,25 @@ impl Screens {
 
 impl App {
     /// Starts on the home screen, drawing with `theme`, showing `settings` in
-    /// Settings and practicing on `showcase`.
+    /// Settings, and practicing on `showcase` or on `repository`, the
+    /// learner's repository as opened at startup, unless it says why Practice
+    /// on it is unavailable.
     #[must_use]
-    pub fn new(theme: Theme, settings: Settings, showcase: ShowcaseProject) -> Self {
+    pub fn new(
+        theme: Theme,
+        settings: Settings,
+        showcase: ShowcaseProject,
+        repository: Result<Repository, Unavailable>,
+    ) -> Self {
         Self {
             theme,
             settings,
             showcase,
             screens: Screens {
-                home: Home::default(),
+                home: Home::new(repository.is_ok()),
                 above: Vec::new(),
             },
+            repository,
             overlay: None,
             pending: keymap::Pending::default(),
             viewport: None,
@@ -187,7 +204,9 @@ impl App {
             Command::Palette => {
                 self.overlay = Some(Overlay::Palette(Palette::new(self.screens.current())));
             }
-            Command::Go(route) => self.screens.go(route, &self.showcase),
+            Command::Go(route) => self
+                .screens
+                .go(route, &self.showcase, self.repository.as_ref()),
             Command::Back => self.screens.back(),
             command => {
                 // Until the loop reports a size, assume the smallest the
@@ -215,6 +234,7 @@ impl App {
             theme: &self.theme,
             settings: &self.settings,
             showcase: &self.showcase,
+            repository: self.repository.as_ref(),
         };
         screen.render(&context, frame, body);
         // While a text entry has focus, the keys that work everywhere type.

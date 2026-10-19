@@ -53,10 +53,6 @@ pub enum AreaSource {
     Default,
 }
 
-/// The most bytes an area file may have: 16 KB, counted in thousands as
-/// every size Whetstone shows is.
-const FILE_LIMIT: usize = 16_000;
-
 /// Whetstone's default area files, in file-name order.
 const DEFAULT_FILES: [(&str, &[u8]); 5] = [
     ("domain.md", include_bytes!("../areas/domain.md")),
@@ -95,7 +91,7 @@ pub enum AreaFileError {
     )]
     InvalidFileName,
     /// The file is larger than 16 KB, 16,000 bytes.
-    #[error("the file is larger than {} KB", FILE_LIMIT / 1000)]
+    #[error("the file is larger than {} KB", Area::FILE_LIMIT / 1000)]
     TooLarge,
     /// The file is not UTF-8 text.
     #[error("the file is not UTF-8 text")]
@@ -153,6 +149,11 @@ pub struct InvalidAreaFile {
 }
 
 impl Area {
+    /// The most bytes an area file may have: 16 KB, counted in thousands as
+    /// every size Whetstone shows is. A reader need not read further to know
+    /// a file is too large.
+    pub const FILE_LIMIT: usize = 16_000;
+
     /// Parses the area file called `file_name` with the contents `contents`,
     /// which comes from `source`.
     fn parse(file_name: &str, contents: &[u8], source: AreaSource) -> Result<Self, AreaFileError> {
@@ -160,7 +161,7 @@ impl Area {
             .strip_suffix(".md")
             .and_then(|id| id.parse().ok())
             .ok_or(AreaFileError::InvalidFileName)?;
-        if contents.len() > FILE_LIMIT {
+        if contents.len() > Self::FILE_LIMIT {
             return Err(AreaFileError::TooLarge);
         }
         let text = str::from_utf8(contents).map_err(|_| AreaFileError::NotUtf8)?;

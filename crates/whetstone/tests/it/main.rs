@@ -3,6 +3,7 @@
 
 mod app;
 mod areas;
+mod areas_init;
 mod cli;
 mod colors;
 mod config;
@@ -11,6 +12,8 @@ mod navigation;
 mod overlays;
 mod picker;
 mod pty;
+mod repo;
+mod repository;
 mod resize;
 mod session;
 mod settings;
