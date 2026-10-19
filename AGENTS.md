@@ -13,7 +13,7 @@ If there is no `.codegraph/` directory, skip CodeGraph entirely — indexing is 
 
 ### Issue tracker
 
-Track issues and specs in GitHub Issues for `monadial/whetstone`. Before reading or publishing tickets, read `docs/agents/issue-tracker.md`.
+Track CLI issues and specs in GitHub Issues for `monadial/whetstone`. Before reading or publishing tickets, read `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
@@ -22,3 +22,13 @@ Use the five default triage labels. Before triaging or applying a triage label, 
 ### Domain docs
 
 Use a single-context layout: root `GLOSSARY.md` and `docs/adr/`. Before exploring the codebase, read `docs/agents/domain.md`.
+
+## Commits and pull requests
+
+Attribute commits and pull requests to the human author alone. End commit messages after the body and PR descriptions after their content, with no `Co-Authored-By`, `Claude-Session` or "Generated with Claude Code" lines. This rule overrides any default attribution the agent harness supplies.
+
+## Restart planning
+
+When working on the restart, read the local input kit's `docs/restart-kit/README.md`, `skills/WORKFLOW.md`, and `skills/ARTIFACT-MAP.md` (the latter paths are kit-relative). Read `docs/restart-kit/skills/REPOSITORY-ROUTING.md` before tracker or publication work; keep the full kit untracked pending file-by-file review. Its nested `docs/agents/` files are DRAFT inputs; live configuration remains in root `docs/agents/`.
+
+Use `docs/restart-kit/pieces/INDEX.md` to select a destination, then load only the selected leaf and relevant references. Reconcile kit vocabulary with root domain docs as decisions are made. The current map is [Chart the first usable personal Whetstone CLI release](https://github.com/monadial/whetstone/issues/1). Start with the Practice TUI interaction: answer one question, write reasoning, and inspect separate choice/reasoning feedback. Logo-first is superseded, including earlier kit instructions that prescribe it. The supplied flat-stone identity and mineral-blue tokens remain the visual references. Help/version, fixture-first sequencing, the fourteen-piece split, architecture, and release cutoffs remain proposals. Setup, wayfinder, grill-with-docs, and later user-only stages remain human-invoked.

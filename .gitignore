@@ -2,3 +2,6 @@
 .env
 .env.*
 !.env.example
+
+# Local planning inputs; review a public subset before staging.
+/docs/restart-kit/
