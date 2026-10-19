@@ -1,0 +1,430 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tomas Mihalicka <tomas@mihalicka.com>
+Date: Mon, 12 Oct 2026 14:22:00 +0200
+Subject: [PATCH 02/10] Persist payments in an append-only file store
+
+Keep payments in a log file so they survive a restart. Each save
+appends the payment's latest state as one JSON line and syncs it to
+disk before returning. An index of byte offsets, rebuilt when the log
+is opened, lets a read seek straight to a payment's newest line, and a
+second index finds a payment by its tenant and idempotency key.
+
+A crash in the middle of a save can leave a final line without its
+newline. Opening the log truncates that torn line instead of refusing
+to start.
+
+Areas: infrastructure
+---
+ Cargo.lock     |  63 +++++++++++++++
+ Cargo.toml     |   2 +
+ src/lib.rs     |   1 +
+ src/payment.rs |  19 +++--
+ src/store.rs   | 202 +++++++++++++++++++++++++++++++++++++++++++++++++
+ 5 files changed, 279 insertions(+), 8 deletions(-)
+ create mode 100644 src/store.rs
+
+diff --git a/Cargo.lock b/Cargo.lock
+index e3900ee..dc9a6a8 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -2,10 +2,24 @@
+ # It is not intended for manual editing.
+ version = 4
+ 
++[[package]]
++name = "itoa"
++version = "1.0.18"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
++
++[[package]]
++name = "memchr"
++version = "2.8.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
++
+ [[package]]
+ name = "payments"
+ version = "0.1.0"
+ dependencies = [
++ "serde",
++ "serde_json",
+  "thiserror",
+ ]
+ 
+@@ -27,6 +41,49 @@ dependencies = [
+  "proc-macro2",
+ ]
+ 
++[[package]]
++name = "serde"
++version = "1.0.229"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "4148590afebada386688f18773da617792bf2ef03ffc1e4cbd2b1d45b023e0ba"
++dependencies = [
++ "serde_core",
++ "serde_derive",
++]
++
++[[package]]
++name = "serde_core"
++version = "1.0.229"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "67dca2c9c51e58a4791a4b1ed58308b39c64224d349a935ab5039aa360942a48"
++dependencies = [
++ "serde_derive",
++]
++
++[[package]]
++name = "serde_derive"
++version = "1.0.229"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "e7a5d71263a5a7d47b41f6b3f06ba276f10cc18b0931f1799f710578e2309348"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "syn",
++]
++
++[[package]]
++name = "serde_json"
++version = "1.0.154"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "e7e9cc8b1b85264074fbcc02a88680c4096b1e47df8f739dceb03bf482f04bd6"
++dependencies = [
++ "itoa",
++ "memchr",
++ "serde",
++ "serde_core",
++ "zmij",
++]
++
+ [[package]]
+ name = "syn"
+ version = "3.0.9"
+@@ -63,3 +120,9 @@ name = "unicode-ident"
+ version = "1.0.27"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "a2c754d6c33795a1c324727428e5a7dedb5b06195f9890bdbcba760d3e246563"
++
++[[package]]
++name = "zmij"
++version = "1.0.23"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
+diff --git a/Cargo.toml b/Cargo.toml
+index 3923722..7ce2274 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -11,6 +11,8 @@ publish = false
+ [workspace]
+ 
+ [dependencies]
++serde = { version = "1.0.229", features = ["derive"] }
++serde_json = "1.0.154"
+ thiserror = "2.0.21"
+ 
+ [lints.rust]
+diff --git a/src/lib.rs b/src/lib.rs
+index 45e93ab..2d8daa2 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,3 +1,4 @@
+ //! A small multi-tenant payments service.
+ 
+ pub mod payment;
++pub mod store;
+diff --git a/src/payment.rs b/src/payment.rs
+index 0049b58..7fdac2e 100644
+--- a/src/payment.rs
++++ b/src/payment.rs
+@@ -5,6 +5,8 @@ use std::fmt;
+ use std::sync::atomic::{AtomicU64, Ordering};
+ use std::time::{SystemTime, UNIX_EPOCH};
+ 
++use serde::{Deserialize, Serialize};
++
+ /// Why a request or a transition was refused.
+ #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+ pub enum PaymentError {
+@@ -21,7 +23,7 @@ pub enum PaymentError {
+ }
+ 
+ /// A merchant using the service. Every payment belongs to exactly one tenant.
+-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
++#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+ pub struct TenantId(String);
+ 
+ impl TenantId {
+@@ -43,7 +45,7 @@ impl fmt::Display for TenantId {
+ 
+ /// The key a client sends so that repeating a request never creates a second
+ /// payment.
+-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
++#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+ pub struct IdempotencyKey(String);
+ 
+ impl IdempotencyKey {
+@@ -57,7 +59,7 @@ impl IdempotencyKey {
+ }
+ 
+ /// Identifies a payment within its tenant.
+-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
++#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+ pub struct PaymentId(String);
+ 
+ impl PaymentId {
+@@ -75,7 +77,7 @@ impl fmt::Display for PaymentId {
+ /// The key the provider deduplicates charges on. Two submissions with the
+ /// same operation key are the same charge, so the provider applies it at most
+ /// once.
+-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
++#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+ pub struct OperationKey(String);
+ 
+ impl OperationKey {
+@@ -99,7 +101,7 @@ fn unique_token() -> String {
+ }
+ 
+ /// An ISO 4217 currency code such as `EUR`.
+-#[derive(Debug, Clone, PartialEq, Eq)]
++#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+ pub struct Currency(String);
+ 
+ impl Currency {
+@@ -117,7 +119,7 @@ impl Currency {
+ }
+ 
+ /// An amount in the currency's minor unit, such as cents.
+-#[derive(Debug, Clone, PartialEq, Eq)]
++#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+ pub struct Money {
+     amount_minor: u64,
+     currency: Currency,
+@@ -158,7 +160,8 @@ pub enum ChargeOutcome {
+ /// answer; submitting again with the same operation key is safe, because the
+ /// provider charges at most once. `Succeeded` and `Declined` are settled and
+ /// never change again.
+-#[derive(Debug, Clone, PartialEq, Eq)]
++#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(rename_all = "snake_case")]
+ pub enum PaymentStatus {
+     Pending,
+     Succeeded { provider_ref: String },
+@@ -167,7 +170,7 @@ pub enum PaymentStatus {
+ }
+ 
+ /// A tenant's request to charge an amount, and what has happened to it.
+-#[derive(Debug, Clone, PartialEq, Eq)]
++#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+ pub struct Payment {
+     id: PaymentId,
+     tenant: TenantId,
+diff --git a/src/store.rs b/src/store.rs
+new file mode 100644
+index 0000000..0052901
+--- /dev/null
++++ b/src/store.rs
+@@ -0,0 +1,202 @@
++//! Stores payments in an append-only log file. Every save appends the
++//! payment's latest state as one JSON line, and reads seek straight to the
++//! newest line for that payment.
++
++use std::collections::HashMap;
++use std::fs::{File, OpenOptions};
++use std::io::{self, BufRead, BufReader, Seek, SeekFrom, Write};
++use std::path::Path;
++use std::sync::{Mutex, MutexGuard};
++
++use crate::payment::{IdempotencyKey, Payment, PaymentId, TenantId};
++
++#[derive(Debug, thiserror::Error)]
++pub enum StoreError {
++    #[error("payment log i/o failed")]
++    Io(#[from] io::Error),
++    #[error("payment log entry at byte {offset} is corrupt")]
++    Corrupt {
++        offset: u64,
++        source: serde_json::Error,
++    },
++}
++
++#[derive(Debug)]
++pub struct FileStore {
++    log: Mutex<Log>,
++}
++
++#[derive(Debug)]
++struct Log {
++    file: File,
++    /// Where the newest line for each payment starts.
++    offsets: HashMap<(TenantId, PaymentId), u64>,
++    by_idempotency_key: HashMap<(TenantId, IdempotencyKey), PaymentId>,
++}
++
++impl FileStore {
++    /// Opens the log at `path`, creating it if needed, and indexes it.
++    ///
++    /// A final line without a newline is a write torn by a crash; it is
++    /// truncated so the next save starts on a clean line.
++    pub fn open(path: &Path) -> Result<Self, StoreError> {
++        let file = OpenOptions::new()
++            .create(true)
++            .read(true)
++            .append(true)
++            .open(path)?;
++        let mut log = Log {
++            file,
++            offsets: HashMap::new(),
++            by_idempotency_key: HashMap::new(),
++        };
++        let mut reader = BufReader::new(log.file.try_clone()?);
++        let mut offset = 0;
++        let mut line = String::new();
++        loop {
++            line.clear();
++            let read = reader.read_line(&mut line)?;
++            if read == 0 || !line.ends_with('\n') {
++                break;
++            }
++            let payment: Payment = serde_json::from_str(&line)
++                .map_err(|source| StoreError::Corrupt { offset, source })?;
++            log.index(offset, &payment);
++            offset += read as u64;
++        }
++        log.file.set_len(offset)?;
++        Ok(Self {
++            log: Mutex::new(log),
++        })
++    }
++
++    pub fn save(&self, payment: &Payment) -> Result<(), StoreError> {
++        let mut line = serde_json::to_string(payment).expect("a payment always encodes as JSON");
++        line.push('\n');
++        let mut log = self.lock();
++        let offset = log.file.seek(SeekFrom::End(0))?;
++        log.file.write_all(line.as_bytes())?;
++        log.file.sync_data()?;
++        log.index(offset, payment);
++        Ok(())
++    }
++
++    pub fn get(&self, tenant: &TenantId, id: &PaymentId) -> Result<Option<Payment>, StoreError> {
++        let mut log = self.lock();
++        match log.offsets.get(&(tenant.clone(), id.clone())).copied() {
++            Some(offset) => log.read_at(offset).map(Some),
++            None => Ok(None),
++        }
++    }
++
++    pub fn find_by_idempotency_key(
++        &self,
++        tenant: &TenantId,
++        key: &IdempotencyKey,
++    ) -> Result<Option<Payment>, StoreError> {
++        let id = self
++            .lock()
++            .by_idempotency_key
++            .get(&(tenant.clone(), key.clone()))
++            .cloned();
++        match id {
++            Some(id) => self.get(tenant, &id),
++            None => Ok(None),
++        }
++    }
++
++    fn lock(&self) -> MutexGuard<'_, Log> {
++        self.log
++            .lock()
++            .expect("a panic while writing leaves the payment log in an unknown state")
++    }
++}
++
++impl Log {
++    fn index(&mut self, offset: u64, payment: &Payment) {
++        let tenant = payment.tenant().clone();
++        self.offsets
++            .insert((tenant.clone(), payment.id().clone()), offset);
++        self.by_idempotency_key.insert(
++            (tenant, payment.idempotency_key().clone()),
++            payment.id().clone(),
++        );
++    }
++
++    fn read_at(&mut self, offset: u64) -> Result<Payment, StoreError> {
++        self.file.seek(SeekFrom::Start(offset))?;
++        let mut line = String::new();
++        BufReader::new(&self.file).read_line(&mut line)?;
++        serde_json::from_str(&line).map_err(|source| StoreError::Corrupt { offset, source })
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use std::path::PathBuf;
++
++    use crate::payment::{ChargeOutcome, TenantId};
++
++    fn log_path(name: &str) -> PathBuf {
++        let path = std::env::temp_dir().join(format!("payments-{}-{name}.log", std::process::id()));
++        std::fs::remove_file(&path).ok();
++        path
++    }
++
++    #[test]
++    fn the_latest_state_survives_a_restart() {
++        let path = log_path("restart");
++        let mut payment = Payment::sample("acme", "order-1");
++        let store = FileStore::open(&path).unwrap();
++        store.save(&payment).unwrap();
++        payment
++            .record(ChargeOutcome::Succeeded {
++                provider_ref: "ch_1".into(),
++            })
++            .unwrap();
++        store.save(&payment).unwrap();
++        drop(store);
++
++        let reopened = FileStore::open(&path).unwrap();
++
++        assert_eq!(
++            reopened.get(payment.tenant(), payment.id()).unwrap(),
++            Some(payment)
++        );
++    }
++
++    #[test]
++    fn idempotency_keys_are_scoped_to_a_tenant() {
++        let store = FileStore::open(&log_path("scoped")).unwrap();
++        let acme = Payment::sample("acme", "order-1");
++        store.save(&acme).unwrap();
++
++        let globex = TenantId::parse("globex").unwrap();
++        let find = |tenant| store.find_by_idempotency_key(tenant, acme.idempotency_key());
++
++        assert_eq!(find(acme.tenant()).unwrap(), Some(acme.clone()));
++        assert_eq!(find(&globex).unwrap(), None);
++        assert_eq!(store.get(&globex, acme.id()).unwrap(), None);
++    }
++
++    #[test]
++    fn a_torn_final_line_is_discarded_on_open() {
++        let path = log_path("torn");
++        let payment = Payment::sample("acme", "order-1");
++        FileStore::open(&path).unwrap().save(&payment).unwrap();
++        let mut file = OpenOptions::new().append(true).open(&path).unwrap();
++        file.write_all(b"{\"id\":\"pay_").unwrap();
++
++        let store = FileStore::open(&path).unwrap();
++        store.save(&payment).unwrap();
++
++        assert_eq!(
++            FileStore::open(&path)
++                .unwrap()
++                .get(payment.tenant(), payment.id())
++                .unwrap(),
++            Some(payment)
++        );
++    }
++}

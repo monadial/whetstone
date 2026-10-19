@@ -1,0 +1,4 @@
+# Whetstone settings for this repository.
+
+# The areas Practice questions can focus on.
+areas = ["domain", "observability", "scalability", "infrastructure", "system design"]

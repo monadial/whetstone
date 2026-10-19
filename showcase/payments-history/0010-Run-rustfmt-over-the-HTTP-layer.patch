@@ -1,0 +1,39 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tomas Mihalicka <tomas@mihalicka.com>
+Date: Fri, 16 Oct 2026 09:52:00 +0200
+Subject: [PATCH 10/10] Run rustfmt over the HTTP layer
+
+The metrics handler and the error response went in without cargo fmt.
+Format them. No code changes.
+
+Areas: infrastructure
+---
+ src/http.rs | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/src/http.rs b/src/http.rs
+index bd47dd3..c37b9ed 100644
+--- a/src/http.rs
++++ b/src/http.rs
+@@ -81,9 +81,7 @@ async fn fetch<S: PaymentStore, P: PaymentProvider>(
+     Ok(Json(payment.into()))
+ }
+ 
+-async fn metrics<S: PaymentStore, P: PaymentProvider>(
+-    State(service): Service<S, P>,
+-) -> String {
++async fn metrics<S: PaymentStore, P: PaymentProvider>(State(service): Service<S, P>) -> String {
+     service.metrics().render()
+ }
+ 
+@@ -98,7 +96,9 @@ impl IntoResponse for ServiceError {
+         let message = if status.is_server_error() {
+             tracing::error!(error = ?self, "request failed");
+             "internal error".to_owned()
+-        } else { self.to_string() };
++        } else {
++            self.to_string()
++        };
+         (status, Json(serde_json::json!({ "error": message }))).into_response()
+     }
+ }
