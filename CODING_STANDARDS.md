@@ -9,21 +9,21 @@ Each rule says how it is enforced:
 - **Lint/CI**: a lint, test or CI job fails the build. CI denies all warnings, so a lint set to `warn` in the workspace still fails CI.
 - **Review**: a reviewer checks it. Nothing mechanical catches it.
 
-Some rules are both. Rules about code that does not exist yet (async workers, AI, storage) are marked *from …*. They apply as soon as that code lands, and their checks arrive with it.
+Some rules are both. Rules about code that does not exist yet (async workers, AI, storage) are marked *from …*, or sit in a section that says when it applies. They apply as soon as that code lands, and their checks arrive with it.
 
 ## Toolchain, workspace and dependencies
 
 | # | Rule | Enforced by |
 | --- | --- | --- |
 | 1 | Every crate uses edition 2024 and inherits `rust-version` from the workspace. The policy is latest stable only: `rust-version` equals the channel in `rust-toolchain.toml` (1.99.1), and the two are bumped together, deliberately. | **Lint/CI**: CI builds with the pinned toolchain, and Cargo refuses a `rust-version` above it. **Review**: the two stay equal. |
-| 2 | Commit `Cargo.lock`. Every Cargo command in CI runs with `--locked`. | **Lint/CI**: `--locked` fails on a stale lockfile. |
+| 2 | Commit `Cargo.lock`. Every CI command that resolves dependencies (Clippy, tests, docs, cargo-deny, cargo-shear) runs with `--locked`. | **Lint/CI**: `--locked` fails on a stale lockfile. |
 | 3 | Use the stable toolchain only: no nightly features and no unstable rustfmt options. | **Lint/CI**: CI uses the pinned stable toolchain, which rejects `#![feature]`. |
 | 4 | Code is formatted with `cargo fmt` in the default style. There is no `rustfmt.toml`: `cargo fmt` takes style edition 2024 from the crates' edition. Bare `rustfmt` defaults to style edition 2015, so use `cargo fmt`. | **Lint/CI**: `cargo fmt --all --check`. |
 | 5 | Lint levels are set only in `[workspace.lints]` in the root `Cargo.toml`, and every crate inherits them with `[lints] workspace = true`. `clippy.toml` files hold lint options (test allowances, disallowed paths), never levels. CI denies warnings across all targets. | **Lint/CI**: `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings` on every CI platform. **Review**: no lint levels in crate attributes or `clippy.toml`. |
 | 6 | Suppress a lint only locally, with `#[expect(lint, reason = "…")]`, never `#[allow]`. | **Lint/CI**: `clippy::allow_attributes`, `clippy::allow_attributes_without_reason`. |
 | 7 | No unsafe code: `unsafe_code = "forbid"`. Lifting it needs an ADR, a `// SAFETY:` comment on every unsafe block and `clippy::undocumented_unsafe_blocks`. | **Lint/CI**: rustc's `unsafe_code`. |
 | 8 | Every new dependency states its reason in the PR that adds it. No dependency with an active RustSec vulnerability, unmaintained or unsound advisory, no yanked version, and no unused dependency. | **Lint/CI**: `cargo deny check` (advisories), `cargo shear --deny-warnings`. **Review**: the stated reason. |
-| 9 | Dependency licenses must be on the allow-list in `deny.toml`. Anything else needs a per-crate `exceptions` entry, with its reason in the PR. Dependencies come from crates.io only (a git source needs a reviewed `allow-git` entry), and no version requirement is `*`. | **Lint/CI**: `cargo deny check` (licenses, sources, bans). |
+| 9 | Dependency licenses must be on the allow-list in `deny.toml`. Anything else needs a per-crate `exceptions` entry, with its reason in the PR. Dependencies come from crates.io only (a git source needs a reviewed `allow-git` entry), and no version requirement is `*` (path dependencies between the workspace crates are exempt). | **Lint/CI**: `cargo deny check` (licenses, sources, bans). |
 | 10 | *From the AI crate:* Rig crates move together, in a dedicated upgrade PR that re-runs the AI contract tests. | **Review**. **Lint/CI**: the contract tests. |
 
 ## Errors and panics
@@ -33,7 +33,7 @@ Some rules are both. Rules about code that does not exist yet (async workers, AI
 | 11 | Recoverable failures (I/O, config, source, provider, storage) return `Result`. No `unwrap`, `panic!`, `todo!`, `unimplemented!` or `dbg!` outside tests. `clippy.toml` allows `unwrap`, `expect`, `panic!` and printing in tests. | **Lint/CI**: `clippy::unwrap_used`, `panic`, `todo`, `unimplemented`, `dbg_macro`. |
 | 12 | `expect` is used only for invariants, and its message states the invariant: `.expect("signal numbers are positive")`. (`clippy::expect_used` is deliberately off.) | **Review**. |
 | 13 | Each module that can fail has its own `thiserror` error type, which is `Error + Send + Sync + 'static`, never `()`. Messages are lowercase, with no trailing period. `anyhow` appears only at the binary edge: the command boundary in `lib.rs` and the CLI output path that reports its error. | **Review**. |
-| 14 | No `std::process::exit`. Return an `ExitCode` to `main`, so that `Drop` guards run. | **Lint/CI**: `clippy::exit`. |
+| 14 | No `std::process::exit`. Return an `ExitCode` to `main`, and from it, so that `Drop` guards run. | **Lint/CI**: `clippy::exit`, outside `main`. **Review**: inside `main`, which the lint ignores. |
 | 15 | Keep `panic = "unwind"` in every profile. The terminal guard restores the terminal from both `Drop` and its panic hook. | **Review**: profile changes. |
 
 ## Async work
@@ -59,13 +59,13 @@ The walking skeleton has no async code: its UI loop is synchronous. These rules 
 | 25 | Drawing is pure: `render` does no I/O, network, storage or spawning, and changes no state (`App::render` takes `&self`). | **Review**. |
 | 26 | One input source. The UI loop in `tui.rs` is the only place that reads terminal events, and only key presses (`KeyEventKind::Press`) act, filtered once in `App::handle`, where input enters the app. | **Review**. **Lint/CI** once the loop moves to `EventStream`: `disallowed-methods` for crossterm's `read` and `poll`. |
 | 27 | One terminal guard enables everything the TUI turns on (raw mode, alternate screen, hidden cursor, and later paste and keyboard flags) and undoes it in reverse order on exit, on `Drop` and from its panic hook. | **Lint/CI**: the pseudo-terminal smoke test (`tests/it/pty.rs`) on Linux and macOS, x86_64 and arm64; guard tests (`tests/it/terminal_guard.rs`, `tests/panic_restore.rs`). |
-| 28 | In raw mode Ctrl+C is a reserved key, handled before focus dispatch. SIGINT, SIGTERM and SIGHUP from outside follow the same shutdown path and restore the terminal. | **Lint/CI**: pseudo-terminal tests. |
+| 28 | In raw mode Ctrl+C is a reserved key, handled before focus dispatch. SIGINT, SIGTERM and SIGHUP from outside follow the same shutdown path and restore the terminal. | **Lint/CI**: pseudo-terminal tests for `q`, Ctrl+C and SIGTERM. **Review**: SIGINT and SIGHUP, which no test sends. |
 | 29 | *From overlays and editors:* key dispatch follows focus: reserved keys, then the top overlay, then the focused control. While an editor has focus, every non-reserved key is text. | **Lint/CI**: keystroke tests at the app seam. |
 | 30 | *From submission:* submitting never depends on a modified Enter. Tab → Submit → Enter always works. | **Lint/CI**: a keystroke test. |
 | 31 | Text is measured in cells and edited by grapheme. No byte-length layout and no byte slicing of user text. | **Lint/CI**: `clippy::string_slice`; property tests once the editor lands. **Review**. |
 | 32 | Layout is derived from `frame.area()` on every draw. State holds no `Rect`, so a resize never changes selections, scroll or focus. | **Lint/CI**: snapshot and resize tests. **Review**. |
-| 33 | Colours come only from theme tokens. A non-empty `NO_COLOR` disables colour, an explicit flag overrides it, and meaning never depends on colour alone. | **Lint/CI**: buffer-style tests, from the brand theme. **Review**. |
-| 34 | Nothing writes to stdout or stderr while the TUI is active. Only the CLI output path (`output.rs`) prints, under `#[expect(clippy::print_…, reason = "…")]`. Diagnostics go to the log file. | **Lint/CI**: `clippy::print_stdout`, `print_stderr`; the pseudo-terminal test that logs never reach the screen. |
+| 33 | Colours come only from theme tokens. A non-empty `NO_COLOR` disables colour (an explicit colour flag, once one exists, overrides it), and meaning never depends on colour alone. | **Lint/CI**: buffer-style tests, from the brand theme. **Review**. |
+| 34 | Nothing writes to stdout or stderr while the TUI is active. Only the CLI output path (`output.rs`) prints, and its print macros sit under `#[expect(clippy::print_…, reason = "…")]`. Diagnostics go to the log file. | **Lint/CI**: `clippy::print_stdout`, `print_stderr`; the pseudo-terminal test that logs never reach the screen. |
 | 35 | Output without a terminal is line-oriented, with no spinner and no cursor control. Without an interactive terminal, `whetstone` refuses before drawing anything. | **Lint/CI**: `assert_cmd` and pseudo-terminal tests. |
 
 ## AI and storage
@@ -84,9 +84,9 @@ These rules apply from the Practice spec, when the AI crate and the session reco
 
 | # | Rule | Enforced by |
 | --- | --- | --- |
-| 41 | The API key is read once from `OPENROUTER_API_KEY` into a `SecretString` and exposed only where the auth header is built. It is never a CLI argument, never logged and never serialized. Settings shows only whether it was found. | **Review**. |
+| 41 | *From the first code that reads the key:* the API key is read once from `OPENROUTER_API_KEY` into a `SecretString` and exposed only where the auth header is built. It is never a CLI argument, never logged and never serialized. Settings shows only whether it was found. | **Review**. |
 | 42 | No `std::env::set_var` or `remove_var`. Tests pass environment variables through `Command::env` or an injected `Environment`. | **Lint/CI**: `unsafe_code = "forbid"` (both are unsafe in edition 2024). |
-| 43 | `#[instrument]` on functions that take secrets, source text or learner reasoning uses `skip` or `skip_all`. Rig's content telemetry stays off. | **Review**. |
+| 43 | *From the AI crate:* `#[instrument]` on functions that take secrets, source text or learner reasoning uses `skip` or `skip_all`. Rig's content telemetry stays off. | **Review**. |
 | 44 | Logging starts once, at launch, and writes to `whetstone.log` in the state directory. If a non-blocking writer (`tracing-appender`) is added, its `WorkerGuard` is bound to a named variable that lives until exit. | **Review**. |
 | 45 | Workflows set least-privilege `permissions` (`contents: read` by default), pin actions to a full commit SHA with a version comment, check out with `persist-credentials: false`, and never check out PR code under `pull_request_target`. | **Review**. |
 
