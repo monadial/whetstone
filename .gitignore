@@ -5,3 +5,6 @@
 
 # Local planning inputs; review a public subset before staging.
 /docs/restart-kit/
+
+# Cargo build output.
+/target/
