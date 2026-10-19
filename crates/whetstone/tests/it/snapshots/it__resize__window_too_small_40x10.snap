@@ -1,0 +1,24 @@
+---
+source: crates/whetstone/tests/it/resize.rs
+expression: session.frame()
+---
+Buffer {
+    area: Rect { x: 0, y: 0, width: 40, height: 10 },
+    content: [
+        " Window too small                       ",
+        " Whetstone needs at least 50x12; this   ",
+        " window is 40x10.                       ",
+        " Resize it to carry on where you were,  ",
+        " or press Ctrl+C to quit.               ",
+        "                                        ",
+        "                                        ",
+        "                                        ",
+        "                                        ",
+        "                                        ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 1, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 17, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+    ]
+}

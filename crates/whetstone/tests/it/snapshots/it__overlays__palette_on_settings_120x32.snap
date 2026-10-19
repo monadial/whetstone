@@ -1,0 +1,52 @@
+---
+source: crates/whetstone/tests/it/overlays.rs
+expression: session.frame()
+---
+Buffer {
+    area: Rect { x: 0, y: 0, width: 120, height: 32 },
+    content: [
+        "                                                                                                                        ",
+        "  Settings                                                                                                              ",
+        "  No config found at ~/.config/whetstone/config.toml, so these are the defaults.                                        ",
+        "                                                                                                                        ",
+        "  > Provider         OpenRouter (default)                                                                               ",
+        "    Jev model        typesafe/jev-1.14 (default)                                                                        ",
+        "    Generator model  anthropic/claude-sonnet-5.5 (default)                                                              ",
+        "    OpenRouter key   not set (OPENROUTER_API_KEY)                                                                       ",
+        "                                                                                                                        ",
+        "    Back                                                                                                                ",
+        "                                                                                                                        ",
+        "  Where Practice will send its requests once AI arrives. OpenRouter is the only provider so far.                        ",
+        "  In config.toml: provider = "openrouter"                                                                               ",
+        "                                      ┌ Actions on Settings ──────────────────────┐                                     ",
+        "                                      │   Home      Go to the home screen         │                                     ",
+        "                                      │ > Settings  See what Practice will use    │                                     ",
+        "                                      │   Help      Show the keys for this screen │                                     ",
+        "                                      │   Quit      Leave Whetstone               │                                     ",
+        "                                      └ Enter run  Esc close ─────────────────────┘                                     ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "  ? keys  : actions  q back                                                                                             ",
+        "                                                                                                                        ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 10, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 4, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 12, y: 4, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 39, y: 13, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 60, y: 13, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 40, y: 15, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 50, y: 15, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+    ]
+}

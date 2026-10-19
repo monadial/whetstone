@@ -57,6 +57,9 @@ pub(crate) fn run(mut app: App) -> Result<Ending, TuiError> {
         .map_err(TuiError::Enable)?;
     let mut terminal =
         Terminal::new(CrosstermBackend::new(io::stdout())).map_err(TuiError::Draw)?;
+    // The terminal reports later sizes as resize events, but not the first.
+    let size = terminal.size().map_err(TuiError::Draw)?;
+    app.handle(&Event::Resize(size.width, size.height));
     let ending = loop {
         terminal
             .draw(|frame| app.render(frame))
