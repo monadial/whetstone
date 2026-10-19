@@ -16,7 +16,7 @@ pub use crate::area::{Area, AreaFileError, AreaId, AreaSource, InvalidAreaFile, 
 pub use crate::change::{Change, TouchedFile};
 pub use crate::exclusion::{
     DefaultExclusion, DefaultExclusionKind, ExcludePattern, ExcludePatternError,
-    ExcludePatternReason, ExcludePatterns,
+    ExcludePatternProblem, ExcludePatterns,
 };
 pub use crate::secret::{
     SECRET_RULES, SECRET_RULES_VERSION, SecretFinding, SecretRule, find_secrets,

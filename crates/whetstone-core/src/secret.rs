@@ -16,6 +16,7 @@
 //! the crate leaves out `regex`'s Unicode tables.
 
 use std::cell::LazyCell;
+use std::fmt;
 use std::sync::LazyLock;
 
 use regex::Regex;
@@ -26,7 +27,7 @@ pub const SECRET_RULES_VERSION: u32 = 1;
 
 /// One known secret format: a name, a regex, and an example it should match
 /// and one it shouldn't.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SecretRule {
     name: &'static str,
     pattern: &'static str,
@@ -54,21 +55,28 @@ pub const SECRET_RULES: &[SecretRule] = &[
 /// A PEM private key block, from its `BEGIN` line to its `END` line.
 ///
 /// Source: RFC 7468 section 2 (<https://www.rfc-editor.org/rfc/rfc7468>),
-/// whose encapsulation boundaries are
-/// `-----BEGIN label-----` and `-----END label-----` with the labels
-/// `PRIVATE KEY` and `ENCRYPTED PRIVATE KEY`. Also OpenSSL's older labels
-/// (`RSA PRIVATE KEY`, `EC PRIVATE KEY`), OpenSSH's `OPENSSH PRIVATE KEY`
-/// (`sshkey.c`) and OpenPGP's `PGP PRIVATE KEY BLOCK` armor (RFC 9580 section
-/// 6.2.1, <https://www.rfc-editor.org/rfc/rfc9580>). The `END` label isn't checked against the `BEGIN` label, because
-/// `regex` has no backreferences.
+/// whose encapsulation boundaries are `-----BEGIN label-----` and
+/// `-----END label-----`, with the labels `PRIVATE KEY` and `ENCRYPTED
+/// PRIVATE KEY`. It also covers OpenSSL's older labels (`RSA PRIVATE KEY`,
+/// `EC PRIVATE KEY`), OpenSSH's `OPENSSH PRIVATE KEY` (`sshkey.c`) and
+/// OpenPGP's `PGP PRIVATE KEY BLOCK` armor (RFC 9580 section 6.2.1,
+/// <https://www.rfc-editor.org/rfc/rfc9580>), which has the same shape.
+///
+/// Between the boundaries, the block holds no quote and no run of dashes:
+/// that finds a key in a diff, in YAML or in JSON with escaped newlines, but
+/// not code that only names the boundaries, and never runs from an
+/// unfinished block into the next one. The `END` label isn't checked against
+/// the `BEGIN` label, because `regex` has no backreferences.
 #[expect(
     clippy::doc_markdown,
     reason = "OpenSSH and OpenPGP are names, not code"
 )]
 const PEM_PRIVATE_KEY: SecretRule = SecretRule {
     name: "PEM private key",
-    pattern: "-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----(?s:.)*?\
-              -----END (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----",
+    // A removed line in a diff puts one more dash before `-----END`.
+    pattern: "-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----\
+              (?:[^-\"'`]|-[^-\"'`])*?\
+              -?-----END (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----",
     example: concat!(
         "-----BEGIN ",
         "PRIVATE KEY-----\nFAKE\n-----END ",
@@ -87,8 +95,9 @@ const PEM_PRIVATE_KEY: SecretRule = SecretRule {
 /// Source: AWS IAM User Guide, "IAM identifiers"
 /// (<https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_identifiers.html>),
 /// whose table of unique ID prefixes lists `AKIA` for access keys and `ASIA`
-/// for temporary ones. AWS documents no length or alphabet: 20 characters
-/// fits its example key ID and gitleaks' rule.
+/// for temporary ones. The IAM API reference allows any 16 to 128 word
+/// characters (<https://docs.aws.amazon.com/IAM/latest/APIReference/API_AccessKey.html>);
+/// the 20 characters here fit AWS's example key ID and gitleaks' rule.
 const AWS_ACCESS_KEY_ID: SecretRule = SecretRule {
     name: "AWS access key ID",
     pattern: r"(?-u:\b)(?:AKIA|ASIA)[A-Z0-9]{16}(?-u:\b)",
@@ -104,11 +113,12 @@ const AWS_ACCESS_KEY_ID: SecretRule = SecretRule {
 /// (<https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/about-authentication-to-github>),
 /// section "GitHub's token formats", which lists the prefixes, and the GitHub
 /// blog post "Behind GitHub's new authentication token formats" (2021): 30
-/// random Base62 characters and a 6-character checksum after the prefix. Tokens may grow
-/// to 255 characters, and since April 2026 installation tokens (`ghs_`) can
-/// be about 520 characters with `.` and `-` (GitHub changelog, 24 April
-/// 2026), so no upper bound is set. The 82-character body of `github_pat_`
-/// follows gitleaks, because GitHub doesn't document it.
+/// random Base62 characters and a 6-character checksum after the prefix.
+/// Tokens may grow to 255 characters, and since April 2026 installation
+/// tokens (`ghs_`) can be about 520 characters with `.` and `-` (GitHub
+/// changelog, 24 April 2026), so no upper bound is set. The 82-character
+/// body of `github_pat_` follows gitleaks, because GitHub doesn't document
+/// it.
 const GITHUB_TOKEN: SecretRule = SecretRule {
     name: "GitHub token",
     pattern: r"(?-u:\b)(?:gh[pour]_[A-Za-z0-9_]{36,}|ghs_[A-Za-z0-9_.-]{36,}|github_pat_[A-Za-z0-9_]{82,})",
@@ -122,9 +132,9 @@ const GITHUB_TOKEN: SecretRule = SecretRule {
 /// <https://docs.gitlab.com/security/tokens/> (`glpat-` for personal,
 /// project, group and impersonation tokens), and
 /// <https://docs.gitlab.com/user/profile/personal_access_tokens/>, which says
-/// the token is 20 characters long. The
-/// newer routable tokens (GitLab handbook, "Routable tokens") carry a longer
-/// Base64 payload after the same prefix, which this also matches.
+/// the token is 20 characters long. The newer routable tokens (GitLab
+/// handbook, "Routable tokens") carry a longer Base64 payload after the same
+/// prefix, which this also matches.
 const GITLAB_PERSONAL_ACCESS_TOKEN: SecretRule = SecretRule {
     name: "GitLab personal access token",
     pattern: r"(?-u:\b)glpat-[0-9A-Za-z_-]{20,}",
@@ -138,9 +148,9 @@ const GITLAB_PERSONAL_ACCESS_TOKEN: SecretRule = SecretRule {
 ///
 /// Source: Slack API docs, <https://docs.slack.dev/authentication/tokens>
 /// and <https://docs.slack.dev/authentication/using-token-rotation>, which
-/// list the prefixes and ask integrators to expect up to 255 characters and not
-/// to rely on any other structure. The older `xoxa-`, `xoxo-`, `xoxr-` and
-/// `xoxs-` types follow gitleaks.
+/// list the prefixes and ask integrators to expect up to 255 characters and
+/// not to rely on any other structure. The older `xoxa-`, `xoxo-`, `xoxr-`
+/// and `xoxs-` types follow gitleaks.
 const SLACK_TOKEN: SecretRule = SecretRule {
     name: "Slack token",
     pattern: r"(?-u:\b)(?:xoxe\.)?(?:xox[abeoprs]|xapp|xwfp)-[0-9A-Za-z-]{10,}",
@@ -152,8 +162,8 @@ const SLACK_TOKEN: SecretRule = SecretRule {
 /// Test-mode keys (`_test_`) are left out: they can't move money.
 ///
 /// Source: Stripe Docs, "API keys" (<https://docs.stripe.com/keys>), which
-/// gives the prefixes. Stripe
-/// documents no length; the 10-character minimum follows gitleaks.
+/// gives the prefixes. Stripe documents no length; the 10-character minimum
+/// follows gitleaks.
 const STRIPE_LIVE_KEY: SecretRule = SecretRule {
     name: "Stripe live key",
     pattern: r"(?-u:\b)[rs]k_live_[0-9A-Za-z]{10,}",
@@ -165,8 +175,9 @@ const STRIPE_LIVE_KEY: SecretRule = SecretRule {
 ///
 /// Source: Google Cloud docs
 /// (<https://cloud.google.com/docs/authentication/api-keys>), whose example
-/// key starts with `AIza`. Google publishes no length; the 39-character format follows
-/// Microsoft Purview's "Google API key" sensitive information type.
+/// key starts with `AIza`. Google publishes no length; the 39-character
+/// format follows Microsoft Purview's "Google API key" sensitive information
+/// type.
 const GOOGLE_API_KEY: SecretRule = SecretRule {
     name: "Google API key",
     pattern: r"(?-u:\b)AIza[0-9A-Za-z_-]{35}",
@@ -217,13 +228,13 @@ const OPENAI_API_KEY: SecretRule = SecretRule {
     name: "OpenAI API key",
     pattern: r"(?-u:\b)sk-(?:(?:proj|svcacct|admin)-)?[A-Za-z0-9_-]{20,}T3BlbkFJ[A-Za-z0-9_-]{20,}",
     example: concat!(
-        "sk-proj-",
+        "sk-",
         "FAKEfakeFAKEfakeFAKE",
         "T3Blbk",
         "FJ",
         "FAKEfakeFAKEfakeFAKE"
     ),
-    counterexample: concat!("sk-proj-", "FAKEfakeFAKEfakeFAKEfakeFAKEfakeFAKEfake"),
+    counterexample: concat!("sk-", "FAKEfakeFAKEfakeFAKEfakeFAKEfakeFAKEfake"),
 };
 
 impl SecretRule {
@@ -255,10 +266,10 @@ impl SecretRule {
 /// A possible secret in a text: where it starts, the rule that matched and a
 /// masked excerpt. It never holds the matched value, so its `Debug` output
 /// is safe to log.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct SecretFinding {
     line: usize,
-    rule_name: &'static str,
+    rule: &'static SecretRule,
     excerpt: String,
 }
 
@@ -269,10 +280,10 @@ impl SecretFinding {
         self.line
     }
 
-    /// The name of the rule that matched.
+    /// The rule that matched.
     #[must_use]
-    pub fn rule_name(&self) -> &'static str {
-        self.rule_name
+    pub fn rule(&self) -> &'static SecretRule {
+        self.rule
     }
 
     /// The match's first four characters, then eight asterisks, however long
@@ -280,6 +291,17 @@ impl SecretFinding {
     #[must_use]
     pub fn excerpt(&self) -> &str {
         &self.excerpt
+    }
+}
+
+/// Shows the rule by name alone, so a logged finding stays short.
+impl fmt::Debug for SecretFinding {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SecretFinding")
+            .field("line", &self.line)
+            .field("rule", &self.rule.name)
+            .field("excerpt", &self.excerpt)
+            .finish()
     }
 }
 
@@ -313,7 +335,7 @@ pub fn find_secrets(text: &str) -> Vec<SecretFinding> {
         .into_iter()
         .map(|(rule, found)| SecretFinding {
             line: line_starts.partition_point(|&start| start <= found.start()),
-            rule_name: rule.name,
+            rule,
             excerpt: found
                 .as_str()
                 .chars()
@@ -344,7 +366,7 @@ mod tests {
 
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].line(), 3);
-        assert_eq!(findings[0].rule_name(), "AWS access key ID");
+        assert_eq!(findings[0].rule().name(), "AWS access key ID");
         assert_eq!(findings[0].excerpt(), "AKIA********");
     }
 
@@ -367,7 +389,7 @@ mod tests {
 
         let found: Vec<_> = find_secrets(&text)
             .iter()
-            .map(|finding| (finding.line(), finding.rule_name()))
+            .map(|finding| (finding.line(), finding.rule().name()))
             .collect();
 
         assert_eq!(
@@ -409,7 +431,7 @@ mod tests {
             let found = |text| {
                 find_secrets(text)
                     .iter()
-                    .map(|finding| (finding.line(), finding.rule_name()))
+                    .map(|finding| (finding.line(), finding.rule().name()))
                     .collect::<Vec<_>>()
             };
 
@@ -428,7 +450,7 @@ mod tests {
 
         let found: Vec<_> = findings
             .iter()
-            .map(|finding| (finding.line(), finding.rule_name(), finding.excerpt()))
+            .map(|finding| (finding.line(), finding.rule().name(), finding.excerpt()))
             .collect();
         assert_eq!(
             found,
@@ -454,6 +476,41 @@ mod tests {
         assert_eq!(lines, [2, 6]);
     }
 
+    #[test]
+    fn a_pem_block_escaped_inside_a_string_is_found() {
+        let pem = rule("PEM private key").example();
+        let json = format!(r#"{{"private_key": "{}\n"}}"#, pem.replace('\n', r"\n"));
+
+        assert_eq!(rule_names(&json), ["PEM private key"]);
+    }
+
+    #[test]
+    fn code_that_names_pem_boundaries_is_not_a_finding() {
+        let code = concat!(
+            "const BEGIN: &str = \"-----BEGIN ",
+            "PRIVATE KEY-----\";\n",
+            "const END: &str = \"-----END ",
+            "PRIVATE KEY-----\";\n"
+        );
+
+        assert_eq!(rule_names(code), [] as [&str; 0]);
+    }
+
+    #[test]
+    fn a_pem_block_never_runs_across_another_boundary() {
+        let pem = rule("PEM private key").example();
+        let unfinished = concat!("-----BEGIN ", "PRIVATE KEY-----\nFAKE\n");
+        let certificate = "-----BEGIN CERTIFICATE-----\nFAKE\n-----END CERTIFICATE-----\n";
+        let text = format!("{unfinished}{certificate}{pem}\n");
+
+        let lines: Vec<_> = find_secrets(&text)
+            .iter()
+            .map(SecretFinding::line)
+            .collect();
+
+        assert_eq!(lines, [6]);
+    }
+
     /// `body` repeated until it is `len` characters long.
     fn filler(body: &str, len: usize) -> String {
         body.chars().cycle().take(len).collect()
@@ -462,7 +519,7 @@ mod tests {
     fn rule_names(text: &str) -> Vec<&'static str> {
         find_secrets(text)
             .iter()
-            .map(SecretFinding::rule_name)
+            .map(|finding| finding.rule().name())
             .collect()
     }
 
@@ -480,6 +537,14 @@ mod tests {
             (fake("xapp-", 10), "Slack token"),
             (fake("xoxe.xoxp-", 10), "Slack token"),
             (fake("rk_live_", 10), "Stripe live key"),
+            (
+                format!(
+                    "sk-proj-{0}{1}{0}",
+                    filler("FAKEfake", 58),
+                    "T3Blbk".to_owned() + "FJ"
+                ),
+                "OpenAI API key",
+            ),
             (fake("sk-ant-admin01-", 32), "Anthropic API key"),
         ];
 
