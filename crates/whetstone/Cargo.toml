@@ -1,0 +1,28 @@
+[package]
+name = "whetstone"
+description = "Practice understanding supplied work through questions and written reasoning."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4.6", features = ["derive"] }
+ratatui = "0.30"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std"] }
+
+[dev-dependencies]
+assert_cmd = "2.2"
+insta = "1.49"
+tempfile = "3"
+
+[target."cfg(unix)".dev-dependencies]
+rexpect = "0.7"
