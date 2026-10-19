@@ -33,15 +33,15 @@ impl ColorSupport {
     /// and anything else gets the terminal's own 16.
     #[must_use]
     pub fn detect(environment: &Environment) -> Self {
-        let text = |name| environment.get(name).and_then(OsStr::to_str);
+        let var = |name| environment.get(name).and_then(OsStr::to_str);
         if environment
             .get("NO_COLOR")
             .is_some_and(|value| !value.is_empty())
         {
             Self::NoColor
-        } else if text("COLORTERM").is_some_and(|value| matches!(value, "truecolor" | "24bit")) {
+        } else if var("COLORTERM").is_some_and(|value| matches!(value, "truecolor" | "24bit")) {
             Self::TrueColor
-        } else if text("TERM").is_some_and(|term| term.contains("256color")) {
+        } else if var("TERM").is_some_and(|term| term.contains("256color")) {
             Self::Ansi256
         } else {
             Self::Ansi16
@@ -70,13 +70,24 @@ pub struct Theme {
 
 /// What a control shows about itself besides its label.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct ControlState {
+pub struct ControlState<'a> {
     /// It owns keyboard focus.
     pub focused: bool,
-    /// For a choice, whether it is selected; `None` for an action.
-    pub selected: Option<bool>,
-    /// It cannot be used yet.
-    pub disabled: bool,
+    /// Whether it is an action or a choice.
+    pub kind: ControlKind,
+    /// Why it is disabled, if it is. The reason is shown, so a disabled
+    /// control reads differently even where text attributes do not show.
+    pub disabled: Option<&'a str>,
+}
+
+/// What a control is for.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ControlKind {
+    /// It does something when activated.
+    #[default]
+    Action,
+    /// It is part of what the learner chooses, and selected or not.
+    Choice { selected: bool },
 }
 
 /// The colours of the flat-stone mark's three bands. Equal colours draw as
@@ -93,6 +104,7 @@ pub(crate) struct Stone {
 
 /// One colour level's translation of the brand tokens (the dark theme, as
 /// the canvas is painted at every level that can show it).
+#[derive(Debug)]
 struct Palette {
     canvas: Color,
     text: Color,
@@ -164,10 +176,10 @@ impl Palette {
 }
 
 impl Theme {
-    /// The brand palette as far as `colors` can show it.
+    /// The brand palette as far as `color_support` allows.
     #[must_use]
-    pub fn new(colors: ColorSupport) -> Self {
-        let palette = match colors {
+    pub fn new(color_support: ColorSupport) -> Self {
+        let palette = match color_support {
             ColorSupport::TrueColor => Palette::TRUE_COLOR,
             ColorSupport::Ansi256 => Palette::ANSI_256,
             ColorSupport::Ansi16 => Palette::ANSI_16,
@@ -187,12 +199,13 @@ impl Theme {
     }
 
     /// A control as one line: `>` in front while it has focus, then `(x)` or
-    /// `( )` for a choice, then its label. Focus is also bold, a disabled
-    /// label dim and italic, and a selected choice's row is highlighted where
-    /// colour allows. The markers and attributes are the same at every colour
-    /// level, so no state depends on colour.
+    /// `( )` for a choice, then its label, then why it is disabled if it is.
+    /// Focus is also bold, a disabled label dim and italic, and a selected
+    /// choice's row is highlighted where colour allows. The markers and
+    /// attributes are the same at every colour level, so no state depends on
+    /// colour.
     #[must_use]
-    pub fn control<'a>(&self, label: &'a str, state: ControlState) -> Line<'a> {
+    pub fn control<'a>(&self, label: &'a str, state: ControlState<'a>) -> Line<'a> {
         let emphasis = if state.focused {
             self.focus
         } else {
@@ -202,22 +215,21 @@ impl Theme {
             if state.focused { "> " } else { "  " },
             emphasis,
         )];
-        if let Some(selected) = state.selected {
+        if let ControlKind::Choice { selected } = state.kind {
             spans.push(Span::styled(
                 if selected { "(x) " } else { "( ) " },
                 emphasis,
             ));
         }
-        spans.push(Span::styled(
-            label,
-            if state.disabled {
-                self.disabled
-            } else {
-                emphasis
-            },
-        ));
+        match state.disabled {
+            None => spans.push(Span::styled(label, emphasis)),
+            Some(reason) => {
+                spans.push(Span::styled(label, self.disabled));
+                spans.push(Span::styled(format!(" ({reason})"), self.disabled));
+            }
+        }
         let line = Line::from(spans);
-        if state.selected == Some(true) {
+        if state.kind == (ControlKind::Choice { selected: true }) {
             line.style(self.selected)
         } else {
             line

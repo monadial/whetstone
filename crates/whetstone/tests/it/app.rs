@@ -1,14 +1,13 @@
 //! App seam: build the app from injected inputs, feed it terminal events and
 //! snapshot the frames it draws on ratatui's test backend.
 
-use std::collections::BTreeSet;
-
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use ratatui::style::Color;
-use whetstone::{App, ColorSupport, Environment, Flow, Theme};
+use whetstone::{App, ColorSupport, Flow, Theme};
+
+use crate::colors::{ansi256_token_colors, colors_used, dark_token_colors, environment};
 
 /// A terminal that reports 24-bit colour.
 const TRUECOLOR: &[(&str, &str)] = &[("COLORTERM", "truecolor")];
@@ -17,8 +16,7 @@ const NO_COLOR: &[(&str, &str)] = &[("COLORTERM", "truecolor"), ("NO_COLOR", "1"
 
 /// The app as it starts in a terminal whose environment is `variables`.
 fn app_in(variables: &[(&str, &str)]) -> App {
-    let environment: Environment = variables.iter().copied().collect();
-    App::new(Theme::new(ColorSupport::detect(&environment)))
+    App::new(Theme::new(ColorSupport::detect(&environment(variables))))
 }
 
 /// Draws one frame. Its debug form lists every style change next to the
@@ -104,57 +102,18 @@ fn other_keys_keep_the_app_running() {
     }
 }
 
-/// The brand token file, the source of truth for the palette.
-const BRAND_TOKENS: &str = include_str!("../../../../assets/brand/brand-tokens.json");
-
-/// The brand token text from the key `start` up to the key `end`.
-fn tokens_between(start: &str, end: &str) -> &'static str {
-    let (_, after) = BRAND_TOKENS
-        .split_once(start)
-        .expect("the brand tokens have the start key");
-    let (section, _) = after
-        .split_once(end)
-        .expect("the brand tokens have the end key after it");
-    section
-}
-
-/// Every colour a frame uses, as foreground or background.
-fn colours(frame: &Buffer) -> BTreeSet<String> {
-    frame
-        .content()
-        .iter()
-        .flat_map(|cell| [cell.fg, cell.bg])
-        .map(|colour| format!("{colour:?}"))
-        .collect()
-}
-
 #[test]
 fn home_in_24_bit_colour_uses_only_the_dark_brand_tokens() {
-    let tokens: BTreeSet<String> = tokens_between("\"dark\":", "\"ansi256Dark\"")
-        .split('"')
-        .filter_map(|text| text.strip_prefix('#'))
-        .map(|hex| {
-            let [_, red, green, blue] = u32::from_str_radix(hex, 16)
-                .expect("a hex colour")
-                .to_be_bytes();
-            format!("{:?}", Color::Rgb(red, green, blue))
-        })
-        .collect();
+    let used = colors_used(&draw(&app_in(TRUECOLOR), 120, 32));
 
-    let used = colours(&draw(&app_in(TRUECOLOR), 120, 32));
-
+    let tokens = dark_token_colors();
     assert!(used.is_subset(&tokens), "{used:?} within {tokens:?}");
 }
 
 #[test]
 fn home_in_256_colours_uses_only_the_indexed_brand_tokens() {
-    let tokens: BTreeSet<String> = tokens_between("\"ansi256Dark\":", "\"ansi16\"")
-        .split(|c: char| !c.is_ascii_digit())
-        .filter_map(|number| number.parse().ok())
-        .map(|index| format!("{:?}", Color::Indexed(index)))
-        .collect();
+    let used = colors_used(&draw(&app_in(&[("TERM", "xterm-256color")]), 120, 32));
 
-    let used = colours(&draw(&app_in(&[("TERM", "xterm-256color")]), 120, 32));
-
+    let tokens = ansi256_token_colors();
     assert!(used.is_subset(&tokens), "{used:?} within {tokens:?}");
 }
