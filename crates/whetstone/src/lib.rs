@@ -17,7 +17,7 @@ mod tui;
 pub use crate::app::{App, Flow};
 pub use crate::environment::{Dirs, Environment, NoHome};
 pub use crate::terminal::{ModeSwitch, TerminalGuard, TerminalMode};
-pub use crate::theme::{ColorSupport, ControlState, Theme};
+pub use crate::theme::{ColorSupport, ControlKind, ControlState, Theme};
 
 use std::ffi::OsString;
 use std::process::ExitCode;

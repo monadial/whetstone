@@ -33,7 +33,7 @@ echo "modes after:"; stty -a; echo "modes end"
 const LAUNCH: &str = r#""$WHETSTONE""#;
 
 /// Runs `whetstone` in the foreground with colour turned off.
-const LAUNCH_WITHOUT_COLOUR: &str = r#"NO_COLOR=1 "$WHETSTONE""#;
+const LAUNCH_WITHOUT_COLOR: &str = r#"NO_COLOR=1 "$WHETSTONE""#;
 
 /// Runs `whetstone` in the background, still attached to the terminal, and
 /// waits for it. Its process ID goes to `$HOME/pid` so the test can signal it.
@@ -294,7 +294,7 @@ fn with_stdin_redirected_it_refuses_without_touching_the_terminal() {
 #[test]
 fn with_no_color_nothing_is_coloured_and_focus_stays_bold() {
     let home = TempDir::new().expect("create a temporary home");
-    let mut session = start(LAUNCH_WITHOUT_COLOUR, &[("HOME", home.path())]);
+    let mut session = start(LAUNCH_WITHOUT_COLOR, &[("HOME", home.path())]);
 
     let transcript = quit_with_q(&mut session);
 
@@ -313,14 +313,14 @@ fn with_no_color_nothing_is_coloured_and_focus_stays_bold() {
         "no bare reset clears the attributes: {styles:?}"
     );
     assert!(
-        !styles.iter().any(|parameters| sets_a_colour(parameters)),
+        !styles.iter().any(|parameters| sets_a_color(parameters)),
         "no colour is set: {styles:?}"
     );
 }
 
 /// Whether SGR `parameters` set a foreground, background or underline
 /// colour. 39, 49 and 59 return to the terminal's own colours.
-fn sets_a_colour(parameters: &str) -> bool {
+fn sets_a_color(parameters: &str) -> bool {
     parameters
         .split(';')
         .filter_map(|parameter| parameter.parse::<u16>().ok())

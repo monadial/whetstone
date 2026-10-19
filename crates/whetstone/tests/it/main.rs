@@ -3,6 +3,7 @@
 
 mod app;
 mod cli;
+mod colors;
 mod dirs;
 mod pty;
 mod support;

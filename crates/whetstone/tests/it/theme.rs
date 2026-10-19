@@ -1,15 +1,18 @@
 //! The theme layer: how much colour the environment allows, and how controls
 //! show their state when colour is limited or absent.
 
+use std::collections::HashSet;
+
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier};
 use ratatui::widgets::Widget as _;
-use whetstone::{ColorSupport, ControlState, Environment, Theme};
+use whetstone::{ColorSupport, ControlKind, ControlState, Theme};
+
+use crate::colors::{ansi256_token_colors, colors_used, dark_token_colors, environment};
 
 fn detect(variables: &[(&str, &str)]) -> ColorSupport {
-    let environment: Environment = variables.iter().copied().collect();
-    ColorSupport::detect(&environment)
+    ColorSupport::detect(&environment(variables))
 }
 
 #[test]
@@ -52,21 +55,21 @@ const LEVELS: [ColorSupport; 4] = [
     ColorSupport::NoColor,
 ];
 
-const ACTION: ControlState = ControlState {
-    focused: false,
-    selected: None,
-    disabled: false,
-};
+const UNAVAILABLE: Option<&str> = Some("arrives with Jev");
 
 /// Every state a control can be in.
-fn all_states() -> Vec<ControlState> {
+fn all_states() -> Vec<ControlState<'static>> {
     let mut states = Vec::new();
     for focused in [false, true] {
-        for selected in [None, Some(false), Some(true)] {
-            for disabled in [false, true] {
+        for kind in [
+            ControlKind::Action,
+            ControlKind::Choice { selected: false },
+            ControlKind::Choice { selected: true },
+        ] {
+            for disabled in [None, UNAVAILABLE] {
                 states.push(ControlState {
                     focused,
-                    selected,
+                    kind,
                     disabled,
                 });
             }
@@ -75,15 +78,20 @@ fn all_states() -> Vec<ControlState> {
     states
 }
 
-/// A control as it reads without colour: runs of text, each with its text
-/// attributes, trailing blanks dropped.
-fn reading(colors: ColorSupport, state: ControlState) -> Vec<(String, Modifier)> {
+/// Draws the control `Domain` in `state` on a one-row buffer.
+fn draw_control(color_support: ColorSupport, state: ControlState<'_>) -> Buffer {
     let mut buffer = Buffer::empty(Rect::new(0, 0, 40, 1));
-    Theme::new(colors)
+    Theme::new(color_support)
         .control("Domain", state)
         .render(buffer.area, &mut buffer);
+    buffer
+}
+
+/// A control as it reads without colour: runs of text, each with its text
+/// attributes, trailing blanks dropped.
+fn reading(color_support: ColorSupport, state: ControlState<'_>) -> Vec<(String, Modifier)> {
     let mut runs: Vec<(String, Modifier)> = Vec::new();
-    for cell in buffer.content() {
+    for cell in draw_control(color_support, state).content() {
         match runs.last_mut() {
             Some((text, modifier)) if *modifier == cell.modifier => text.push_str(cell.symbol()),
             _ => runs.push((cell.symbol().to_owned(), cell.modifier)),
@@ -96,6 +104,14 @@ fn reading(colors: ColorSupport, state: ControlState) -> Vec<(String, Modifier)>
     runs
 }
 
+/// A control's text alone, as a terminal that ignores attributes shows it.
+fn text(state: ControlState<'_>) -> String {
+    reading(ColorSupport::NoColor, state)
+        .into_iter()
+        .map(|(text, _)| text)
+        .collect()
+}
+
 fn run(text: &str, modifier: Modifier) -> (String, Modifier) {
     (text.to_owned(), modifier)
 }
@@ -104,51 +120,55 @@ fn run(text: &str, modifier: Modifier) -> (String, Modifier) {
 fn without_colour_markers_and_attributes_show_focus_selection_and_disabled() {
     let none = Modifier::empty();
     let disabled = Modifier::DIM | Modifier::ITALIC;
+    let action = ControlState::default();
     for (state, expected) in [
-        (ACTION, vec![run("  Domain", none)]),
+        (action, vec![run("  Domain", none)]),
         (
             ControlState {
                 focused: true,
-                ..ACTION
+                ..action
             },
             vec![run("> Domain", Modifier::BOLD)],
         ),
         (
             ControlState {
-                selected: Some(false),
-                ..ACTION
+                kind: ControlKind::Choice { selected: false },
+                ..action
             },
             vec![run("  ( ) Domain", none)],
         ),
         (
             ControlState {
-                selected: Some(true),
-                ..ACTION
+                kind: ControlKind::Choice { selected: true },
+                ..action
             },
             vec![run("  (x) Domain", none)],
         ),
         (
             ControlState {
                 focused: true,
-                selected: Some(true),
-                ..ACTION
+                kind: ControlKind::Choice { selected: true },
+                ..action
             },
             vec![run("> (x) Domain", Modifier::BOLD)],
         ),
         (
             ControlState {
-                disabled: true,
-                ..ACTION
+                disabled: UNAVAILABLE,
+                ..action
             },
-            vec![run("  ", none), run("Domain", disabled)],
+            vec![run("  ", none), run("Domain (arrives with Jev)", disabled)],
         ),
         (
             ControlState {
                 focused: true,
-                disabled: true,
-                ..ACTION
+                disabled: UNAVAILABLE,
+                ..action
             },
-            vec![run("> ", Modifier::BOLD), run("Domain", disabled)],
+            vec![
+                run("> ", Modifier::BOLD),
+                run("Domain (arrives with Jev)", disabled),
+            ],
         ),
     ] {
         assert_eq!(reading(ColorSupport::NoColor, state), expected, "{state:?}");
@@ -158,10 +178,7 @@ fn without_colour_markers_and_attributes_show_focus_selection_and_disabled() {
 #[test]
 fn without_colour_no_control_state_is_drawn_in_colour() {
     for state in all_states() {
-        let mut buffer = Buffer::empty(Rect::new(0, 0, 40, 1));
-        Theme::new(ColorSupport::NoColor)
-            .control("Domain", state)
-            .render(buffer.area, &mut buffer);
+        let buffer = draw_control(ColorSupport::NoColor, state);
 
         assert!(
             buffer
@@ -174,27 +191,44 @@ fn without_colour_no_control_state_is_drawn_in_colour() {
 }
 
 #[test]
-fn every_control_state_reads_differently_without_colour() {
+fn every_control_state_reads_differently_by_its_text_alone() {
     let states = all_states();
     for (i, first) in states.iter().enumerate() {
         for second in &states[i + 1..] {
-            assert_ne!(
-                reading(ColorSupport::NoColor, *first),
-                reading(ColorSupport::NoColor, *second),
-                "{first:?} and {second:?}"
-            );
+            assert_ne!(text(*first), text(*second), "{first:?} and {second:?}");
         }
     }
 }
 
 #[test]
 fn at_every_colour_level_colour_only_adds_to_the_markers_and_attributes() {
-    for colors in LEVELS {
+    for color_support in LEVELS {
         for state in all_states() {
             assert_eq!(
-                reading(colors, state),
+                reading(color_support, state),
                 reading(ColorSupport::NoColor, state),
-                "{state:?} at {colors:?}"
+                "{state:?} at {color_support:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn controls_in_colour_use_only_the_brand_tokens() {
+    for (color_support, tokens) in [
+        (ColorSupport::TrueColor, dark_token_colors()),
+        (ColorSupport::Ansi256, ansi256_token_colors()),
+    ] {
+        for state in all_states() {
+            // The canvas comes from the screen behind the control.
+            let used: HashSet<Color> = colors_used(&draw_control(color_support, state))
+                .into_iter()
+                .filter(|color| *color != Color::Reset)
+                .collect();
+
+            assert!(
+                used.is_subset(&tokens),
+                "{state:?} at {color_support:?}: {used:?} within {tokens:?}"
             );
         }
     }
