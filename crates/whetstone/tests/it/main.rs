@@ -33,6 +33,7 @@ mod resize;
 mod session;
 mod settings;
 mod showcase;
+mod stage_row;
 mod support;
 mod suspend;
 mod terminal_guard;

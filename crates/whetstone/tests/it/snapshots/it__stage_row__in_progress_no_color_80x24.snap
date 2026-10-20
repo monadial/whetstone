@@ -1,0 +1,50 @@
+---
+source: crates/whetstone/tests/it/stage_row.rs
+expression: session.frame()
+---
+Buffer {
+    area: Rect { x: 0, y: 0, width: 80, height: 24 },
+    content: [
+        "                                                                                ",
+        "  ✓ Reading the change → ⠋ Finding connected code → · Preparing evidence →      ",
+        "  · Outbound review → · Checking areas · Jev →                                  ",
+        "  · Writing questions · generator → · Reviewing questions · Jev                 ",
+        "                                                                                ",
+        "  Review what will be sent                                                      ",
+        "                                                                                ",
+        "  Sends to OpenRouter · Jev: typesafe/jev-1.14 · Generator:                     ",
+        "  anthropic/claude-sonnet-5.5                                                   ",
+        "  OpenRouter routes only to endpoints it lists as not keeping prompts.          ",
+        "  https://openrouter.ai/docs/guides/privacy/data-collection                     ",
+        "                                                                                ",
+        "  Your answers in this session go to the same places. Nothing outside this      ",
+        "  list is sent.                                                                 ",
+        "                                                                                ",
+        "  Change                                                                        ",
+        "  > 442a9ac  Count from zero                                                    ",
+        "    Author, committer, dates and the commit ID are not sent.                    ",
+        "                                                                                ",
+        "  Files                                                                         ",
+        "    ledger.py  1 KB  included                                                   ",
+        "                                                                                ",
+        "  ? keys  : actions  Space toggle  Enter read  q back                           ",
+        "                                                                                ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 52, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 72, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 19, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 22, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 44, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 3, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 33, y: 3, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 36, y: 3, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 63, y: 3, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 5, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 26, y: 5, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 16, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 28, y: 16, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+    ]
+}
