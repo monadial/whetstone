@@ -1,0 +1,48 @@
+---
+source: crates/whetstone/tests/it/links_and_mentions.rs
+expression: session.frame()
+---
+Buffer {
+    area: Rect { x: 0, y: 0, width: 120, height: 32 },
+    content: [
+        "                                                                                                                        ",
+        "  Review what will be sent                                                                                              ",
+        "                                                                                                                        ",
+        "  Sends to OpenRouter · Jev: typesafe/jev-1.14 · Generator: anthropic/claude-sonnet-5.5                                 ",
+        "  OpenRouter routes only to endpoints it lists as not keeping prompts.                                                  ",
+        "  https://openrouter.ai/docs/guides/privacy/data-collection                                                             ",
+        "                                                                                                                        ",
+        "  Your answers in this session go to the same places. Nothing outside this list is sent.                                ",
+        "                                                                                                                        ",
+        "  Change                                                                                                                ",
+        "  > dd4e6f1  Double the charge                                                                                          ",
+        "    Author, committer, dates and the commit ID are not sent.                                                            ",
+        "                                                                                                                        ",
+        "  Files                                                                                                                 ",
+        "    README.md    1 KB  included · 1 connected                                                                           ",
+        "    shop/pay.py  1 KB  included · 3 connected                                                                           ",
+        "                                                                                                                        ",
+        "  Connected code: 1 range and 2 files · 1 KB                                                                            ",
+        "    docs/payments.md  whole file  1 KB  included  linked from `README.md`, named in `shop/pay.py`                       ",
+        "    shop/cart.py      whole file  1 KB  included  calls `charge`, named in `shop/pay.py`                                ",
+        "    shop/check.py     lines 1–2   1 KB  included  called by `charge`                                                    ",
+        "                                                                                                                        ",
+        "  Areas                                                                                                                 ",
+        "    Domain          Whetstone default                                                                                   ",
+        "    Infrastructure  Whetstone default                                                                                   ",
+        "    Observability   Whetstone default                                                                                   ",
+        "    Scalability     Whetstone default                                                                                   ",
+        "    System design   Whetstone default                                                                                   ",
+        "                                                                                                                        ",
+        "  Secret check                                                                                                          ",
+        "  ? keys  : actions  Space toggle  Enter read  q back                                                                   ",
+        "                                                                                                                        ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 26, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 10, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 30, y: 10, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+    ]
+}
