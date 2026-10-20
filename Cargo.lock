@@ -3169,6 +3169,7 @@ dependencies = [
  "insta",
  "ratatui",
  "rexpect",
+ "rustix",
  "serde",
  "signal-hook",
  "tempfile",

@@ -25,6 +25,10 @@ gix = { version = "0.89", default-features = false, features = ["sha1", "blob-di
 # short screen. Ratatui exempts `unstable-*` features from semver, so check it
 # still builds when moving off the locked 0.30.x.
 ratatui = { version = "0.30", features = ["unstable-rendered-line-info"] }
+# Suspends as vim does, through safe calls: stops the whole process group,
+# after checking a job-control shell is there to continue it. Already in the
+# tree through crossterm and gix.
+rustix = { version = "1.1", features = ["process"] }
 serde = { version = "1", features = ["derive"] }
 signal-hook = "0.3"
 thiserror = "2"

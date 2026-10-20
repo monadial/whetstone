@@ -12,15 +12,13 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm::event::{self, Event};
 use ratatui::crossterm::style;
 use ratatui::layout::{Position, Rect, Size};
+use rustix::process::{self, Signal};
 use signal_hook::SigId;
 use signal_hook::consts::{SIGCONT, SIGHUP, SIGINT, SIGTERM, SIGTSTP};
 
 use crate::app::{App, Flow};
 use crate::environment::Environment;
 use crate::terminal::{CrosstermSwitch, TerminalGuard, TerminalMode};
-
-/// The terminal as ratatui draws to it.
-type Screen = Terminal<CrosstermBackend<io::Stdout>>;
 
 /// How long the loop waits for input before checking for a signal.
 const SIGNAL_CHECK_INTERVAL: Duration = Duration::from_millis(100);
@@ -80,7 +78,8 @@ pub(crate) fn run(mut app: App, environment: &Environment) -> Result<Ending, Tui
             Input::Stop { signal } => break Ending::Stopped { signal },
             Input::Suspend => Flow::Suspend,
             // Continued without suspending first, perhaps after a stop the
-            // app could not catch. Taking the terminal back is harmless.
+            // app could not catch. Taking the terminal back again is
+            // harmless.
             Input::Continue => {
                 resume(&mut guard, &mut terminal, &mut app)?;
                 Flow::Continue
@@ -91,15 +90,18 @@ pub(crate) fn run(mut app: App, environment: &Environment) -> Result<Ending, Tui
             Flow::Quit => break Ending::Quit,
             Flow::Suspend => {
                 guard.suspend().map_err(TuiError::Restore)?;
-                stop_until_continued().map_err(TuiError::Suspend)?;
-                // A stop signal that came while suspended ends the app
-                // before it takes the terminal back.
+                // A stop signal received before the stop, or while stopped,
+                // ends the app without taking the terminal back.
+                if signals.stop.last().is_none() {
+                    stop_until_continued().map_err(TuiError::Suspend)?;
+                    // The SIGCONT that continued the app is handled here,
+                    // but a SIGTSTP after it is not.
+                    signals.job_control.forget(SIGCONT);
+                }
                 if let Some(signal) = signals.stop.last() {
                     break Ending::Stopped { signal };
                 }
                 resume(&mut guard, &mut terminal, &mut app)?;
-                // The SIGCONT that continued the app is handled.
-                signals.job_control.take();
             }
         }
     };
@@ -109,23 +111,44 @@ pub(crate) fn run(mut app: App, environment: &Environment) -> Result<Ending, Tui
 }
 
 /// Tells `app` the size `terminal` has now, and returns it.
-fn report_size(terminal: &Screen, app: &mut App) -> Result<Size, TuiError> {
+fn report_size(
+    terminal: &Terminal<CrosstermBackend<io::Stdout>>,
+    app: &mut App,
+) -> Result<Size, TuiError> {
     let size = terminal.size().map_err(TuiError::Draw)?;
     app.handle(&Event::Resize(size.width, size.height));
     Ok(size)
 }
 
-/// Stops the process the way SIGTSTP does by default, and returns once it
-/// is continued, usually by the learner's `fg`.
+/// Stops the app's process group, as Ctrl+Z does outside raw mode, and
+/// returns once it is continued, usually by the learner's `fg`. If no shell
+/// could continue it, it carries on at once instead, as vim does.
 fn stop_until_continued() -> io::Result<()> {
-    signal_hook::low_level::emulate_default_handler(SIGTSTP)
+    if process::getsid(None)? == process::getpgrp() {
+        // The app's process group is its session's own, as when it runs
+        // straight under tmux or `ssh -t`, so no job-control shell is there
+        // to bring it back.
+        tracing::info!("whetstone carries on, since no shell could continue it");
+        return Ok(());
+    }
+    // SIGSTOP, since the app handles SIGTSTP itself. The whole group, so a
+    // wrapper waiting for the app, such as `cargo run`, stops too, and the
+    // shell takes the terminal back.
+    process::kill_current_process_group(Signal::STOP)?;
+    Ok(())
 }
 
-/// Takes the terminal back once the process is continued: turns its modes
-/// back on, reads its size again, since the window may have been resized
-/// while stopped, and clears it, so the next frame draws the same screen in
-/// full.
-fn resume(guard: &mut TerminalGuard, terminal: &mut Screen, app: &mut App) -> Result<(), TuiError> {
+/// Takes the terminal back once the process is continued: turns every mode
+/// off and on again, since the shell may have changed the terminal's
+/// settings while the app was stopped, reads the terminal's size again,
+/// since the window may have been resized, and clears it, so the next frame
+/// draws the same screen in full.
+fn resume(
+    guard: &mut TerminalGuard,
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &mut App,
+) -> Result<(), TuiError> {
+    guard.suspend().map_err(TuiError::Restore)?;
     guard.resume().map_err(TuiError::Enable)?;
     let size = report_size(terminal, app)?;
     // Unlike `Terminal::clear`, resizing clears without asking the terminal
@@ -174,32 +197,32 @@ fn next_input(signals: &Signals) -> Result<Input, TuiError> {
 struct Signals {
     /// SIGHUP, SIGINT and SIGTERM stop the app the way Ctrl+C does. In raw
     /// mode Ctrl+C is a key, so SIGINT can only come from outside.
-    stop: Received,
+    stop: LastSignal,
     /// SIGTSTP suspends the app the way Ctrl+Z does, and SIGCONT continues
     /// it. In raw mode Ctrl+Z is a key, so SIGTSTP can only come from
     /// outside. As with the kernel's own stop and continue, only the later
     /// of the two counts.
-    job_control: Received,
+    job_control: LastSignal,
 }
 
 impl Signals {
     fn listen() -> io::Result<Self> {
         Ok(Self {
-            stop: Received::listen(&[SIGHUP, SIGINT, SIGTERM])?,
-            job_control: Received::listen(&[SIGTSTP, SIGCONT])?,
+            stop: LastSignal::listen(&[SIGHUP, SIGINT, SIGTERM])?,
+            job_control: LastSignal::listen(&[SIGTSTP, SIGCONT])?,
         })
     }
 }
 
 /// The last of some signals received, recorded by their handlers.
 #[derive(Debug)]
-struct Received {
+struct LastSignal {
     /// The last signal received, or 0.
     last: Arc<AtomicUsize>,
     registrations: Vec<SigId>,
 }
 
-impl Received {
+impl LastSignal {
     fn listen(signals: &[c_int]) -> io::Result<Self> {
         let mut received = Self {
             last: Arc::new(AtomicUsize::new(0)),
@@ -228,6 +251,17 @@ impl Received {
         Self::signal(self.last.swap(0, Ordering::Relaxed))
     }
 
+    /// Forgets `signal` if it is the last signal received, but not a later
+    /// one.
+    fn forget(&self, signal: c_int) {
+        let value = usize::try_from(signal).expect("signal numbers are positive");
+        // The exchange fails when a later signal has replaced it, which
+        // stays.
+        let _ = self
+            .last
+            .compare_exchange(value, 0, Ordering::Relaxed, Ordering::Relaxed);
+    }
+
     fn signal(value: usize) -> Option<c_int> {
         match value {
             0 => None,
@@ -236,7 +270,7 @@ impl Received {
     }
 }
 
-impl Drop for Received {
+impl Drop for LastSignal {
     fn drop(&mut self) {
         for registration in self.registrations.drain(..) {
             signal_hook::low_level::unregister(registration);
