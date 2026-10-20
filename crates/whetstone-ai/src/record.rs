@@ -27,10 +27,12 @@ use tokio_util::sync::CancellationToken;
 use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
 use crate::replay::{API, SampleQuestion, live_key, sample_generator_request, sample_jev_request};
-use crate::samples::{area, candidate, evidence, generator_model, jev_model, observability};
+use crate::samples::{
+    REASONING, area, candidate, evidence, generator_model, jev_model, observability, question,
+};
 use crate::{
-    AiError, CandidatesOutput, GeneratorRequest, OpenRouter, SecretString, Timeouts,
-    candidates_request, gate_request, question_check_request,
+    AiError, CandidatesOutput, GeneratorRequest, OpenRouter, QuestionWithoutKey, SecretString,
+    Timeouts, candidates_request, gate_request, question_check_request, reasoning_request,
 };
 
 const UPSTREAM: &str = "https://openrouter.ai";
@@ -234,6 +236,26 @@ async fn record_question_check() {
 async fn record_gate() {
     let (_server, connection) = recording("gate", "/systemone", live_key()).await;
     let request = gate_request(&jev_model(), &evidence(), &[area(), observability()]);
+
+    let reply = connection
+        .evaluate(&request, &CancellationToken::new())
+        .await;
+
+    println!("{reply:#?}");
+    assert!(reply.is_ok());
+}
+
+#[tokio::test]
+#[ignore = "calls OpenRouter with the maintainer's key"]
+async fn record_reasoning() {
+    let (_server, connection) = recording("reasoning", "/systemone", live_key()).await;
+    let question = question();
+    let request = reasoning_request(
+        &jev_model(),
+        &evidence(),
+        QuestionWithoutKey::from(&question),
+        REASONING,
+    );
 
     let reply = connection
         .evaluate(&request, &CancellationToken::new())

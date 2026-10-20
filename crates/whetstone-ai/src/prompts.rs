@@ -32,12 +32,15 @@ const GATE_FILE: &str = include_str!("../prompts/gate.toml");
 
 const QUESTION_CHECK_FILE: &str = include_str!("../prompts/question-check.toml");
 
+const REASONING_FILE: &str = include_str!("../prompts/reasoning.toml");
+
 /// Every base-prompt file, by name, in name order.
 const FILES: &[(&str, &str)] = &[
     ("area.md", AREA),
     ("evidence.md", EVIDENCE),
     ("gate.toml", GATE_FILE),
     ("question-check.toml", QUESTION_CHECK_FILE),
+    ("reasoning.toml", REASONING_FILE),
     ("writing.md", WRITING),
 ];
 
@@ -70,6 +73,31 @@ pub(crate) struct QuestionCheckPrompts {
     pub(crate) depth: ScorePrompt,
 }
 
+/// Reasoning's question about one criterion.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ReasoningPrompts {
+    /// `{statement}` is the criterion's statement; the criterion's own
+    /// descriptions say what yes and no mean.
+    pub(crate) criterion: InstructionsPrompt,
+}
+
+/// A yes/no question to Jev whose meanings of yes and no come from
+/// elsewhere: its instructions.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct InstructionsPrompt {
+    instructions: String,
+}
+
+impl InstructionsPrompt {
+    /// The question, with each placeholder filled from `values`, and `yes`
+    /// and `no` as what yes and no mean.
+    pub(crate) fn question(&self, values: &[(&str, &str)], yes: &str, no: &str) -> JevQuestion {
+        JevQuestion::yes_no_with_meanings(fill(&self.instructions, values), yes, no)
+    }
+}
+
 /// A yes/no question to Jev: its instructions, and what yes and no mean.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -83,6 +111,8 @@ pub(crate) static GATE: LazyLock<GatePrompts> = LazyLock::new(|| parse(GATE_FILE
 
 pub(crate) static QUESTION_CHECK: LazyLock<QuestionCheckPrompts> =
     LazyLock::new(|| parse(QUESTION_CHECK_FILE));
+
+pub(crate) static REASONING: LazyLock<ReasoningPrompts> = LazyLock::new(|| parse(REASONING_FILE));
 
 static VERSION: LazyLock<String> = LazyLock::new(|| {
     let mut hash = Sha256::new();

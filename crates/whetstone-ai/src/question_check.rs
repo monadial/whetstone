@@ -187,7 +187,7 @@ fn candidate_state(evidence: &Evidence, candidate: &Candidate) -> Value {
 
 /// The name of the rubric's criterion at `index`, counting from 0:
 /// `criterion_1` for the first.
-fn criterion_name(index: usize) -> String {
+pub(crate) fn criterion_name(index: usize) -> String {
     format!("criterion_{}", index + 1)
 }
 
