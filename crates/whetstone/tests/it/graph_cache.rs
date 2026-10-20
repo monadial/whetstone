@@ -90,7 +90,7 @@ fn a_commit_reviewed_again_takes_its_connected_code_from_the_cache() {
     session.settle();
     assert_eq!(
         connected_code(&session)[0],
-        "Connected code: 2 ranges · 1 KB"
+        "Connected code: 2 ranges · 1 KB of 100 KB limit"
     );
 
     // Back to the picker, and review the same commit again.
@@ -100,7 +100,7 @@ fn a_commit_reviewed_again_takes_its_connected_code_from_the_cache() {
 
     assert_eq!(
         connected_code(&session)[0],
-        "Connected code: 2 ranges · 1 KB · from cache"
+        "Connected code: 2 ranges · 1 KB of 100 KB limit · from cache"
     );
     assert_eq!(connected_rows(&session), CHARGE_CONNECTED);
 }
@@ -121,7 +121,7 @@ fn practising_on_a_commit_again_writes_nothing_for_analysis_and_analyses_nothing
 
     assert_eq!(
         connected_code(&session)[0],
-        "Connected code: 2 ranges · 1 KB · from cache"
+        "Connected code: 2 ranges · 1 KB of 100 KB limit · from cache"
     );
     assert_eq!(connected_rows(&session), CHARGE_CONNECTED);
     assert!(!nowhere.exists());
@@ -144,7 +144,7 @@ fn a_damaged_cache_file_is_analysed_again_and_rebuilt() {
 
     assert_eq!(
         connected_code(&session)[0],
-        "Connected code: 2 ranges · 1 KB"
+        "Connected code: 2 ranges · 1 KB of 100 KB limit"
     );
     assert_eq!(connected_rows(&session), CHARGE_CONNECTED);
     assert_eq!(graphs(cache_home.path()), std::slice::from_ref(&graph));
@@ -156,7 +156,7 @@ fn a_damaged_cache_file_is_analysed_again_and_rebuilt() {
     session.settle();
     assert_eq!(
         connected_code(&session)[0],
-        "Connected code: 2 ranges · 1 KB · from cache"
+        "Connected code: 2 ranges · 1 KB of 100 KB limit · from cache"
     );
 }
 
@@ -175,7 +175,7 @@ fn an_unwritable_cache_folder_still_gives_connected_code_and_is_logged_once() {
         session.settle();
         assert_eq!(
             connected_code(&session)[0],
-            "Connected code: 2 ranges · 1 KB"
+            "Connected code: 2 ranges · 1 KB of 100 KB limit"
         );
         assert_eq!(connected_rows(&session), CHARGE_CONNECTED);
 
@@ -184,7 +184,7 @@ fn an_unwritable_cache_folder_still_gives_connected_code_and_is_logged_once() {
         session.settle();
         assert_eq!(
             connected_code(&session)[0],
-            "Connected code: 2 ranges · 1 KB"
+            "Connected code: 2 ranges · 1 KB of 100 KB limit"
         );
         assert_eq!(connected_rows(&session), CHARGE_CONNECTED);
     });
@@ -214,7 +214,7 @@ fn after_a_session_the_cache_folder_holds_one_graph_and_nothing_else_is_left_or_
         session.settle();
         assert_eq!(
             connected_code(&session)[0],
-            "Connected code: 2 ranges · 1 KB · from cache"
+            "Connected code: 2 ranges · 1 KB of 100 KB limit · from cache"
         );
         session.press("j j <Space> q <Enter>");
         assert_eq!(session.press("<C-c>"), Flow::Quit);
@@ -265,18 +265,13 @@ fn what_a_change_links_to_and_names_is_read_from_the_commit_on_a_cache_hit_too()
 
     assert_eq!(
         connected_code(&session)[0],
-        "Connected code: 2 ranges and 2 files · 1 KB · from cache"
+        "Connected code: 2 ranges and 2 files · 1 KB of 100 KB limit · from cache"
     );
     assert_eq!(
         connected_rows(&session),
         [
-            [
-                "config/limits.toml",
-                "whole file",
-                "1 KB",
-                "included",
-                "named in `README.md`"
-            ],
+            CHARGE_CONNECTED[0],
+            CHARGE_CONNECTED[1],
             [
                 "docs/payments.md",
                 "whole file",
@@ -284,8 +279,13 @@ fn what_a_change_links_to_and_names_is_read_from_the_commit_on_a_cache_hit_too()
                 "included",
                 "linked from `README.md`"
             ],
-            CHARGE_CONNECTED[0],
-            CHARGE_CONNECTED[1],
+            [
+                "config/limits.toml",
+                "whole file",
+                "1 KB",
+                "included",
+                "named in `README.md`"
+            ],
         ]
     );
 }
@@ -312,7 +312,10 @@ fn connected_code_from_the_cache_in_the_review_at_120x32() {
 
 #[test]
 fn connected_code_from_the_cache_in_the_review_at_80x24() {
-    let session = reviewed_again(80, 24);
+    let mut session = reviewed_again(80, 24);
+    // Down to the first piece of connected code, past the touched file, so
+    // that the summary is on the screen below the stage row.
+    session.press("j j");
 
     insta::assert_debug_snapshot!("connected_code_from_cache_80x24", session.frame());
 }
