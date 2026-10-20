@@ -9,17 +9,42 @@
 use std::sync::Arc;
 
 use ratatui::crossterm::event::Event;
-use whetstone::{Assessment, Flow, StoreEntry};
+use whetstone::{Assessment, Durability, Flow, StoreEntry};
 use whetstone_ai::{Asked, ScriptedAi};
-use whetstone_core::{ChoiceOutcome, OptionLetter};
+use whetstone_core::{ChoiceOutcome, OptionLetter, Provenance, Role};
 
-use crate::preparing_questions::{DOMAIN, PAYMENT_LIFECYCLE, generate, writing_about_the_domain};
-use crate::session::Session;
+use crate::preparing_questions::{
+    DOMAIN, PAYMENT_LIFECYCLE, generate, generate_in, writing_about_the_domain,
+};
+use crate::session::{NO_COLOR, Refusing, Session, Setup, TestStore};
 
 /// A session `width` by `height` showing the first of the questions `ai`
 /// writes and checks about the domain area of the payment lifecycle change.
 pub(crate) fn answering(ai: &Arc<ScriptedAi>, width: u16, height: u16) -> Session {
     let mut session = generate(ai, &[DOMAIN], PAYMENT_LIFECYCLE, width, height);
+    session.settle();
+    session
+}
+
+/// The same as [`answering`], with the session store `store`.
+pub(crate) fn answering_with(
+    ai: &Arc<ScriptedAi>,
+    store: &TestStore,
+    width: u16,
+    height: u16,
+) -> Session {
+    let mut session = generate_in(
+        Setup {
+            variables: NO_COLOR,
+            ai: Some(ai),
+            store: Some(store),
+            ..Setup::default()
+        },
+        &[DOMAIN],
+        PAYMENT_LIFECYCLE,
+        width,
+        height,
+    );
     session.settle();
     session
 }
@@ -71,6 +96,12 @@ fn the_session_record_starts_once_questions_pass_with_the_questions_and_the_evid
         panic!("Jev checked the questions: {asked:#?}");
     };
     assert_eq!(&record.evidence, evidence, "the evidence exactly as sent");
+    let roles: Vec<Role> = record.provenance.iter().map(Provenance::role).collect();
+    assert_eq!(
+        roles,
+        [[Role::Jev, Role::Generator].as_slice(), &[Role::Jev; 6]].concat(),
+        "the provenance of the relevance gate, the write and each check"
+    );
 }
 
 /// Types `text` a key at a time, as a terminal sends it: a space as Space
@@ -248,7 +279,8 @@ fn a_paste_past_the_limit_is_cut_at_4000_characters_with_a_notice() {
     session.press("a i");
     type_text(&mut session, "ab");
 
-    paste(&mut session, &"é".repeat(4_000));
+    // Each an e and a combining accent: two characters, one grapheme.
+    paste(&mut session, &"e\u{301}".repeat(4_000));
 
     assert!(
         session
@@ -263,9 +295,9 @@ fn a_paste_past_the_limit_is_cut_at_4000_characters_with_a_notice() {
         panic!("the response is saved: {log:#?}");
     };
     assert_eq!(
-        response.reasoning().chars().count(),
-        4_000,
-        "counted in graphemes"
+        response.reasoning(),
+        format!("ab{}", "e\u{301}".repeat(3_998)),
+        "counted in graphemes, not characters"
     );
 }
 
@@ -428,7 +460,8 @@ fn going_home_or_quitting_asks_before_a_draft_would_be_lost_but_ctrl_c_quits() {
     );
     assert_eq!(session.press("j <Enter>"), Flow::Quit);
 
-    let mut session = answering(&ai_with_a_draft(), 80, 24);
+    let ai = writing_about_the_domain(6, PAYMENT_LIFECYCLE);
+    let mut session = answering(&ai, 80, 24);
     session.press("b");
     assert_eq!(
         session.press("<C-c>"),
@@ -437,10 +470,43 @@ fn going_home_or_quitting_asks_before_a_draft_would_be_lost_but_ctrl_c_quits() {
     );
 }
 
-/// A scripted AI writing and checking the questions again, for a second
-/// session.
-fn ai_with_a_draft() -> Arc<ScriptedAi> {
-    writing_about_the_domain(6, PAYMENT_LIFECYCLE)
+#[test]
+fn a_response_the_store_refuses_isnt_submitted_and_its_draft_stays() {
+    let ai = writing_about_the_domain(6, PAYMENT_LIFECYCLE);
+    let store = TestStore::new(Durability::InMemory, Refusing::Responses);
+    let mut session = answering_with(&ai, &store, 80, 24);
+
+    submit(&mut session, "b", "Draft");
+
+    assert!(
+        session
+            .text()
+            .contains("Your response wasn't saved, so it isn't submitted:"),
+        "{}",
+        session.text()
+    );
+    assert!(!session.text().contains("Choice ·"), "{}", session.text());
+    assert_eq!(option(&session, "B"), "(x) B  Option B of the question");
+    assert_eq!(written(&session), ["Draft"]);
+    assert_eq!(session.store().log().len(), 1, "only the start");
+}
+
+#[test]
+fn when_the_session_record_cant_start_submit_says_so() {
+    let ai = writing_about_the_domain(6, PAYMENT_LIFECYCLE);
+    let store = TestStore::new(Durability::InMemory, Refusing::Starts);
+    let mut session = answering_with(&ai, &store, 80, 24);
+
+    session.press("b i");
+    type_text(&mut session, "Draft");
+    session.press("<Tab>");
+
+    assert_eq!(
+        session.row_with("Submit response"),
+        "> Submit response (the session record didn't start)"
+    );
+    session.press("<Enter>");
+    assert!(!session.text().contains("Choice ·"), "{}", session.text());
 }
 
 #[test]
@@ -464,6 +530,29 @@ fn inspect_source_reads_the_evidence_as_sent_and_back_returns_to_the_draft() {
     session.press("q");
     assert_eq!(option(&session, "B"), "(x) B  Option B of the question");
     assert_eq!(written(&session), ["Draft"]);
+}
+
+/// A session `width` by `height` reading the evidence from the first
+/// question.
+fn inspecting(width: u16, height: u16) -> Session {
+    let ai = writing_about_the_domain(6, PAYMENT_LIFECYCLE);
+    let mut session = answering(&ai, width, height);
+    session.press("j j j j j <Enter>");
+    session
+}
+
+#[test]
+fn inspect_source_at_120x32() {
+    let session = inspecting(120, 32);
+
+    insta::assert_debug_snapshot!("inspect_source_120x32", session.frame());
+}
+
+#[test]
+fn inspect_source_at_80x24() {
+    let session = inspecting(80, 24);
+
+    insta::assert_debug_snapshot!("inspect_source_80x24", session.frame());
 }
 
 #[test]

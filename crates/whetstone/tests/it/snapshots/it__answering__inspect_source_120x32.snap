@@ -1,0 +1,46 @@
+---
+source: crates/whetstone/tests/it/answering.rs
+expression: session.frame()
+---
+Buffer {
+    area: Rect { x: 0, y: 0, width: 120, height: 32 },
+    content: [
+        "                                                                                                                        ",
+        "  Evidence: Model the payment lifecycle                                                                                 ",
+        "                                                                                                                        ",
+        "  Message, as it is sent                                                                                                ",
+        "  Model the payment lifecycle                                                                                           ",
+        "                                                                                                                        ",
+        "  Start the payments service with its domain model. A payment belongs to                                                ",
+        "  one tenant, carries the client's idempotency key and an operation key                                                 ",
+        "  that the provider deduplicates charges on, and moves from pending to                                                  ",
+        "  succeeded or declined.                                                                                                ",
+        "                                                                                                                        ",
+        "  A submission the provider never answers leaves the payment unknown                                                    ",
+        "  rather than failed, because the charge may have gone through. An                                                      ",
+        "  unknown payment can be submitted again, and since the operation key                                                   ",
+        "  stays with the payment, the provider charges it at most once. A settled                                               ",
+        "  payment refuses any further outcome.                                                                                  ",
+        "                                                                                                                        ",
+        "  .gitignore: diff                                                                                                      ",
+        "  1 diff --git a/.gitignore b/.gitignore                                                                                ",
+        "  2 new file mode 100644                                                                                                ",
+        "  3 index 0000000..ea8c4bf                                                                                              ",
+        "  4 --- /dev/null                                                                                                       ",
+        "  5 +++ b/.gitignore                                                                                                    ",
+        "  6 @@ -0,0 +1 @@                                                                                                       ",
+        "  7 +/target                                                                                                            ",
+        "                                                                                                                        ",
+        "  .gitignore: full content                                                                                              ",
+        "  1 /target                                                                                                             ",
+        "                                                                                                                        ",
+        "  .whetstone/config.toml: diff                                                                                          ",
+        "  ? keys  : actions  q back                                                                                             ",
+        "                                                                                                                        ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 39, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+    ]
+}

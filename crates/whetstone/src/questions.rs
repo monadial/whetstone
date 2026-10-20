@@ -29,10 +29,12 @@ use ratatui::crossterm::event::KeyCode;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, List, Padding, Paragraph};
-use whetstone_core::{Area, Evidence, OptionLetter, Picked, Question, QuestionCount, Response};
+use whetstone_core::{
+    Area, Evidence, OptionLetter, Picked, Provenance, Question, QuestionCount, Response,
+};
 
 use crate::columns;
-use crate::feedback::{self, Chosen, Feedback, Place};
+use crate::feedback::{self, Feedback, Place, Step};
 use crate::focus::Position;
 use crate::keymap::{self, Binding, Command, Input, Keymap, Press};
 use crate::palette::Action;
@@ -250,7 +252,7 @@ enum Record {
 /// response to each, and which one shows.
 #[derive(Debug)]
 pub(crate) struct Questions {
-    /// Each question, in the order to show them.
+    /// Each question, in the order to show them: never none.
     picked: Vec<Entry>,
     /// How many were asked for, when fewer passed.
     shortfall: Option<QuestionCount>,
@@ -266,7 +268,7 @@ pub(crate) struct Questions {
 
 impl Questions {
     /// The questions `picked`, about the chosen `areas`, showing the first,
-    /// or `None` when none passed their checks.
+    /// or `None` when there are none to show.
     pub(crate) fn new(picked: Picked, areas: &[Area]) -> Option<Self> {
         let (questions, shortfall) = match picked {
             Picked::All(questions) => (questions, None),
@@ -276,6 +278,10 @@ impl Questions {
             } => (questions, Some(asked_for)),
             Picked::NonePassed => return None,
         };
+        // The screen always shows one of them.
+        if questions.is_empty() {
+            return None;
+        }
         let name = |question: &Question| {
             areas
                 .iter()
@@ -387,11 +393,17 @@ impl Questions {
         }
     }
 
-    /// Starts the session record in `store`, with the questions and
-    /// `evidence`, the evidence exactly as sent, unless it started. Then
-    /// saves a response the learner just submitted, before anything else is
-    /// done with it, and shows its choice outcome at once.
-    pub(crate) fn keep_record(&mut self, store: &mut dyn SessionStore, evidence: &Evidence) {
+    /// Starts the session record in `store`, with the questions,
+    /// `evidence`, the evidence exactly as sent, and the `provenance` of
+    /// every request so far, unless it started. Then saves a response the
+    /// learner just submitted, before anything else is done with it, and
+    /// shows its choice outcome at once.
+    pub(crate) fn keep_record(
+        &mut self,
+        store: &mut dyn SessionStore,
+        evidence: &Evidence,
+        provenance: &[Provenance],
+    ) {
         if let Record::ToStart = self.record {
             let record = NewRecord {
                 questions: self
@@ -400,7 +412,7 @@ impl Questions {
                     .map(|entry| entry.question.clone())
                     .collect(),
                 evidence: evidence.clone(),
-                provenance: Vec::new(),
+                provenance: provenance.to_vec(),
             };
             self.record = match store.start(record) {
                 Ok(session) => {
@@ -485,12 +497,12 @@ impl Questions {
             Attempt::Submitted(feedback) => {
                 let [_, body] = layout(self.shortfall, area);
                 return match feedback.apply(command, body, &entry.question, place)? {
-                    Chosen::NextQuestion => {
+                    Step::NextQuestion => {
                         self.at = (at + 1).min(self.picked.len() - 1);
                         None
                     }
-                    Chosen::InspectSource => Some(INSPECT_SOURCE.command),
-                    Chosen::Finish => Some(Command::Go(Route::Home)),
+                    Step::InspectSource => Some(INSPECT_SOURCE.command),
+                    Step::Finish => Some(Command::Go(Route::Home)),
                 };
             }
         };

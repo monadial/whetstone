@@ -18,12 +18,43 @@ use crate::view::Route;
 /// What the question says, wrapped to this many cells.
 const WIDTH: usize = 52;
 
-/// Asking whether to leave, losing a draft, with what leaving would run.
+/// Asking whether to leave, losing a draft, and how.
 #[derive(Debug, Clone)]
 pub(crate) struct Leave {
-    /// What runs if the learner leaves: Back, going home or quitting.
-    then: Command,
+    leaving: Leaving,
     selected: Position,
+}
+
+/// How the learner would leave, each way losing a draft.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Leaving {
+    /// Back, closing the current screen.
+    Back,
+    /// Going home, closing every screen above home.
+    Home,
+    /// Quitting Whetstone.
+    Quit,
+}
+
+impl Leaving {
+    /// How `command` leaves, if it does.
+    pub(crate) fn by(command: Command) -> Option<Self> {
+        match command {
+            Command::Back => Some(Self::Back),
+            Command::Go(Route::Home) => Some(Self::Home),
+            Command::Quit => Some(Self::Quit),
+            _ => None,
+        }
+    }
+
+    /// The command that leaves this way.
+    fn command(self) -> Command {
+        match self {
+            Self::Back => Command::Back,
+            Self::Home => Command::Go(Route::Home),
+            Self::Quit => Command::Quit,
+        }
+    }
 }
 
 /// The two answers, in focus order.
@@ -56,11 +87,11 @@ impl Leave {
         },
     ];
 
-    /// Asks whether to run `then`, which would lose a draft. Focus starts
-    /// on staying.
-    pub(crate) fn new(then: Command) -> Self {
+    /// Asks whether to leave by `leaving`, which would lose a draft. Focus
+    /// starts on staying.
+    pub(crate) fn new(leaving: Leaving) -> Self {
         Self {
-            then,
+            leaving,
             selected: Position::default(),
         }
     }
@@ -70,7 +101,7 @@ impl Leave {
         match command {
             Command::Activate => match Answer::ALL[self.selected.index()] {
                 Answer::Stay => Outcome::Close,
-                Answer::Leave => Outcome::Leave(self.then),
+                Answer::Leave => Outcome::Leave(self.leaving.command()),
             },
             Command::Back => Outcome::Close,
             _ => Outcome::Stay,
@@ -78,11 +109,11 @@ impl Leave {
     }
 
     /// What leaving does, as its answer says it.
-    fn leaving(&self) -> &'static str {
-        match self.then {
-            Command::Quit => "Quit, and lose the draft",
-            Command::Go(Route::Home) => "Go home, and lose the draft",
-            _ => "Go back, and lose the draft",
+    fn leave_label(&self) -> &'static str {
+        match self.leaving {
+            Leaving::Back => "Go back, and lose the draft",
+            Leaving::Home => "Go home, and lose the draft",
+            Leaving::Quit => "Quit, and lose the draft",
         }
     }
 
@@ -100,7 +131,7 @@ impl Leave {
             theme.control(
                 match answer {
                     Answer::Stay => "Keep answering",
-                    Answer::Leave => self.leaving(),
+                    Answer::Leave => self.leave_label(),
                 },
                 ControlState {
                     focused: Answer::ALL[self.selected.index()] == answer,

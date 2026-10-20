@@ -5,8 +5,8 @@
 //! supported, never Needs review, and in words only: Jev's probabilities
 //! stay out of it.
 //!
-//! A submitted response is final, so feedback offers no way back to it:
-//! only Next question, Inspect source and Finish.
+//! A submitted response is final, so feedback offers no way back to it. Its
+//! controls are Next question, Inspect source and Finish.
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -56,9 +56,9 @@ impl Control {
     }
 }
 
-/// What the learner chose to do from feedback.
+/// What the learner does next from feedback.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Chosen {
+pub(crate) enum Step {
     /// Answer the next question.
     NextQuestion,
     /// Read the evidence the question rests on.
@@ -140,14 +140,14 @@ impl Feedback {
     }
 
     /// Applies `command` to the feedback on `question`, at `place`, drawn
-    /// in `area`, and returns what the learner chose, if they chose.
+    /// in `area`, and returns what the learner does next, if they chose.
     pub(crate) fn apply(
         &mut self,
         command: Command,
         area: Rect,
         question: &Question,
         place: Place,
-    ) -> Option<Chosen> {
+    ) -> Option<Step> {
         match command {
             Command::Activate => {
                 let control = self.focused();
@@ -155,9 +155,9 @@ impl Feedback {
                     return None;
                 }
                 return Some(match control {
-                    Control::NextQuestion => Chosen::NextQuestion,
-                    Control::InspectSource => Chosen::InspectSource,
-                    Control::Finish => Chosen::Finish,
+                    Control::NextQuestion => Step::NextQuestion,
+                    Control::InspectSource => Step::InspectSource,
+                    Control::Finish => Step::Finish,
                 });
             }
             Command::HalfPageDown | Command::HalfPageUp | Command::Top | Command::Bottom => {
