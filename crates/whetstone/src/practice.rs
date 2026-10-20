@@ -631,8 +631,14 @@ impl View for Practice {
 
     fn finish_job(&mut self, job: JobId, output: JobOutput) {
         match output {
-            JobOutput::ShowcaseConnectedCode { connections, .. } => {
-                if matches!(self.lookup, Lookup::Running(waiting) if waiting == job) {
+            JobOutput::ShowcaseConnectedCode {
+                position,
+                connections,
+                ..
+            } => {
+                if matches!(self.lookup, Lookup::Running(waiting) if waiting == job)
+                    && self.at == ChangeRef::Showcase(ChangeIndex::new(position))
+                {
                     self.prepare_evidence(&connections);
                 }
             }
