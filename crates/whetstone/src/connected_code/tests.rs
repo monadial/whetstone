@@ -1,0 +1,652 @@
+//! Tests through the module's interface: [`find`] on small repositories,
+//! the analysis directory it writes, and the startup sweep.
+
+use std::collections::BTreeMap;
+use std::convert::Infallible;
+use std::fs;
+use std::io;
+use std::os::unix::fs::PermissionsExt as _;
+use std::panic::{self, AssertUnwindSafe};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime};
+
+use tempfile::TempDir;
+use whetstone_core::{CommitId, ExcludePatterns};
+
+use super::*;
+use crate::repository::test_repo::{TestRepo, files_under};
+
+/// The connected code `find` finds for the commit `id` of `repo`, each
+/// connection described as its path, lines, tier and relations, after
+/// checking that it left nothing in the temporary directory.
+fn connected(repo: &TestRepo, id: CommitId) -> Vec<String> {
+    let repository = repo.open();
+    let change = repository.load(id).expect("load the change");
+    let tree = repository.tree(id).expect("read the commit's tree");
+    let temp = TempDir::new().expect("create a temporary directory");
+
+    let found = find(&tree, &change, &ExcludePatterns::default(), temp.path())
+        .expect("find connected code");
+
+    assert_eq!(
+        files_under(temp.path()),
+        Vec::<String>::new(),
+        "left behind"
+    );
+    found.connections().iter().map(describe).collect()
+}
+
+/// A connection as `path start-end tier: relation, relation`.
+fn describe(connection: &Connection) -> String {
+    let tier = match connection.tier() {
+        Tier::High => "high",
+        Tier::Medium => "medium",
+    };
+    let relations = connection
+        .relations()
+        .iter()
+        .map(|relation| match relation {
+            Relation::Calls(name) => format!("calls {name}"),
+            Relation::CalledBy(name) => format!("called by {name}"),
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "{} {}-{} {tier}: {relations}",
+        connection.path(),
+        connection.lines().start(),
+        connection.lines().end(),
+    )
+}
+
+/// A snapshot held in memory, as the showcase project can make one.
+#[derive(Debug, Default)]
+struct Memory(BTreeMap<String, (FileKind, Vec<u8>)>);
+
+impl Memory {
+    fn with(mut self, path: &str, kind: FileKind, contents: impl Into<Vec<u8>>) -> Self {
+        self.0.insert(path.to_owned(), (kind, contents.into()));
+        self
+    }
+}
+
+impl Snapshot for Memory {
+    type Error = Infallible;
+
+    fn files(&self) -> Result<Vec<SnapshotFile>, Infallible> {
+        Ok(self
+            .0
+            .iter()
+            .map(|(path, (kind, _))| SnapshotFile::new(path.clone(), *kind))
+            .collect())
+    }
+
+    fn read(&self, path: &str) -> Result<Option<Vec<u8>>, Infallible> {
+        Ok(self.0.get(path).and_then(|(kind, contents)| {
+            matches!(kind, FileKind::Blob | FileKind::Executable).then(|| contents.clone())
+        }))
+    }
+}
+
+/// A Rust crate in which `Payments::charge` validates with
+/// `check::validate` and is called by `shop::checkout`.
+fn rust_payments() -> TestRepo {
+    let repo = TestRepo::new();
+    repo.write("src/lib.rs", "mod check;\nmod pay;\nmod shop;\n")
+        .write(
+            "src/check.rs",
+            "pub fn validate(amount: u32) -> bool {\n    amount > 0\n}\n",
+        )
+        .write("src/pay.rs", rust_pay("validate(amount)"))
+        .write(
+            "src/shop.rs",
+            "use crate::pay::Payments;\n\
+             \n\
+             pub fn checkout(payments: &Payments) -> bool {\n\
+             \x20   payments.charge(10)\n\
+             }\n",
+        );
+    repo.commit("Start the shop");
+    repo
+}
+
+/// `src/pay.rs`, whose `Payments::charge` returns `body`.
+fn rust_pay(body: &str) -> String {
+    format!(
+        "use crate::check::validate;\n\
+         \n\
+         pub struct Payments;\n\
+         \n\
+         impl Payments {{\n\
+         \x20   pub fn charge(&self, amount: u32) -> bool {{\n\
+         \x20       {body}\n\
+         \x20   }}\n\
+         }}\n"
+    )
+}
+
+#[test]
+fn a_rust_change_connects_to_the_callers_and_callees_of_the_method_it_modifies() {
+    let repo = rust_payments();
+    repo.write("src/pay.rs", rust_pay("validate(amount * 2)"));
+    let id = repo.commit("Double the charge");
+
+    assert_eq!(
+        connected(&repo, id),
+        [
+            "src/check.rs 1-3 high: called by charge",
+            "src/shop.rs 3-5 high: calls charge",
+        ]
+    );
+}
+
+#[test]
+fn a_python_change_connects_to_the_callers_and_callees_of_the_method_it_modifies() {
+    let repo = TestRepo::new();
+    let pay = |body: &str| {
+        format!(
+            "from shop.check import validate\n\
+             \n\
+             \n\
+             class Payments:\n\
+             \x20   def charge(self, amount):\n\
+             \x20       return {body}\n"
+        )
+    };
+    repo.write("shop/__init__.py", "")
+        .write(
+            "shop/check.py",
+            "def validate(amount):\n    return amount > 0\n",
+        )
+        .write("shop/pay.py", pay("validate(amount)"))
+        .write(
+            "shop/cart.py",
+            "from shop.pay import Payments\n\
+             \n\
+             \n\
+             def checkout():\n\
+             \x20   payments = Payments()\n\
+             \x20   return payments.charge(10)\n",
+        );
+    repo.commit("Start the shop");
+    repo.write("shop/pay.py", pay("validate(amount * 2)"));
+    let id = repo.commit("Double the charge");
+
+    assert_eq!(
+        connected(&repo, id),
+        [
+            "shop/cart.py 4-6 high: calls charge",
+            "shop/check.py 1-2 high: called by charge",
+        ]
+    );
+}
+
+/// A Python module of three functions, each called from its own file, with
+/// `sub` recording its result through `records.record`.
+fn python_ops() -> TestRepo {
+    let repo = TestRepo::new();
+    repo.write("ops.py", OPS)
+        .write("records.py", "def record(value):\n    return [value]\n")
+        .write(
+            "use_add.py",
+            "from ops import add\n\n\ndef twice(a):\n    return add(a, a)\n",
+        )
+        .write(
+            "use_sub.py",
+            "from ops import sub\n\n\ndef none_left(a):\n    return sub(a, a)\n",
+        )
+        .write(
+            "use_mul.py",
+            "from ops import mul\n\n\ndef square(a):\n    return mul(a, a)\n",
+        );
+    repo.commit("Add the operations");
+    repo
+}
+
+/// `ops.py` as [`python_ops`] first commits it.
+const OPS: &str = "\
+from records import record
+
+
+def add(a, b):
+    return a + b
+
+
+def sub(a, b):
+    total = a - b
+    total = round(total)
+    record(total)
+    return total
+
+
+def mul(a, b):
+    return a * b
+";
+
+/// What finding connected code gives for a change to `sub` alone.
+const SUB_CONNECTED: [&str; 2] = [
+    "records.py 1-2 high: called by sub",
+    "use_sub.py 4-5 high: calls sub",
+];
+
+#[test]
+fn a_change_inside_one_function_of_several_connects_only_that_function() {
+    let repo = python_ops();
+    repo.write("ops.py", OPS.replace("total = a - b", "total = b - a"));
+    let id = repo.commit("Subtract the other way round");
+
+    assert_eq!(connected(&repo, id), SUB_CONNECTED);
+}
+
+#[test]
+fn removing_lines_inside_a_function_changes_that_function() {
+    let repo = python_ops();
+    repo.write("ops.py", OPS.replace("    total = round(total)\n", ""));
+    let id = repo.commit("Keep the fraction");
+
+    assert_eq!(connected(&repo, id), SUB_CONNECTED);
+}
+
+#[test]
+fn removing_the_last_lines_of_a_python_function_changes_that_function() {
+    let repo = python_ops();
+    repo.write("ops.py", OPS.replace("    return total\n", ""));
+    let id = repo.commit("Return nothing");
+
+    assert_eq!(connected(&repo, id), SUB_CONNECTED);
+}
+
+#[test]
+fn deleting_a_function_finds_no_connected_code_for_it_or_its_neighbours() {
+    let repo = python_ops();
+    let without_sub = OPS.replace(
+        "def sub(a, b):\n    total = a - b\n    total = round(total)\n    record(total)\n    return total\n\n\n",
+        "",
+    );
+    repo.write("ops.py", &without_sub);
+    let first = repo.commit("Drop sub");
+    repo.write(
+        "ops.py",
+        without_sub.replace("\n\ndef mul(a, b):\n    return a * b\n", ""),
+    );
+    let last = repo.commit("Drop mul");
+
+    assert_eq!(connected(&repo, first), Vec::<String>::new());
+    assert_eq!(connected(&repo, last), Vec::<String>::new());
+}
+
+#[test]
+fn a_caller_in_a_file_the_change_touches_is_not_connected_code() {
+    let repo = python_ops();
+    repo.write("ops.py", OPS.replace("total = a - b", "total = b - a"))
+        .write(
+            "use_sub.py",
+            "from ops import sub\n\n\ndef none_left(a):\n    return sub(a, a) + 0\n",
+        );
+    let id = repo.commit("Subtract the other way round, and say so");
+
+    assert_eq!(connected(&repo, id), ["records.py 1-2 high: called by sub"]);
+}
+
+#[test]
+fn callers_that_overlap_or_touch_in_one_file_merge_into_one_range_with_all_relations() {
+    let repo = python_ops();
+    repo.write(
+        "callers.py",
+        "from ops import add, sub\n\
+         \n\
+         \n\
+         def first(a):\n\
+         \x20   return add(a, 1)\n\
+         def second(a):\n\
+         \x20   return sub(a, 1)\n\
+         \n\
+         \n\
+         def outer(a):\n\
+         \x20   def inner(b):\n\
+         \x20       return sub(b, 1)\n\
+         \x20   return sub(inner(a), 2)\n\
+         \n\
+         \n\
+         def apart(a):\n\
+         \x20   return sub(a, 2)\n",
+    );
+    repo.commit("Call the operations");
+    repo.write(
+        "ops.py",
+        OPS.replace("a + b", "b + a")
+            .replace("total = a - b", "total = b - a"),
+    );
+    let id = repo.commit("Swap the operands");
+
+    let connected = connected(&repo, id);
+
+    let in_callers: Vec<_> = connected
+        .iter()
+        .filter(|connection| connection.starts_with("callers.py"))
+        .collect();
+    assert_eq!(
+        in_callers,
+        [
+            "callers.py 4-7 high: calls add, calls sub",
+            "callers.py 10-13 high: calls sub",
+            "callers.py 16-17 high: calls sub",
+        ]
+    );
+}
+
+#[test]
+fn calls_of_low_confidence_are_not_connected_code() {
+    let repo = TestRepo::new();
+    let server = |test: &str| {
+        format!(
+            "class BillingServicer:\n    def Charge(self, request, context):\n        return {test}\n"
+        )
+    };
+    // The engine links the `Charge` rpc to the servicer's `Charge` method
+    // by name alone, at low confidence.
+    repo.write(
+        "billing.proto",
+        "syntax = \"proto3\";\n\
+         \n\
+         package billing;\n\
+         \n\
+         service Billing {\n\
+         \x20 rpc Charge (ChargeRequest) returns (ChargeReply);\n\
+         }\n\
+         \n\
+         message ChargeRequest {\n\
+         \x20 int32 amount = 1;\n\
+         }\n\
+         \n\
+         message ChargeReply {\n\
+         \x20 bool ok = 1;\n\
+         }\n",
+    )
+    .write("server.py", server("request.amount > 0"))
+    .write(
+        "client.py",
+        "from server import BillingServicer\n\
+         \n\
+         \n\
+         def pay():\n\
+         \x20   return BillingServicer().Charge(None, None)\n",
+    );
+    repo.commit("Serve billing");
+    repo.write("server.py", server("request.amount >= 0"));
+    let id = repo.commit("Allow free charges");
+
+    assert_eq!(connected(&repo, id), ["client.py 4-5 high: calls Charge"]);
+}
+
+#[test]
+fn the_whole_graph_is_kept_and_never_shows_names_when_debugged() {
+    let repo = rust_payments();
+    repo.write("src/pay.rs", rust_pay("validate(amount * 2)"));
+    let id = repo.commit("Double the charge");
+    let repository = repo.open();
+    let change = repository.load(id).expect("load the change");
+    let tree = repository.tree(id).expect("read the commit's tree");
+    let temp = TempDir::new().expect("create a temporary directory");
+
+    let found = find(&tree, &change, &ExcludePatterns::default(), temp.path())
+        .expect("find connected code");
+
+    assert_eq!(found.graph().connections(&change), found.connections());
+    let debug = format!("{:?}", found.graph());
+    assert_eq!(debug, "Graph { files: 4, callables: 3, edges: 2 }");
+}
+
+#[test]
+fn the_log_records_counts_and_timings_but_never_files_callables_or_contents() {
+    let repo = rust_payments();
+    repo.write("src/pay.rs", rust_pay("validate(amount * 2)"));
+    let id = repo.commit("Double the charge");
+    let repository = repo.open();
+    let change = repository.load(id).expect("load the change");
+    let tree = repository.tree(id).expect("read the commit's tree");
+    let temp = TempDir::new().expect("create a temporary directory");
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let writer = Arc::clone(&log);
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(move || Captured(Arc::clone(&writer)))
+        .with_max_level(tracing::Level::TRACE)
+        .with_ansi(false)
+        .finish();
+
+    tracing::subscriber::with_default(subscriber, || {
+        find(&tree, &change, &ExcludePatterns::default(), temp.path())
+            .expect("find connected code");
+    });
+
+    let log = String::from_utf8(log.lock().expect("log lock").clone()).expect("UTF-8");
+    assert!(log.contains("wrote a commit's files for analysis"), "{log}");
+    assert!(log.contains("written=4"), "{log}");
+    assert!(log.contains("found connected code"), "{log}");
+    assert!(log.contains("connections=2"), "{log}");
+    for name in [
+        "charge", "validate", "checkout", "Payments", "pay.rs", "amount",
+    ] {
+        assert!(!log.contains(name), "{name} in {log}");
+    }
+}
+
+/// A writer that appends to a shared buffer.
+struct Captured(Arc<Mutex<Vec<u8>>>);
+
+impl io::Write for Captured {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.0.lock().expect("log lock").extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn only_files_the_engine_reads_are_written_and_never_excluded_binary_or_secret_ones() {
+    let snapshot = Memory::default()
+        .with("src/main.rs", FileKind::Blob, "fn main() {}\n")
+        .with(
+            "scripts/release",
+            FileKind::Executable,
+            "#!/usr/bin/env python3\nprint('released')\n",
+        )
+        .with(
+            "api/openapi.yaml",
+            FileKind::Blob,
+            "openapi: 3.0.0\npaths: {}\n",
+        )
+        .with("include/shape.h", FileKind::Blob, "int area(void);\n")
+        .with("config/settings.yaml", FileKind::Blob, "debug: true\n")
+        .with("README.md", FileKind::Blob, "# Shapes\n")
+        .with(
+            "config/credentials.py",
+            FileKind::Blob,
+            "TOKEN = 'hunter2'\n",
+        )
+        .with("deploy/secrets.rb", FileKind::Blob, "TOKEN = 'hunter2'\n")
+        .with(".env", FileKind::Blob, "TOKEN=hunter2\n")
+        .with("Cargo.lock", FileKind::Blob, "version = 4\n")
+        .with("fixtures/huge.rs", FileKind::Blob, "fn fixture() {}\n")
+        .with("src/blob.rs", FileKind::Blob, b"fn \0main() {}\n".to_vec())
+        .with("src/latin1.py", FileKind::Blob, b"caf\xe9 = 1\n".to_vec())
+        .with("src/link.rs", FileKind::Symlink, "main.rs")
+        .with("vendor/shapes", FileKind::Submodule, "")
+        .with("target/debug/build.rs", FileKind::Blob, "fn main() {}\n")
+        .with(
+            "web/node_modules/left/pad.js",
+            FileKind::Blob,
+            "function pad() {}\n",
+        )
+        .with("src/bin/tool.rs", FileKind::Blob, "fn main() {}\n")
+        .with("../outside.rs", FileKind::Blob, "fn main() {}\n")
+        .with("src/./here.rs", FileKind::Blob, "fn main() {}\n");
+    let exclude = ExcludePatterns::parse(["fixtures/"]).expect("a valid pattern");
+    let temp = TempDir::new().expect("create a temporary directory");
+
+    let dir = AnalysisDir::write(&snapshot, &exclude, temp.path()).expect("write the files");
+
+    assert_eq!(
+        files_under(dir.path()),
+        [
+            "api/openapi.yaml",
+            "include/shape.h",
+            "scripts/release",
+            "src/main.rs"
+        ]
+    );
+    let name = dir
+        .path()
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("a UTF-8 name");
+    assert!(name.starts_with("whetstone-analysis-"), "{name}");
+    assert_eq!(dir.path().parent(), Some(temp.path()));
+    let mode = fs::metadata(dir.path())
+        .expect("the directory's metadata")
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o777, 0o700);
+}
+
+#[test]
+fn a_file_is_written_exactly_when_the_engines_own_detector_recognises_it() {
+    let samples: [(&str, &[u8]); 16] = [
+        ("lib.rs", b"fn f() {}\n"),
+        ("Shape.C", b"int f() { return 0; }\n"),
+        ("shape.h", b"int f(void);\n"),
+        ("main.GO", b"package main\n"),
+        ("tool", b"#!/usr/bin/env python3\nprint(1)\n"),
+        ("tool.txt", b"#!/bin/bash\necho 1\n"),
+        ("odd", b"#!/usr/bin/env not-a-language\n"),
+        ("notes", b"no shebang\n"),
+        ("api.yaml", b"# An API\nopenapi: 3.1.0\n"),
+        ("api.json", b"{\"swagger\": \"2.0\", \"paths\": {}}"),
+        ("events.YML", b"asyncapi: '2.6.0'\n"),
+        ("settings.yaml", b"debug: true\n"),
+        ("package.json", b"{\"name\": \"shapes\"}\n"),
+        ("README.md", b"# Shapes\n"),
+        ("schema.graphql", b"type Query { shape: Int }\n"),
+        ("billing.proto", b"syntax = \"proto3\";\n"),
+    ];
+    let originals = TempDir::new().expect("create a temporary directory");
+    let mut snapshot = Memory::default();
+    for (path, contents) in samples {
+        fs::write(originals.path().join(path), contents).expect("write a sample");
+        snapshot = snapshot.with(path, FileKind::Blob, contents);
+    }
+    let registry = cgg_lang::PluginRegistry::with_v1_plugins();
+    let detector = cgg_lang::LanguageDetector::new(&registry);
+    let recognised: Vec<String> = samples
+        .iter()
+        .filter(|(path, _)| {
+            detector.detect(&originals.path().join(path)).verdict
+                != cgg_lang::DetectVerdict::Unknown
+        })
+        .map(|(path, _)| (*path).to_owned())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let temp = TempDir::new().expect("create a temporary directory");
+
+    let dir = AnalysisDir::write(&snapshot, &ExcludePatterns::default(), temp.path())
+        .expect("write the files");
+
+    assert_eq!(files_under(dir.path()), recognised);
+    assert!(
+        recognised.len() > 8 && recognised.len() < samples.len(),
+        "{recognised:?}"
+    );
+}
+
+#[test]
+fn the_analysis_directory_is_removed_after_the_analysis_and_after_a_panic() {
+    let snapshot = Memory::default().with("src/main.rs", FileKind::Blob, "fn main() {}\n");
+    let temp = TempDir::new().expect("create a temporary directory");
+
+    let dir = AnalysisDir::write(&snapshot, &ExcludePatterns::default(), temp.path())
+        .expect("write the files");
+    dir.analyse().expect("analyse the files");
+    drop(dir);
+    assert_eq!(files_under(temp.path()), Vec::<String>::new());
+
+    let interrupted = panic::catch_unwind(AssertUnwindSafe(|| {
+        let dir = AnalysisDir::write(&snapshot, &ExcludePatterns::default(), temp.path())
+            .expect("write the files");
+        assert_eq!(files_under(dir.path()), ["src/main.rs"]);
+        panic!("the analysis was interrupted");
+    }));
+
+    assert!(interrupted.is_err());
+    assert_eq!(files_under(temp.path()), Vec::<String>::new());
+}
+
+#[test]
+fn a_temporary_directory_inside_a_directory_the_engine_never_reads_fails_before_writing() {
+    let temp = TempDir::new().expect("create a temporary directory");
+    let build = temp.path().join("build");
+    fs::create_dir(&build).expect("create a build directory");
+    let snapshot = Memory::default().with("src/main.rs", FileKind::Blob, "fn main() {}\n");
+    let change = Change::new(String::new(), Vec::new(), String::new(), Vec::new());
+
+    let failure = find(&snapshot, &change, &ExcludePatterns::default(), &build)
+        .expect_err("the engine would read nothing there");
+
+    assert!(
+        matches!(failure, Failure::UnreadableTemporaryDirectory("build")),
+        "{failure:?}"
+    );
+    assert_eq!(files_under(temp.path()), Vec::<String>::new());
+}
+
+#[test]
+fn the_sweep_removes_only_analysis_directories_unchanged_for_more_than_a_day() {
+    let temp = TempDir::new().expect("create a temporary directory");
+    let now = SystemTime::now();
+    let made = |name: &str, age: Duration| {
+        let path = temp.path().join(name);
+        fs::create_dir_all(path.join("src")).expect("create a directory");
+        fs::write(path.join("src/main.rs"), "fn main() {}\n").expect("write a file");
+        fs::File::open(&path)
+            .and_then(|dir| dir.set_modified(now - age))
+            .expect("date the directory");
+    };
+    made("whetstone-analysis-old", Duration::from_hours(25));
+    made("whetstone-analysis-recent", Duration::from_hours(23));
+    made("other-old", Duration::from_hours(48));
+    made("linked-old", Duration::from_hours(48));
+    std::os::unix::fs::symlink(
+        temp.path().join("linked-old"),
+        temp.path().join("whetstone-analysis-link"),
+    )
+    .expect("make a symbolic link");
+    fs::write(temp.path().join("whetstone-analysis-file"), "").expect("write a file");
+
+    sweep(temp.path(), now);
+
+    let mut left: Vec<String> = fs::read_dir(temp.path())
+        .expect("read the temporary directory")
+        .map(|entry| {
+            entry
+                .expect("an entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    left.sort();
+    assert_eq!(
+        left,
+        [
+            "linked-old",
+            "other-old",
+            "whetstone-analysis-file",
+            "whetstone-analysis-link",
+            "whetstone-analysis-recent",
+        ]
+    );
+    assert!(temp.path().join("linked-old/src/main.rs").exists());
+}

@@ -33,6 +33,9 @@ allow = [
     "Apache-2.0",
     "Apache-2.0 WITH LLVM-exception",
     "BSD-3-Clause",
+    # A public-domain dedication with a permissive fallback. cgg's Clojure
+    # grammar, tree-sitter-clojure-orchard, uses it.
+    "CC0-1.0",
     "ISC",
     "MIT",
     "Unicode-3.0",
