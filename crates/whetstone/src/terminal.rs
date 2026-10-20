@@ -5,10 +5,14 @@
 //! before the panic message prints. Ratatui's own restore only covers raw mode
 //! and the alternate screen, so Whetstone owns this. While Whetstone is
 //! suspended, the guard turns the same modes off and later back on.
+//!
+//! A panic the app carries on after, in a background job, is caught with
+//! [`catch_panic`], and the hook then leaves the terminal alone.
 
+use std::cell::Cell;
 use std::ffi::OsStr;
 use std::io::{self, IsTerminal as _, Write};
-use std::panic;
+use std::panic::{self, AssertUnwindSafe};
 use std::sync::{Arc, Mutex, PoisonError, TryLockError};
 
 use ratatui::crossterm::event::{DisableBracketedPaste, EnableBracketedPaste};
@@ -184,9 +188,60 @@ impl Session {
     }
 }
 
+thread_local! {
+    /// What [`catch_panic`] is catching on this thread, if anything.
+    static CATCHING: Cell<Option<Catch>> = const { Cell::new(None) };
+}
+
+/// A panic [`catch_panic`] is catching.
+#[derive(Debug, Default)]
+struct Catch {
+    /// Where it happened, once it has.
+    at: Option<String>,
+}
+
+/// A panic that [`catch_panic`] caught.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("it panicked")]
+pub(crate) struct Panicked;
+
+/// Runs `work` and returns what it returns, or [`Panicked`] once a panic in
+/// it has unwound, dropping what it held. It is for work the app carries on
+/// after, such as a background job's: the terminal guard's panic hook
+/// leaves the terminal as it is and prints nothing for a panic caught here,
+/// and the log records only where it happened, since its message could
+/// name the learner's files.
+pub(crate) fn catch_panic<T>(work: impl FnOnce() -> T) -> Result<T, Panicked> {
+    let outer = CATCHING.replace(Some(Catch::default()));
+    let result = panic::catch_unwind(AssertUnwindSafe(work));
+    let caught = CATCHING.replace(outer).and_then(|catch| catch.at);
+    result.map_err(|_payload| {
+        tracing::warn!(at = caught, "caught a panic, and carried on");
+        Panicked
+    })
+}
+
+/// Whether [`catch_panic`] is catching the panic `info` describes, on this
+/// thread. If it is, it records where the panic happened for it.
+fn caught_here(info: &panic::PanicHookInfo<'_>) -> bool {
+    if CATCHING.take().is_none() {
+        return false;
+    }
+    let at = info
+        .location()
+        .map(|location| format!("{}:{}", location.file(), location.line()));
+    CATCHING.set(Some(Catch { at }));
+    true
+}
+
 fn install_panic_hook(session: Arc<Mutex<Session>>) {
     let previous = panic::take_hook();
     panic::set_hook(Box::new(move |info| {
+        // A panic `catch_panic` catches is the app's to handle: leave the
+        // terminal and the screen alone.
+        if caught_here(info) {
+            return;
+        }
         // Never block or panic in here. If the session is busy, a mode switch
         // is mid-call (perhaps the one panicking): skip the restore and let
         // the guard's drop do it while unwinding. Print the message either

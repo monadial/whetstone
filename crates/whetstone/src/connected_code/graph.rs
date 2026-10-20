@@ -1,14 +1,6 @@
 //! A commit's call graph as the engine found it, and the connected code a
 //! change has in it: the callers and callees of its changed callables.
 
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "wired into the outbound review by the #58 integration"
-    )
-)]
-
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::ops::RangeInclusive;
@@ -64,13 +56,20 @@ pub(crate) enum Tier {
     Medium,
 }
 
-/// What a connection has to do with a changed callable, which it names.
+/// What a connection has to do with a changed callable, which it names,
+/// with the touched file the changed callable is in.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Relation {
     /// It calls the changed callable: it is a caller.
-    Calls(String),
+    Calls {
+        callable: String,
+        touched_file: String,
+    },
     /// The changed callable calls it: it is a callee.
-    CalledBy(String),
+    CalledBy {
+        callable: String,
+        touched_file: String,
+    },
 }
 
 impl Connection {
@@ -97,6 +96,10 @@ impl Connection {
         &self.relations
     }
 }
+
+/// How the other end of a call relates to its changed end, from the
+/// changed callable's name and the touched file it is in.
+type Relate = fn(String, String) -> Relation;
 
 /// A callable one hop from a changed one, before ranges are merged.
 #[derive(Debug)]
@@ -181,19 +184,25 @@ impl Graph {
                 Confidence::Medium => Tier::Medium,
                 Confidence::Low => continue,
             };
-            let ends = [
-                (
-                    edge.dst,
-                    edge.src,
-                    Relation::Calls as fn(String) -> Relation,
-                ),
-                (edge.src, edge.dst, Relation::CalledBy),
+            let ends: [(_, _, Relate); 2] = [
+                (edge.dst, edge.src, |callable, touched_file| {
+                    Relation::Calls {
+                        callable,
+                        touched_file,
+                    }
+                }),
+                (edge.src, edge.dst, |callable, touched_file| {
+                    Relation::CalledBy {
+                        callable,
+                        touched_file,
+                    }
+                }),
             ];
             for (changed_end, other_end, relation) in ends {
                 if !changed.contains(&changed_end) {
                     continue;
                 }
-                let (Some((changed_callable, _)), Some((other, path))) =
+                let (Some((changed_callable, changed_path)), Some((other, path))) =
                     (placed(&changed_end), placed(&other_end))
                 else {
                     continue;
@@ -205,7 +214,10 @@ impl Graph {
                     start: other.start_line,
                     end: other.end_line.max(other.start_line),
                     tier,
-                    relations: BTreeSet::from([relation(name(changed_callable))]),
+                    relations: BTreeSet::from([relation(
+                        name(changed_callable),
+                        changed_path.to_owned(),
+                    )]),
                 });
             }
         }

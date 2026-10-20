@@ -88,13 +88,14 @@ fn launch(environment: &Environment) -> anyhow::Result<ExitCode> {
         config = %dirs.config.display(),
         "whetstone started"
     );
-    connected_code::sweep(&environment.temp_dir(), SystemTime::now());
+    let temp_dir = environment.temp_dir();
+    connected_code::sweep(&temp_dir, SystemTime::now());
     let settings = Settings::load(&dirs.config, environment)?;
     let theme = Theme::new(settings.color_support());
     let repository = Repository::open(environment.current_dir());
     repository::log(&repository);
     match tui::run(
-        App::new(theme, settings, embedded_showcase(), repository),
+        App::new(theme, settings, embedded_showcase(), repository, temp_dir),
         environment,
     )? {
         Ending::Quit => {

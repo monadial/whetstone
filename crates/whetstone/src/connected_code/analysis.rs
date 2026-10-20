@@ -1,11 +1,13 @@
 //! The private temporary directory a commit's code is written to for the
-//! engine, which removes itself, and the sweep at startup for any that a
-//! crash left behind.
+//! engine, which removes itself, the guard that removes any still in use
+//! when the app quits, and the sweep at startup for any that a crash left
+//! behind.
 
 use std::fs::{self, OpenOptions, Permissions};
 use std::io::{self, Write as _};
 use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant, SystemTime};
 
 use whetstone_core::{DefaultExclusion, ExcludePatterns, FileContent};
@@ -26,22 +28,86 @@ const LEFTOVER_AGE: Duration = Duration::from_hours(24);
 /// found could change the graph or fail the analysis.
 const NO_ENGINE_CONFIG: &str = "/dev/null";
 
+/// Where analysis directories are made, the system temporary directory,
+/// and which of them are in use. Its clones share that record, so a
+/// background job can make its directory while the app holds the
+/// [`AnalysisDirsGuard`] that removes it when the app quits.
+#[derive(Debug, Clone)]
+pub(crate) struct AnalysisDirs {
+    temp_dir: PathBuf,
+    in_use: Arc<Mutex<InUse>>,
+}
+
+/// The analysis directories in use, and whether the app is quitting.
+#[derive(Debug, Default)]
+struct InUse {
+    /// Set when the guard drops. No directory is made or written after it.
+    closed: bool,
+    dirs: Vec<PathBuf>,
+}
+
+/// Removes every analysis directory still in use when it drops, as the app
+/// quits or a panic unwinds on its thread, and from then on stops any job
+/// from making a directory or writing a file. Quitting never waits for a
+/// job, so a job's own [`AnalysisDir`] may never drop: the process can exit
+/// while it writes or the engine reads.
+#[derive(Debug)]
+pub(crate) struct AnalysisDirsGuard(Arc<Mutex<InUse>>);
+
+impl AnalysisDirs {
+    /// Analysis directories in `temp_dir`, the system temporary directory.
+    pub(crate) fn new(temp_dir: PathBuf) -> Self {
+        Self {
+            temp_dir,
+            in_use: Arc::default(),
+        }
+    }
+
+    /// The guard that removes the directories in use when it drops. Until
+    /// one drops, jobs make and write them freely.
+    pub(crate) fn guard(&self) -> AnalysisDirsGuard {
+        AnalysisDirsGuard(Arc::clone(&self.in_use))
+    }
+
+    fn lock(&self) -> MutexGuard<'_, InUse> {
+        lock(&self.in_use)
+    }
+}
+
+/// The record of directories in use, even after a panic while it was held:
+/// it is only ever left whole.
+fn lock(in_use: &Mutex<InUse>) -> MutexGuard<'_, InUse> {
+    in_use.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+impl Drop for AnalysisDirsGuard {
+    fn drop(&mut self) {
+        let mut in_use = lock(&self.0);
+        in_use.closed = true;
+        let (mut removed, mut failed) = (0_usize, 0_usize);
+        for dir in in_use.dirs.drain(..) {
+            match fs::remove_dir_all(&dir) {
+                Ok(()) => removed += 1,
+                Err(_) => failed += 1,
+            }
+        }
+        if removed + failed > 0 {
+            tracing::info!(removed, failed, "removed the analysis directories in use");
+        }
+    }
+}
+
 /// A commit's files, written to a new private directory for the engine to
 /// read: `whetstone-analysis-` and a random suffix, created mode 0700 in
 /// the system temporary directory. Dropping it removes the directory and
-/// everything in it, including while a panic unwinds.
+/// everything in it, including while a panic unwinds, and so does dropping
+/// the [`AnalysisDirsGuard`] while it is in use.
 #[derive(Debug)]
 pub(crate) struct AnalysisDir {
     dir: tempfile::TempDir,
+    dirs: AnalysisDirs,
 }
 
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "wired into the outbound review by the #58 integration"
-    )
-)]
 impl AnalysisDir {
     /// Writes the files of `snapshot` that the engine reads into a new
     /// analysis directory in `temp_dir`, each at its path in the
@@ -57,23 +123,22 @@ impl AnalysisDir {
     ///
     /// Fails before creating anything if `temp_dir`'s own path has a
     /// directory the engine never reads in, which would hide every file.
+    ///
+    /// Once the [`AnalysisDirsGuard`] has dropped, it makes nothing, or
+    /// stops before its next file, and fails.
     pub(crate) fn write<S: Snapshot>(
         snapshot: &S,
         exclude: &ExcludePatterns,
-        temp_dir: &Path,
+        dirs: &AnalysisDirs,
     ) -> Result<Self, Failure> {
-        if let Some(name) = Engine::denied_directory(temp_dir) {
+        if let Some(name) = Engine::denied_directory(&dirs.temp_dir) {
             return Err(Failure::UnreadableTemporaryDirectory(name));
         }
         let started = Instant::now();
         let files = snapshot
             .files()
             .map_err(|error| Failure::Snapshot(Box::new(error)))?;
-        let dir = tempfile::Builder::new()
-            .prefix(PREFIX)
-            .permissions(Permissions::from_mode(0o700))
-            .tempdir_in(temp_dir)
-            .map_err(Failure::Write)?;
+        let dir = Self::make(dirs)?;
         let engine = Engine::new();
         let mut tally = Tally::default();
         for file in &files {
@@ -96,7 +161,7 @@ impl AnalysisDir {
                 tally.not_code += 1;
                 continue;
             }
-            match write_private(&dir.path().join(relative), text.as_bytes()) {
+            match dir.write_file(&relative, text.as_bytes())? {
                 Ok(()) => {
                     tally.written += 1;
                     tally.bytes += text.len();
@@ -106,7 +171,37 @@ impl AnalysisDir {
             }
         }
         tally.log(files.len(), started.elapsed());
-        Ok(Self { dir })
+        Ok(dir)
+    }
+
+    /// A new, empty analysis directory, recorded as in use.
+    fn make(dirs: &AnalysisDirs) -> Result<Self, Failure> {
+        let mut in_use = dirs.lock();
+        if in_use.closed {
+            return Err(Failure::Quitting);
+        }
+        let dir = tempfile::Builder::new()
+            .prefix(PREFIX)
+            .permissions(Permissions::from_mode(0o700))
+            .tempdir_in(&dirs.temp_dir)
+            .map_err(Failure::Write)?;
+        in_use.dirs.push(dir.path().to_path_buf());
+        Ok(Self {
+            dir,
+            dirs: dirs.clone(),
+        })
+    }
+
+    /// Writes `contents` to `relative` inside the directory, unless the
+    /// [`AnalysisDirsGuard`] has dropped. The record stays locked while it
+    /// writes, so the guard never removes the directory while a file is
+    /// being written into it, which would make it again.
+    fn write_file(&self, relative: &Path, contents: &[u8]) -> Result<io::Result<()>, Failure> {
+        let in_use = self.dirs.lock();
+        if in_use.closed {
+            return Err(Failure::Quitting);
+        }
+        Ok(write_private(&self.path().join(relative), contents))
     }
 
     /// The analysis directory.
@@ -135,6 +230,21 @@ impl AnalysisDir {
             "analysed a commit's files"
         );
         Ok(graph)
+    }
+}
+
+impl Drop for AnalysisDir {
+    /// Removes the directory while the record is locked, so that the app
+    /// never exits with it half removed. Its `TempDir` then finds nothing
+    /// left to remove.
+    fn drop(&mut self) {
+        let mut in_use = self.dirs.lock();
+        in_use.dirs.retain(|dir| dir != self.dir.path());
+        if let Err(error) = fs::remove_dir_all(self.dir.path())
+            && error.kind() != io::ErrorKind::NotFound
+        {
+            tracing::warn!(error = %error, "cannot remove an analysis directory");
+        }
     }
 }
 

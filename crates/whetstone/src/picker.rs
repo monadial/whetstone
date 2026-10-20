@@ -14,6 +14,7 @@ use ratatui::widgets::{List, ListState, Paragraph};
 use whetstone_core::{Area, CommitId, InvalidAreaFile, ReviewChoices, ShowcaseProject};
 
 use crate::columns;
+use crate::connected_code::Request;
 use crate::entry::TextEntry;
 use crate::focus::Position;
 use crate::keymap::{self, Binding, Command, Input, Keymap, Press};
@@ -781,13 +782,22 @@ impl View for Picker {
             .filter(|(_, choice)| **choice == AreaChoice::Valid { selected: true })
             .filter_map(|(area, _)| area.as_ref().ok().cloned())
             .collect();
+        let exclude = repository.config().exclude().clone();
+        let connected_code = Request::new(
+            repository.handle(),
+            id,
+            change.clone(),
+            exclude.clone(),
+            context.analysis.clone(),
+        );
         Some(Box::new(OutboundReview::new(
             id,
             context.settings,
             change,
             areas,
-            repository.config().exclude().clone(),
+            exclude,
             Rc::clone(choices),
+            connected_code,
         )))
     }
 

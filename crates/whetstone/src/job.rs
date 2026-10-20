@@ -12,6 +12,7 @@ use std::mem;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
+use whetstone_core::{CommitId, Connections};
 
 /// A job's identity, unique among the jobs one [`Jobs`] starts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -19,10 +20,16 @@ pub struct JobId(u64);
 
 /// What the app's background jobs produce. Each kind of job adds its
 /// variant here, and the app applies it in [`App::handle`](crate::App::handle).
-///
-/// No job is started yet: finding connected code (#58) is the first.
 #[derive(Debug)]
-pub enum JobOutput {}
+pub enum JobOutput {
+    /// A commit's connected code, found for its outbound review.
+    ConnectedCode {
+        /// The commit it is for.
+        commit: CommitId,
+        /// What was found, or why there is none.
+        connections: Connections,
+    },
+}
 
 /// How a job ended.
 #[derive(Debug, Clone, PartialEq, Eq)]

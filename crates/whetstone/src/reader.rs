@@ -57,8 +57,8 @@ impl fmt::Debug for Section {
 enum Numbering {
     /// Prose, as written.
     Plain,
-    /// Code, each line after its number.
-    Numbered,
+    /// Code, each line after its number, the first numbered `first`.
+    Numbered { first: usize },
 }
 
 impl Section {
@@ -73,8 +73,14 @@ impl Section {
 
     /// Code under `heading`, each line numbered.
     pub(crate) fn numbered(heading: &str, text: &str) -> Self {
+        Self::numbered_from(heading, text, 1)
+    }
+
+    /// Lines of code from a file under `heading`, each numbered as in the
+    /// file, where the first is line `first`.
+    pub(crate) fn numbered_from(heading: &str, text: &str, first: usize) -> Self {
         Self {
-            numbering: Numbering::Numbered,
+            numbering: Numbering::Numbered { first },
             ..Self::plain(heading, text)
         }
     }
@@ -83,12 +89,17 @@ impl Section {
     /// its number if it is code.
     fn lines(&self, theme: &Theme) -> Vec<Line<'_>> {
         let mut lines = vec![Line::styled(self.heading.as_str(), theme.muted)];
-        let digits = self.text.lines().count().max(1).to_string().len();
+        let first = match self.numbering {
+            Numbering::Plain => 1,
+            Numbering::Numbered { first } => first,
+        };
+        let last = first + self.text.lines().count().max(1) - 1;
+        let digits = last.to_string().len();
         for (index, line) in self.text.lines().enumerate() {
             lines.push(match self.numbering {
                 Numbering::Plain => Line::raw(line),
-                Numbering::Numbered => Line::from(vec![
-                    Span::styled(format!("{:>digits$} ", index + 1), theme.muted),
+                Numbering::Numbered { first } => Line::from(vec![
+                    Span::styled(format!("{:>digits$} ", first + index), theme.muted),
                     Span::raw(line),
                 ]),
             });

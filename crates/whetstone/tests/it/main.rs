@@ -12,6 +12,7 @@ mod colors;
 mod commit_viewer;
 mod commits;
 mod config;
+mod connected_code;
 mod dirs;
 mod jobs;
 mod navigation;

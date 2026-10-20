@@ -2,14 +2,6 @@
 //! change's unified diff: the lines it adds or modifies, and where it only
 //! removes lines.
 
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "wired into the outbound review by the #58 integration"
-    )
-)]
-
 use std::collections::HashMap;
 
 use whetstone_core::Change;
