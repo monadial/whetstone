@@ -42,6 +42,14 @@ pub(crate) trait View: fmt::Debug {
         &[]
     }
 
+    /// The screen `route` names, built from this screen's state, if this
+    /// screen builds it: the picker builds the outbound review from its
+    /// choices, and the review builds what it lets the learner read. Every
+    /// other route opens from the route alone.
+    fn open(&self, _route: Route, _context: &Context<'_>) -> Option<Box<dyn View>> {
+        None
+    }
+
     /// Applies `command` to the screen drawn in `area`, and returns what it
     /// asks of the app, if anything. Only scrolling needs `area`, to know
     /// how far a page goes; the state never keeps it.
@@ -79,6 +87,22 @@ pub(crate) enum Route {
     Picker(Project),
     /// The change viewer, showing one change.
     Viewer(ChangeRef),
+    /// The outbound review of a commit from the learner's repository, which
+    /// the picker opens.
+    Review(CommitId),
+    /// Something the outbound review lets the learner read whole.
+    Read(Reading),
+}
+
+/// What the outbound review lets the learner read whole.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Reading {
+    /// The change: its full commit ID, and its message as it is sent.
+    Change,
+    /// What the touched file at this index sends.
+    File(usize),
+    /// The area prompt of the selected area at this index.
+    Area(usize),
 }
 
 /// A change the viewer can show.
@@ -121,13 +145,14 @@ pub(crate) fn comparison_label(comparison: Comparison) -> Option<&'static str> {
 
 impl Route {
     /// The screen at this route, as it first opens over `showcase` or
-    /// `repository`.
+    /// `repository`, unless only the screen before it can build it, as
+    /// [`View::open`] does.
     pub(crate) fn open(
         self,
         showcase: &ShowcaseProject,
         repository: Result<&Repository, &Unavailable>,
-    ) -> Box<dyn View> {
-        match self {
+    ) -> Option<Box<dyn View>> {
+        Some(match self {
             Self::Home => Box::new(Home::new(repository)),
             Self::Settings => Box::new(SettingsScreen::default()),
             Self::Picker(Project::Showcase) => Box::new(Picker::new(showcase)),
@@ -149,6 +174,7 @@ impl Route {
                     Err(error) => Box::new(Unreadable::new(id, &error)),
                 }
             }
-        }
+            Self::Review(_) | Self::Read(_) => return None,
+        })
     }
 }

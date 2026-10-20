@@ -93,18 +93,19 @@ impl Screens {
     }
 
     /// Goes to `route`: home is always the one at the bottom, and any other
-    /// screen opens above the current one, over `showcase` or `repository`,
-    /// unless it is the current one.
-    fn go(
-        &mut self,
-        route: Route,
-        showcase: &ShowcaseProject,
-        repository: Result<&Repository, &Unavailable>,
-    ) {
+    /// screen opens above the current one, unless it is the current one. The
+    /// current screen builds it if it can, and otherwise it opens over the
+    /// showcase project or the repository in `context`.
+    fn go(&mut self, route: Route, context: &Context<'_>) {
         if route == Route::Home {
             self.above.clear();
-        } else if route != self.current().route() {
-            self.above.push(route.open(showcase, repository));
+        } else if route != self.current().route()
+            && let Some(screen) = self
+                .current()
+                .open(route, context)
+                .or_else(|| route.open(context.showcase, context.repository))
+        {
+            self.above.push(screen);
         }
     }
 
@@ -205,9 +206,15 @@ impl App {
             Command::Palette => {
                 self.overlay = Some(Overlay::Palette(Palette::new(self.screens.current())));
             }
-            Command::Go(route) => self
-                .screens
-                .go(route, &self.showcase, self.repository.as_ref()),
+            Command::Go(route) => {
+                let context = Context {
+                    theme: &self.theme,
+                    settings: &self.settings,
+                    showcase: &self.showcase,
+                    repository: self.repository.as_ref(),
+                };
+                self.screens.go(route, &context);
+            }
             Command::Back => self.screens.back(),
             command => {
                 // Until the loop reports a size, assume the smallest the

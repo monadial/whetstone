@@ -17,6 +17,7 @@ mod pty;
 mod repo;
 mod repository;
 mod resize;
+mod review;
 mod session;
 mod settings;
 mod showcase;
