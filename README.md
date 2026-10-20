@@ -25,9 +25,9 @@ Whetstone builds with the Rust toolchain pinned in `rust-toolchain.toml`, on Lin
 cargo run
 ```
 
-It needs an interactive terminal. `whetstone --help` lists the options. Set `NO_COLOR` to turn colour off: focus and selection stay visible through markers and bold text.
+It needs an interactive terminal: [Terminal support](#terminal-support) says which ones. `whetstone --help` lists the options. Set `NO_COLOR` to turn colour off: focus and selection stay visible through markers and bold text.
 
-Everything works from the keyboard. `j`/`k` or the arrows move, Tab and Shift+Tab move focus, and Enter or Space activates. `q` goes back, and quits from home. `?` shows the keys for the current screen and `:` lists its actions. Ctrl+C quits from anywhere.
+Everything works from the keyboard. `j`/`k` or the arrows move, Tab and Shift+Tab move focus, and Enter or Space activates. `q` goes back, and quits from home. `?` shows the keys for the current screen and `:` lists its actions. Ctrl+C quits from anywhere, and Ctrl+Z suspends Whetstone to your shell until `fg`.
 
 In the picker, `/` searches your repository's commits by message or ID. In a change, `h`/`l` switch between the files and the diff, before and after panes. `gg`/`G` and Ctrl+D/Ctrl+U jump and scroll, and each pane keeps its place. `/` searches the focused pane, and `n`/`N` move to the next and previous match. In the outbound review, Space leaves a file out or brings it back, and Enter reads exactly what is sent for the change, a file or an area.
 
@@ -58,11 +58,15 @@ A `!` pattern is invalid, so the config can only leave more out. Lockfiles and c
 
 ## Configure it
 
-Settings shows what Practice will use. It is read-only: the values come from `config.toml` in Whetstone's config folder, `$XDG_CONFIG_HOME/whetstone/` (by default `~/.config/whetstone/`) on Linux and macOS. Every setting is optional, and without a file Whetstone uses these defaults and says so:
+Settings shows what Practice will use, and how much colour Whetstone draws with. It is read-only: the values come from `config.toml` in Whetstone's config folder, `$XDG_CONFIG_HOME/whetstone/` (by default `~/.config/whetstone/`) on Linux and macOS. Every setting is optional, and without a file Whetstone uses these defaults and says so:
 
 ```toml
 # The service Practice sends its requests to. OpenRouter is the only one so far.
 provider = "openrouter"
+
+# How much colour Whetstone draws with: "auto", "24-bit", "256", "16" or "none".
+# Auto reads COLORTERM, then TERM. A non-empty NO_COLOR wins over any value.
+colours = "auto"
 
 # Jev, the evaluator: it returns decisions and probabilities, never prose.
 [jev]
@@ -74,6 +78,41 @@ model = "anthropic/claude-sonnet-5.5"
 ```
 
 The OpenRouter key never goes in the file. Set `OPENROUTER_API_KEY` in your shell; Settings shows only whether it is set. Whetstone writes nothing to disk except its log, in `$XDG_STATE_HOME/whetstone/` (by default `~/.local/state/whetstone/`), and the area files `whetstone areas init` copies.
+
+## Terminal support
+
+Whetstone states which terminals it is meant for, in two tiers. **Supported** means tested in CI on every change and checked by hand before each release: CI runs Whetstone in a pseudo-terminal on every supported platform, and before a release each supported terminal goes through the [pre-release terminal checklist](docs/terminal-checklist.md). **Expected to work** means bugs are fixed when they're reported, but nobody checks before a release.
+
+Supported:
+
+- Linux and macOS, on x86_64 and arm64.
+- iTerm2, Ghostty and Terminal.app on macOS; GNOME Terminal and Ghostty on Linux.
+- Each of those inside tmux, and over SSH.
+
+Expected to work:
+
+- kitty, WezTerm, Alacritty, Konsole, the VS Code terminal and GNU screen, and other terminals compatible with `xterm-256color`.
+- WSL, the only way to run Whetstone on Windows. There is no Windows build.
+
+Whetstone needs a UTF-8 locale, a font with box-drawing characters, which draw its borders, and a terminal with bracketed paste, which lets a paste arrive as text rather than keys. It refuses to start, says why and exits with 1 when stdin or stdout isn't a terminal, or when `TERM=dumb` says the terminal can't move the cursor. `--help`, `--version` and `whetstone areas init` work anywhere.
+
+Every screen fits whole at 80×24. Below 50×12, Whetstone shows "Window too small" instead, and growing the window brings back where you were. A paste goes into a search as text, on one line: a pasted line break never runs the search and a pasted `q` never goes back. Anywhere else a paste does nothing.
+
+Ctrl+Z gives you your shell back, and `fg` brings back the same screen at the window's current size. Started without a shell to return to, such as a tmux pane's own command or `ssh -t host whetstone`, Ctrl+Z has nowhere to go, so Whetstone carries on. However it ends, by `q`, Ctrl+C, a signal or a crash, Whetstone leaves your terminal as it found it. It exits with 0 after `q` or Ctrl+C, and with 128 plus the signal's number after a signal.
+
+Colours follow what your terminal reports: `COLORTERM`, then `TERM`. SSH usually doesn't forward `COLORTERM`, so over SSH colours drop to 256. If your terminal shows 24-bit colour, set `colours = "24-bit"` in the [config](#configure-it). A non-empty `NO_COLOR` turns colour off whatever `colours` says.
+
+Known limits:
+
+- Right-to-left text, such as Arabic or Hebrew, is kept as you typed it but shown left to right.
+- A rare emoji may sit one cell off, where your terminal and Whetstone disagree on its width.
+- There's no mouse. Whetstone never captures it, so your terminal's own selection and copying keep working, and a click does nothing.
+
+In tmux, set `escape-time` low, so Esc acts at once. tmux waits that long after an Esc for the rest of a key sequence, and before tmux 3.5 it waits 500 ms by default. In `~/.tmux.conf`:
+
+```text
+set -sg escape-time 10
+```
 
 ## License
 
