@@ -2,6 +2,8 @@
 //! outbound review: connected code is kept within both, the most relevant
 //! first, and the review says how much was not sent and why.
 
+use whetstone_core::Evidence;
+
 use crate::connected_code::{REVIEW_NEWEST, connected_code};
 use crate::repo::TestRepo;
 use crate::session::{NO_COLOR, Session, Setup, columns};
@@ -208,12 +210,12 @@ const REVIEW_NEWEST_WITH_ONE_AREA: &str = "<Enter> j <Space> k <S-Tab> <Enter>";
 /// [`subtracting`] with one area of the repository's own, so the areas'
 /// size is small and fixed, and a newest commit that also changes the
 /// first line of `notes.txt`, which is as long as it must be for the change
-/// to leave `room` bytes under the 400 KB size limit.
+/// to leave `room` bytes under the size limit.
 fn subtracting_beside_notes(room: usize, callers: &[(&str, usize)]) -> TestRepo {
     // The commit message, both touched files' paths and diffs, `ops.py`
     // and the area.
     const REST: usize = 679;
-    let notes = 400_000 - REST - room;
+    let notes = Evidence::SIZE_LIMIT - REST - room;
     let line = format!("{}\n", "x".repeat(99));
     let mut text = "Notes\n".to_owned();
     while text.len() + line.len() <= notes {
@@ -356,5 +358,32 @@ fn connected_code_over_the_limit_and_with_no_room_at_80x24() {
     insta::assert_debug_snapshot!(
         "connected_code_over_the_limit_and_with_no_room_80x24",
         session.frame()
+    );
+}
+
+#[test]
+fn the_callers_closest_to_the_touched_file_are_sent_first_when_not_all_fit() {
+    let repo = TestRepo::new("shop");
+    repo.write("shop/__init__.py", "").write("shop/ops.py", OPS);
+    for path in ["a/use.py", "shop/use.py", "z/use.py"] {
+        repo.write(
+            path,
+            caller(path, 900).replace("from ops import", "from shop.ops import"),
+        );
+    }
+    repo.commit("Add the callers");
+    repo.write("shop/ops.py", OPS.replace("a - b", "b - a"));
+    repo.commit("Subtract the other way round");
+
+    let session = reviewed(&repo, Some("connected_code_limit_kb = 2\n"));
+
+    assert_eq!(
+        connected_code(&session),
+        [
+            "Connected code: 2 ranges · 2 KB of 2 KB limit",
+            "shop/use.py  lines 4–6  1 KB  included  calls `sub`",
+            "a/use.py     lines 4–6  1 KB  included  calls `sub`",
+            "1 more not sent: over the connected code limit",
+        ]
     );
 }
