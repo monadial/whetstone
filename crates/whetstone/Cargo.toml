@@ -14,6 +14,13 @@ workspace = true
 [dependencies]
 anyhow = "1"
 clap = { version = "4.6", features = ["derive"] }
+# Only turns on `event-stream` in the crossterm that ratatui re-exports, so
+# the UI loop can read terminal input as an async stream. The code uses it
+# through `ratatui::crossterm`, so the version must stay ratatui's.
+crossterm = { version = "0.29", default-features = false, features = ["event-stream"] }
+# `StreamExt::next` reads crossterm's `EventStream`. Already in the tree
+# through tokio-util.
+futures-util = { version = "0.3", default-features = false }
 # Reads the learner's repository: discovery, objects, refs, history and
 # diffs, in pure Rust and built without network or transport features.
 # `sha1` is the only hash it needs, and gix will not build without one.
@@ -60,3 +67,8 @@ tempfile = "3"
 
 [target."cfg(unix)".dev-dependencies]
 rexpect = "0.7"
+
+# crossterm is a dependency only to turn on a feature; the code reaches it
+# through ratatui's re-export.
+[package.metadata.cargo-shear]
+ignored = ["crossterm"]
