@@ -6,7 +6,7 @@ use std::fmt;
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use whetstone_core::{Change, CommitId, Comparison, ShowcaseProject};
+use whetstone_core::{Change, CommitId, Comparison, FileIndex, ShowcaseProject};
 
 use crate::config::Settings;
 use crate::home::Home;
@@ -89,7 +89,7 @@ pub(crate) enum Route {
     Viewer(ChangeRef),
     /// The outbound review of a commit from the learner's repository, which
     /// the picker opens.
-    Review(CommitId),
+    OutboundReview(CommitId),
     /// Something the outbound review lets the learner read whole.
     Read(Reading),
 }
@@ -100,7 +100,7 @@ pub(crate) enum Reading {
     /// The change: its full commit ID, and its message as it is sent.
     Change,
     /// What the touched file at this index sends.
-    File(usize),
+    File(FileIndex),
     /// The area prompt of the selected area at this index.
     Area(usize),
 }
@@ -174,7 +174,7 @@ impl Route {
                     Err(error) => Box::new(Unreadable::new(id, &error)),
                 }
             }
-            Self::Review(_) | Self::Read(_) => return None,
+            Self::OutboundReview(_) | Self::Read(_) => return None,
         })
     }
 }

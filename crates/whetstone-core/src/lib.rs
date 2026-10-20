@@ -19,8 +19,8 @@ pub use crate::change::{
     Change, CommitId, Comparison, FileContent, InvalidCommitId, Origin, TouchedFile,
 };
 pub use crate::evidence::{
-    Evidence, Exclusion, FileStatus, Finding, FindingStatus, Place, ReviewChoices, ReviewedFile,
-    SentFile, Side, Unsendable,
+    Evidence, EvidenceFile, Exclusion, FileIndex, FileStatus, Finding, FindingStatus, Place,
+    ReviewChoices, SentFile, Side, Unsendable,
 };
 pub use crate::exclusion::{
     DefaultExclusion, DefaultExclusionKind, ExcludePattern, ExcludePatternError,

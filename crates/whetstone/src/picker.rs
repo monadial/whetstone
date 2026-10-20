@@ -17,9 +17,9 @@ use crate::columns;
 use crate::entry::TextEntry;
 use crate::focus::Position;
 use crate::keymap::{self, Binding, Command, Input, Keymap, Press};
+use crate::outbound_review::OutboundReview;
 use crate::palette::Action;
 use crate::repository::{Availability, Commit, History, HistoryEnd, HistoryError, Repository};
-use crate::review::Review;
 use crate::search::{self, Query};
 use crate::theme::{ControlKind, ControlState, Theme};
 use crate::view::{ChangeIndex, ChangeRef, Context, Project, Route, View, comparison_label};
@@ -137,7 +137,7 @@ pub(crate) struct Picker {
     /// The learner's choices on the outbound review of the chosen commit,
     /// kept while it stays chosen, and shared with the review while it is
     /// open.
-    review: Option<(CommitId, Rc<RefCell<ReviewChoices>>)>,
+    review_choices: Option<(CommitId, Rc<RefCell<ReviewChoices>>)>,
 }
 
 impl Picker {
@@ -152,7 +152,7 @@ impl Picker {
             focus: Position::default(),
             search_box: None,
             query: None,
-            review: None,
+            review_choices: None,
         }
     }
 
@@ -175,7 +175,7 @@ impl Picker {
             focus: Position::default(),
             search_box: None,
             query: None,
-            review: None,
+            review_choices: None,
         }
     }
 
@@ -474,15 +474,23 @@ impl Picker {
     /// kept for it, once a commit and an area are chosen. "Generate
     /// questions" on the showcase project is disabled until Jev arrives, as
     /// it says.
-    fn review_chosen(&mut self) -> Option<Command> {
+    fn open_outbound_review(&mut self) -> Option<Command> {
         if self.proceed().1.is_some() {
             return None;
         }
         let id = self.commits().get(self.chosen?)?.id();
-        if self.review.as_ref().is_none_or(|(kept, _)| *kept != id) {
-            self.review = Some((id, Rc::default()));
+        if self.kept_choices(id).is_none() {
+            self.review_choices = Some((id, Rc::default()));
         }
-        Some(Command::Go(Route::Review(id)))
+        Some(Command::Go(Route::OutboundReview(id)))
+    }
+
+    /// The review choices kept for the commit `id`, if any are.
+    fn kept_choices(&self, id: CommitId) -> Option<&Rc<RefCell<ReviewChoices>>> {
+        self.review_choices
+            .as_ref()
+            .filter(|(kept, _)| *kept == id)
+            .map(|(_, choices)| choices)
     }
 
     /// The control after the lists, and why it is disabled, if it is.
@@ -744,14 +752,11 @@ impl View for Picker {
     }
 
     fn open(&self, route: Route, context: &Context<'_>) -> Option<Box<dyn View>> {
-        let Route::Review(id) = route else {
+        let Route::OutboundReview(id) = route else {
             return None;
         };
         let repository = context.repository.ok()?;
-        let (kept, choices) = self.review.as_ref()?;
-        if *kept != id {
-            return None;
-        }
+        let choices = self.kept_choices(id)?;
         let change = match repository.load(id) {
             Ok(change) => change,
             Err(error) => return Some(Box::new(Unreadable::new(id, &error))),
@@ -763,7 +768,7 @@ impl View for Picker {
             .filter(|(_, choice)| **choice == AreaChoice::Valid { selected: true })
             .filter_map(|(area, _)| area.as_ref().ok().cloned())
             .collect();
-        Some(Box::new(Review::new(
+        Some(Box::new(OutboundReview::new(
             id,
             context.settings,
             change,
@@ -816,14 +821,14 @@ impl View for Picker {
                 // Review choices are for one change, and never carry to
                 // another.
                 if let ChangeRef::Commit(id) = change
-                    && self.review.as_ref().is_some_and(|(kept, _)| *kept != id)
+                    && self.kept_choices(id).is_none()
                 {
-                    self.review = None;
+                    self.review_choices = None;
                 }
                 self.chosen = Some(index);
                 (command == Command::Open).then_some(Command::Go(Route::Viewer(change)))
             }
-            Control::Proceed => self.review_chosen(),
+            Control::Proceed => self.open_outbound_review(),
         }
     }
 

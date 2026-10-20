@@ -7,7 +7,8 @@
 //! made, without a Git library with write features in the build. Each `git`
 //! runs with a cleared environment, no system or global config, and fixed
 //! authors, committers and dates, so commit IDs are the same on every
-//! machine and snapshots can show them.
+//! machine and snapshots can show them, and with no automatic gc, so
+//! nothing changes on disk behind a test's back.
 
 use std::cell::Cell;
 use std::collections::BTreeMap;
@@ -219,6 +220,13 @@ impl TestRepo {
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("GIT_TERMINAL_PROMPT", "0")
+            // No automatic gc or maintenance, which Git detaches after a
+            // commit: it would repack while a test watches the disk.
+            .env("GIT_CONFIG_COUNT", "2")
+            .env("GIT_CONFIG_KEY_0", "gc.auto")
+            .env("GIT_CONFIG_VALUE_0", "0")
+            .env("GIT_CONFIG_KEY_1", "maintenance.auto")
+            .env("GIT_CONFIG_VALUE_1", "false")
             .env("GIT_AUTHOR_NAME", AUTHOR.0)
             .env("GIT_AUTHOR_EMAIL", AUTHOR.1)
             .env("GIT_COMMITTER_NAME", AUTHOR.0)

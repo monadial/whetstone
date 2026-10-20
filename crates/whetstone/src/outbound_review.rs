@@ -18,8 +18,8 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::Paragraph;
 use whetstone_core::{
-    Area, Change, CommitId, Comparison, Evidence, ExcludePatterns, FileStatus, Finding,
-    FindingStatus, Origin, Place, ReviewChoices, ReviewedFile, Unsendable,
+    Area, Change, CommitId, Comparison, Evidence, EvidenceFile, ExcludePatterns, FileIndex,
+    Finding, FindingStatus, Origin, Place, ReviewChoices, Side, Unsendable,
 };
 
 use crate::columns;
@@ -80,6 +80,8 @@ const ARRIVES_WITH_JEV: &str = "arrives with Jev";
 const INDENT: &str = "  ";
 /// The cells between columns, at least.
 const COLUMN_GAP: usize = 2;
+/// What the size column shows for a file with no content.
+const NO_SIZE: &str = "–";
 /// Bytes in a kilobyte, as the limit counts them.
 const KB: usize = 1000;
 
@@ -89,7 +91,7 @@ enum Control {
     /// The change, which Enter reads whole.
     Change,
     /// The touched file at this index.
-    File(usize),
+    File(FileIndex),
     /// The selected area at this index.
     Area(usize),
     /// Leaves out the file of the finding at this index.
@@ -103,7 +105,7 @@ enum Control {
 /// The outbound review's state: the change and what it is built with, the
 /// evidence they make, and where the learner is.
 #[derive(Debug)]
-pub(crate) struct Review {
+pub(crate) struct OutboundReview {
     id: CommitId,
     /// Where it is sent, from the learner's settings.
     destination: String,
@@ -159,7 +161,7 @@ impl<'a> Document<'a> {
     }
 }
 
-impl Review {
+impl OutboundReview {
     /// The review of the commit `id`, whose change is `change`, sent where
     /// `settings` say, with the selected `areas`, leaving out what `exclude`
     /// leaves out, as the learner's `choices` adjust it.
@@ -203,7 +205,12 @@ impl Review {
     /// The controls, in focus order.
     fn controls(&self) -> Vec<Control> {
         let mut controls = vec![Control::Change];
-        controls.extend((0..self.evidence.files().len()).map(Control::File));
+        controls.extend(
+            self.evidence
+                .files()
+                .iter()
+                .map(|file| Control::File(file.index())),
+        );
         controls.extend((0..self.evidence.areas().len()).map(Control::Area));
         for (index, finding) in self.evidence.findings().iter().enumerate() {
             if finding.place().file().is_some() {
@@ -444,8 +451,9 @@ impl Review {
                     Some(from) => format!("{}  ← {from}", file.path()),
                     None => file.path().to_owned(),
                 };
-                let size = file.size().map(kilobytes).unwrap_or_default();
-                (path, size, status(file.status()))
+                // A submodule or a symbolic link has no content to size.
+                let size = file.size().map_or_else(|| NO_SIZE.to_owned(), kilobytes);
+                (path, size, file.status().to_string())
             })
             .collect();
         let size_width = rows
@@ -465,8 +473,8 @@ impl Review {
             .max()
             .unwrap_or_default()
             .min(width.saturating_sub(marker + 2 * COLUMN_GAP + size_width + status_width));
-        for (index, (path, size, status)) in rows.into_iter().enumerate() {
-            let focused = self.focused() == Control::File(index);
+        for (index, (file, (path, size, status))) in files.iter().zip(rows).enumerate() {
+            let focused = self.focused() == Control::File(file.index());
             let mut row = theme.control(
                 columns::truncate(&path, path_width.max(1)),
                 ControlState {
@@ -485,25 +493,25 @@ impl Review {
     /// A finding as one sentence: where it is, the rule that matched and
     /// the masked excerpt.
     fn describe(&self, finding: &Finding) -> String {
-        let secret = finding.secret();
+        let matched = finding.matched();
+        let line = matched.line();
         let place = match finding.place() {
-            Place::CommitMessage => format!("the commit message, line {}", secret.line()),
-            Place::Content { file } => format!("{}, line {}", self.path(file), secret.line()),
-            Place::Diff { file } => format!("{}, diff line {}", self.path(file), secret.line()),
+            Place::CommitMessage => format!("the commit message, line {line}"),
+            Place::Content(file) => format!("{}, line {line}", self.path(file)),
+            Place::Diff(file) => format!("{}, diff line {line}", self.path(file)),
         };
         format!(
             "Possible secret in {place}: {}, {}",
-            secret.rule().name(),
-            secret.excerpt()
+            matched.rule().name(),
+            matched.excerpt()
         )
     }
 
     /// The path of the touched file at `index`.
-    fn path(&self, index: usize) -> &str {
+    fn path(&self, index: FileIndex) -> &str {
         self.evidence
-            .files()
-            .get(index)
-            .map(ReviewedFile::path)
+            .file(index)
+            .map(EvidenceFile::path)
             .unwrap_or_default()
     }
 
@@ -539,7 +547,7 @@ impl Review {
                 ],
             ),
             Reading::File(index) => {
-                let file = self.evidence.files().get(index)?;
+                let file = self.evidence.file(index)?;
                 let title = format!("What is sent for {}", file.path());
                 match file.sent() {
                     Some(sent) => Reader::new(
@@ -549,8 +557,8 @@ impl Review {
                             Section::numbered("Diff", sent.diff),
                             Section::numbered(
                                 match sent.side {
-                                    whetstone_core::Side::After => "Full content",
-                                    whetstone_core::Side::Before => {
+                                    Side::After => "Full content",
+                                    Side::Before => {
                                         "Full content before the change, which deletes it"
                                     }
                                 },
@@ -563,7 +571,7 @@ impl Review {
                         title,
                         vec![Section::plain(
                             "Nothing is sent",
-                            &format!("{} is {}.", file.path(), status(file.status())),
+                            &format!("{} is {}.", file.path(), file.status()),
                         )],
                     ),
                 }
@@ -580,16 +588,6 @@ impl Review {
                 )
             }
         })
-    }
-}
-
-/// A file's status as the review shows it.
-fn status(status: &FileStatus) -> String {
-    match status {
-        FileStatus::Included => "included".to_owned(),
-        FileStatus::IncludedByYou => "included by you".to_owned(),
-        FileStatus::LeftOutByYou => "left out by you".to_owned(),
-        FileStatus::LeftOut(reason) => format!("left out: {reason}"),
     }
 }
 
@@ -613,9 +611,9 @@ fn scrolled_top(top: usize, shown: Range<usize>, rows: usize, total: usize) -> u
     top
 }
 
-impl View for Review {
+impl View for OutboundReview {
     fn route(&self) -> Route {
-        Route::Review(self.id)
+        Route::OutboundReview(self.id)
     }
 
     fn name(&self) -> &'static str {
