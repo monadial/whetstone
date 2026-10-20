@@ -31,3 +31,4 @@ mod support;
 mod terminal_guard;
 mod theme;
 mod viewer;
+mod wide_characters;
