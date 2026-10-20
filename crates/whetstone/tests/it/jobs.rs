@@ -219,7 +219,7 @@ fn with_no_job_running_settling_and_ticking_change_nothing_on_screen() {
 fn started<T>(jobs: &mut Jobs<T>) -> Vec<JobId> {
     jobs.take_started()
         .into_iter()
-        .map(|job| job.run().id)
+        .map(|job| job.run().expect("a blocking job needs no runtime").id)
         .collect()
 }
 
@@ -228,11 +228,19 @@ fn jobs_started_one_at_a_time_take_turns_and_only_the_newest_waits() {
     let mut jobs = Jobs::new();
 
     let first = jobs.start_one_at_a_time(|_| Ok("first"));
-    let first_report = jobs.take_started().remove(0).run();
+    let first_report = jobs
+        .take_started()
+        .remove(0)
+        .run()
+        .expect("a blocking job needs no runtime");
     let replaced = jobs.start_one_at_a_time(|_| Ok("replaced"));
     assert!(started(&mut jobs).is_empty(), "waits for the first");
     let newest = jobs.start_one_at_a_time(|_| Ok("newest"));
-    let replaced_report = jobs.take_started().remove(0).run();
+    let replaced_report = jobs
+        .take_started()
+        .remove(0)
+        .run()
+        .expect("a blocking job needs no runtime");
 
     assert_eq!(replaced_report.id, replaced);
     assert_eq!(replaced_report.outcome, JobOutcome::Cancelled);
@@ -274,7 +282,9 @@ fn a_job_that_ran_one_at_a_time_passes_its_turn_on_however_it_ended() {
         }
         let next = jobs.start_one_at_a_time(|_| Ok(2));
 
-        let accepted = jobs.accept(job.run()).is_some();
+        let accepted = jobs
+            .accept(job.run().expect("a blocking job needs no runtime"))
+            .is_some();
 
         assert_eq!(
             accepted,
@@ -301,7 +311,11 @@ fn a_forgotten_job_runs_to_its_end_uncancelled_and_its_result_is_ignored() {
 
     assert!(jobs.forget(id), "the app waited for it");
     assert!(!jobs.forget(id), "and no longer does");
-    let finished = jobs.take_started().remove(0).run();
+    let finished = jobs
+        .take_started()
+        .remove(0)
+        .run()
+        .expect("a blocking job needs no runtime");
 
     assert_eq!(finished.outcome, JobOutcome::Done(false), "never cancelled");
     assert!(jobs.accept(finished).is_none());

@@ -256,7 +256,8 @@ impl Session {
     fn send(&mut self, message: Message) -> Flow {
         let flow = self.app.handle(message);
         for job in self.app.take_jobs() {
-            self.finished.push(job.run());
+            self.finished
+                .push(job.run().expect("the test machine can start a runtime"));
         }
         for limit in self.app.take_time_limits() {
             self.time_limits

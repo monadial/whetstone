@@ -17,6 +17,7 @@
 
 use std::fmt;
 use std::future::Future;
+use std::io;
 use std::mem;
 use std::pin::Pin;
 use std::time::Duration;
@@ -150,20 +151,21 @@ impl<T> Job<T> {
     /// called on a runtime. A job cancelled before it runs never runs its
     /// body. One cancelled by the time its body ends reports cancellation,
     /// whatever the body returned.
-    #[must_use]
-    pub fn run(self) -> Finished<T> {
+    ///
+    /// Fails only when an async job's runtime can't be started, as the UI
+    /// loop's can't when the system has no I/O resources left.
+    pub fn run(self) -> io::Result<Finished<T>> {
         let outcome = match self.work {
             Work::Blocking(body) => run_blocking(&self.token, body),
             Work::Async(body) => tokio::runtime::Builder::new_current_thread()
                 .enable_all()
-                .build()
-                .expect("the harness's machine can start a runtime's I/O and timers")
+                .build()?
                 .block_on(run_async(&self.token, body)),
         };
-        Finished {
+        Ok(Finished {
             id: self.id,
             outcome,
-        }
+        })
     }
 }
 
