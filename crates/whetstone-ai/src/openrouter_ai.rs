@@ -110,6 +110,9 @@ impl Ai for OpenRouterAi {
 /// `requested` with what the reply reports: the model that answered, and its
 /// usage and cost. A cost that isn't one (negative, say) counts as not
 /// reported, since a cost is never estimated.
+///
+/// It is logged with the models, the token counts and the cost, and nothing
+/// that was sent or written (rules 43 and 44).
 fn provenance(requested: Provenance, reported_model: Option<String>, usage: Usage) -> Provenance {
     let provenance = requested.with_usage(whetstone_core::Usage {
         input_tokens: usage.input_tokens,
@@ -119,14 +122,26 @@ fn provenance(requested: Provenance, reported_model: Option<String>, usage: Usag
         Some(model) => provenance.with_reported_model(ModelId::new(model)),
         None => provenance,
     };
-    match usage.cost.and_then(|usd| Cost::new(usd).ok()) {
+    let provenance = match usage.cost.and_then(|usd| Cost::new(usd).ok()) {
         Some(cost) => provenance.with_cost(cost),
         None => provenance,
-    }
+    };
+    tracing::info!(
+        role = ?provenance.role(),
+        model = %provenance.requested_model(),
+        answered = provenance.reported_model().map(ModelId::as_str),
+        input_tokens = provenance.usage().input_tokens,
+        output_tokens = provenance.usage().output_tokens,
+        cost_usd = provenance.cost().map(Cost::usd),
+        "OpenRouter replied"
+    );
+    provenance
 }
 
 #[cfg(test)]
 mod tests {
+    use std::io;
+    use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
     use serde_json::Value;
@@ -316,6 +331,78 @@ mod tests {
             (AiError::Cancelled, RequestFailure::Cancelled),
         ] {
             assert_eq!(RequestFailure::from(error.clone()), failure, "{error:?}");
+        }
+    }
+
+    /// Log lines, as the app's log file gets them.
+    #[derive(Clone, Default)]
+    struct Log(Arc<Mutex<Vec<u8>>>);
+
+    impl io::Write for Log {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.0
+                .lock()
+                .expect("the log lock")
+                .extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl Log {
+        fn text(&self) -> String {
+            String::from_utf8_lossy(&self.0.lock().expect("the log lock")).into_owned()
+        }
+    }
+
+    #[tokio::test]
+    async fn a_request_logs_its_models_and_cost_and_nothing_it_sends_or_gets_back() {
+        let log = Log::default();
+        let writer = log.clone();
+        // Every target, Rig's included, at the level the app logs at, in
+        // plain text as the app writes it.
+        let _logging = tracing::subscriber::set_default(
+            tracing_subscriber::fmt()
+                .with_writer(move || writer.clone())
+                .with_max_level(tracing::Level::INFO)
+                .with_ansi(false)
+                .finish(),
+        );
+
+        let (_generator, generator) = ai("/chat/completions", 200, CANDIDATES).await;
+        generator
+            .write_candidates(&evidence(), &area(), two())
+            .await
+            .expect("the recorded reply decodes");
+        let (_jev, jev) = ai("/systemone", 200, QUESTION_CHECK).await;
+        jev.check_question(&evidence(), &candidate())
+            .await
+            .expect("the recorded reply decodes");
+
+        let log = log.text();
+        assert!(log.contains("OpenRouter replied"), "{log}");
+        assert!(
+            log.contains("cost_usd=0.022528"),
+            "the generator's cost: {log}"
+        );
+        assert!(log.contains("cost_usd=8.0094e-5"), "Jev's cost: {log}");
+        for never in [
+            // The key.
+            crate::replay::TEST_KEY,
+            // A base prompt, the area prompt, and the evidence.
+            "You write candidate questions for Whetstone",
+            "Given the evidence",
+            "Focus on the rules the change encodes",
+            "Reuse the charge's key when retrying after a timeout",
+            "let key = original.key.clone();",
+            // A candidate sent to Jev, and one the generator wrote.
+            "Why does the retry in `charge_with_retry`",
+            "Before this change, the retry after a `Timeout`",
+        ] {
+            assert!(!log.contains(never), "{never:?} reached the log:\n{log}");
         }
     }
 }

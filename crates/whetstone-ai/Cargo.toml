@@ -63,6 +63,10 @@ whetstone-core = { path = "../whetstone-core" }
 insta = "1.49"
 # Time-dependent async tests use a paused clock (CODING_STANDARDS.md rule 49).
 tokio = { version = "1.53", features = ["macros", "rt", "test-util"] }
+# A test captures what a request logs, Rig's events included, at the level
+# the app logs at, to show no evidence, prompt, question or key reaches it
+# (rules 43 and 44). The binary already depends on it with these features.
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std"] }
 # The contract tests run the real calls against a local HTTP server that
 # replays recorded OpenRouter replies, one server per test (rule 48). It is
 # MIT or Apache-2.0, as `deny.toml` allows, runs on Tokio like the code under
