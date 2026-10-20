@@ -72,22 +72,36 @@ impl TryFrom<i64> for QuestionCount {
 /// order to show them, from the areas in `areas`, in the order the learner
 /// chose them.
 ///
-/// Each area's questions go in the order the generator wrote them. Picking
-/// takes them in turn across the areas, one from each area that has any
-/// left, in area order, round after round, until `count` are picked. The
-/// questions may arrive in any order. Questions about an area not in
-/// `areas` come after the others' in each round, by area ID.
+/// Each area's questions go deepest first, by their depth's expected value;
+/// equally deep ones go in the order the generator wrote them. Picking takes
+/// them in turn across the areas, round after round, one from each area that
+/// has any left, until `count` are picked. Each round takes from the areas in
+/// the order of their deepest remaining question; areas whose deepest are
+/// equally deep go in area order. Depth only orders questions: it never
+/// leaves one out while fewer than `count` are picked.
+///
+/// The questions may arrive in any order. Questions about an area not in
+/// `areas` rank after the others when depths tie, by area ID.
 #[must_use]
 pub fn pick(questions: Vec<Question>, areas: &[AreaId], count: QuestionCount) -> Picked {
     let wanted = usize::from(count.get());
     let mut by_area = by_area(questions, areas);
     let mut picked = Vec::with_capacity(wanted);
     while picked.len() < wanted && by_area.iter().any(|of_area| !of_area.is_empty()) {
-        for of_area in &mut by_area {
+        let deepest = |of_area: &VecDeque<Question>| {
+            of_area
+                .front()
+                .map_or(f64::NEG_INFINITY, |question| question.depth().expected())
+        };
+        // A stable sort of areas in area order leaves equally deep ones in
+        // area order.
+        let mut round: Vec<usize> = (0..by_area.len()).collect();
+        round.sort_by(|&a, &b| deepest(&by_area[b]).total_cmp(&deepest(&by_area[a])));
+        for area in round {
             if picked.len() == wanted {
                 break;
             }
-            picked.extend(of_area.pop_front());
+            picked.extend(by_area[area].pop_front());
         }
     }
     match picked.len() {
@@ -100,8 +114,9 @@ pub fn pick(questions: Vec<Question>, areas: &[AreaId], count: QuestionCount) ->
     }
 }
 
-/// `questions` grouped by area, in area order, each area's in the order
-/// written: `areas` first, in their order, then any other by area ID.
+/// `questions` grouped by area, in area order, each area's deepest first,
+/// then in the order written: `areas` first, in their order, then any other
+/// by area ID.
 fn by_area(mut questions: Vec<Question>, areas: &[AreaId]) -> Vec<VecDeque<Question>> {
     let rank = |question: &Question| {
         let area = question.area();
@@ -109,9 +124,14 @@ fn by_area(mut questions: Vec<Question>, areas: &[AreaId]) -> Vec<VecDeque<Quest
             .iter()
             .position(|id| id == area)
             .unwrap_or(areas.len());
-        (place, area.clone(), question.id().written())
+        (place, area.clone())
     };
-    questions.sort_by_cached_key(rank);
+    questions.sort_by(|a, b| {
+        rank(a)
+            .cmp(&rank(b))
+            .then(b.depth().expected().total_cmp(&a.depth().expected()))
+            .then(a.id().written().cmp(&b.id().written()))
+    });
     let mut by_area: Vec<VecDeque<Question>> = Vec::new();
     for question in questions {
         match by_area.last_mut() {
@@ -146,17 +166,18 @@ mod tests {
     use crate::assessment_policy::AssessmentPolicy;
     use crate::question::OptionLetter;
     use crate::question::tests::area;
-    use crate::question_check::tests::{candidate, passing};
+    use crate::question_check::tests::{candidate, depth, passing};
     use crate::question_check::{QuestionCheckAnswers, show_rule};
 
     fn count(count: i64) -> QuestionCount {
         QuestionCount::try_from(count).expect("from 3 to 5")
     }
 
-    /// A question about `area_id`, written in place `written_at`.
-    fn question(area_id: &str, written_at: usize) -> Question {
+    /// A question about `area_id`, written in place `written_at`, whose
+    /// depth's expected value is `deep`.
+    fn question(area_id: &str, written_at: usize, deep: f64) -> Question {
         let candidate = candidate(area_id, written_at, OptionLetter::A);
-        let answers = QuestionCheckAnswers::new(passing(&candidate));
+        let answers = QuestionCheckAnswers::new(passing(&candidate), depth(deep));
         show_rule(candidate, answers, AssessmentPolicy::current()).expect("shown")
     }
 
@@ -197,13 +218,13 @@ mod tests {
     }
 
     #[test]
-    fn picking_takes_the_first_questions_in_the_order_written() {
+    fn an_areas_deepest_questions_come_first() {
         let picked = pick(
             vec![
-                question("domain", 3),
-                question("domain", 0),
-                question("domain", 1),
-                question("domain", 2),
+                question("domain", 0, 0.4),
+                question("domain", 1, 1.9),
+                question("domain", 2, 1.0),
+                question("domain", 3, 0.1),
             ],
             &areas(&["domain"]),
             count(3),
@@ -212,44 +233,101 @@ mod tests {
         assert!(matches!(picked, Picked::All(_)));
         assert_eq!(
             order(&picked),
-            expected(&[("domain", 0), ("domain", 1), ("domain", 2)])
+            expected(&[("domain", 1), ("domain", 2), ("domain", 0)])
         );
     }
 
     #[test]
-    fn picking_takes_questions_in_turn_across_areas_in_area_order() {
+    fn equally_deep_questions_go_in_the_order_written() {
         let picked = pick(
             vec![
-                question("domain", 0),
-                question("domain", 1),
-                question("domain", 2),
-                question("observability", 0),
-                question("scalability", 1),
-                question("scalability", 0),
+                question("domain", 2, 1.0),
+                question("domain", 0, 1.0),
+                question("domain", 1, 1.5),
             ],
-            &areas(&["scalability", "domain", "observability"]),
+            &areas(&["domain"]),
+            count(3),
+        );
+
+        assert_eq!(
+            order(&picked),
+            expected(&[("domain", 1), ("domain", 0), ("domain", 2)])
+        );
+    }
+
+    #[test]
+    fn questions_are_taken_in_turn_across_areas_by_their_deepest_remaining() {
+        let picked = pick(
+            vec![
+                question("domain", 0, 1.0),
+                question("domain", 1, 0.9),
+                question("domain", 2, 0.8),
+                question("scalability", 0, 1.5),
+                question("scalability", 1, 0.1),
+                question("observability", 0, 0.5),
+            ],
+            &areas(&["domain", "scalability", "observability"]),
             count(5),
         );
 
         assert_eq!(
             order(&picked),
             expected(&[
+                // Round 1: 1.5, 1.0, 0.5.
                 ("scalability", 0),
                 ("domain", 0),
                 ("observability", 0),
-                ("scalability", 1),
+                // Round 2: domain's 0.9 now leads scalability's 0.1.
                 ("domain", 1),
+                ("scalability", 1),
             ])
         );
     }
 
     #[test]
-    fn an_area_not_chosen_comes_after_the_chosen_ones() {
+    fn one_area_never_takes_every_slot() {
         let picked = pick(
             vec![
-                question("security", 0),
-                question("domain", 0),
-                question("cost", 0),
+                question("domain", 0, 2.0),
+                question("domain", 1, 2.0),
+                question("domain", 2, 2.0),
+                question("scalability", 0, 0.0),
+            ],
+            &areas(&["domain", "scalability"]),
+            count(3),
+        );
+
+        assert_eq!(
+            order(&picked),
+            expected(&[("domain", 0), ("scalability", 0), ("domain", 1)])
+        );
+    }
+
+    #[test]
+    fn areas_whose_deepest_are_equally_deep_go_in_area_order() {
+        let picked = pick(
+            vec![
+                question("domain", 0, 1.2),
+                question("observability", 0, 1.2),
+                question("scalability", 0, 1.2),
+            ],
+            &areas(&["scalability", "domain", "observability"]),
+            count(3),
+        );
+
+        assert_eq!(
+            order(&picked),
+            expected(&[("scalability", 0), ("domain", 0), ("observability", 0)])
+        );
+    }
+
+    #[test]
+    fn an_area_not_chosen_ranks_after_the_chosen_ones_when_depths_tie() {
+        let picked = pick(
+            vec![
+                question("security", 0, 1.0),
+                question("domain", 0, 1.0),
+                question("cost", 0, 1.0),
             ],
             &areas(&["domain"]),
             count(3),
@@ -262,10 +340,10 @@ mod tests {
     }
 
     #[test]
-    fn fewer_passing_than_asked_for_is_a_shortfall() {
+    fn fewer_passing_than_asked_for_is_a_shortfall_of_every_one() {
         let picked = pick(
-            vec![question("domain", 0), question("domain", 1)],
-            &areas(&["domain"]),
+            vec![question("domain", 0, 0.0), question("scalability", 0, 2.0)],
+            &areas(&["domain", "scalability"]),
             count(4),
         );
 
@@ -278,6 +356,10 @@ mod tests {
         };
         assert_eq!(questions.len(), 2);
         assert_eq!(*asked_for, count(4));
+        assert_eq!(
+            order(&picked),
+            expected(&[("scalability", 0), ("domain", 0)])
+        );
     }
 
     #[test]
