@@ -1,7 +1,7 @@
-//! Overlays drawn over the current screen: key help and the palette of
-//! actions. The open overlay owns the keys, and the screen under it keeps its
-//! state, so closing the overlay returns focus to the control that opened
-//! it.
+//! Overlays drawn over the current screen: key help, the palette of
+//! actions, and asking before a draft would be lost. The open overlay owns
+//! the keys, and the screen under it keeps its state, so closing the overlay
+//! returns focus to the control that opened it.
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Margin, Rect, Size};
@@ -10,6 +10,7 @@ use ratatui::widgets::{Block, Clear};
 
 use crate::help::KeyHelp;
 use crate::keymap::{self, Command, Keymap};
+use crate::leave::Leave;
 use crate::palette::Palette;
 use crate::theme::Theme;
 
@@ -18,6 +19,7 @@ use crate::theme::Theme;
 pub(crate) enum Overlay {
     KeyHelp(KeyHelp),
     Palette(Palette),
+    Leave(Leave),
 }
 
 /// What an overlay asks of the app after a command.
@@ -29,6 +31,9 @@ pub(crate) enum Outcome {
     Close,
     /// Close, then run a command on the screen under it.
     Run(Command),
+    /// Close, then run a command that loses a draft, as the learner chose
+    /// to.
+    Leave(Command),
 }
 
 impl Overlay {
@@ -38,6 +43,7 @@ impl Overlay {
         match self {
             Self::KeyHelp(_) => KeyHelp::KEYMAP,
             Self::Palette(_) => Palette::KEYMAP,
+            Self::Leave(_) => Leave::KEYMAP,
         }
     }
 
@@ -46,6 +52,7 @@ impl Overlay {
         match self {
             Self::KeyHelp(help) => help.apply(command, viewport),
             Self::Palette(palette) => palette.apply(command),
+            Self::Leave(leave) => leave.apply(command),
         }
     }
 
@@ -53,6 +60,7 @@ impl Overlay {
         match self {
             Self::KeyHelp(help) => help.render(theme, frame),
             Self::Palette(palette) => palette.render(theme, frame),
+            Self::Leave(leave) => leave.render(theme, frame),
         }
     }
 }

@@ -20,6 +20,7 @@ use crate::keymap::{Command, Input, Keymap};
 use crate::palette::Action;
 use crate::picker::Picker;
 use crate::repository::{Repository, Unavailable};
+use crate::session_record::SessionStore;
 use crate::settings::SettingsScreen;
 use crate::theme::Theme;
 use crate::viewer::{Unreadable, Viewer};
@@ -50,9 +51,10 @@ pub(crate) trait View: fmt::Debug {
 
     /// The screen `route` names, built from this screen's state, if this
     /// screen builds it: the picker builds the outbound review and Practice
-    /// from its choices, and the review builds Practice from the evidence
-    /// it shows and what it lets the learner read. Every other route opens
-    /// from the route alone.
+    /// from its choices, the review builds Practice from the evidence it
+    /// shows and what it lets the learner read, and Practice's questions
+    /// build what they let the learner read. Every other route opens from
+    /// the route alone.
     fn open(&self, _route: Route, _context: &Context<'_>) -> Option<Box<dyn View>> {
         None
     }
@@ -65,12 +67,26 @@ pub(crate) trait View: fmt::Debug {
     /// are written, or a Retry. A job is started only once.
     fn start_jobs(&mut self, _jobs: &mut Jobs<JobOutput>) {}
 
+    /// Saves to `store` what the screen's state now holds for the session
+    /// record, such as a record to start once questions pass their checks,
+    /// or a response the learner submitted. The app calls it each time the
+    /// screen has applied a command, a job's result or the end of a time
+    /// limit, before it starts the screen's jobs, so a response is saved
+    /// before anything else is done with it. Each is saved only once.
+    fn keep_record(&mut self, _store: &mut dyn SessionStore) {}
+
     /// Closes the screen, as the learner leaves it for the screen before it
     /// or for home, with `jobs` to stop the jobs it waits for. By default
     /// they run on and their results are never applied, as the outbound
     /// review lets an analysis run on to be cached for the commit's next
     /// review. A screen whose requests the learner pays for cancels them.
     fn close(&mut self, _jobs: &mut Jobs<JobOutput>) {}
+
+    /// Whether leaving the screen would lose a draft the learner wrote,
+    /// such as an unsubmitted response, so the app asks first.
+    fn holds_draft(&self) -> bool {
+        false
+    }
 
     /// Whether the screen waits for the result of the job `job`.
     fn waits_for(&self, _job: JobId) -> bool {
@@ -156,7 +172,8 @@ pub(crate) enum Route {
     Practice(ChangeRef),
 }
 
-/// What the outbound review lets the learner read whole.
+/// What the outbound review, or Practice's questions, let the learner read
+/// whole.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Reading {
     /// The change: its full commit ID, and its message as it is sent.
@@ -167,6 +184,9 @@ pub(crate) enum Reading {
     Area(usize),
     /// What the connection at this index in the evidence sends.
     Connection(usize),
+    /// Everything Practice sent as the evidence its questions rest on,
+    /// which the questions screen and feedback let the learner inspect.
+    Evidence,
 }
 
 /// A change the viewer can show.

@@ -3,7 +3,6 @@
 //!
 //! It edits by grapheme, the character as the learner sees it, so a cursor
 //! never lands inside one and erasing takes a whole one (rule 31).
-#![cfg_attr(not(test), expect(dead_code, reason = "wired in by #90"))]
 
 use std::fmt;
 use std::ops::Range;
