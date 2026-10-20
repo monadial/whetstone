@@ -1,0 +1,40 @@
+---
+source: crates/whetstone/tests/it/questions_screen.rs
+expression: session.frame()
+---
+Buffer {
+    area: Rect { x: 0, y: 0, width: 80, height: 24 },
+    content: [
+        "                                                                                ",
+        "  3 passed checks, 4 asked for                                                  ",
+        "  Question 2 of 3 · Domain                                                      ",
+        "                                                                                ",
+        "  Domain question 2?                                                            ",
+        "                                                                                ",
+        "  A  Option A of the question                                                   ",
+        "  B  Option B of the question                                                   ",
+        "  C  Option C of the question                                                   ",
+        "                                                                                ",
+        "  > Next question                                                               ",
+        "    Previous question                                                           ",
+        "    Back                                                                        ",
+        "                                                                                ",
+        "                                                                                ",
+        "                                                                                ",
+        "                                                                                ",
+        "                                                                                ",
+        "                                                                                ",
+        "                                                                                ",
+        "                                                                                ",
+        "                                                                                ",
+        "  ? keys  : actions  h/l question  q back                                       ",
+        "                                                                                ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 17, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 10, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 17, y: 10, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+    ]
+}

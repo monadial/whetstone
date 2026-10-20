@@ -175,9 +175,15 @@ impl Questions {
                 lines.push(Line::raw(format!("{lead}{text}")));
             }
         }
+        // The controls follow the question, and keep their rows on a short
+        // screen.
         let rows = u16::try_from(Control::ALL.len()).unwrap_or(u16::MAX);
-        let [body, controls] =
-            Layout::vertical([Constraint::Fill(1), Constraint::Length(rows)]).areas(area);
+        let [body, _, controls] = Layout::vertical([
+            Constraint::Max(u16::try_from(lines.len()).unwrap_or(u16::MAX)),
+            Constraint::Length(1),
+            Constraint::Length(rows),
+        ])
+        .areas(area);
         frame.render_widget(Paragraph::new(lines), body);
         frame.render_widget(
             List::new(Control::ALL.map(|control| {

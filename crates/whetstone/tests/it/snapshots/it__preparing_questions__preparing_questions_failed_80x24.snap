@@ -1,0 +1,42 @@
+---
+source: crates/whetstone/tests/it/preparing_questions.rs
+expression: "writing_rate_limited(80, 24).frame()"
+---
+Buffer {
+    area: Rect { x: 0, y: 0, width: 80, height: 24 },
+    content: [
+        "                                                                                ",
+        "  ✓ Reading the change → ✓ Finding connected code → ✓ Preparing evidence →      ",
+        "  – Checking areas · Jev → ✗ Writing questions · generator →                    ",
+        "  · Checking questions · Jev                                                    ",
+        "                                                                                ",
+        "  Preparing questions                                                           ",
+        "  Model the payment lifecycle · Domain                                          ",
+        "                                                                                ",
+        "  Writing questions failed: rate limited.                                       ",
+        "  Retry asks again only what failed. Nothing is retried until you choose to.    ",
+        "                                                                                ",
+        "  > Retry                                                                       ",
+        "    Back                                                                        ",
+        "                                                                                ",
+        "                                                                                ",
+        "                                                                                ",
+        "                                                                                ",
+        "                                                                                ",
+        "                                                                                ",
+        "                                                                                ",
+        "                                                                                ",
+        "                                                                                ",
+        "  ? keys  : actions  q cancel                                                   ",
+        "                                                                                ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 3, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 28, y: 3, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 5, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 21, y: 5, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 11, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 9, y: 11, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+    ]
+}
