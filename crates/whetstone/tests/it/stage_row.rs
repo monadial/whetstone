@@ -55,7 +55,7 @@ fn the_outbound_review_opens_with_the_change_read_and_connected_code_being_found
         stage_row(&session),
         [
             "✓ Reading the change → ⠋ Finding connected code → · Preparing evidence → · Outbound review →",
-            "· Checking areas · Jev → · Writing questions · generator → · Reviewing questions · Jev",
+            "· Checking areas · Jev → · Writing questions · generator → · Checking questions · Jev",
         ]
     );
 }
@@ -76,7 +76,7 @@ fn once_connected_code_arrives_the_evidence_is_prepared_and_the_outbound_review_
         stage_row(&session),
         [
             "✓ Reading the change → ✓ Finding connected code → ✓ Preparing evidence → ⠋ Outbound review →",
-            "· Checking areas · Jev → · Writing questions · generator → · Reviewing questions · Jev",
+            "· Checking areas · Jev → · Writing questions · generator → · Checking questions · Jev",
         ]
     );
 }
@@ -116,7 +116,7 @@ fn at_80x24_the_row_wraps_between_stages_never_inside_one() {
         [
             "✓ Reading the change → ✓ Finding connected code → ✓ Preparing evidence →",
             "⠋ Outbound review → · Checking areas · Jev →",
-            "· Writing questions · generator → · Reviewing questions · Jev",
+            "· Writing questions · generator → · Checking questions · Jev",
         ]
     );
 }
@@ -140,7 +140,7 @@ fn connected_code_from_the_cache_still_finishes_finding_it() {
         stage_row(&session),
         [
             "✓ Reading the change → ✓ Finding connected code → ✓ Preparing evidence → ⠋ Outbound review →",
-            "· Checking areas · Jev → · Writing questions · generator → · Reviewing questions · Jev",
+            "· Checking areas · Jev → · Writing questions · generator → · Checking questions · Jev",
         ]
     );
 }
@@ -199,7 +199,7 @@ fn when_finding_connected_code_takes_too_long_it_is_skipped() {
         stage_row(&session),
         [
             "✓ Reading the change → – Finding connected code → ✓ Preparing evidence → ⠋ Outbound review →",
-            "· Checking areas · Jev → · Writing questions · generator → · Reviewing questions · Jev",
+            "· Checking areas · Jev → · Writing questions · generator → · Checking questions · Jev",
         ]
     );
     // The analysis still runs to its end, which changes nothing here.

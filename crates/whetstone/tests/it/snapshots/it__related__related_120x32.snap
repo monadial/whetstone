@@ -7,7 +7,7 @@ Buffer {
     content: [
         "                                                                                                                        ",
         "  ✓ Reading the change → ✓ Finding connected code → ✓ Preparing evidence → ⠋ Outbound review →                          ",
-        "  · Checking areas · Jev → · Writing questions · generator → · Reviewing questions · Jev                                ",
+        "  · Checking areas · Jev → · Writing questions · generator → · Checking questions · Jev                                 ",
         "                                                                                                                        ",
         "  Review what will be sent                                                                                              ",
         "                                                                                                                        ",
@@ -45,7 +45,7 @@ Buffer {
         x: 27, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
         x: 58, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 61, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
-        x: 88, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 87, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 2, y: 4, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
         x: 26, y: 4, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 2, y: 24, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,

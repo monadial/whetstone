@@ -6,7 +6,7 @@ Buffer {
     area: Rect { x: 0, y: 0, width: 80, height: 24 },
     content: [
         "                                                                                ",
-        "  · Writing questions · generator → · Reviewing questions · Jev                 ",
+        "  · Writing questions · generator → · Checking questions · Jev                  ",
         "                                                                                ",
         "  Review what will be sent                                                      ",
         "                                                                                ",
@@ -35,7 +35,7 @@ Buffer {
         x: 2, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
         x: 33, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 36, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
-        x: 63, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 62, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 2, y: 3, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
         x: 26, y: 3, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 2, y: 21, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,

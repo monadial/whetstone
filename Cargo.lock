@@ -4113,6 +4113,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "unicode-segmentation",
+ "whetstone-ai",
  "whetstone-core",
 ]
 

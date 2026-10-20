@@ -90,6 +90,8 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["f
 # Typed text is edited by grapheme (CODING_STANDARDS.md rule 31). Ratatui
 # already depends on it.
 unicode-segmentation = "1.13"
+# Jev and the generator, reached only through the AI port.
+whetstone-ai = { path = "../whetstone-ai" }
 whetstone-core = { path = "../whetstone-core" }
 
 # build.rs replays the showcase project's patch series into embedded data.

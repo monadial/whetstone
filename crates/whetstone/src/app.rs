@@ -14,7 +14,8 @@
 //!
 //! A background job's result enters the same way, and is applied only if
 //! the app still waits for that job. So does the end of a job's time limit,
-//! after which the app no longer waits for it.
+//! after which the app no longer waits for it. Once the screen has applied a
+//! command, a result or a time limit, it starts any job its state now needs.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -25,6 +26,7 @@ use ratatui::crossterm::event::{Event, KeyEvent, KeyEventKind};
 use ratatui::layout::{Constraint, Layout, Margin, Position, Rect, Size};
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Paragraph, Wrap};
+use whetstone_ai::Ai;
 use whetstone_core::ShowcaseProject;
 
 use crate::config::Settings;
@@ -72,8 +74,11 @@ pub struct App {
     /// The graphs connected code was found in before, one cache for the
     /// whole run, shared with the jobs that find connected code.
     cache: Arc<GraphCache>,
-    /// How long the outbound review waits for connected code.
+    /// How long the outbound review, and Preparing questions on the
+    /// showcase project, wait for connected code.
     time_limit: Duration,
+    /// Jev and the generator, if Practice can ask them.
+    ai: Option<Arc<dyn Ai>>,
 }
 
 /// Something for the app to apply: a terminal event the UI loop read, a
@@ -145,15 +150,18 @@ impl Screens {
     /// screen opens above the current one, unless it is the current one. The
     /// current screen builds it if it can, and otherwise it opens over the
     /// showcase project or the repository in `context`. A screen that opens
-    /// starts its background jobs with `jobs`.
+    /// starts its background jobs with `jobs`, and going home closes every
+    /// screen above it, the current one first.
     fn go(&mut self, route: Route, context: &Context<'_>, jobs: &mut Jobs<JobOutput>) {
         if route == Route::Home {
-            self.above.clear();
+            while !self.above.is_empty() {
+                self.back(jobs);
+            }
         } else if route != self.current().route()
             && let Some(mut screen) = self
                 .current()
                 .open(route, context)
-                .or_else(|| route.open(context.showcase, context.repository))
+                .or_else(|| route.open(context))
         {
             screen.start_jobs(jobs);
             self.above.push(screen);
@@ -171,9 +179,12 @@ impl Screens {
             .map(|screen| screen.as_mut() as &mut dyn View)
     }
 
-    /// Returns to the screen before the current one, if there is one.
-    fn back(&mut self) {
-        self.above.pop();
+    /// Returns to the screen before the current one, if there is one,
+    /// closing the current one with `jobs`.
+    fn back(&mut self, jobs: &mut Jobs<JobOutput>) {
+        if let Some(mut screen) = self.above.pop() {
+            screen.close(jobs);
+        }
     }
 }
 
@@ -215,6 +226,7 @@ impl App {
             analysis,
             cache: Arc::new(GraphCache::open(cache_dir, GraphCache::CAP)),
             time_limit: connected_code::TIME_LIMIT,
+            ai: None,
         }
     }
 
@@ -223,6 +235,17 @@ impl App {
     #[must_use]
     pub fn with_time_limit(self, time_limit: Duration) -> Self {
         Self { time_limit, ..self }
+    }
+
+    /// The same app, with Practice asking Jev and the generator through
+    /// `ai`. Without one, Practice cannot start: Generate questions on the
+    /// showcase project is disabled.
+    #[must_use]
+    pub fn with_ai(self, ai: Arc<dyn Ai>) -> Self {
+        Self {
+            ai: Some(ai),
+            ..self
+        }
     }
 
     /// Applies one message. Key presses act, a paste goes into the focused
@@ -280,6 +303,7 @@ impl App {
             JobOutcome::Done(output) => {
                 if let Some(screen) = self.screens.waiting_for(finished.id) {
                     screen.finish_job(finished.id, output);
+                    screen.start_jobs(&mut self.jobs);
                 } else {
                     // The screen that started it has closed, so its result
                     // is for nothing that is open.
@@ -300,6 +324,7 @@ impl App {
         }
         if let Some(screen) = self.screens.waiting_for(job) {
             screen.time_up(job);
+            screen.start_jobs(&mut self.jobs);
         }
     }
 
@@ -383,16 +408,20 @@ impl App {
                     ticks: self.ticks,
                     cache: &self.cache,
                     time_limit: self.time_limit,
+                    ai: self.ai.as_ref(),
                 };
                 self.screens.go(route, &context, &mut self.jobs);
             }
-            Command::Back => self.screens.back(),
+            Command::Back => self.screens.back(&mut self.jobs),
             command => {
                 // Until the loop reports a size, assume the smallest the
                 // screens are drawn in.
                 let size = self.viewport.unwrap_or(MINIMUM);
-                let [screen, _] = screen_and_footer(Rect::from((Position::ORIGIN, size)));
-                if let Some(next) = self.screens.current_mut().apply(command, screen) {
+                let [area, _] = screen_and_footer(Rect::from((Position::ORIGIN, size)));
+                let screen = self.screens.current_mut();
+                let next = screen.apply(command, area);
+                screen.start_jobs(&mut self.jobs);
+                if let Some(next) = next {
                     return self.run(next);
                 }
             }
@@ -418,6 +447,7 @@ impl App {
             ticks: self.ticks,
             cache: &self.cache,
             time_limit: self.time_limit,
+            ai: self.ai.as_ref(),
         };
         screen.render(&context, frame, body);
         // While a text entry has focus, the keys that work everywhere type.
