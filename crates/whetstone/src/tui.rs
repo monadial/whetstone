@@ -16,7 +16,7 @@ use rustix::process::{self, Signal};
 use signal_hook::SigId;
 use signal_hook::consts::{SIGCONT, SIGHUP, SIGINT, SIGTERM, SIGTSTP};
 
-use crate::app::{App, Flow};
+use crate::app::{App, Flow, Message};
 use crate::environment::Environment;
 use crate::terminal::{CrosstermSwitch, TerminalGuard, TerminalMode};
 
@@ -74,7 +74,7 @@ pub(crate) fn run(mut app: App, environment: &Environment) -> Result<Ending, Tui
             .map_err(TuiError::Draw)?;
         crash.after_draw();
         let flow = match next_input(&signals)? {
-            Input::Event(event) => app.handle(&event),
+            Input::Event(event) => app.handle(Message::Terminal(event)),
             Input::Stop { signal } => break Ending::Stopped { signal },
             Input::Suspend => Flow::Suspend,
             // Continued without suspending first, perhaps after a stop the
@@ -116,7 +116,7 @@ fn report_size(
     app: &mut App,
 ) -> Result<Size, TuiError> {
     let size = terminal.size().map_err(TuiError::Draw)?;
-    app.handle(&Event::Resize(size.width, size.height));
+    app.handle(Message::Terminal(Event::Resize(size.width, size.height)));
     Ok(size)
 }
 
