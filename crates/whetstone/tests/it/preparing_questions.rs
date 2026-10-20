@@ -12,6 +12,10 @@ use whetstone_core::{
     WrittenCandidate, WrittenCitation, WrittenCriterion, WrittenOption,
 };
 
+use std::time::Duration;
+
+use whetstone_core::ConnectionsState;
+
 use crate::session::{NO_COLOR, Session, Setup};
 
 /// The showcase project's areas, in the order the picker offers them.
@@ -44,15 +48,28 @@ pub(crate) fn generate(
     width: u16,
     height: u16,
 ) -> Session {
-    let mut session = Session::start(
+    generate_in(
         Setup {
             variables: NO_COLOR,
             ai: Some(ai),
             ..Setup::default()
         },
+        areas,
+        change,
         width,
         height,
-    );
+    )
+}
+
+/// The same as [`generate`], in a session started as `setup` says.
+fn generate_in(
+    setup: Setup<'_>,
+    areas: &[usize],
+    change: usize,
+    width: u16,
+    height: u16,
+) -> Session {
+    let mut session = Session::start(setup, width, height);
     session.press("<Enter>");
     for place in 0..AREAS {
         if !areas.contains(&place) {
@@ -247,8 +264,21 @@ fn one_generator_call_per_chosen_area_goes_out_at_once_then_one_check_per_candid
     assert!(session.text().contains("Preparing questions"));
 
     session.settle_once();
-    let text = session.text();
-    assert!(text.contains("Question 1 of 4 · Domain"), "{text}");
+    let mut areas = Vec::new();
+    for _ in 0..4 {
+        areas.push(session.row_with("Question "));
+        session.press("l");
+    }
+    assert_eq!(
+        areas,
+        [
+            "Question 1 of 4 · Domain",
+            "Question 2 of 4 · Infrastructure",
+            "Question 3 of 4 · Domain",
+            "Question 4 of 4 · Infrastructure",
+        ],
+        "picking alternates across the areas"
+    );
 }
 
 /// A scripted AI that writes `count` candidates about the domain area, each
@@ -328,4 +358,387 @@ fn a_failed_request_at_80x24() {
         "preparing_questions_failed_80x24",
         writing_rate_limited(80, 24).frame()
     );
+}
+
+/// The requests `ai` was asked, as what each was for: the area written
+/// about, or the stem checked.
+fn asked_for(ai: &ScriptedAi) -> Vec<String> {
+    ai.asked()
+        .iter()
+        .map(|asked| match asked {
+            Asked::WriteCandidates { area, .. } => format!("write {}", area.id()),
+            Asked::CheckQuestion { candidate, .. } => format!("check {}", candidate.stem()),
+        })
+        .collect()
+}
+
+/// The text of every row, trimmed, without the blank ones.
+fn rows(session: &Session) -> Vec<String> {
+    session
+        .rows()
+        .iter()
+        .map(|row| row.trim().to_owned())
+        .filter(|row| !row.is_empty())
+        .collect()
+}
+
+#[test]
+fn the_showcase_changes_connected_code_reaches_the_evidence_the_generator_and_jev_are_given() {
+    let ai = Arc::new(ScriptedAi::new());
+    ai.on_write(
+        &area_id(DOMAIN),
+        Ok(vec![candidate("Served?", "A", SERVE_OVER_HTTP)]),
+    );
+    ai.on_check("Served?", Ok(a_is_clearly_right()));
+    let mut session = generate(&ai, &[DOMAIN], SERVE_OVER_HTTP, 120, 32);
+
+    session.settle();
+
+    let asked = ai.asked();
+    let [
+        Asked::WriteCandidates {
+            evidence: written_from,
+            ..
+        },
+        Asked::CheckQuestion {
+            evidence: checked_against,
+            ..
+        },
+    ] = asked.as_slice()
+    else {
+        panic!("one write and one check: {asked:#?}");
+    };
+    assert_eq!(written_from.connections_state(), ConnectionsState::Found);
+    assert_ne!(
+        written_from.connections().len(),
+        0,
+        "connected code is sent"
+    );
+    assert_eq!(
+        written_from.areas(),
+        &[whetstone::embedded_showcase().areas()[DOMAIN].clone()],
+        "only the chosen area"
+    );
+    assert!(
+        written_from
+            .message()
+            .starts_with("Serve payments over HTTP"),
+        "the change's own message"
+    );
+    assert_eq!(
+        checked_against, written_from,
+        "Jev checks against the same evidence"
+    );
+    assert!(session.text().contains("Served?"));
+}
+
+#[test]
+fn when_finding_connected_code_takes_too_long_questions_are_written_without_it() {
+    let ai = Arc::new(ScriptedAi::new());
+    ai.on_write(
+        &area_id(DOMAIN),
+        Ok(vec![candidate(
+            "Without connected code?",
+            "A",
+            SERVE_OVER_HTTP,
+        )]),
+    );
+    ai.on_check("Without connected code?", Ok(a_is_clearly_right()));
+    let mut session = generate_in(
+        Setup {
+            variables: NO_COLOR,
+            ai: Some(&ai),
+            time_limit: Some(Duration::ZERO),
+            ..Setup::default()
+        },
+        &[DOMAIN],
+        SERVE_OVER_HTTP,
+        120,
+        32,
+    );
+
+    session.wait(Duration::ZERO);
+
+    assert!(
+        session
+            .text()
+            .contains("– Finding connected code → ✓ Preparing evidence"),
+        "{}",
+        session.text()
+    );
+    let asked = ai.asked();
+    let [Asked::WriteCandidates { evidence, .. }] = asked.as_slice() else {
+        panic!("the generator writes at once: {asked:#?}");
+    };
+    assert_eq!(evidence.connections_state(), ConnectionsState::TookTooLong);
+    assert_eq!(evidence.connections().len(), 0, "no connected code is sent");
+
+    session.settle();
+    assert!(
+        session.text().contains("Without connected code?"),
+        "the analysis's late result changes nothing:\n{}",
+        session.text()
+    );
+    assert_eq!(ai.asked().len(), 2, "nothing is written again");
+}
+
+#[test]
+fn cancel_returns_to_the_areas_and_changes_and_a_request_that_finishes_after_it_changes_nothing() {
+    let ai = writing_about_the_domain(6, PAYMENT_LIFECYCLE);
+    let mut session = generate(&ai, &[DOMAIN], PAYMENT_LIFECYCLE, 80, 24);
+    session.settle_once();
+    assert_eq!(asked_for(&ai), ["write domain"]);
+
+    session.press("<Enter>");
+    let picker = session.text();
+    assert!(picker.contains("Change to practice on"), "{picker}");
+    session.settle();
+
+    assert_eq!(session.text(), picker, "the late write changes nothing");
+    assert_eq!(asked_for(&ai), ["write domain"], "and starts no check");
+}
+
+#[test]
+fn q_cancels_while_jev_checks_and_no_late_answer_changes_anything() {
+    let ai = writing_about_the_domain(6, PAYMENT_LIFECYCLE);
+    let mut session = generate(&ai, &[DOMAIN], PAYMENT_LIFECYCLE, 80, 24);
+    session.settle_once();
+    session.settle_once();
+    let asked = ai.asked().len();
+
+    session.press("q");
+    let picker = session.text();
+    session.settle();
+
+    assert!(picker.contains("Change to practice on"), "{picker}");
+    assert_eq!(session.text(), picker);
+    assert_eq!(ai.asked().len(), asked);
+}
+
+#[test]
+fn cancel_while_connected_code_is_found_asks_nothing_once_it_is_found() {
+    let ai = writing_about_the_domain(6, PAYMENT_LIFECYCLE);
+    let mut session = generate(&ai, &[DOMAIN], PAYMENT_LIFECYCLE, 80, 24);
+
+    session.press("<Esc>");
+    let picker = session.text();
+    session.settle();
+
+    assert_eq!(session.text(), picker);
+    assert!(ai.asked().is_empty(), "{:#?}", ai.asked());
+}
+
+#[test]
+fn going_home_while_preparing_cancels_too() {
+    let ai = writing_about_the_domain(6, PAYMENT_LIFECYCLE);
+    let mut session = generate(&ai, &[DOMAIN], PAYMENT_LIFECYCLE, 80, 24);
+    session.settle_once();
+
+    // The palette's first action after Cancel is Home.
+    session.press(": j <Enter>");
+    let home = session.text();
+    assert!(home.contains("Practice on the showcase project"), "{home}");
+    session.settle();
+
+    assert_eq!(session.text(), home);
+    assert_eq!(asked_for(&ai), ["write domain"]);
+}
+
+#[test]
+fn generate_questions_again_after_cancel_prepares_afresh() {
+    let ai = writing_about_the_domain(6, PAYMENT_LIFECYCLE);
+    for stem in stems("Domain", 6) {
+        ai.on_check(&stem, Ok(a_is_clearly_right()));
+    }
+    ai.on_write(
+        &area_id(DOMAIN),
+        Ok(stems("Domain", 6)
+            .iter()
+            .map(|stem| candidate(stem, "A", PAYMENT_LIFECYCLE))
+            .collect()),
+    );
+    let mut session = generate(&ai, &[DOMAIN], PAYMENT_LIFECYCLE, 80, 24);
+    session.settle_once();
+    session.press("q");
+
+    session.press("<Enter>");
+    session.settle();
+
+    assert_eq!(session.row_with("Question 1"), "Question 1 of 4 · Domain");
+    assert_eq!(
+        asked_for(&ai)
+            .iter()
+            .filter(|asked| asked.starts_with("write"))
+            .count(),
+        2
+    );
+}
+
+#[test]
+fn a_failed_request_names_its_stage_and_offers_retry_and_back_and_nothing_is_retried_automatically()
+{
+    let mut session = {
+        let ai = Arc::new(ScriptedAi::new());
+        ai.on_write(&area_id(DOMAIN), Err(RequestFailure::RateLimited));
+        let mut session = generate(&ai, &[DOMAIN], PAYMENT_LIFECYCLE, 80, 24);
+        session.settle();
+        assert_eq!(
+            asked_for(&ai),
+            ["write domain"],
+            "asked once, and never again"
+        );
+        session
+    };
+
+    let rows = rows(&session);
+    assert!(
+        rows.contains(&"Writing questions failed: rate limited.".to_owned()),
+        "{rows:#?}"
+    );
+    assert!(rows.contains(&"> Retry".to_owned()), "{rows:#?}");
+    assert!(rows.contains(&"Back".to_owned()), "{rows:#?}");
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("✗ Writing questions · generator")),
+        "{rows:#?}"
+    );
+
+    session.press("j <Enter>");
+    assert!(session.text().contains("Change to practice on"));
+}
+
+#[test]
+fn retry_after_a_failed_write_asks_again_only_for_the_area_that_failed() {
+    let ai = Arc::new(ScriptedAi::new());
+    let domain = stems("Domain", 3);
+    let infrastructure = stems("Infrastructure", 3);
+    ai.on_write(
+        &area_id(DOMAIN),
+        Ok(domain
+            .iter()
+            .map(|stem| candidate(stem, "A", SERVE_OVER_HTTP))
+            .collect()),
+    );
+    ai.on_write(
+        &area_id(INFRASTRUCTURE),
+        Err(RequestFailure::ProviderUnavailable),
+    );
+    ai.on_write(
+        &area_id(INFRASTRUCTURE),
+        Ok(infrastructure
+            .iter()
+            .map(|stem| candidate(stem, "A", SERVE_OVER_HTTP))
+            .collect()),
+    );
+    for stem in domain.iter().chain(&infrastructure) {
+        ai.on_check(stem, Ok(a_is_clearly_right()));
+    }
+    let mut session = generate(&ai, &[DOMAIN, INFRASTRUCTURE], SERVE_OVER_HTTP, 120, 32);
+    session.settle();
+    assert!(
+        session
+            .text()
+            .contains("Writing questions failed: the provider is unavailable."),
+        "{}",
+        session.text()
+    );
+
+    session.press("<Enter>");
+    session.settle();
+
+    let asked = asked_for(&ai);
+    assert_eq!(
+        asked[..3],
+        [
+            "write domain",
+            "write infrastructure",
+            "write infrastructure"
+        ],
+        "the domain area is not written again"
+    );
+    assert_eq!(asked.len(), 9, "then every candidate is checked once");
+    session.press("l");
+    assert_eq!(
+        session.row_with("Question 2"),
+        "Question 2 of 4 · Infrastructure"
+    );
+}
+
+#[test]
+fn retry_after_a_failed_check_asks_again_only_for_the_check_that_failed() {
+    let ai = Arc::new(ScriptedAi::new());
+    let stems = stems("Domain", 6);
+    ai.on_write(
+        &area_id(DOMAIN),
+        Ok(stems
+            .iter()
+            .map(|stem| candidate(stem, "A", PAYMENT_LIFECYCLE))
+            .collect()),
+    );
+    for (index, stem) in stems.iter().enumerate() {
+        if index == 2 {
+            ai.on_check(stem, Err(RequestFailure::TimedOut));
+        }
+        ai.on_check(stem, Ok(a_is_clearly_right()));
+    }
+    let mut session = generate(&ai, &[DOMAIN], PAYMENT_LIFECYCLE, 80, 24);
+    session.settle();
+    let rows = rows(&session);
+    assert!(
+        rows.contains(&"Checking questions failed: timed out.".to_owned()),
+        "{rows:#?}"
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("✓ Writing questions · generator")),
+        "{rows:#?}"
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("✗ Checking questions · Jev")),
+        "{rows:#?}"
+    );
+    let asked = ai.asked().len();
+
+    session.press("<Enter>");
+    session.settle();
+
+    assert_eq!(asked_for(&ai)[asked..], ["check Domain question 3?"]);
+    assert_eq!(session.row_with("Question 1"), "Question 1 of 4 · Domain");
+}
+
+#[test]
+fn with_an_ai_generate_questions_needs_a_change_and_an_area() {
+    let ai = Arc::new(ScriptedAi::new());
+    let mut session = Session::start(
+        Setup {
+            variables: NO_COLOR,
+            ai: Some(&ai),
+            ..Setup::default()
+        },
+        80,
+        24,
+    );
+    session.press("<Enter>");
+    assert_eq!(
+        session.row_with("Generate questions"),
+        "Generate questions (choose a change)"
+    );
+    session.press("<S-Tab> <Enter>");
+    assert!(
+        session.text().contains("Change to practice on"),
+        "activating it does nothing yet"
+    );
+
+    session.press("<Tab> <Space> <Tab> <Space> <Tab> <Space> <Tab> <Space> <Tab> <Space>");
+    assert_eq!(
+        session.row_with("Generate questions"),
+        "Generate questions (choose a change and an area)"
+    );
+    session.press("<Tab> <Space>");
+    assert_eq!(
+        session.row_with("Generate questions"),
+        "Generate questions (choose an area)"
+    );
+    assert_eq!(ai.asked().len(), 0, "nothing is asked");
 }
