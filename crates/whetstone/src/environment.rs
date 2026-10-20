@@ -38,6 +38,19 @@ impl Environment {
         self.vars.get(OsStr::new(name)).map(OsString::as_os_str)
     }
 
+    /// The system temporary directory: `TMPDIR` if it is an absolute path,
+    /// otherwise `/tmp`, as `std::env::temp_dir` finds it on Linux, but
+    /// from this snapshot rather than the process's environment. An empty
+    /// or relative `TMPDIR` counts as unset, so nothing is ever created
+    /// relative to the current directory. On macOS, where launchd always
+    /// sets `TMPDIR`, `std` would ask the system for the per-user directory
+    /// when it is unset; that takes a C call this crate does not make.
+    #[must_use]
+    pub fn temp_dir(&self) -> PathBuf {
+        self.absolute_path("TMPDIR")
+            .map_or_else(|| PathBuf::from("/tmp"), Path::to_path_buf)
+    }
+
     /// The value of `name` as an absolute path. Unset, empty and relative
     /// values count as unset, as the XDG Base Directory spec requires.
     fn absolute_path(&self, name: &str) -> Option<&Path> {
@@ -135,5 +148,26 @@ impl BaseDir {
             })
             .ok_or(NoHome { dir: self })?;
         Ok(base.join("whetstone"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_temporary_directory_is_tmpdir_when_it_is_an_absolute_path() {
+        let environment: Environment = [("TMPDIR", "/var/folders/xy/T/")].into_iter().collect();
+
+        assert_eq!(environment.temp_dir(), Path::new("/var/folders/xy/T/"));
+    }
+
+    #[test]
+    fn the_temporary_directory_is_tmp_when_tmpdir_is_unset_empty_or_relative() {
+        for vars in [vec![], vec![("TMPDIR", "")], vec![("TMPDIR", "scratch")]] {
+            let environment: Environment = vars.into_iter().collect();
+
+            assert_eq!(environment.temp_dir(), Path::new("/tmp"), "{environment:?}");
+        }
     }
 }
