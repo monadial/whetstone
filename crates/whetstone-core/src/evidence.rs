@@ -3,10 +3,11 @@
 //!
 //! [`Evidence::build`] is a pure function of the change, the repository's
 //! exclude patterns, the selected areas, the change's connections (or why
-//! there are none) and the learner's [`ReviewChoices`]. The outbound review
-//! draws only from its value, and the AI step will send only what it holds,
-//! so what is shown and what is sent cannot diverge. A file or connection
-//! that is left out keeps no text in it.
+//! there are none), the connected code limit and the learner's
+//! [`ReviewChoices`]. The outbound review draws only from its value, and
+//! the AI step will send only what it holds, so what is shown and what is
+//! sent cannot diverge. A file or connection that is left out keeps no text
+//! in it.
 
 use std::collections::{BTreeSet, HashSet};
 use std::fmt;
@@ -17,7 +18,7 @@ use crate::connected_code_limit::ConnectedCodeLimit;
 use crate::connection::{Connection, ConnectionGroup, ConnectionId, Connections, Relation, Tier};
 use crate::exclusion::{DefaultExclusion, ExcludePattern, ExcludePatterns};
 use crate::secret::{SecretFinding, find_secrets};
-use crate::selection;
+use crate::selection::{self, NotSent};
 
 /// What a Practice sends: the commit message; for each included file, its
 /// diff and its full content (the content before the change for a
@@ -26,8 +27,9 @@ use crate::selection;
 ///
 /// Alongside it, but not sent: every touched file's and connection's
 /// status, with the reason one left out is left out, whether connections
-/// were found, the possible secrets found in what is sent, and the total
-/// size against [`Evidence::SIZE_LIMIT`].
+/// were found, how many found connections did not fit and the connected
+/// code limit they were selected within, the possible secrets found in
+/// what is sent, and the total size against [`Evidence::SIZE_LIMIT`].
 ///
 /// Its `Debug` output shows no message, file text, area prompt or callable
 /// name, so logging it cannot spread a secret.
@@ -39,6 +41,7 @@ pub struct Evidence {
     connections: Vec<EvidenceConnection>,
     connections_state: ConnectionsState,
     connected_code_limit: ConnectedCodeLimit,
+    not_sent: Vec<(NotSent, usize)>,
     findings: Vec<Finding>,
     size: usize,
 }
@@ -285,7 +288,8 @@ impl Evidence {
 
     /// The evidence for `change`, leaving out what `exclude` and the rules
     /// before it leave out, with the selected `areas` and the change's
-    /// `connections`, as `choices` adjust it.
+    /// `connections`, selected within `connected_code_limit`, as `choices`
+    /// adjust it.
     ///
     /// Rules leave a file or a connection out in this order, and the first
     /// that matches gives the reason: binary files, submodules and symbolic
@@ -302,6 +306,20 @@ impl Evidence {
     /// it connects to first, by the leading path components they share;
     /// then by path and starting line. Found connections that are empty are
     /// [`ConnectionsState::NoneFound`].
+    ///
+    /// A connection a rule leaves out is listed with its reason and uses no
+    /// room. Each other is added, in rank order, while it fits in the room
+    /// left under [`Evidence::SIZE_LIMIT`] after the commit message, the
+    /// touched files the rules send and the selected areas, and if it is
+    /// connected code, within `connected_code_limit`. One that does not fit
+    /// is not listed, only counted in [`Evidence::not_sent`], and smaller
+    /// ones after it can still be added.
+    ///
+    /// The selection reads none of `choices`, so it is the same in every
+    /// build of one change's evidence: the first build fixes it. Leaving a
+    /// connection or a touched file out frees room without adding anything
+    /// else, and a connection brought back is sent beside those selected,
+    /// whatever room it takes.
     #[must_use]
     pub fn build(
         change: &Change,
@@ -311,21 +329,28 @@ impl Evidence {
         connected_code_limit: ConnectedCodeLimit,
         choices: &ReviewChoices,
     ) -> Self {
-        let (connections, connections_state) =
-            EvidenceConnection::all(connections, exclude, choices);
-        let files: Vec<EvidenceFile> = change
+        let mut files: Vec<EvidenceFile> = change
             .files()
             .iter()
             .zip(change.file_diffs())
             .enumerate()
-            .map(|(index, (file, diff))| EvidenceFile {
-                connected: connections
-                    .iter()
-                    .filter(|connection| connection.is_connected_code_for(file.path()))
-                    .count(),
-                ..EvidenceFile::new(FileIndex(index), file, diff, exclude, choices)
+            .map(|(index, (file, diff))| {
+                EvidenceFile::new(FileIndex(index), file, diff, exclude, choices)
             })
             .collect();
+        let areas_size: usize = areas
+            .iter()
+            .map(|area| area.name().len() + area.prompt().len())
+            .sum();
+        let room = room(change.message(), &files, areas_size);
+        let (connections, connections_state, not_sent) =
+            EvidenceConnection::all(connections, exclude, room, connected_code_limit, choices);
+        for file in &mut files {
+            file.connected = connections
+                .iter()
+                .filter(|connection| connection.is_connected_code_for(&file.path))
+                .count();
+        }
         let mut found: Vec<(Place, SecretFinding)> = find_secrets(change.message())
             .into_iter()
             .map(|matched| (Place::CommitMessage, matched))
@@ -388,10 +413,7 @@ impl Evidence {
                 .filter(|connection| connection.sent.is_some())
                 .filter_map(|connection| connection.size)
                 .sum::<usize>()
-            + areas
-                .iter()
-                .map(|area| area.name().len() + area.prompt().len())
-                .sum::<usize>();
+            + areas_size;
         Self {
             message: change.message().to_owned(),
             files,
@@ -399,6 +421,7 @@ impl Evidence {
             connections,
             connections_state,
             connected_code_limit,
+            not_sent,
             findings,
             size,
         }
@@ -446,6 +469,29 @@ impl Evidence {
     #[must_use]
     pub fn connected_code_limit(&self) -> ConnectedCodeLimit {
         self.connected_code_limit
+    }
+
+    /// How many bytes of connected code are sent: the path and sent text of
+    /// each connection of connected code that is included. Related tests
+    /// and related configuration are not connected code, and do not count
+    /// towards its limit.
+    #[must_use]
+    pub fn connected_code_size(&self) -> usize {
+        self.connections
+            .iter()
+            .filter(|connection| connection.group == ConnectionGroup::ConnectedCode)
+            .filter(|connection| connection.sent.is_some())
+            .filter_map(|connection| connection.size)
+            .sum()
+    }
+
+    /// How many found connections no rule leaves out are not sent, because
+    /// they did not fit, for each reason that has any: over the connected
+    /// code limit first, then no room under the size limit. They are not in
+    /// [`Evidence::connections`].
+    #[must_use]
+    pub fn not_sent(&self) -> &[(NotSent, usize)] {
+        &self.not_sent
     }
 
     /// The possible secrets in what is sent, the commit message's first,
@@ -498,10 +544,24 @@ impl fmt::Debug for Evidence {
             .field("connections", &self.connections)
             .field("connections_state", &self.connections_state)
             .field("connected_code_limit", &self.connected_code_limit)
+            .field("not_sent", &self.not_sent)
             .field("findings", &self.findings)
             .field("size", &self.size)
             .finish()
     }
+}
+
+/// The room for connections under [`Evidence::SIZE_LIMIT`]: what is left
+/// after `message`, the touched `files` the rules alone send and
+/// `areas_size` bytes of areas. It counts what the rules send whatever the
+/// learner chooses, so that it is the same in every build.
+fn room(message: &str, files: &[EvidenceFile], areas_size: usize) -> usize {
+    let files_size: usize = files
+        .iter()
+        .filter(|file| file.status.sent_by_rules())
+        .filter_map(|file| file.size)
+        .sum();
+    Evidence::SIZE_LIMIT.saturating_sub(message.len() + files_size + areas_size)
 }
 
 /// The 1-based lines of `diff` that its hunks remove.
@@ -721,30 +781,41 @@ impl EvidenceConnection {
     fn all(
         connections: &Connections,
         exclude: &ExcludePatterns,
+        room: usize,
+        limit: ConnectedCodeLimit,
         choices: &ReviewChoices,
-    ) -> (Vec<Self>, ConnectionsState) {
-        match connections {
-            Connections::Found(found) if !found.is_empty() => (
-                selection::rank(found)
+    ) -> (Vec<Self>, ConnectionsState, Vec<(NotSent, usize)>) {
+        let state = match connections {
+            Connections::Found(found) if !found.is_empty() => {
+                let ranked = selection::rank(found)
                     .into_iter()
-                    .map(|connection| Self::new(connection, exclude, choices))
-                    .collect(),
-                ConnectionsState::Found,
-            ),
-            Connections::Found(_) | Connections::NoneFound => {
-                (Vec::new(), ConnectionsState::NoneFound)
+                    .map(|connection| (connection, Self::status_of(connection, exclude, choices)))
+                    .collect();
+                let selection = selection::select(ranked, room, limit);
+                let listed = selection
+                    .listed
+                    .into_iter()
+                    .map(|(connection, status)| Self::new(connection, status))
+                    .collect();
+                return (listed, ConnectionsState::Found, selection.not_sent);
             }
-            Connections::Finding => (Vec::new(), ConnectionsState::Finding),
-            Connections::TookTooLong => (Vec::new(), ConnectionsState::TookTooLong),
-            Connections::AnalysisFailed => (Vec::new(), ConnectionsState::AnalysisFailed),
-        }
+            Connections::Found(_) | Connections::NoneFound => ConnectionsState::NoneFound,
+            Connections::Finding => ConnectionsState::Finding,
+            Connections::TookTooLong => ConnectionsState::TookTooLong,
+            Connections::AnalysisFailed => ConnectionsState::AnalysisFailed,
+        };
+        (Vec::new(), state, Vec::new())
     }
 
-    /// The found `connection`, as the rules and `choices` leave it.
-    fn new(connection: &Connection, exclude: &ExcludePatterns, choices: &ReviewChoices) -> Self {
+    /// Whether the found `connection` is sent, and why, as the rules and
+    /// `choices` leave it.
+    fn status_of(
+        connection: &Connection,
+        exclude: &ExcludePatterns,
+        choices: &ReviewChoices,
+    ) -> FileStatus {
         let id = connection.id();
-        let content = connection.content();
-        let status = match content {
+        match connection.content() {
             FileContent::Binary { .. } => FileStatus::LeftOut(Exclusion::Binary),
             FileContent::Submodule => FileStatus::LeftOut(Exclusion::Submodule),
             FileContent::Symlink => FileStatus::LeftOut(Exclusion::Symlink),
@@ -754,13 +825,12 @@ impl EvidenceConnection {
                 choices,
                 &Item::Connection(id.clone()),
             ),
-        };
-        let size = match content {
-            FileContent::Text(text) => Some(id.path().len() + text.len()),
-            FileContent::Binary { size } => Some(*size),
-            FileContent::Submodule | FileContent::Symlink => None,
-        };
-        let sent = match content {
+        }
+    }
+
+    /// The found `connection`, whose status is `status`.
+    fn new(connection: &Connection, status: FileStatus) -> Self {
+        let sent = match connection.content() {
             FileContent::Text(text)
                 if matches!(status, FileStatus::Included | FileStatus::IncludedByYou) =>
             {
@@ -769,12 +839,12 @@ impl EvidenceConnection {
             _ => None,
         };
         Self {
-            id: id.clone(),
+            id: connection.id().clone(),
             group: connection.group(),
             tier: connection.tier(),
             relations: connection.relations().to_vec(),
             status,
-            size,
+            size: connection.size(),
             sent,
         }
     }
@@ -848,6 +918,16 @@ impl fmt::Display for FileStatus {
             }
             Self::LeftOut(reason) => write!(f, "left out: {reason}"),
         }
+    }
+}
+
+impl FileStatus {
+    /// Whether the rules alone send it, before the learner's choices: it is
+    /// included, or the learner left it out. The learner's choices never
+    /// change this, since they only leave out what the rules send and bring
+    /// back what the rules leave out.
+    pub(crate) fn sent_by_rules(&self) -> bool {
+        matches!(self, Self::Included | Self::LeftOutByYou)
     }
 }
 

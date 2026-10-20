@@ -41,4 +41,5 @@ pub use crate::repository_config::{RepositoryConfig, RepositoryConfigError};
 pub use crate::secret::{
     SECRET_RULES, SECRET_RULES_VERSION, SecretFinding, SecretRule, find_secrets,
 };
+pub use crate::selection::NotSent;
 pub use crate::showcase::ShowcaseProject;
