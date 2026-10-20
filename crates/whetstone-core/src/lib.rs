@@ -27,7 +27,7 @@ pub use crate::connected_code_limit::{
 };
 pub use crate::connection::{
     Connection, ConnectionGroup, ConnectionId, Connections, Extent, InvalidLineRange, LineRange,
-    Relation, Tier,
+    Relation, Tier, merge_into_whole_files,
 };
 pub use crate::evidence::{
     ConnectionsState, Evidence, EvidenceConnection, EvidenceFile, Exclusion, FileIndex, FileStatus,
