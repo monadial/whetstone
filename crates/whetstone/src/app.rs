@@ -7,6 +7,9 @@
 //! it. Otherwise the screen's keymap and then the keys that work everywhere
 //! turn it into a command. The command changes the current screen, or the
 //! app itself when it opens an overlay, changes screens or quits.
+//!
+//! A paste never becomes keys or commands. It goes into the screen's focused
+//! text entry as one insertion, and anywhere else it does nothing.
 
 use ratatui::Frame;
 use ratatui::crossterm::event::{Event, KeyEvent, KeyEventKind};
@@ -143,11 +146,16 @@ impl App {
         }
     }
 
-    /// Applies one terminal event. Key presses act, and a resize changes
-    /// only how the next frame is laid out.
+    /// Applies one terminal event. Key presses act, a paste goes into the
+    /// focused text entry, and a resize changes only how the next frame is
+    /// laid out.
     pub fn handle(&mut self, event: &Event) -> Flow {
         match event {
             Event::Key(key) if key.kind == KeyEventKind::Press => self.press(key),
+            Event::Paste(text) => {
+                self.paste(text);
+                Flow::Continue
+            }
             Event::Resize(width, height) => {
                 self.viewport = Some(Size::new(*width, *height));
                 Flow::Continue
@@ -194,6 +202,19 @@ impl App {
         match command {
             Some(command) => self.run(command),
             None => Flow::Continue,
+        }
+    }
+
+    /// Rule 57: a paste is text for the focused text entry, never keys, so
+    /// it skips the keymap. Under the notice, under an overlay, which has no
+    /// text entry, or on a screen without a focused one, it does nothing.
+    fn paste(&mut self, text: &str) {
+        if self.viewport.is_some_and(|size| !fits(size)) || self.overlay.is_some() {
+            return;
+        }
+        let screen = self.screens.current_mut();
+        if screen.input() == Input::Text {
+            screen.paste(text);
         }
     }
 

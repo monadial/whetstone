@@ -20,6 +20,7 @@ mod outbound_review;
 mod output;
 mod overlay;
 mod palette;
+mod paste;
 mod picker;
 mod reader;
 mod repository;

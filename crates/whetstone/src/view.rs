@@ -50,6 +50,11 @@ pub(crate) trait View: fmt::Debug {
         None
     }
 
+    /// Inserts pasted `text` into the focused text entry as one insertion.
+    /// The app calls it only while [`View::input`] is text, so a screen
+    /// with a text entry implements both.
+    fn paste(&mut self, _text: &str) {}
+
     /// Applies `command` to the screen drawn in `area`, and returns what it
     /// asks of the app, if anything. Only scrolling needs `area`, to know
     /// how far a page goes; the state never keeps it.
