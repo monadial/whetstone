@@ -59,6 +59,12 @@ multiple-versions = "warn"
 wildcards = "deny"
 allow-wildcard-paths = true
 
+# Only the AI crate may depend on Rig (ADR 0001, CODING_STANDARDS.md rule 36):
+# the rest of the app depends on Whetstone ports and domain types.
+[[bans.deny]]
+crate = "rig"
+wrappers = ["whetstone-ai"]
+
 # The Git library only reads the learner's repository and never talks to a
 # remote (#29): none of its network client features may be turned on.
 [[bans.features]]
