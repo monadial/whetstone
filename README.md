@@ -81,7 +81,7 @@ The OpenRouter key never goes in the file. Set `OPENROUTER_API_KEY` in your shel
 
 ## Terminal support
 
-Whetstone states which terminals it is meant for, in two tiers. **Supported** means tested in CI on every change and checked by hand before each release: CI runs Whetstone in a pseudo-terminal on every supported platform, and before a release each supported terminal goes through the [pre-release terminal checklist](docs/terminal-checklist.md). **Expected to work** means bugs are fixed when they're reported, but nobody checks before a release.
+Whetstone states which terminals it is meant for, in two tiers. **Supported** means tested in CI on every change and checked by hand before each release. CI runs Whetstone in a pseudo-terminal on every supported platform, and before a release each supported terminal goes through the [pre-release terminal checklist](docs/terminal-checklist.md). **Expected to work** means bugs are fixed when they're reported, but nobody checks before a release.
 
 Supported:
 
@@ -94,13 +94,21 @@ Expected to work:
 - kitty, WezTerm, Alacritty, Konsole, the VS Code terminal and GNU screen, and other terminals compatible with `xterm-256color`.
 - WSL, the only way to run Whetstone on Windows. There is no Windows build.
 
-Whetstone needs a UTF-8 locale, a font with box-drawing characters, which draw its borders, and a terminal with bracketed paste, which lets a paste arrive as text rather than keys. It refuses to start, says why and exits with 1 when stdin or stdout isn't a terminal, or when `TERM=dumb` says the terminal can't move the cursor. `--help`, `--version` and `whetstone areas init` work anywhere.
+Whetstone needs:
 
-Every screen fits whole at 80×24. Below 50×12, Whetstone shows "Window too small" instead, and growing the window brings back where you were. A paste goes into a search as text, on one line: a pasted line break never runs the search and a pasted `q` never goes back. Anywhere else a paste does nothing.
+- a UTF-8 locale;
+- a font with box-drawing characters, which draw its borders;
+- a terminal with bracketed paste, so that a paste arrives as text rather than keys.
 
-Ctrl+Z gives you your shell back, and `fg` brings back the same screen at the window's current size. Started without a shell to return to, such as a tmux pane's own command or `ssh -t host whetstone`, Ctrl+Z has nowhere to go, so Whetstone carries on. However it ends, by `q`, Ctrl+C, a signal or a crash, Whetstone leaves your terminal as it found it. It exits with 0 after `q` or Ctrl+C, and with 128 plus the signal's number after a signal.
+It refuses to start, says why and exits with 1 when stdin or stdout isn't a terminal, or when `TERM=dumb` says the terminal can't move the cursor. `--help`, `--version` and `whetstone areas init` work anywhere.
 
-Colours follow what your terminal reports: `COLORTERM`, then `TERM`. SSH doesn't forward `COLORTERM` unless set up to, so over SSH colours usually drop to 256. If your terminal shows 24-bit colour, set `colours = "24-bit"` in the [config](#configure-it). A non-empty `NO_COLOR` turns colour off whatever `colours` says.
+Every screen fits whole at 80×24. Below 50×12, Whetstone shows "Window too small" instead, and growing the window brings back where you were.
+
+A paste goes into a search as text, on one line: a pasted line break never runs the search and a pasted `q` never goes back. Anywhere else a paste does nothing.
+
+Ctrl+Z gives you your shell back, and `fg` brings back the same screen at the window's current size. When Whetstone runs without a shell to return to, such as a tmux pane's own command or `ssh -t host whetstone`, Ctrl+Z has nowhere to go, so Whetstone carries on. Whetstone leaves your terminal as it found it when it ends by `q`, Ctrl+C, a panic, or SIGHUP, SIGINT or SIGTERM from outside, as when the window closes or SSH drops. It exits with 0 after `q` or Ctrl+C, and with 128 plus the signal's number after one of those signals.
+
+SSH doesn't forward `COLORTERM` unless set up to, so over SSH Whetstone goes by `TERM` alone and colours drop to 256 or 16. If your terminal shows 24-bit colour, set `colours = "24-bit"` in the [config](#configure-it).
 
 Known limits:
 
@@ -108,7 +116,7 @@ Known limits:
 - A rare emoji may sit one cell off, where your terminal and Whetstone disagree on its width.
 - There's no mouse. Whetstone never captures it, so your terminal's own selection and copying keep working, and a click does nothing.
 
-In tmux, set `escape-time` low, so Esc acts at once. tmux waits that long after an Esc for the rest of a key sequence, and before tmux 3.5 it waits 500 ms by default. In `~/.tmux.conf`:
+In tmux, set `escape-time` low, so Esc acts at once. It is how long tmux waits after an Esc for the rest of a key sequence, and before tmux 3.5 it is 500 ms by default. In `~/.tmux.conf`:
 
 ```text
 set -sg escape-time 10
