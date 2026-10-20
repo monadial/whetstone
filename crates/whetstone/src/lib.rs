@@ -30,6 +30,7 @@ mod questions;
 mod reader;
 mod repository;
 mod search;
+mod session_record;
 mod settings;
 mod showcase;
 mod stage_row;
@@ -47,6 +48,10 @@ pub use crate::job::{
     Cancelled, Finished, Job, JobId, JobOutcome, JobOutput, Jobs, TimeLimit, Waiting, Workers,
 };
 pub use crate::repository::{Repository, Unavailable};
+pub use crate::session_record::{
+    Assessment, AttemptId, Durability, InMemoryStore, NewRecord, Report, ReportKind, SavedResponse,
+    SessionId, SessionStore, Signal, StoreEntry, StoreError,
+};
 pub use crate::showcase::embedded_showcase;
 pub use crate::terminal::{ModeSwitch, TerminalGuard, TerminalMode};
 pub use crate::theme::{ColorSupport, ControlKind, ControlState, Theme};
