@@ -60,9 +60,22 @@ pub enum AiError {
     Cancelled,
 }
 
+/// What a call asks of `OpenRouter`'s routing, which decides what a refused
+/// route means.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Routing {
+    /// Only endpoints that keep no prompts, as every generator call asks: a
+    /// refused route means no endpoint for the model does.
+    ZeroRetention,
+    /// Any endpoint, as Jev calls go until #69: a refused route means none is
+    /// available.
+    Any,
+}
+
 impl AiError {
-    /// The failure a Rig provider error stands for, for a call to `model`.
-    pub(crate) fn from_provider(error: &ProviderError, model: &str) -> Self {
+    /// The failure a Rig provider error stands for, for a call to `model`
+    /// routed as `routing` says.
+    pub(crate) fn from_provider(error: &ProviderError, model: &str, routing: Routing) -> Self {
         Self::classify(
             error
                 .provider_response_status()
@@ -70,24 +83,38 @@ impl AiError {
             error.provider_response_json().ok().flatten().as_ref(),
             error.kind(),
             model,
+            routing,
         )
     }
 
-    /// The failure a Rig error report stands for, for a call to `model`.
-    pub(crate) fn from_report(report: &ErrorReport, model: &str) -> Self {
+    /// The failure a Rig error report stands for, for a call to `model`
+    /// routed as `routing` says.
+    pub(crate) fn from_report(report: &ErrorReport, model: &str, routing: Routing) -> Self {
         Self::classify(
             report.http_status,
             report.provider_response_json().ok().flatten().as_ref(),
             report.kind,
             model,
+            routing,
         )
     }
 
-    fn classify(status: Option<u16>, body: Option<&Value>, kind: ErrorKind, model: &str) -> Self {
+    fn classify(
+        status: Option<u16>,
+        body: Option<&Value>,
+        kind: ErrorKind,
+        model: &str,
+        routing: Routing,
+    ) -> Self {
         if let Some(status) = status {
             if body.is_some_and(refuses_route) {
-                return Self::NoZeroRetentionEndpoint {
-                    model: model.to_owned(),
+                return match routing {
+                    Routing::ZeroRetention => Self::NoZeroRetentionEndpoint {
+                        model: model.to_owned(),
+                    },
+                    Routing::Any => Self::ProviderUnavailable {
+                        status: Some(status),
+                    },
                 };
             }
             return match status {
@@ -142,8 +169,8 @@ impl From<AiError> for RequestFailure {
 /// Whether an error reply is `OpenRouter` refusing the route: its error names
 /// the routing step that left no endpoint, as the recorded
 /// `generator-no-zero-retention.json` names "Filter by Data Policy". A
-/// request's only routing is its data policy, so any refused step means no
-/// endpoint keeps to it.
+/// generator request's only routing is its data policy, so for it any
+/// refused step means no endpoint keeps to it.
 fn refuses_route(body: &Value) -> bool {
     body.pointer("/error/metadata/failed_routing_step")
         .is_some_and(Value::is_string)
@@ -158,8 +185,8 @@ mod tests {
 
     use super::*;
     use crate::replay::{
-        GENERATOR_MODEL, JEV_MODEL, SampleQuestion, connection, sample_generator_request,
-        sample_jev_request, server,
+        GENERATOR_MODEL, SampleQuestion, connection, sample_generator_request, sample_jev_request,
+        server,
     };
     use crate::{GENERATOR_TIMEOUT, JEV_TIMEOUT, OpenRouter, SecretString, Timeouts};
 
@@ -274,15 +301,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_refused_route_is_no_zero_retention_endpoint_for_the_model() {
+    async fn a_refused_route_means_no_zero_retention_endpoint_for_the_generator_only() {
+        // Jev's requests ask nothing of the route until #69, so a route
+        // refused for one can't be about zero retention.
         let refused = include_str!("../fixtures/generator-no-zero-retention.json");
 
         assert_eq!(
             failures(404, refused).await,
             (
-                AiError::NoZeroRetentionEndpoint {
-                    model: JEV_MODEL.to_owned()
-                },
+                AiError::ProviderUnavailable { status: Some(404) },
                 AiError::NoZeroRetentionEndpoint {
                     model: GENERATOR_MODEL.to_owned()
                 },

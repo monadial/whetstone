@@ -19,7 +19,7 @@ use serde::de::DeserializeOwned;
 use tokio_util::sync::CancellationToken;
 
 use crate::connection::{OpenRouter, bounded};
-use crate::failure::AiError;
+use crate::failure::{AiError, Routing};
 use crate::usage::Usage;
 
 /// One generator call: the model, the preamble that instructs it and the
@@ -112,10 +112,10 @@ fn zero_retention() -> ProviderPreferences {
 fn failure(error: &StructuredOutputError, model: &str) -> AiError {
     match error {
         StructuredOutputError::Prompt(PromptError::Provider(error)) => {
-            AiError::from_provider(error, model)
+            AiError::from_provider(error, model, Routing::ZeroRetention)
         }
         StructuredOutputError::Prompt(PromptError::Report(report)) => {
-            AiError::from_report(report, model)
+            AiError::from_report(report, model, Routing::ZeroRetention)
         }
         StructuredOutputError::Prompt(PromptError::Cancelled { .. }) => AiError::Cancelled,
         // Output that doesn't decode, no output, or a reply that asked for

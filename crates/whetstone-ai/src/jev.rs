@@ -17,7 +17,7 @@ use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
 use crate::connection::{OpenRouter, bounded};
-use crate::failure::AiError;
+use crate::failure::{AiError, Routing};
 use crate::usage::Usage;
 
 /// One Jev evaluation: the model to ask, the state every question is about,
@@ -209,7 +209,7 @@ impl OpenRouter {
                 .map(|(name, question)| (name.clone(), question.definition()))
                 .collect(),
         )
-        .map_err(|error| AiError::from_provider(&error, model))?;
+        .map_err(|error| AiError::from_provider(&error, model, Routing::Any))?;
         let jev = JevConfig::new(self.key_for_auth_header())
             .model(model)
             .with_endpoint(self.url("/systemone"))
@@ -218,7 +218,7 @@ impl OpenRouter {
         let result = bounded(self.timeouts().jev, cancel, async {
             jev.evaluate(&request.state, questions)
                 .await
-                .map_err(|error| AiError::from_provider(&error, model))
+                .map_err(|error| AiError::from_provider(&error, model, Routing::Any))
         })
         .await?;
         JevReply::from_rig(result)
