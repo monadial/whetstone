@@ -12,19 +12,37 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
-# The command line, parsed as the app parses its own.
+# The command line: `check` and `measure`, as the app parses its own.
 clap = { version = "4.6", features = ["derive"] }
+# Runs a few Jev calls at a time, in order, on one thread. Already in the
+# tree through tokio-util and the app; `alloc` is the least that has
+# `buffered`.
+futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
 # Reads the labelled examples' TOML into typed values.
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
 # The labelled examples are TOML files, as area files' front matter and the
 # base prompts' instructions are; the same version and features as there.
 toml = { version = "1.1", default-features = false, features = ["parse", "serde", "std"] }
+# The runtime the keyed run's calls run on: one thread, as the app's UI loop.
+tokio = { version = "1.53", features = ["rt"] }
+# `OpenRouter::evaluate` takes a `CancellationToken`.
+tokio-util = "0.7"
 # The showcase project's changes, as the app embeds them, and the injected
-# `Environment` the tool runs in (rule 55).
+# `Environment` the key is read from (rule 55).
 whetstone = { path = "../whetstone" }
 # The Jev calls, through the same request builders and strict decoders as
 # Practice.
 whetstone-ai = { path = "../whetstone-ai" }
 # Evidence, areas, candidates, questions and the assessment policy.
 whetstone-core = { path = "../whetstone-core" }
+
+[dev-dependencies]
+# Reviewed snapshots of the report as it reads; the other crates use it.
+insta = "1.49"
+# The mock Jev server reads each request's questions to answer them.
+serde_json = "1"
+# `#[tokio::test]`.
+tokio = { version = "1.53", features = ["macros", "rt"] }
+# Each test's own local server, standing in for `OpenRouter` (rule 48).
+wiremock = "0.6"

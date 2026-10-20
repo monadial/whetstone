@@ -1,0 +1,61 @@
+---
+source: crates/whetstone-labels/src/report.rs
+expression: "Report::new(measurements).to_string()"
+---
+# Jev against the labelled examples
+
+- **Model:** `typesafe/jev-1.14`, reported as `typesafe/jev-1.14-20261014`.
+- **Runs:** each example 3 times: 6 calls, 1 failed.
+- **Cost:** 0.000412 USD, as reported; not reported for 1 call.
+- **Labels:** 5, of which 5 by an agent, as seeds still to review.
+- **Assessment policy:** version 0, unvalidated. This tool never changes it: setting its values is a recorded decision that bumps its version (rule 38).
+
+Counts are of answers, one per label per run. A clear answer disagrees when it is clear yes for a label of no, or clear no for a label of yes. The clear-yes columns depend only on the upper cut-off and the clear-no columns only on the lower, so any pair can be read off the rows.
+
+## Failed calls
+
+- `b`, run 2: rate limited by OpenRouter
+
+## Relevance gate
+
+No labels yet.
+
+## Question check (checks 1 to 5)
+
+No labels yet.
+
+## Option rating
+
+5 labels (2 yes, 3 no), 15 answers.
+
+| Cut-offs | Clear yes | … labelled no | Clear no | … labelled yes | Unclear | Clear answers that disagree |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 0.70 / 0.30 | 4 | 1 | 9 | 2 | 2 | 3 of 13 (23%) |
+| 0.75 / 0.25 | 3 | 1 | 7 | 2 | 5 | 3 of 10 (30%) |
+| 0.80 / 0.20 | 2 | 1 | 6 | 2 | 7 | 3 of 8 (38%) |
+| 0.85 / 0.15 | 1 | 0 | 6 | 2 | 8 | 2 of 7 (29%) |
+| 0.90 / 0.10 | 1 | 0 | 5 | 1 | 9 | 1 of 6 (17%) |
+| policy 0 (in use) | 2 | 1 | 6 | 2 | 7 | 3 of 8 (38%) |
+
+Spread across runs, each label's largest answer minus its smallest: mean 0.29, largest 0.72 (`a/option_b`). Under the policy in use, 3 labels' answers fall in more than one band.
+
+Under the policy in use, these labels have answers that are unclear or disagree:
+
+| Label | Labelled | Answers |
+| --- | --- | --- |
+| `a/option_a` | yes | 0.95, 0.72, 0.78 |
+| `a/option_b` | no | 0.10, 0.25, 0.82 |
+| `a/option_c` | no | 0.30, 0.29, 0.31 |
+| `b/option_a` | yes | 0.05, 0.15, 0.50 |
+
+## Rationale and hint checks
+
+No labels yet.
+
+## Reasoning criterion
+
+No labels yet.
+
+## Explanation check
+
+No labels yet.
