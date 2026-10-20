@@ -1,0 +1,25 @@
+---
+source: crates/whetstone/src/stage_row.rs
+expression: "drawn(&row, width)"
+---
+Buffer {
+    area: Rect { x: 0, y: 0, width: 80, height: 3 },
+    content: [
+        "✓ Reading the change → ⠋ Finding connected code → · Preparing evidence →        ",
+        "· Outbound review → · Checking areas · Jev → · Writing questions · generator →  ",
+        "· Reviewing questions · Jev                                                     ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 50, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 70, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 0, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 17, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 20, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 42, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 45, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 76, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 0, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 27, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+    ]
+}
