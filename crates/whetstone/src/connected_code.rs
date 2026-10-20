@@ -1,7 +1,9 @@
 //! Connected code: the callers and callees of the callables a change adds
 //! or modifies, one hop away, found on the learner's machine with the
-//! embedded `cgg` engine ([ADR 0002]). This module is the only one that
-//! knows about `cgg`, so the engine can be upgraded or replaced behind it.
+//! embedded `cgg` engine ([ADR 0002]), and the repository files the change
+//! links to in Markdown and names on the lines it adds or modifies. This
+//! module is the only one that knows about `cgg`, so the engine can be
+//! upgraded or replaced behind it.
 //!
 //! The outbound review asks for a commit's connected code with a
 //! [`Request`], which a background job runs. It gives the change's
@@ -277,10 +279,12 @@ impl Request {
     /// Finds the commit's connected code, blocking until the engine is
     /// done: the callers and callees of the callables its change adds or
     /// modifies, as [`find`] finds them, each with the lines it would send,
-    /// and its related tests and related configuration, each whole, as
-    /// [`related::connections`] finds them, read from the commit, with any
-    /// range in a file sent whole merged into it; or none found, or the
-    /// analysis failed, a panic included.
+    /// the files its change links to and names, each whole, as
+    /// [`with_linked_and_named`](linked_and_named::with_linked_and_named)
+    /// finds them, and its related tests and related configuration, each
+    /// whole, as [`related::connections`] finds them, read from the commit,
+    /// with any range in a file sent whole merged into it; or none found, or
+    /// the analysis failed, a panic included.
     pub(crate) fn find(&self) -> Connections {
         let started = Instant::now();
         let found = catching(|| {
