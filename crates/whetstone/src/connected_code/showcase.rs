@@ -19,7 +19,7 @@ use whetstone_core::{Change, Connections, ExcludePatterns, FileContent, Showcase
 
 use super::{
     AnalysisDirs, FileKind, GraphCache, GraphOrigin, Snapshot, SnapshotFile, SnapshotId,
-    connections_at, state,
+    connections_at, log_state,
 };
 
 /// The showcase project's tree just after one of its changes, with that
@@ -35,7 +35,9 @@ pub(crate) struct ShowcaseTree {
 }
 
 /// The showcase project keeps a binary file's size, never its contents, so
-/// there is nothing to read.
+/// there is nothing to read. Whetstone's build replays only text patches,
+/// so the embedded showcase project has no binary file, and one in a
+/// change would make its analysis fail, never pass unnoticed.
 #[derive(Debug, thiserror::Error)]
 #[error("the showcase project keeps no contents for a binary file")]
 pub(crate) struct BinaryFile;
@@ -45,10 +47,11 @@ impl ShowcaseTree {
     /// [`ShowcaseProject::files_at`] replays it, or `None` if there is no
     /// change there.
     pub(crate) fn at(showcase: &ShowcaseProject, position: usize) -> Option<Self> {
+        let change = showcase.changes().get(position)?.clone();
         let files = showcase.files_at(position)?;
         Some(Self {
             position,
-            change: showcase.changes()[position].clone(),
+            change,
             files: files
                 .into_iter()
                 .map(|(path, content)| (path.to_owned(), content.clone()))
@@ -58,7 +61,8 @@ impl ShowcaseTree {
 
     /// Finds the change's connected code, blocking until it is found, as
     /// [`connections_at`] finds a learner's commit's. The showcase project's
-    /// config sets nothing, so only the default exclusions apply. Its graph
+    /// config sets nothing, which its tests check, so only the default
+    /// exclusions apply. Its graph
     /// is cached under the change's position and this Whetstone version,
     /// which ships the showcase project.
     pub(crate) fn find(
@@ -71,7 +75,7 @@ impl ShowcaseTree {
             connections_at(self, &self.change, &ExcludePatterns::default(), dirs, cache);
         tracing::info!(
             position = self.position,
-            state = state(&connections),
+            state = log_state(&connections),
             origin = ?origin,
             ms = started.elapsed().as_millis(),
             "found a showcase change's connected code"
@@ -122,19 +126,21 @@ mod tests {
     /// The expected table's header, before the engine version and the
     /// changes it numbers.
     const TABLE_HEADER: &str = "\
-# The connected code of every curated showcase change, as Whetstone finds it
-# through the connected-code module, the same way as a learner's commit.
-# Each line is one connection: change | path | extent | group | relations.
-# A change with none has one \"none found\" line.
+# The connected code, related tests and related configuration of every curated
+# showcase change, as Whetstone finds them through the connected-code module,
+# the same way as for a learner's commit. Each line is one of them:
+# change | path | extent | group | relations. A change with none of them has
+# one \"none found\" line.
 #
 # Review this table whenever cgg is upgraded (ADR 0002): an upgrade can change
 # what is found. The engine version below follows the cgg pin, so an upgrade
-# fails this check until the table has been reviewed. A failing run writes the
-# table it found beside this one, ending in `.snap.new`, to compare and accept.";
+# fails this check until the table has been reviewed. Run locally, a failing
+# check writes the table it found beside this one, ending in `.snap.new`, to
+# compare and accept.";
 
-    /// The showcase project's expected connected code, kept with the tests:
-    /// each curated change's connections, one per line, in change, path and
-    /// extent order, after a header that numbers the changes as their
+    /// The showcase project's expected connected code, related tests and
+    /// related configuration, kept with the tests: each curated change's,
+    /// one per line, in change, path and extent order, after a header that numbers the changes as their
     /// patches in `showcase/payments-history/` are.
     #[test]
     fn every_curated_showcase_change_has_the_connected_code_its_table_expects() {

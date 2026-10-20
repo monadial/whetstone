@@ -22,11 +22,11 @@ anyhow = "1"
 # with a confidence on every edge. It is pre-1.0 and its options gain fields
 # with new releases, so it is pinned exactly and upgraded on purpose, with the
 # showcase project's expected connected code checked on every upgrade (the
-# table `connected_code/showcase.rs`'s test keeps). Only
-# the `connected_code` module uses it. Its grammars compile C, and every
-# tree-sitter use in Whetstone must share its tree-sitter version. Cached
-# graphs are keyed by this version, `ENGINE_VERSION` in
-# `connected_code/analysis.rs`, which a test keeps equal to this pin.
+# table `connected_code/showcase.rs`'s test keeps). Only the `connected_code`
+# module uses it. Its grammars compile C, and every tree-sitter use in
+# Whetstone must share its tree-sitter version. Cached graphs are keyed by
+# this version, `ENGINE_VERSION` in `connected_code/analysis.rs`, which a test
+# keeps equal to this pin.
 cgg = "=0.11.0"
 # cgg's own language detector and its walker's deny list, so that only the
 # files cgg reads are written out for it. Already in the tree through cgg, and
