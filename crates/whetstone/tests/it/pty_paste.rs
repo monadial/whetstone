@@ -3,6 +3,7 @@
 //! into the search box as text, never as keys.
 #![cfg(unix)]
 
+use std::path::Path;
 use std::process::Command;
 
 use rexpect::session::PtySession;
@@ -14,16 +15,16 @@ use crate::pty_terminal::{LAUNCH_AND_CRASH, without_pending_input};
 /// A terminal mode the TUI turns on at start and must turn off at every
 /// exit, with the escape sequences that turn it on and off.
 #[derive(Debug, Clone, Copy)]
-struct Mode {
+pub(super) struct Mode {
     name: &'static str,
-    on: &'static str,
+    pub(super) on: &'static str,
     off: &'static str,
 }
 
 /// The modes these tests check, in the order the guard turns them on, so
 /// the guard's order shows. Raw mode writes no escape sequence, so the
 /// shell's records of the modes cover it instead.
-const MODES: &[Mode] = &[
+pub(super) const MODES: &[Mode] = &[
     Mode {
         name: "the alternate screen",
         on: "\x1b[?1049h",
@@ -43,7 +44,7 @@ const MODES: &[Mode] = &[
 
 /// A way `whetstone` ends. Each must turn every mode off.
 #[derive(Debug, Clone, Copy)]
-enum Exit {
+pub(super) enum Exit {
     /// `q` on home.
     Quit,
     /// The reserved Ctrl+C.
@@ -56,6 +57,34 @@ enum Exit {
 }
 
 impl Exit {
+    /// Every way `whetstone` ends, so the checks that loop over it cover a
+    /// new one too. [`Exit::code`] does not compile until a new one has a
+    /// code, as a reminder to add it here.
+    ///
+    /// The crash trigger panics right after the first draw, so a panic can
+    /// never follow a suspend: `tests/it/pty_suspend.rs` leaves it out.
+    pub(super) const ALL: [Self; 4] = [Self::Quit, Self::CtrlC, Self::Signal, Self::Panic];
+
+    /// The exit code `whetstone` ends with this way.
+    pub(super) fn code(self) -> i32 {
+        match self {
+            Self::Quit | Self::CtrlC => 0,
+            // The shell convention for a process ended by SIGTERM: 128 + 15.
+            Self::Signal => 143,
+            // Rust's exit code for a process whose main thread panicked.
+            Self::Panic => 101,
+        }
+    }
+
+    /// Whether this build can end this way: release builds compile the
+    /// crash trigger out.
+    fn possible(self) -> bool {
+        match self {
+            Self::Quit | Self::CtrlC | Self::Signal => true,
+            Self::Panic => cfg!(debug_assertions),
+        }
+    }
+
     /// Runs `whetstone` in a pseudo-terminal until it draws home, lets it
     /// end this way, and returns everything the terminal received, with the
     /// exit code.
@@ -67,14 +96,26 @@ impl Exit {
             Self::Panic => LAUNCH_AND_CRASH,
         };
         let mut session = start(launch, &[("HOME", home.path())]);
-        let transcript = quit_with(&mut session, |session| match self {
+        let transcript = quit_with(&mut session, |session| self.end(session, home.path()));
+        match self {
+            Self::Quit | Self::CtrlC | Self::Signal => transcript,
+            // The panic comes before whetstone first polls the terminal: see
+            // `without_pending_input`.
+            Self::Panic => without_pending_input(&transcript.0),
+        }
+    }
+
+    /// Ends the `whetstone` running in `session` this way. A signal goes to
+    /// the process ID its launch wrote to `pid` in `home`.
+    pub(super) fn end(self, session: &mut PtySession, home: &Path) {
+        match self {
             Self::Quit => {
                 session.send("q").expect("send q");
                 session.flush().expect("flush q");
             }
             Self::CtrlC => session.send_control('c').expect("send Ctrl+C"),
             Self::Signal => {
-                let pid = read_pid(&home.path().join("pid")).expect("whetstone's process ID");
+                let pid = read_pid(&home.join("pid")).expect("whetstone's process ID");
                 let kill = Command::new("kill")
                     .args(["-TERM", &pid])
                     .status()
@@ -83,12 +124,6 @@ impl Exit {
             }
             // The crash trigger fires on its own, right after the first draw.
             Self::Panic => {}
-        });
-        match self {
-            Self::Quit | Self::CtrlC | Self::Signal => transcript,
-            // The panic comes before whetstone first polls the terminal: see
-            // `without_pending_input`.
-            Self::Panic => without_pending_input(&transcript.0),
         }
     }
 }
@@ -115,7 +150,7 @@ impl Transcript {
 /// Asserts that `printed` turns every one of [`MODES`] on in the guard's
 /// order, and then turns each off again in reverse order, as the guard
 /// restores them.
-fn assert_modes_on_then_off_in(printed: &str) {
+pub(super) fn assert_modes_on_then_off_in(printed: &str) {
     for mode in MODES {
         assert!(
             printed.contains(mode.on),
@@ -156,27 +191,13 @@ fn assert_modes_on_then_off_in(printed: &str) {
 }
 
 #[test]
-fn the_modes_are_on_while_whetstone_runs_and_off_after_q() {
-    let transcript = Exit::Quit.run();
+fn the_modes_are_on_while_whetstone_runs_and_off_after_every_exit() {
+    for exit in Exit::ALL.into_iter().filter(|exit| exit.possible()) {
+        let transcript = exit.run();
 
-    transcript.assert_exit_code(0);
-    transcript.assert_modes_on_then_off();
-}
-
-#[test]
-fn the_modes_are_on_while_whetstone_runs_and_off_after_ctrl_c() {
-    let transcript = Exit::CtrlC.run();
-
-    transcript.assert_exit_code(0);
-    transcript.assert_modes_on_then_off();
-}
-
-#[test]
-fn the_modes_are_on_while_whetstone_runs_and_off_after_a_termination_signal() {
-    let transcript = Exit::Signal.run();
-
-    transcript.assert_exit_code(143);
-    transcript.assert_modes_on_then_off();
+        transcript.assert_exit_code(exit.code());
+        transcript.assert_modes_on_then_off();
+    }
 }
 
 #[test]
@@ -187,8 +208,7 @@ fn the_modes_are_on_while_whetstone_runs_and_off_after_a_termination_signal() {
 fn the_modes_are_on_while_whetstone_runs_and_off_before_a_real_panic_message_prints() {
     let transcript = Exit::Panic.run();
 
-    // Rust's exit code for a process whose main thread panicked.
-    transcript.assert_exit_code(101);
+    transcript.assert_exit_code(Exit::Panic.code());
     // Raw mode writes no escape sequence: the shell's records of the modes
     // show it was turned off.
     transcript.assert_terminal_restored();

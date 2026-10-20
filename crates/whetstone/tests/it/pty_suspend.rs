@@ -11,9 +11,11 @@
 
 use std::process::Command;
 
+use rexpect::session::PtySession;
 use tempfile::TempDir;
 
-use crate::pty::{Transcript, start};
+use crate::pty::{Transcript, quit_with, start};
+use crate::pty_paste::{Exit, MODES, assert_modes_on_then_off_in};
 use crate::pty_terminal::{Recording, recorded, resize};
 
 /// Runs `whetstone` under job control, after writing the terminal's device
@@ -39,32 +41,8 @@ dash "$HOME/job""#
 /// `$HOME/pid`, so the test can signal it.
 const LAUNCH_RECORDING_PID: &str = r#"sh -c 'echo $$ > "$HOME/pid"; exec "$WHETSTONE"'"#;
 
-/// A terminal mode the TUI turns on with an escape sequence, with the
-/// sequences that turn it on and off. Raw mode has none: the terminal's
-/// settings show it.
-struct Mode {
-    name: &'static str,
-    on: &'static str,
-    off: &'static str,
-}
-
-const MODES: [Mode; 3] = [
-    Mode {
-        name: "the alternate screen",
-        on: "\x1b[?1049h",
-        off: "\x1b[?1049l",
-    },
-    Mode {
-        name: "the hidden cursor",
-        on: "\x1b[?25l",
-        off: "\x1b[?25h",
-    },
-    Mode {
-        name: "bracketed paste",
-        on: "\x1b[?2004h",
-        off: "\x1b[?2004l",
-    },
-];
+/// Enters the alternate screen, the first of [`MODES`] the TUI turns on.
+const ENTER_ALTERNATE_SCREEN: &str = MODES[0].on;
 
 /// Clears the whole screen, so the next frame is drawn in full.
 const CLEAR: &str = "\x1b[2J";
@@ -115,7 +93,7 @@ impl Transcript {
             self.section("modes while suspended:"),
             "the terminal's settings are restored while whetstone is stopped"
         );
-        assert_modes_on_then_off(self.until_suspended(), "before whetstone stops");
+        assert_modes_on_then_off_in(self.until_suspended());
     }
 
     /// Asserts that after `fg`, `whetstone` turned every mode back on and
@@ -123,9 +101,9 @@ impl Transcript {
     /// again before it exited. Returns what it wrote since `fg`.
     fn assert_taken_back_after_fg(&self) -> &str {
         let resumed = self.since_resumed();
-        assert_modes_on_then_off(resumed, "after fg");
+        assert_modes_on_then_off_in(resumed);
         let (_, entered) = resumed
-            .split_once(MODES[0].on)
+            .split_once(ENTER_ALTERNATE_SCREEN)
             .expect("the alternate screen is entered again");
         assert!(
             entered.contains(CLEAR),
@@ -135,22 +113,19 @@ impl Transcript {
     }
 }
 
-/// Asserts that every one of [`MODES`] is turned on in `output`, and is off
-/// again by its end.
-fn assert_modes_on_then_off(output: &str, when: &str) {
-    for mode in &MODES {
-        assert!(
-            output.contains(mode.on),
-            "{} is turned on {when}:\n{output:?}",
-            mode.name
-        );
-        let since_on = output.rsplit_once(mode.on).map_or("", |(_, rest)| rest);
-        assert!(
-            since_on.contains(mode.off),
-            "{} is turned off again {when}:\n{output:?}",
-            mode.name
-        );
-    }
+/// Waits for home, suspends `whetstone` with Ctrl+Z, and waits for the
+/// shell's record of the modes while it is stopped. Returns everything
+/// printed until then.
+fn suspend_from_home(session: &mut PtySession) -> String {
+    let until_home = session.exp_string("Quit").expect("home screen is drawn");
+    session.send_control('z').expect("send Ctrl+Z");
+    let until_suspended = session
+        .exp_string("modes while suspended:")
+        .expect("whetstone stops");
+    let suspended = session
+        .exp_string("modes end")
+        .expect("the modes are recorded while whetstone is stopped");
+    format!("{until_home}Quit{until_suspended}modes while suspended:{suspended}modes end")
 }
 
 /// Sends `signal` to the process whose ID the launch wrote to `$HOME/pid`.
@@ -278,8 +253,31 @@ fn a_termination_signal_while_suspended_ends_whetstone_without_taking_the_termin
     transcript.assert_given_back_while_suspended();
     let resumed = transcript.since_resumed();
     assert!(
-        !resumed.contains(MODES[0].on),
+        !resumed.contains(ENTER_ALTERNATE_SCREEN),
         "the alternate screen is not entered again after fg:\n{resumed:?}"
     );
     transcript.assert_terminal_restored();
+}
+
+#[test]
+fn after_a_suspend_and_fg_every_exit_turns_every_mode_off_again() {
+    // The crash trigger panics right after the first draw, before any
+    // suspend.
+    for exit in Exit::ALL
+        .into_iter()
+        .filter(|exit| !matches!(exit, Exit::Panic))
+    {
+        let home = TempDir::new().expect("create a temporary home");
+        let mut session = start(&launch_suspend_and_fg(""), &[("HOME", home.path())]);
+
+        let suspended = suspend_from_home(&mut session);
+        // Home, drawn again after fg.
+        let rest = quit_with(&mut session, |session| exit.end(session, home.path()));
+        let transcript = Transcript(suspended + &rest.0);
+
+        transcript.assert_exit_code(exit.code());
+        transcript.assert_given_back_while_suspended();
+        transcript.assert_taken_back_after_fg();
+        transcript.assert_terminal_restored();
+    }
 }
