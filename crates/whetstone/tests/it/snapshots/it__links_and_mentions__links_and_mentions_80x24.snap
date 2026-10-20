@@ -24,9 +24,9 @@ Buffer {
         "    README.md    1 KB  included · 1 connected                                   ",
         "    shop/pay.py  1 KB  included · 3 connected                                   ",
         "                                                                                ",
-        "  Connected code: 1 range and 2 files · 1 KB                                    ",
-        "  > docs/payments.md  whole file  1 KB  included                                ",
-        "      linked from `README.md`, named in `shop/pay.py`                           ",
+        "  Connected code: 1 range and 2 files · 1 KB of 100 KB limit                    ",
+        "  > shop/cart.py      whole file  1 KB  included                                ",
+        "      calls `charge`, named in `shop/pay.py`                                    ",
         "  ? keys  : actions  Space toggle  Enter read  q back                           ",
         "                                                                                ",
     ],
@@ -35,6 +35,6 @@ Buffer {
         x: 2, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
         x: 26, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 2, y: 20, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
-        x: 20, y: 20, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 16, y: 20, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
     ]
 }
