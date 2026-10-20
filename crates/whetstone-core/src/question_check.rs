@@ -7,9 +7,10 @@
 //! change and doesn't give the answer away; whether each criterion is fair;
 //! each option's rating; whether each rationale and the "why it matters"
 //! line hold up; and whether the hint points to the evidence without
-//! revealing the answer key. Jev's answers come back as
-//! [`QuestionCheckAnswers`], as returned, and [`show_rule`] decides under the
-//! [`AssessmentPolicy`]. Only a question that passes is ever shown.
+//! revealing the answer key. It also scores the candidate's [`Depth`], which
+//! orders questions and never passes or fails one. Jev's answers come back
+//! as [`QuestionCheckAnswers`], as returned, and [`show_rule`] decides under
+//! the [`AssessmentPolicy`]. Only a question that passes is ever shown.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -50,16 +51,45 @@ pub enum CandidateCheck {
     HintHidesAnswerKey,
 }
 
-/// Jev's answers to a candidate's question check, each the probability of
-/// yes, exactly as returned.
-#[derive(Debug, Clone, Default, PartialEq)]
+/// Jev's answers to a candidate's question check, exactly as returned: each
+/// yes/no answer the probability of yes, and its depth.
+#[derive(Debug, Clone, PartialEq)]
 pub struct QuestionCheckAnswers {
     yes_no: BTreeMap<CandidateCheck, Probability>,
+    depth: Depth,
 }
 
-/// A candidate that passed its question check, with Jev's answers, the
-/// version of the policy that passed it, and its hint if the hint passed its
-/// checks too. Only questions are ever shown.
+/// How much understanding of the change a candidate needs, as Jev scores it
+/// over three ordered levels: its distribution over the levels and its
+/// expected value, exactly as returned. Nothing renormalises the
+/// distribution, and Jev's `confidence` is never read.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Depth {
+    /// The probability of each level, in [`DepthLevel::ALL`] order.
+    distribution: [Probability; 3],
+    expected: f64,
+}
+
+/// A level of [`Depth`], from the shallowest to the deepest.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum DepthLevel {
+    /// Answerable by reading one line.
+    OneLine,
+    /// Needs reading the change.
+    TheChange,
+    /// Needs an understanding of how the change affects the code around it.
+    CodeAround,
+}
+
+/// A depth Jev returned whose expected value is not a level's place: not a
+/// number from 0 to 2. A reply holding one is invalid, never coerced.
+#[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
+#[error("{0} is not an expected depth: it must be from 0 to 2")]
+pub struct InvalidDepth(f64);
+
+/// A candidate that passed its question check, with Jev's answers, its
+/// depth, the version of the policy that passed it, and its hint if the hint
+/// passed its checks too. Only questions are ever shown.
 ///
 /// Its `Debug` output shows no question text.
 #[derive(Clone, PartialEq)]
@@ -131,12 +161,16 @@ impl CandidateCheck {
 }
 
 impl QuestionCheckAnswers {
-    /// Jev's `answers`, each to one check. A check answered twice keeps its
-    /// last answer.
+    /// Jev's yes/no `answers`, each to one check, and its `depth` score. A
+    /// check answered twice keeps its last answer.
     #[must_use]
-    pub fn new(answers: impl IntoIterator<Item = (CandidateCheck, Probability)>) -> Self {
+    pub fn new(
+        answers: impl IntoIterator<Item = (CandidateCheck, Probability)>,
+        depth: Depth,
+    ) -> Self {
         Self {
             yes_no: answers.into_iter().collect(),
+            depth,
         }
     }
 
@@ -146,9 +180,59 @@ impl QuestionCheckAnswers {
         self.yes_no.get(&check).copied()
     }
 
-    /// Every answer, by check, in [`CandidateCheck`] order.
+    /// Every yes/no answer, by check, in [`CandidateCheck`] order.
     pub fn iter(&self) -> impl Iterator<Item = (CandidateCheck, Probability)> + '_ {
         self.yes_no.iter().map(|(&check, &answer)| (check, answer))
+    }
+
+    /// Jev's depth score.
+    #[must_use]
+    pub fn depth(&self) -> Depth {
+        self.depth
+    }
+}
+
+impl Depth {
+    /// The depth with this `distribution` over the levels, in
+    /// [`DepthLevel::ALL`] order, and this `expected` value: the
+    /// probability-weighted mean of the levels' places, counting from 0, so
+    /// from 0 to 2.
+    pub fn new(distribution: [Probability; 3], expected: f64) -> Result<Self, InvalidDepth> {
+        if (0.0..=2.0).contains(&expected) {
+            Ok(Self {
+                distribution,
+                expected,
+            })
+        } else {
+            Err(InvalidDepth(expected))
+        }
+    }
+
+    /// The probability of `level`, as returned.
+    #[must_use]
+    pub fn probability(&self, level: DepthLevel) -> Probability {
+        self.distribution[level.index()]
+    }
+
+    /// The expected value, as returned: from 0, answerable by reading one
+    /// line, to 2, needing an understanding of the code around the change.
+    #[must_use]
+    pub fn expected(&self) -> f64 {
+        self.expected
+    }
+}
+
+impl DepthLevel {
+    /// Every level, from the shallowest to the deepest.
+    pub const ALL: [Self; 3] = [Self::OneLine, Self::TheChange, Self::CodeAround];
+
+    /// Its place in [`DepthLevel::ALL`].
+    fn index(self) -> usize {
+        match self {
+            Self::OneLine => 0,
+            Self::TheChange => 1,
+            Self::CodeAround => 2,
+        }
     }
 }
 
@@ -292,6 +376,13 @@ impl Question {
         &self.answers
     }
 
+    /// How much understanding of the change it needs, as Jev scored it. It
+    /// orders questions, and never passed or failed this one.
+    #[must_use]
+    pub fn depth(&self) -> Depth {
+        self.answers.depth
+    }
+
     /// The version of the policy that passed it.
     #[must_use]
     pub fn policy(&self) -> PolicyVersion {
@@ -373,6 +464,11 @@ pub(crate) mod tests {
             .collect()
     }
 
+    /// A depth whose expected value is `expected`.
+    pub(crate) fn depth(expected: f64) -> Depth {
+        Depth::new([0.2, 0.3, 0.5].map(probability), expected).expect("from 0 to 2")
+    }
+
     /// Answers rating options A, B and C at `a`, `b` and `c`.
     fn options(a: f64, b: f64, c: f64) -> Vec<(CandidateCheck, Probability)> {
         OptionLetter::ALL
@@ -393,7 +489,7 @@ pub(crate) mod tests {
         all.extend(answers);
         show_rule(
             candidate,
-            QuestionCheckAnswers::new(all),
+            QuestionCheckAnswers::new(all, depth(1.3)),
             AssessmentPolicy::current(),
         )
     }
@@ -455,7 +551,7 @@ pub(crate) mod tests {
 
         let question = show_rule(
             candidate,
-            QuestionCheckAnswers::new(answers.clone()),
+            QuestionCheckAnswers::new(answers.clone(), depth(1.3)),
             AssessmentPolicy::current(),
         )
         .expect("shown");
@@ -482,6 +578,52 @@ pub(crate) mod tests {
             Some(probability(0.9))
         );
         assert_eq!(question.answers().iter().collect::<Vec<_>>(), answers);
+        assert_eq!(question.depth(), depth(1.3));
+    }
+
+    #[test]
+    fn depth_is_kept_as_returned() {
+        let distribution = [0.1, 0.25, 0.6].map(probability);
+
+        let depth = Depth::new(distribution, 1.5).expect("from 0 to 2");
+
+        assert_eq!(depth.probability(DepthLevel::OneLine), probability(0.1));
+        assert_eq!(depth.probability(DepthLevel::TheChange), probability(0.25));
+        assert_eq!(depth.probability(DepthLevel::CodeAround), probability(0.6));
+        assert_eq!(depth.expected().to_bits(), 1.5_f64.to_bits());
+    }
+
+    #[test]
+    fn an_expected_depth_is_from_0_to_2() {
+        let distribution = [0.0, 0.0, 1.0].map(probability);
+        for expected in [0.0, 2.0] {
+            assert!(Depth::new(distribution, expected).is_ok(), "{expected}");
+        }
+        for expected in [-0.01, 2.01, f64::NAN, f64::INFINITY] {
+            assert!(Depth::new(distribution, expected).is_err(), "{expected}");
+        }
+    }
+
+    #[test]
+    fn depth_never_passes_or_fails_a_candidate() {
+        for expected in [0.0, 1.0, 2.0] {
+            let candidate = candidate("domain", 0, OptionLetter::A);
+            let answers = passing(&candidate);
+
+            let question = show_rule(
+                candidate,
+                QuestionCheckAnswers::new(answers, depth(expected)),
+                AssessmentPolicy::current(),
+            );
+
+            assert!(question.is_ok(), "{expected}");
+        }
+        let deep_but_unclear = show_rule(
+            candidate("domain", 0, OptionLetter::A),
+            QuestionCheckAnswers::new(options(0.5, 0.1, 0.1), depth(2.0)),
+            AssessmentPolicy::current(),
+        );
+        assert!(deep_but_unclear.is_err());
     }
 
     #[test]
@@ -595,7 +737,7 @@ pub(crate) mod tests {
 
             let shown = show_rule(
                 candidate.clone(),
-                QuestionCheckAnswers::new(answers),
+                QuestionCheckAnswers::new(answers, depth(1.3)),
                 AssessmentPolicy::current(),
             );
 
@@ -628,7 +770,7 @@ pub(crate) mod tests {
     fn a_withheld_candidate_names_itself() {
         let withheld = show_rule(
             candidate("observability", 2, OptionLetter::A),
-            QuestionCheckAnswers::default(),
+            QuestionCheckAnswers::new([], depth(1.3)),
             AssessmentPolicy::current(),
         )
         .expect_err("withheld");
