@@ -113,8 +113,8 @@ impl RelatedFile {
 /// Why a [`RelatedFile`] is related to the touched files.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum RelatedGroup {
-    /// A related test: by its ecosystem's naming convention, it is a test
-    /// for each touched file it relates to.
+    /// A related test: by its ecosystem's test rules, it is a test for each
+    /// touched file it relates to.
     Test,
     /// Related configuration: it is the nearest build manifest for each
     /// touched file it relates to.
@@ -163,11 +163,11 @@ pub(crate) fn find<'a>(
     tree: impl IntoIterator<Item = &'a str>,
     touched: &[TouchedFile],
 ) -> Vec<RelatedFile> {
-    find_by(Conventions::embedded(), tree, touched)
+    find_with(Conventions::embedded(), tree, touched)
 }
 
-/// [`find`], by `conventions`.
-fn find_by<'a>(
+/// [`find`], with `conventions` instead of the embedded ones.
+fn find_with<'a>(
     conventions: &Conventions,
     tree: impl IntoIterator<Item = &'a str>,
     touched: &[TouchedFile],
@@ -285,7 +285,7 @@ impl<'a> Tree<'a> {
         let Some(ecosystem) = source.ecosystem else {
             return Vec::new();
         };
-        if self.is_test(ecosystem, source.dir, source.stem) {
+        if self.is_test(ecosystem, source) {
             return Vec::new();
         }
         ecosystem
@@ -300,8 +300,9 @@ impl<'a> Tree<'a> {
             .collect()
     }
 
-    /// Whether a file of `ecosystem` in `dir` with `stem` is a test itself.
-    fn is_test(&self, ecosystem: &Ecosystem, dir: &str, stem: &str) -> bool {
+    /// Whether `source`, a file of `ecosystem`, is a test itself.
+    fn is_test(&self, ecosystem: &Ecosystem, source: &Source<'_>) -> bool {
+        let Source { dir, stem, .. } = *source;
         let is_test = &ecosystem.is_test;
         let beside_manifest = || {
             self.package(ecosystem, dir).is_some_and(|package| {
@@ -845,7 +846,7 @@ mod tests {
         ];
 
         assert_eq!(
-            find_by(&conventions, tree, &changed(&["src/Shop/Store.cs"])),
+            find_with(&conventions, tree, &changed(&["src/Shop/Store.cs"])),
             [
                 RelatedFile {
                     path: "Directory.Build.props".to_owned(),
