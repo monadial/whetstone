@@ -15,12 +15,13 @@ use ratatui::widgets::{List, ListState, Paragraph};
 use whetstone_core::{Area, CommitId, InvalidAreaFile, ReviewChoices, ShowcaseProject};
 
 use crate::columns;
-use crate::connected_code::Request;
+use crate::connected_code::{Request, ShowcaseTree};
 use crate::entry::TextEntry;
 use crate::focus::Position;
 use crate::keymap::{self, Binding, Command, Input, Keymap, Press};
 use crate::outbound_review::OutboundReview;
 use crate::palette::Action;
+use crate::practice::Practice;
 use crate::repository::{Availability, Commit, History, HistoryEnd, HistoryError, Repository};
 use crate::search::{self, Query};
 use crate::theme::{ControlKind, ControlState, Theme};
@@ -97,8 +98,9 @@ enum Control {
     /// The change at this index.
     Change(usize),
     /// What comes after choosing: "Generate questions" on the showcase
-    /// project, once Jev arrives, and "Review what will be sent" on the
-    /// learner's repository.
+    /// project, which starts Practice once Practice can ask Jev and the
+    /// generator, and "Review what will be sent" on the learner's
+    /// repository.
     Proceed,
 }
 
@@ -114,8 +116,9 @@ enum AreaChoice {
 /// What the picker practices on, and what it read of it.
 #[derive(Debug)]
 enum Source {
-    /// The showcase project, with this many curated changes.
-    Showcase { changes: usize },
+    /// The showcase project, with this many curated changes, and whether
+    /// Practice can ask Jev and the generator.
+    Showcase { changes: usize, ai: bool },
     /// The learner's repository, with the commits reachable from HEAD read
     /// so far, newest first, or why they could not be read. The history
     /// holds the repository it reads, so it is boxed.
@@ -146,10 +149,13 @@ pub(crate) struct Picker {
 
 impl Picker {
     /// The picker over `showcase`, as it first opens: every area selected.
-    pub(crate) fn new(showcase: &ShowcaseProject) -> Self {
+    /// Generate questions starts Practice only if Practice can ask Jev and
+    /// the generator, as `ai` says.
+    pub(crate) fn new(showcase: &ShowcaseProject, ai: bool) -> Self {
         Self {
             source: Source::Showcase {
                 changes: showcase.changes().len(),
+                ai,
             },
             areas: vec![AreaChoice::Valid { selected: true }; showcase.areas().len()],
             chosen: None,
@@ -197,7 +203,7 @@ impl Picker {
     /// How many changes the picker lists.
     fn changes(&self) -> usize {
         match self.source {
-            Source::Showcase { changes } => changes,
+            Source::Showcase { changes, .. } => changes,
             Source::Repository { .. } => self.commits().len(),
         }
     }
@@ -321,7 +327,7 @@ impl Picker {
     /// commits could be read, if none or not all could.
     fn change_rows(&self) -> usize {
         match &self.source {
-            Source::Showcase { changes } => *changes,
+            Source::Showcase { changes, .. } => *changes,
             Source::Repository {
                 history: Ok(history),
             } => {
@@ -482,13 +488,18 @@ impl Picker {
         }
     }
 
-    /// Opens the outbound review of the chosen commit, with the choices
-    /// kept for it, once a commit and an area are chosen. "Generate
-    /// questions" on the showcase project is disabled until Jev arrives, as
-    /// it says.
-    fn open_outbound_review(&mut self) -> Option<Command> {
+    /// What comes after choosing, once a change and an area are chosen:
+    /// Practice on the chosen showcase change, or the outbound review of the
+    /// chosen commit, with the choices kept for it. While it is disabled, as
+    /// it says, nothing happens.
+    fn proceed_to(&mut self) -> Option<Command> {
         if self.proceed().1.is_some() {
             return None;
+        }
+        if let Source::Showcase { .. } = self.source {
+            return Some(Command::Go(Route::Practice(ChangeRef::Showcase(
+                ChangeIndex::new(self.chosen?),
+            ))));
         }
         let id = self.commits().get(self.chosen?)?.id();
         if self.kept_choices(id).is_none() {
@@ -508,18 +519,31 @@ impl Picker {
     /// The control after the lists, and why it is disabled, if it is.
     fn proceed(&self) -> (&'static str, Option<&'static str>) {
         match self.source {
-            Source::Showcase { .. } => ("Generate questions", Some(ARRIVES_WITH_JEV)),
-            Source::Repository { .. } => (
-                "Review what will be sent",
-                match (self.chosen.is_some(), self.has_area()) {
-                    _ if !self.offers_an_area() => Some(NO_VALID_AREA),
-                    (true, true) => None,
-                    (true, false) => Some("choose an area"),
-                    (false, true) => Some("choose a change"),
-                    (false, false) => Some("choose a change and an area"),
-                },
-            ),
+            Source::Showcase { ai: false, .. } => ("Generate questions", Some(ARRIVES_WITH_JEV)),
+            Source::Showcase { ai: true, .. } => ("Generate questions", self.choices_missing()),
+            Source::Repository { .. } => ("Review what will be sent", self.choices_missing()),
         }
+    }
+
+    /// What is still to choose before Practice can go on, if anything.
+    fn choices_missing(&self) -> Option<&'static str> {
+        match (self.chosen.is_some(), self.has_area()) {
+            _ if !self.offers_an_area() => Some(NO_VALID_AREA),
+            (true, true) => None,
+            (true, false) => Some("choose an area"),
+            (false, true) => Some("choose a change"),
+            (false, false) => Some("choose a change and an area"),
+        }
+    }
+
+    /// The areas chosen, in the order offered: valid and selected.
+    fn chosen_areas<'a>(&self, offered: impl IntoIterator<Item = &'a Area>) -> Vec<Area> {
+        offered
+            .into_iter()
+            .zip(&self.areas)
+            .filter(|(_, choice)| **choice == AreaChoice::Valid { selected: true })
+            .map(|(area, _)| area.clone())
+            .collect()
     }
 }
 
@@ -767,6 +791,17 @@ impl View for Picker {
     }
 
     fn open(&self, route: Route, context: &Context<'_>) -> Option<Box<dyn View>> {
+        if let Route::Practice(ChangeRef::Showcase(index)) = route {
+            let change = index.of(context.showcase)?.clone();
+            let tree = ShowcaseTree::at(context.showcase, index.get())?;
+            return Some(Box::new(Practice::on_showcase(
+                index,
+                change,
+                tree,
+                self.chosen_areas(context.showcase.areas()),
+                context,
+            )?));
+        }
         let Route::OutboundReview(id) = route else {
             return None;
         };
@@ -852,7 +887,7 @@ impl View for Picker {
                 self.chosen = Some(index);
                 (command == Command::Open).then_some(Command::Go(Route::Viewer(change)))
             }
-            Control::Proceed => self.open_outbound_review(),
+            Control::Proceed => self.proceed_to(),
         }
     }
 

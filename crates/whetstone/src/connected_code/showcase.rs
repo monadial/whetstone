@@ -4,14 +4,6 @@
 //! a commit's is in the learner's repository, and nothing about it is
 //! worked out when Whetstone is built.
 
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the AI Practice spec's Preparing questions finds the showcase project's connected code"
-    )
-)]
-
 use std::collections::BTreeMap;
 use std::time::Instant;
 

@@ -57,11 +57,13 @@ use crate::repository::{CommitTree, LoadError, RepositoryHandle, TreeEntryKind};
 pub(crate) use analysis::{AnalysisDir, AnalysisDirs, AnalysisDirsGuard, sweep};
 pub(crate) use cache::{GraphCache, SnapshotId};
 pub(crate) use graph::{Connection, Graph, Relation, Tier};
+pub(crate) use showcase::ShowcaseTree;
 
 /// How long the outbound review waits for a commit's connected code before
 /// it carries on without it, counted from when the review opens: any wait
 /// for another commit's analysis, the cache lookup, writing the commit's
-/// files and analysing them.
+/// files and analysing them. Preparing questions waits as long for a
+/// showcase change's.
 ///
 /// Measured on an Apple M4 Max, a release build finds it for tokio (565
 /// files) in about 0.4 s, and for rust-lang/rust (63,812 files) in about

@@ -27,6 +27,9 @@ pub(crate) enum StageState {
     /// Passed over, such as finding connected code when it isn't available:
     /// marked `–`.
     Skipped,
+    /// Stopped by a request that failed, until the learner retries it:
+    /// marked `✗`.
+    Failed,
 }
 
 /// One stage in the row: what it is called and where it stands.
@@ -48,8 +51,8 @@ pub(crate) enum PracticeStage {
     CheckingAreas,
     /// The generator writes the questions.
     WritingQuestions,
-    /// Jev reviews the generator's questions.
-    ReviewingQuestions,
+    /// Jev checks the generator's questions.
+    CheckingQuestions,
 }
 
 impl PracticeStage {
@@ -61,7 +64,7 @@ impl PracticeStage {
         Self::OutboundReview,
         Self::CheckingAreas,
         Self::WritingQuestions,
-        Self::ReviewingQuestions,
+        Self::CheckingQuestions,
     ];
 
     /// The stage's name in the row, with who does the work where that is an
@@ -74,7 +77,7 @@ impl PracticeStage {
             Self::OutboundReview => "Outbound review",
             Self::CheckingAreas => "Checking areas · Jev",
             Self::WritingQuestions => "Writing questions · generator",
-            Self::ReviewingQuestions => "Reviewing questions · Jev",
+            Self::CheckingQuestions => "Checking questions · Jev",
         }
     }
 }
@@ -88,6 +91,8 @@ const DONE: &str = "✓";
 const UPCOMING: &str = "·";
 /// The mark of a stage passed over.
 const SKIPPED: &str = "–";
+/// The mark of a stage a failed request stopped.
+const FAILED: &str = "✗";
 /// What follows every stage but the last, leading to the next.
 const ARROW: &str = " →";
 
@@ -155,6 +160,7 @@ impl<'a> StageRow<'a> {
             StageState::Current => (SPINNER[self.ticks % SPINNER.len()], Style::new()),
             StageState::Upcoming => (UPCOMING, self.upcoming),
             StageState::Skipped => (SKIPPED, self.muted),
+            StageState::Failed => (FAILED, Style::new()),
         };
         let arrow = if last { "" } else { ARROW };
         let room = width.saturating_sub(Line::raw(format!("{mark} {arrow}")).width());
@@ -289,7 +295,7 @@ mod tests {
                 "frame {index} shows {frame:?} again"
             );
             assert!(
-                !['✓', '·', '–'].map(Some).contains(frame),
+                !['✓', '·', '–', '✗'].map(Some).contains(frame),
                 "frame {index} looks like another mark"
             );
         }
@@ -309,7 +315,7 @@ mod tests {
                 "✓ Preparing evidence → ⠋ Outbound review →",
                 "· Checking areas · Jev →",
                 "· Writing questions · generator →",
-                "· Reviewing questions · Jev",
+                "· Checking questions · Jev",
             ]
         );
         // Down to the widest stage, "· Writing questions · generator →".
@@ -364,7 +370,7 @@ mod tests {
             [
                 "✓ Reading the change → ⠋ Finding connected code → · Preparing evidence →",
                 "· Outbound review → · Checking areas · Jev → · Writing questions · generator →",
-                "· Reviewing questions · Jev",
+                "· Checking questions · Jev",
             ]
         );
     }

@@ -24,7 +24,10 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
-use whetstone_core::{CommitId, Connections};
+use whetstone_ai::{Reply, RequestFailure};
+use whetstone_core::{
+    AreaId, CandidateId, CommitId, Connections, QuestionCheckAnswers, WrittenCandidate,
+};
 
 use crate::connected_code::GraphOrigin;
 
@@ -44,6 +47,31 @@ pub enum JobOutput {
         connections: Connections,
         /// Whether its graph was analysed or came from the cache.
         origin: GraphOrigin,
+    },
+    /// A showcase change's connected code, found for Preparing questions.
+    ShowcaseConnectedCode {
+        /// The change's position among the showcase project's changes.
+        position: usize,
+        /// What was found, or why there is none.
+        connections: Connections,
+        /// Whether its graph was analysed or came from the cache.
+        origin: GraphOrigin,
+    },
+    /// The candidates the generator wrote about one area, or why the
+    /// request failed.
+    Written {
+        /// The area they are about.
+        area: AreaId,
+        /// The candidates as written, or why the request failed.
+        reply: Result<Reply<Vec<WrittenCandidate>>, RequestFailure>,
+    },
+    /// Jev's answers to one candidate's question check, or why the request
+    /// failed.
+    Checked {
+        /// The candidate checked.
+        candidate: CandidateId,
+        /// Jev's answers as returned, or why the request failed.
+        reply: Result<Reply<QuestionCheckAnswers>, RequestFailure>,
     },
 }
 

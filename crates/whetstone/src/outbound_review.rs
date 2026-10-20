@@ -515,7 +515,7 @@ impl OutboundReview {
                 // Jev and the generator arrive with the AI Practice spec.
                 PracticeStage::CheckingAreas
                 | PracticeStage::WritingQuestions
-                | PracticeStage::ReviewingQuestions => StageState::Upcoming,
+                | PracticeStage::CheckingQuestions => StageState::Upcoming,
             },
         });
         let ticks = if finding_connected_code == StageState::Current {
@@ -1182,6 +1182,10 @@ impl View for OutboundReview {
                 connections,
                 origin,
             } => self.apply_connections(commit, connections, origin),
+            // Only Preparing questions waits for these.
+            JobOutput::ShowcaseConnectedCode { .. }
+            | JobOutput::Written { .. }
+            | JobOutput::Checked { .. } => {}
         }
     }
 

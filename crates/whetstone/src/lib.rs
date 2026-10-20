@@ -24,6 +24,8 @@ mod overlay;
 mod palette;
 mod paste;
 mod picker;
+mod practice;
+mod questions;
 mod reader;
 mod repository;
 mod search;

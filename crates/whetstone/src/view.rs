@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
+use whetstone_ai::Ai;
 use whetstone_core::{Change, CommitId, Comparison, FileIndex, ShowcaseProject};
 
 use crate::config::Settings;
@@ -47,17 +48,27 @@ pub(crate) trait View: fmt::Debug {
     }
 
     /// The screen `route` names, built from this screen's state, if this
-    /// screen builds it: the picker builds the outbound review from its
-    /// choices, and the review builds what it lets the learner read. Every
-    /// other route opens from the route alone.
+    /// screen builds it: the picker builds the outbound review and Practice
+    /// from its choices, and the review builds what it lets the learner
+    /// read. Every other route opens from the route alone.
     fn open(&self, _route: Route, _context: &Context<'_>) -> Option<Box<dyn View>> {
         None
     }
 
-    /// Starts the background jobs the screen needs with `jobs`, keeping
-    /// their identities to wait for. The app calls it once, when the
-    /// screen opens.
+    /// Starts the background jobs the screen needs now with `jobs`, keeping
+    /// their identities to wait for. The app calls it when the screen
+    /// opens, and again each time the screen has applied a command, a job's
+    /// result or the end of a time limit, so a screen starts a job as soon
+    /// as its state needs one, such as a check for each candidate once they
+    /// are written, or a Retry. A job is started only once.
     fn start_jobs(&mut self, _jobs: &mut Jobs<JobOutput>) {}
+
+    /// Closes the screen, as the learner leaves it for the screen before it
+    /// or for home, with `jobs` to stop the jobs it waits for. By default
+    /// they run on and their results are never applied, as the outbound
+    /// review lets an analysis run on to be cached for the commit's next
+    /// review. A screen whose requests the learner pays for cancels them.
+    fn close(&mut self, _jobs: &mut Jobs<JobOutput>) {}
 
     /// Whether the screen waits for the result of the job `job`.
     fn waits_for(&self, _job: JobId) -> bool {
@@ -103,9 +114,12 @@ pub(crate) struct Context<'a> {
     pub(crate) ticks: usize,
     /// The graphs connected code was found in before.
     pub(crate) cache: &'a Arc<GraphCache>,
-    /// How long the outbound review waits for connected code, from when it
-    /// opens, before it carries on without it.
+    /// How long the outbound review, or Preparing questions on the showcase
+    /// project, waits for connected code, from when it opens, before it
+    /// carries on without it.
     pub(crate) time_limit: Duration,
+    /// Jev and the generator, if Practice can ask them.
+    pub(crate) ai: Option<&'a Arc<dyn Ai>>,
 }
 
 /// What Practice runs on.
@@ -131,6 +145,9 @@ pub(crate) enum Route {
     OutboundReview(CommitId),
     /// Something the outbound review lets the learner read whole.
     Read(Reading),
+    /// Practice on a change: Preparing questions, then the questions. The
+    /// picker opens it.
+    Practice(ChangeRef),
 }
 
 /// What the outbound review lets the learner read whole.
@@ -167,14 +184,20 @@ impl ChangeIndex {
         Self(index)
     }
 
+    /// Its place in the history, oldest first.
+    pub(crate) const fn get(self) -> usize {
+        self.0
+    }
+
     /// The change in `showcase`, if it has one here.
     pub(crate) fn of(self, showcase: &ShowcaseProject) -> Option<&Change> {
         showcase.changes().get(self.0)
     }
 }
 
-/// Why Practice cannot go on to the AI step yet: neither "Generate
-/// questions" nor the outbound review's Send can be used.
+/// Why Practice cannot go on to the AI step yet, without Jev and the
+/// generator: neither "Generate questions" nor the outbound review's Send
+/// can be used.
 pub(crate) const ARRIVES_WITH_JEV: &str = "arrives with Jev";
 
 /// What a commit's row in the picker and its title in the viewer say about
@@ -189,18 +212,21 @@ pub(crate) fn comparison_label(comparison: Comparison) -> Option<&'static str> {
 }
 
 impl Route {
-    /// The screen at this route, as it first opens over `showcase` or
-    /// `repository`, unless only the screen before it can build it, as
-    /// [`View::open`] does.
-    pub(crate) fn open(
-        self,
-        showcase: &ShowcaseProject,
-        repository: Result<&Repository, &Unavailable>,
-    ) -> Option<Box<dyn View>> {
+    /// The screen at this route, as it first opens over the showcase project
+    /// or the repository in `context`, unless only the screen before it can
+    /// build it, as [`View::open`] does.
+    pub(crate) fn open(self, context: &Context<'_>) -> Option<Box<dyn View>> {
+        let Context {
+            showcase,
+            repository,
+            ..
+        } = *context;
         Some(match self {
             Self::Home => Box::new(Home::new(repository)),
             Self::Settings => Box::new(SettingsScreen::default()),
-            Self::Picker(Project::Showcase) => Box::new(Picker::new(showcase)),
+            Self::Picker(Project::Showcase) => {
+                Box::new(Picker::new(showcase, context.ai.is_some()))
+            }
             Self::Picker(Project::Repository) => Box::new(Picker::for_repository(
                 repository.expect("home offers the repository only when it is available"),
             )),
@@ -219,7 +245,7 @@ impl Route {
                     Err(error) => Box::new(Unreadable::new(self, id, &error)),
                 }
             }
-            Self::OutboundReview(_) | Self::Read(_) => return None,
+            Self::OutboundReview(_) | Self::Read(_) | Self::Practice(_) => return None,
         })
     }
 }

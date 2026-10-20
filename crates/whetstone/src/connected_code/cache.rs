@@ -196,13 +196,6 @@ pub(crate) enum SnapshotId {
     Tree(gix::ObjectId),
     /// The tree at a showcase change, by the change's position in the
     /// showcase project this Whetstone version ships.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the AI Practice spec's Preparing questions finds the showcase project's connected code"
-        )
-    )]
     Showcase(usize),
 }
 

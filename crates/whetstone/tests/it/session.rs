@@ -7,6 +7,7 @@
 use std::fs;
 use std::mem;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
 
 use ratatui::Terminal;
@@ -17,11 +18,13 @@ use tempfile::TempDir;
 use whetstone::{
     App, Dirs, Environment, Finished, Flow, JobId, JobOutput, Message, Repository, Settings, Theme,
 };
+use whetstone_ai::{Ai, ScriptedAi};
 use whetstone_core::ShowcaseProject;
 
 /// What the app starts from: a global config file, if any, the environment
 /// variables besides `HOME`, the showcase project, the directory Whetstone
-/// starts in, and the time limit on finding connected code. Unless the
+/// starts in, the time limit on finding connected code, and the AI Practice
+/// asks, if it has one. Unless the
 /// variables set `TMPDIR`, the system temporary directory is one of the
 /// session's own, and unless they set `XDG_CACHE_HOME`, the cache folder is
 /// in the session's home directory.
@@ -36,9 +39,13 @@ pub(crate) struct Setup<'a> {
     /// repository. Without one it starts in the session's home directory,
     /// outside any repository.
     pub(crate) start: Option<&'a Path>,
-    /// How long the outbound review waits for connected code, if not
-    /// Whetstone's own time limit.
+    /// How long the outbound review, and Preparing questions on the
+    /// showcase project, wait for connected code, if not Whetstone's own
+    /// time limit.
     pub(crate) time_limit: Option<Duration>,
+    /// Jev and the generator, scripted by the test. Without them, as in the
+    /// real binary until Whetstone reaches them, Practice cannot ask them.
+    pub(crate) ai: Option<&'a Arc<ScriptedAi>>,
 }
 
 /// A terminal with colour turned off: snapshots then list only text
@@ -104,9 +111,13 @@ impl Session {
             environment.temp_dir(),
             &dirs.cache,
         );
+        let app = match setup.time_limit {
+            Some(time_limit) => app.with_time_limit(time_limit),
+            None => app,
+        };
         let mut session = Self {
-            app: match setup.time_limit {
-                Some(time_limit) => app.with_time_limit(time_limit),
+            app: match setup.ai {
+                Some(ai) => app.with_ai(Arc::clone(ai) as Arc<dyn Ai>),
                 None => app,
             },
             width,
@@ -178,6 +189,19 @@ impl Session {
                     "a job's result never quits"
                 );
             }
+        }
+    }
+
+    /// Delivers the report of every background job that has ended so far,
+    /// but not of any job the app starts on them, which waits for the next
+    /// delivery: one step of what [`Session::settle`] does.
+    pub(crate) fn settle_once(&mut self) {
+        for finished in mem::take(&mut self.finished) {
+            assert_eq!(
+                self.send(Message::Finished(finished)),
+                Flow::Continue,
+                "a job's result never quits"
+            );
         }
     }
 
