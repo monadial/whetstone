@@ -12,6 +12,9 @@ use std::process::Command;
 
 use rexpect::session::{PtySession, spawn_command};
 use tempfile::TempDir;
+use whetstone_core::Area;
+
+use crate::repo::TestRepo;
 
 const TIMEOUT_MS: u64 = 10_000;
 
@@ -120,4 +123,110 @@ fn with_term_dumb_it_refuses_before_writing_anything_else() {
         "the refusal is the only thing written: no escape sequence comes first"
     );
     transcript.assert_modes_unchanged();
+}
+
+#[test]
+fn with_term_dumb_the_refusal_goes_to_stderr_and_nothing_to_the_terminal() {
+    let home = TempDir::new().expect("create a temporary home");
+    let mut session = start(
+        r#"TERM=dumb "$WHETSTONE" 2> "$HOME/stderr""#,
+        &[("HOME", home.path())],
+    );
+
+    let transcript = Transcript::read(&mut session);
+
+    transcript.assert_exit_code(1);
+    assert_eq!(transcript.written(), "", "nothing reaches the terminal");
+    assert_eq!(
+        std::fs::read_to_string(home.path().join("stderr")).expect("read redirected stderr"),
+        "error: whetstone needs a terminal that can move the cursor, but TERM=dumb says this one cannot\n"
+    );
+    transcript.assert_modes_unchanged();
+}
+
+#[test]
+fn with_term_unset_it_draws_and_quits() {
+    assert_draws_and_quits(r#"(unset TERM; "$WHETSTONE")"#);
+}
+
+#[test]
+fn with_term_empty_it_draws_and_quits() {
+    assert_draws_and_quits(r#"TERM= "$WHETSTONE""#);
+}
+
+/// Waits for the home screen `launch` draws, quits with `q`, and checks the
+/// terminal was left as it was.
+fn assert_draws_and_quits(launch: &str) {
+    let home = TempDir::new().expect("create a temporary home");
+    let mut session = start(launch, &[("HOME", home.path())]);
+
+    // Ratatui moves the cursor between words, so wait for a single word: the
+    // home screen's last action.
+    let until_home = session.exp_string("Quit").expect("home screen is drawn");
+    session.send("q").expect("send q");
+    session.flush().expect("flush q");
+    let rest = session.exp_eof().expect("shell exits");
+    let transcript = Transcript(format!("{until_home}Quit{rest}"));
+
+    transcript.assert_exit_code(0);
+    transcript.assert_modes_unchanged();
+}
+
+#[test]
+fn with_term_dumb_version_prints_the_version() {
+    let home = TempDir::new().expect("create a temporary home");
+    let mut session = start(
+        r#"TERM=dumb "$WHETSTONE" --version"#,
+        &[("HOME", home.path())],
+    );
+
+    let transcript = Transcript::read(&mut session);
+
+    transcript.assert_exit_code(0);
+    assert_eq!(
+        transcript.written(),
+        concat!("whetstone ", env!("CARGO_PKG_VERSION"), "\r\n")
+    );
+}
+
+#[test]
+fn with_term_dumb_help_prints_the_usage() {
+    let home = TempDir::new().expect("create a temporary home");
+    let mut session = start(r#"TERM=dumb "$WHETSTONE" --help"#, &[("HOME", home.path())]);
+
+    let transcript = Transcript::read(&mut session);
+
+    transcript.assert_exit_code(0);
+    let help = transcript.written();
+    assert!(
+        help.contains("Usage: whetstone"),
+        "help shows usage:\n{help}"
+    );
+}
+
+#[test]
+fn with_term_dumb_areas_init_writes_the_default_area_files() {
+    let home = TempDir::new().expect("create a temporary home");
+    let repo = TestRepo::new("payments");
+    let mut session = start(
+        r#"cd "$REPO" && TERM=dumb "$WHETSTONE" areas init"#,
+        &[("HOME", home.path()), ("REPO", repo.root())],
+    );
+
+    let transcript = Transcript::read(&mut session);
+
+    transcript.assert_exit_code(0);
+    let printed: Vec<&str> = transcript.written().lines().collect();
+    assert_eq!(
+        printed.len(),
+        Area::default_files().len(),
+        "one line per area file written:\n{printed:?}"
+    );
+    for &(name, contents) in Area::default_files() {
+        assert_eq!(
+            std::fs::read(repo.path(".whetstone/areas").join(name)).expect("read an area file"),
+            contents,
+            "{name} is written"
+        );
+    }
 }
