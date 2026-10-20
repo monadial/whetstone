@@ -70,6 +70,12 @@ pub(crate) enum Command {
     Type(char),
     /// Erase the last character typed into the focused text entry.
     Erase,
+    /// Delete the character after the cursor in the focused text entry.
+    Delete,
+    /// Move the cursor to the start of its line in the focused text entry.
+    LineStart,
+    /// Move the cursor to the end of its line in the focused text entry.
+    LineEnd,
     /// Stop typing, and close the focused text entry.
     Cancel,
 }

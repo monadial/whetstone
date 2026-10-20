@@ -25,6 +25,7 @@ mod palette;
 mod paste;
 mod picker;
 mod reader;
+mod reasoning_editor;
 mod repository;
 mod search;
 mod session_record;
