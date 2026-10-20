@@ -538,6 +538,30 @@ fn only_files_the_engine_reads_are_written_and_never_excluded_binary_or_secret_o
 }
 
 #[test]
+fn every_file_of_a_commit_larger_than_the_writers_queue_is_written() {
+    let snapshot = (0..1000).fold(Memory::default(), |snapshot, n| {
+        snapshot.with(
+            &format!("src/m{}/f{n}.rs", n % 37),
+            FileKind::Blob,
+            format!("pub fn f{n}() {{}}\n"),
+        )
+    });
+    let temp = TempDir::new().expect("create a temporary directory");
+
+    let dir = AnalysisDir::write(
+        &snapshot,
+        &ExcludePatterns::default(),
+        &AnalysisDirs::new(temp.path().to_path_buf()),
+    )
+    .expect("write the files");
+
+    let written = files_under(dir.path());
+    assert_eq!(written.len(), 1000);
+    let contents = fs::read_to_string(dir.path().join("src/m5/f42.rs")).expect("read a file");
+    assert_eq!(contents, "pub fn f42() {}\n");
+}
+
+#[test]
 fn a_file_is_written_exactly_when_the_engines_own_detector_recognises_it() {
     let samples: [(&str, &[u8]); 16] = [
         ("lib.rs", b"fn f() {}\n"),
