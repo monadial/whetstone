@@ -47,8 +47,8 @@ const CLAIM: &str = "Understand the code you ship.";
 const NAME_GAP: u16 = 4;
 
 /// Where data goes, said before anything is ever sent.
-const OUTBOUND_NOTICE: &str = "Once AI arrives, Practice will send showcase excerpts and your answers \
-                        to OpenRouter, paid with your credits.";
+const OUTBOUND_NOTICE: &str =
+    "Practice sends showcase excerpts and your answers to OpenRouter, paid with your credits.";
 
 /// Home's own keys: `q` quits from here.
 const KEYMAP: Keymap = &[keymap::MOVE, keymap::ACTIVATE, keymap::QUIT];
