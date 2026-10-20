@@ -15,7 +15,9 @@ Whetstone helps you examine your understanding of real code through questions an
 
 Early. `whetstone` opens a terminal home screen. Started inside a Git repository, it offers Practice on that repository first, then Practice on the showcase project (a small sample codebase that ships with Whetstone), Settings and Quit. Practice starts by choosing the areas questions focus on and one change: a commit from your repository's history, or one of the showcase project's curated changes, which are built into the binary. Enter opens the change to read its diff and each file it touches, before and after.
 
-On your repository, **Review what will be sent** opens the outbound review: exactly what a Practice would send and where. It shows the commit message, every touched file with its size and whether it is sent, any possible secrets, each area with its prompt, and the total size against the limit. Questions and feedback need AI, which isn't connected yet, so **Send** is disabled. Once it is, Practice will send what you approved and your answers to [OpenRouter](https://openrouter.ai), paid with your own credits. Nothing is sent today.
+On your repository, **Review what will be sent** opens the outbound review: exactly what a Practice would send and where. It shows the commit message, every touched file with its size and whether it is sent, any possible secrets, each area with its prompt, and the total size against the limit. Questions and feedback on your repository aren't connected yet, so **Send** is disabled. Once they are, Practice will send what you approved and your answers to [OpenRouter](https://openrouter.ai), paid with your own credits. Nothing from your repository is sent today.
+
+On the showcase project, **Generate questions** prepares questions once `OPENROUTER_API_KEY` is set, and is disabled until then. It sends showcase excerpts to OpenRouter, paid with your credits: the generator writes candidate questions, and Jev checks each one, so only questions that pass are shown.
 
 ## Run it
 
