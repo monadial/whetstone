@@ -18,8 +18,8 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::Paragraph;
 use whetstone_core::{
-    Area, Change, CommitId, Comparison, Evidence, EvidenceFile, ExcludePatterns, FileIndex,
-    Finding, FindingStatus, Origin, Place, ReviewChoices, Side, Unsendable,
+    Area, Change, CommitId, Comparison, Connections, Evidence, EvidenceFile, ExcludePatterns,
+    FileIndex, Finding, FindingStatus, Origin, Place, ReviewChoices, Side, Unsendable,
 };
 
 use crate::columns;
@@ -169,7 +169,13 @@ impl OutboundReview {
         exclude: ExcludePatterns,
         choices: Rc<RefCell<ReviewChoices>>,
     ) -> Self {
-        let evidence = Evidence::build(&change, &exclude, &areas, &choices.borrow());
+        let evidence = Evidence::build(
+            &change,
+            &exclude,
+            &areas,
+            &Connections::Finding,
+            &choices.borrow(),
+        );
         tracing::info!(
             commit = id.full(),
             files = evidence.files().len(),
@@ -233,6 +239,7 @@ impl OutboundReview {
             &self.change,
             &self.exclude,
             &self.areas,
+            &Connections::Finding,
             &self.choices.borrow(),
         );
         let last = self.controls().len().saturating_sub(1);
@@ -507,8 +514,9 @@ impl OutboundReview {
         let line = matched.line();
         let place = match finding.place() {
             Place::CommitMessage => format!("the commit message, line {line}"),
-            Place::Content(file) => format!("{}, line {line}", self.path(file)),
-            Place::Diff(file) => format!("{}, diff line {line}", self.path(file)),
+            Place::Content(file) => format!("{}, line {line}", self.path(*file)),
+            Place::Diff(file) => format!("{}, diff line {line}", self.path(*file)),
+            Place::Connection(connection) => format!("{}, line {line}", connection.path()),
         };
         format!(
             "Possible secret in {place}: {}, {}",

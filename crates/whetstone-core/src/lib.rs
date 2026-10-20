@@ -8,6 +8,7 @@
 
 mod area;
 mod change;
+mod connection;
 mod evidence;
 mod exclusion;
 mod repository_config;
@@ -19,9 +20,13 @@ pub use crate::area::{Area, AreaFileError, AreaId, AreaSource, InvalidAreaFile, 
 pub use crate::change::{
     Change, CommitId, Comparison, FileContent, InvalidCommitId, Origin, TouchedFile,
 };
+pub use crate::connection::{
+    Connection, ConnectionGroup, ConnectionId, Connections, Extent, InvalidLineRange, LineRange,
+    Relation, Tier,
+};
 pub use crate::evidence::{
-    Evidence, EvidenceFile, Exclusion, FileIndex, FileStatus, Finding, FindingStatus, Place,
-    ReviewChoices, SentFile, Side, Unsendable,
+    ConnectionsState, Evidence, EvidenceConnection, EvidenceFile, Exclusion, FileIndex, FileStatus,
+    Finding, FindingStatus, Place, ReviewChoices, SentConnection, SentFile, Side, Unsendable,
 };
 pub use crate::exclusion::{
     DefaultExclusion, DefaultExclusionKind, ExcludePattern, ExcludePatternError,
