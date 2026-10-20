@@ -23,7 +23,9 @@ use crate::prompts::QUESTION_CHECK;
 /// `needs_change` and `no_giveaway`; `criterion_1` and on, one per criterion;
 /// `option_a` to `option_c`, the option ratings; `rationale_a` to
 /// `rationale_c` and `why_it_matters`; and `hint_points_to_evidence` and
-/// `hint_hides_answer_key`.
+/// `hint_hides_answer_key`. It also scores the candidate's `depth` over
+/// three levels: answerable by reading one line, needs reading the change,
+/// and needs an understanding of how the change affects the code around it.
 ///
 /// Its state is the evidence as sent, as `evidence`, and the whole candidate
 /// as `candidate`: its area's name and description, never its area prompt,
@@ -45,15 +47,19 @@ pub fn question_check_request(
             .checks()
             .into_iter()
             .map(|check| (name(check), question(check)))
+            .chain([(DEPTH.to_owned(), QUESTION_CHECK.depth.question())])
             .collect(),
     }
 }
 
 /// Jev's answers to `candidate`'s question check, from `reply`, exactly as
-/// returned.
+/// returned: each check's probability of yes, and the depth's distribution
+/// and expected value. Jev's `confidence` is never read.
 ///
 /// Fails with [`AiError::InvalidReply`] when an answer is missing, of
-/// another kind, not a probability, or to a question the check didn't ask.
+/// another kind, not a probability, or to a question the check didn't ask,
+/// or when the depth isn't three probabilities with an expected value from
+/// 0 to 2.
 pub fn question_check_answers(
     candidate: &Candidate,
     reply: &JevReply,
@@ -64,9 +70,13 @@ pub fn question_check_answers(
         .into_iter()
         .map(|check| Ok((check, answers.yes_no(&name(check))?)))
         .collect::<Result<Vec<_>, AiError>>()?;
+    let depth = answers.depth(DEPTH)?;
     answers.done()?;
-    Ok(QuestionCheckAnswers::new(checks))
+    Ok(QuestionCheckAnswers::new(checks, depth))
 }
+
+/// The name the depth score goes under.
+const DEPTH: &str = "depth";
 
 /// The name a check's question goes under, such as `criterion_1` or
 /// `option_a`.
@@ -183,7 +193,7 @@ fn criterion_name(index: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use whetstone_core::Probability;
+    use whetstone_core::{Depth, Probability};
 
     use super::*;
     use crate::jev::JevAnswer;
@@ -238,23 +248,50 @@ mod tests {
             answers.iter().collect::<Vec<_>>(),
             [
                 (CandidateCheck::Answerable, 0.96),
-                (CandidateCheck::AboutArea, 0.78),
-                (CandidateCheck::NeedsChange, 0.54),
-                (CandidateCheck::NoGiveaway, 0.11),
-                (CandidateCheck::Criterion(0), 0.82),
-                (CandidateCheck::Criterion(1), 0.94),
+                (CandidateCheck::AboutArea, 0.76),
+                (CandidateCheck::NeedsChange, 0.57),
+                (CandidateCheck::NoGiveaway, 0.13),
+                (CandidateCheck::Criterion(0), 0.8),
+                (CandidateCheck::Criterion(1), 0.93),
                 (CandidateCheck::Option(OptionLetter::A), 0.98),
                 (CandidateCheck::Option(OptionLetter::B), 0.01),
-                (CandidateCheck::Option(OptionLetter::C), 0.01),
+                (CandidateCheck::Option(OptionLetter::C), 0.02),
                 (CandidateCheck::Rationale(OptionLetter::A), 0.97),
-                (CandidateCheck::Rationale(OptionLetter::B), 0.89),
-                (CandidateCheck::Rationale(OptionLetter::C), 0.88),
-                (CandidateCheck::WhyItMatters, 0.8),
+                (CandidateCheck::Rationale(OptionLetter::B), 0.88),
+                (CandidateCheck::Rationale(OptionLetter::C), 0.93),
+                (CandidateCheck::WhyItMatters, 0.81),
                 (CandidateCheck::HintPointsToEvidence, 0.95),
-                (CandidateCheck::HintHidesAnswerKey, 0.12),
+                (CandidateCheck::HintHidesAnswerKey, 0.13),
             ]
             .map(|(check, answer)| (check, probability(answer)))
         );
+        assert_eq!(
+            answers.depth(),
+            Depth::new(
+                [probability(0.11), probability(0.3), probability(0.59)],
+                1.47
+            )
+            .expect("the recorded depth is one")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_depth_that_is_not_a_score_over_three_levels_is_an_invalid_reply() {
+        for depth in [
+            JevAnswer::YesNo { yes: 0.5 },
+            JevAnswer::Score {
+                probabilities: vec![0.4, 0.6],
+                expected: 0.6,
+            },
+        ] {
+            let mut reply = recorded().await;
+            reply.answers.insert("depth".to_owned(), depth);
+
+            assert_eq!(
+                question_check_answers(&candidate(), &reply),
+                Err(AiError::InvalidReply)
+            );
+        }
     }
 
     #[tokio::test]

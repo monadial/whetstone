@@ -4,7 +4,7 @@
 
 use std::collections::BTreeMap;
 
-use whetstone_core::Probability;
+use whetstone_core::{Depth, Probability};
 
 use crate::failure::AiError;
 use crate::jev::{JevAnswer, JevReply};
@@ -34,6 +34,32 @@ impl<'a> Answers<'a> {
             }
             _ => Err(AiError::InvalidReply),
         }
+    }
+
+    /// The depth Jev scored the score question `name` with: its probability
+    /// for each of the three levels and their expected position, as
+    /// returned.
+    pub(crate) fn depth(&mut self, name: &str) -> Result<Depth, AiError> {
+        let Some(JevAnswer::Score {
+            probabilities,
+            expected,
+        }) = self.unread.remove(name)
+        else {
+            return Err(AiError::InvalidReply);
+        };
+        let [one_line, the_change, code_around] = probabilities.as_slice() else {
+            return Err(AiError::InvalidReply);
+        };
+        let probability = |value: f64| Probability::new(value).map_err(|_| AiError::InvalidReply);
+        Depth::new(
+            [
+                probability(*one_line)?,
+                probability(*the_change)?,
+                probability(*code_around)?,
+            ],
+            *expected,
+        )
+        .map_err(|_| AiError::InvalidReply)
     }
 
     /// Succeeds when every answer was read: the reply answered nothing it
