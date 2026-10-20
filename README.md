@@ -100,7 +100,7 @@ Every screen fits whole at 80×24. Below 50×12, Whetstone shows "Window too sma
 
 Ctrl+Z gives you your shell back, and `fg` brings back the same screen at the window's current size. Started without a shell to return to, such as a tmux pane's own command or `ssh -t host whetstone`, Ctrl+Z has nowhere to go, so Whetstone carries on. However it ends, by `q`, Ctrl+C, a signal or a crash, Whetstone leaves your terminal as it found it. It exits with 0 after `q` or Ctrl+C, and with 128 plus the signal's number after a signal.
 
-Colours follow what your terminal reports: `COLORTERM`, then `TERM`. SSH usually doesn't forward `COLORTERM`, so over SSH colours drop to 256. If your terminal shows 24-bit colour, set `colours = "24-bit"` in the [config](#configure-it). A non-empty `NO_COLOR` turns colour off whatever `colours` says.
+Colours follow what your terminal reports: `COLORTERM`, then `TERM`. SSH doesn't forward `COLORTERM` unless set up to, so over SSH colours usually drop to 256. If your terminal shows 24-bit colour, set `colours = "24-bit"` in the [config](#configure-it). A non-empty `NO_COLOR` turns colour off whatever `colours` says.
 
 Known limits:
 
