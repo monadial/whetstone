@@ -302,7 +302,7 @@ pub(crate) const INTERRUPT: Binding = Binding {
 /// before any screen or overlay sees it.
 pub(crate) const SUSPEND: Binding = Binding {
     keys: &[(Press::ctrl('z'), Command::Suspend)],
-    does: "Suspend to the shell, until fg",
+    does: "Suspend until fg",
     hint: None,
 };
 
@@ -334,6 +334,7 @@ pub(crate) const EVERYWHERE: Keymap = &[
         hint: Some(": actions"),
     },
     INTERRUPT,
+    SUSPEND,
 ];
 
 /// `j`/`k` and the arrows move through a list.

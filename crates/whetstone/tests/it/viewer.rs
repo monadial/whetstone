@@ -703,6 +703,7 @@ fn key_help_on_the_viewer_lists_its_keys() {
         ("q, Esc", "Back"),
         ("Tab, Shift+Tab", "Next or previous control"),
         ("Ctrl+C", "Quit from anywhere"),
+        ("Ctrl+Z", "Suspend until fg"),
     ] {
         assert!(
             rows.iter()
