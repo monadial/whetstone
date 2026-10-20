@@ -13,6 +13,7 @@ mod commit_viewer;
 mod commits;
 mod config;
 mod dirs;
+mod jobs;
 mod navigation;
 mod outbound_review;
 mod overlays;

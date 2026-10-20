@@ -11,6 +11,9 @@
 //!
 //! A paste never becomes keys or commands. It goes into the screen's focused
 //! text entry as one insertion, and anywhere else it does nothing.
+//!
+//! A background job's result enters the same way, and is applied only if
+//! the app still waits for that job.
 
 use ratatui::Frame;
 use ratatui::crossterm::event::{Event, KeyEvent, KeyEventKind};
@@ -22,6 +25,7 @@ use whetstone_core::ShowcaseProject;
 use crate::config::Settings;
 use crate::help::KeyHelp;
 use crate::home::Home;
+use crate::job::{self, Finished, Job, JobOutput, Jobs};
 use crate::keymap::{self, Command, Input};
 use crate::overlay::{Outcome, Overlay};
 use crate::palette::Palette;
@@ -49,6 +53,21 @@ pub struct App {
     /// the notice is showing, how far key help can scroll, and how far a
     /// page goes on the current screen.
     viewport: Option<Size>,
+    /// The background jobs the app started.
+    jobs: Jobs<JobOutput>,
+}
+
+/// Something for the app to apply: a terminal event the UI loop read, a
+/// background job's result, or a tick while a job runs.
+#[derive(Debug)]
+pub enum Message {
+    /// Only key presses and pastes act (rule 26). A resize changes only how
+    /// the next frame is laid out.
+    Terminal(Event),
+    /// A background job ended.
+    Finished(Finished<JobOutput>),
+    /// While a job runs, the UI loop ticks to draw the next frame.
+    Tick,
 }
 
 /// Whether the UI loop keeps going after an event.
@@ -147,24 +166,51 @@ impl App {
             overlay: None,
             pending: keymap::Pending::default(),
             viewport: None,
+            jobs: Jobs::new(),
         }
     }
 
-    /// Applies one terminal event. Key presses act, a paste goes into the
-    /// focused text entry, and a resize changes only how the next frame is
-    /// laid out.
-    pub fn handle(&mut self, event: &Event) -> Flow {
-        match event {
-            Event::Key(key) if key.kind == KeyEventKind::Press => self.press(key),
-            Event::Paste(text) => {
-                self.paste(text);
+    /// Applies one message. Key presses act, a paste goes into the focused
+    /// text entry, and a resize changes only how the next frame is laid
+    /// out. A job's result is applied only if the app still waits for that
+    /// job.
+    pub fn handle(&mut self, message: Message) -> Flow {
+        match message {
+            Message::Terminal(Event::Key(key)) if key.kind == KeyEventKind::Press => {
+                self.press(&key)
+            }
+            Message::Terminal(Event::Paste(text)) => {
+                self.paste(&text);
                 Flow::Continue
             }
-            Event::Resize(width, height) => {
-                self.viewport = Some(Size::new(*width, *height));
+            Message::Terminal(Event::Resize(width, height)) => {
+                self.viewport = Some(Size::new(width, height));
                 Flow::Continue
             }
-            _ => Flow::Continue,
+            Message::Finished(finished) => {
+                self.finished(finished);
+                Flow::Continue
+            }
+            Message::Terminal(_) | Message::Tick => Flow::Continue,
+        }
+    }
+
+    /// The background jobs the app started since the last take, for the UI
+    /// loop to run.
+    pub fn take_jobs(&mut self) -> Vec<Job<JobOutput>> {
+        self.jobs.take_started()
+    }
+
+    /// Rule 24: applies a job's result only if the app still waits for that
+    /// job.
+    fn finished(&mut self, finished: Finished<JobOutput>) {
+        let Some(finished) = self.jobs.accept(finished) else {
+            return;
+        };
+        match finished.outcome {
+            job::Outcome::Done(output) => match output {},
+            // A job the app waits for is cancelled only as the app quits.
+            job::Outcome::Cancelled => {}
         }
     }
 

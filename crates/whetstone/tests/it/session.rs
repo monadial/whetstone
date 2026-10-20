@@ -1,6 +1,7 @@
 //! The app seam's harness: build the app from injected inputs, then drive it
 //! the way the UI loop does, with key presses and resizes, drawing each frame
-//! on ratatui's test backend.
+//! on ratatui's test backend. Background jobs' results and ticks arrive only
+//! when a test asks, so every frame is deterministic.
 
 use std::fs;
 use std::path::Path;
@@ -10,7 +11,7 @@ use ratatui::backend::TestBackend;
 use ratatui::buffer::{Buffer, Cell};
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use tempfile::TempDir;
-use whetstone::{App, Dirs, Environment, Flow, Repository, Settings, Theme};
+use whetstone::{App, Dirs, Environment, Flow, Message, Repository, Settings, Theme};
 use whetstone_core::ShowcaseProject;
 
 /// What the app starts from: a global config file, if any, the environment
@@ -102,14 +103,14 @@ impl Session {
         let mut flow = Flow::Continue;
         for name in script.split_whitespace() {
             assert_ne!(flow, Flow::Quit, "{name} pressed after the app quit");
-            flow = self.app.handle(&Event::Key(key(name)));
+            flow = self.app.handle(Message::Terminal(Event::Key(key(name))));
         }
         flow
     }
 
     /// Applies one terminal event as it arrives, whatever it is.
     pub(crate) fn handle(&mut self, event: &Event) -> Flow {
-        self.app.handle(event)
+        self.app.handle(Message::Terminal(event.clone()))
     }
 
     /// Resizes the terminal, as the UI loop reports it.
@@ -117,9 +118,39 @@ impl Session {
         self.width = width;
         self.height = height;
         assert_eq!(
-            self.app.handle(&Event::Resize(width, height)),
+            self.app
+                .handle(Message::Terminal(Event::Resize(width, height))),
             Flow::Continue,
             "a resize never quits"
+        );
+    }
+
+    /// Runs every background job the app has started, including any it
+    /// starts on a result, and delivers each result, as the UI loop does
+    /// once each job ends. Until a test settles, no job runs, so a frame
+    /// shows the app still waiting.
+    pub(crate) fn settle(&mut self) {
+        loop {
+            let jobs = self.app.take_jobs();
+            if jobs.is_empty() {
+                return;
+            }
+            for job in jobs {
+                assert_eq!(
+                    self.app.handle(Message::Finished(job.run())),
+                    Flow::Continue,
+                    "a job's result never quits"
+                );
+            }
+        }
+    }
+
+    /// Ticks once, as the UI loop does while a job runs.
+    pub(crate) fn tick(&mut self) {
+        assert_eq!(
+            self.app.handle(Message::Tick),
+            Flow::Continue,
+            "a tick never quits"
         );
     }
 
