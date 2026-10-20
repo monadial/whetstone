@@ -5,12 +5,12 @@
 
 use serde::Deserialize;
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 struct Lockfile {
     package: Vec<Package>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 struct Package {
     name: String,
     version: String,

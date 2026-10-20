@@ -154,7 +154,7 @@ fn an_async_job_run_on_the_test_s_thread_runs_to_its_end_as_the_app_seam_harness
         .take_started()
         .into_iter()
         .map(|job| {
-            let finished = job.run();
+            let finished = job.run().expect("the test machine can start a runtime");
             (finished.id, finished.outcome)
         })
         .collect();

@@ -10,6 +10,7 @@
 
 use std::fmt;
 use std::future::Future;
+use std::num::NonZeroUsize;
 use std::pin::Pin;
 
 use whetstone_core::{
@@ -96,21 +97,27 @@ pub enum RequestFailure {
 /// least one, so that picking can still fill the set when some fail their
 /// checks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CandidateCount(usize);
+pub struct CandidateCount(NonZeroUsize);
 
 impl CandidateCount {
     /// The count for each of `areas` chosen areas when `questions` are asked
     /// for: ⌈(`questions` + 2) ÷ `areas`⌉, and at least one.
     #[must_use]
     pub fn per_area(questions: QuestionCount, areas: usize) -> Self {
-        let wanted = usize::from(questions.get()) + 2;
-        Self(wanted.div_ceil(areas.max(1)).max(1))
+        let wanted = NonZeroUsize::MIN.saturating_add(usize::from(questions.get()) + 1);
+        Self(wanted.div_ceil(NonZeroUsize::new(areas).unwrap_or(NonZeroUsize::MIN)))
     }
 
     /// The count as a number.
     #[must_use]
     pub fn get(self) -> usize {
-        self.0
+        self.0.get()
+    }
+}
+
+impl From<CandidateCount> for NonZeroUsize {
+    fn from(count: CandidateCount) -> Self {
+        count.0
     }
 }
 

@@ -61,9 +61,12 @@ impl Ai for OpenRouterAi {
         area: &Area,
         count: CandidateCount,
     ) -> Pending<Vec<WrittenCandidate>> {
-        // A count is at least one, so the fallback is never taken.
-        let count = NonZeroUsize::new(count.get()).unwrap_or(NonZeroUsize::MIN);
-        let request = candidates_request(&self.models.generator, evidence, area, count);
+        let request = candidates_request(
+            &self.models.generator,
+            evidence,
+            area,
+            NonZeroUsize::from(count),
+        );
         let connection = self.connection.clone();
         let model = self.models.generator.clone();
         Box::pin(async move {
@@ -75,6 +78,7 @@ impl Ai for OpenRouterAi {
                 reply.model,
                 reply.usage,
             );
+            log_reply(&provenance);
             Ok(Reply {
                 content: reply.output.into_written(),
                 provenance,
@@ -99,6 +103,7 @@ impl Ai for OpenRouterAi {
                 Some(reply.model),
                 reply.usage,
             );
+            log_reply(&provenance);
             Ok(Reply {
                 content,
                 provenance,
@@ -110,9 +115,6 @@ impl Ai for OpenRouterAi {
 /// `requested` with what the reply reports: the model that answered, and its
 /// usage and cost. A cost that isn't one (negative, say) counts as not
 /// reported, since a cost is never estimated.
-///
-/// It is logged with the models, the token counts and the cost, and nothing
-/// that was sent or written (rules 43 and 44).
 fn provenance(requested: Provenance, reported_model: Option<String>, usage: Usage) -> Provenance {
     let provenance = requested.with_usage(whetstone_core::Usage {
         input_tokens: usage.input_tokens,
@@ -122,10 +124,15 @@ fn provenance(requested: Provenance, reported_model: Option<String>, usage: Usag
         Some(model) => provenance.with_reported_model(ModelId::new(model)),
         None => provenance,
     };
-    let provenance = match usage.cost.and_then(|usd| Cost::new(usd).ok()) {
+    match usage.cost.and_then(|usd| Cost::new(usd).ok()) {
         Some(cost) => provenance.with_cost(cost),
         None => provenance,
-    };
+    }
+}
+
+/// Logs a reply's `provenance`: its models, token counts and cost, and
+/// nothing that was sent or written (rules 43 and 44).
+fn log_reply(provenance: &Provenance) {
     tracing::info!(
         role = ?provenance.role(),
         model = %provenance.requested_model(),
@@ -135,7 +142,6 @@ fn provenance(requested: Provenance, reported_model: Option<String>, usage: Usag
         cost_usd = provenance.cost().map(Cost::usd),
         "OpenRouter replied"
     );
-    provenance
 }
 
 #[cfg(test)]
@@ -171,7 +177,8 @@ mod tests {
         (server, ai)
     }
 
-    fn two() -> CandidateCount {
+    /// Two candidates for each area: 4 questions over 3 areas.
+    fn two_per_area() -> CandidateCount {
         CandidateCount::per_area(QuestionCount::try_from(4).expect("from 3 to 5"), 3)
     }
 
@@ -180,7 +187,7 @@ mod tests {
         let (server, ai) = ai("/chat/completions", 200, CANDIDATES).await;
 
         let reply = ai
-            .write_candidates(&evidence(), &area(), two())
+            .write_candidates(&evidence(), &area(), two_per_area())
             .await
             .expect("the recorded reply decodes");
 
@@ -199,7 +206,7 @@ mod tests {
                     input_tokens: Some(3364),
                     output_tokens: Some(1580),
                 })
-                .with_cost(Cost::new(0.022_528).expect("a cost"))
+                .with_cost(Cost::new(0.022_528).expect("0.022528 is a cost"))
         );
         let (_, body) = received(&server).await;
         assert_eq!(body["model"], generator_model().as_str());
@@ -241,7 +248,7 @@ mod tests {
                     input_tokens: Some(1907),
                     output_tokens: Some(55),
                 })
-                .with_cost(Cost::new(0.000_080_094).expect("a cost"))
+                .with_cost(Cost::new(0.000_080_094).expect("0.000080094 is a cost"))
         );
         let (_, body) = received(&server).await;
         assert_eq!(body["model"], jev_model().as_str());
@@ -268,7 +275,9 @@ mod tests {
         let (_server, ai) = ai("/chat/completions", 401, refused).await;
 
         assert_eq!(
-            ai.write_candidates(&evidence(), &area(), two()).await.err(),
+            ai.write_candidates(&evidence(), &area(), two_per_area())
+                .await
+                .err(),
             Some(RequestFailure::KeyRefused)
         );
     }
@@ -335,14 +344,14 @@ mod tests {
     }
 
     /// Log lines, as the app's log file gets them.
-    #[derive(Clone, Default)]
+    #[derive(Debug, Clone, Default)]
     struct Log(Arc<Mutex<Vec<u8>>>);
 
     impl io::Write for Log {
         fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
             self.0
                 .lock()
-                .expect("the log lock")
+                .expect("no test thread panics holding the log")
                 .extend_from_slice(bytes);
             Ok(bytes.len())
         }
@@ -354,7 +363,13 @@ mod tests {
 
     impl Log {
         fn text(&self) -> String {
-            String::from_utf8_lossy(&self.0.lock().expect("the log lock")).into_owned()
+            String::from_utf8_lossy(
+                &self
+                    .0
+                    .lock()
+                    .expect("no test thread panics holding the log"),
+            )
+            .into_owned()
         }
     }
 
@@ -374,7 +389,7 @@ mod tests {
 
         let (_generator, generator) = ai("/chat/completions", 200, CANDIDATES).await;
         generator
-            .write_candidates(&evidence(), &area(), two())
+            .write_candidates(&evidence(), &area(), two_per_area())
             .await
             .expect("the recorded reply decodes");
         let (_jev, jev) = ai("/systemone", 200, QUESTION_CHECK).await;
