@@ -2,6 +2,7 @@
 //! the lines the change adds or modifies.
 
 use std::collections::BTreeSet;
+use std::ops::Range;
 use std::path::Path;
 
 use pulldown_cmark::{CowStr, Event, LinkType, Options, Parser, Tag};
@@ -18,8 +19,8 @@ use super::touched_text::{self, Target, TouchedText};
 /// Markdown files are those ending `.md` or `.markdown`. Their links are
 /// read as the Markdown specification defines them, with reference links
 /// resolved through their definitions; images and wikilinks are not links.
-/// A link counts when any line it spans is one the change adds or modifies.
-/// Its destination resolves against the linking file, or against the
+/// A link counts when any line it spans, or for a reference link any line
+/// its definition spans, is one the change adds or modifies. Its destination resolves against the linking file, or against the
 /// repository's root when it starts with `/`, without its query or
 /// fragment. Only a file in the commit's tree that the change does not
 /// touch is a target: an external URL, a missing file, a directory and a
@@ -49,7 +50,7 @@ fn is_markdown(path: &str) -> bool {
 }
 
 /// The destinations of the links in `file` that lie on a line the change
-/// adds or modifies.
+/// adds or modifies, or whose reference definition does.
 fn changed_destinations<'a>(file: &TouchedText<'a>) -> Vec<CowStr<'a>> {
     let Some(text) = file.text() else {
         return Vec::new();
@@ -57,27 +58,40 @@ fn changed_destinations<'a>(file: &TouchedText<'a>) -> Vec<CowStr<'a>> {
     let line_starts: Vec<usize> = std::iter::once(0)
         .chain(text.match_indices('\n').map(|(at, _)| at + 1))
         .collect();
-    // The 1-based line that the byte at `offset` lies on.
-    let line_of = |offset: usize| line_starts.partition_point(|&start| start <= offset);
-    Parser::new_ext(text, Options::empty())
-        .into_offset_iter()
-        .filter_map(|(event, span)| match event {
+    // Whether the change adds or modifies a line that the bytes `span` lie
+    // on.
+    let changed = |span: Range<usize>| {
+        let line_of = |offset: usize| line_starts.partition_point(|&start| start <= offset);
+        (line_of(span.start)..=line_of(span.end.saturating_sub(1)))
+            .any(|line| file.is_changed(line))
+    };
+    let mut events = Parser::new_ext(text, Options::empty()).into_offset_iter();
+    let mut destinations = Vec::new();
+    while let Some((event, span)) = events.next() {
+        match event {
             // An email autolink's destination is an address with no
             // `mailto:` scheme.
             Event::Start(Tag::Link {
                 link_type,
                 dest_url,
+                id,
                 ..
             }) if link_type != LinkType::Email => {
-                let lines = line_of(span.start)..=line_of(span.end.saturating_sub(1));
-                lines
-                    .into_iter()
-                    .any(|line| file.is_changed(line))
-                    .then_some(dest_url)
+                let definition = match link_type {
+                    LinkType::Reference | LinkType::Collapsed | LinkType::Shortcut => events
+                        .reference_definitions()
+                        .get(&id)
+                        .map(|definition| definition.span.clone()),
+                    _ => None,
+                };
+                if changed(span) || definition.is_some_and(changed) {
+                    destinations.push(dest_url);
+                }
             }
-            _ => None,
-        })
-        .collect()
+            _ => {}
+        }
+    }
+    destinations
 }
 
 /// The repository path that a link in the file at `linking` to
@@ -309,6 +323,23 @@ mod tests {
                 target("docs/setup.md", &["docs/guide.md"]),
             ]
         );
+    }
+
+    #[test]
+    fn a_reference_link_counts_when_the_change_adds_or_modifies_its_definition() {
+        let guide = created(
+            "docs/guide.md",
+            "Read [the setup][setup] and [faq].\n\
+             \n\
+             [setup]: setup.md\n\
+             [faq]: faq.md\n",
+        );
+        let files = tree(&["docs/faq.md", "docs/guide.md", "docs/setup.md"]);
+
+        // Only the setup link's definition changes, not where it is used.
+        let found = linked_files(&files, &[TouchedText::new(&guide, BTreeSet::from([3]))]);
+
+        assert_eq!(found, [target("docs/setup.md", &["docs/guide.md"])]);
     }
 
     #[test]
