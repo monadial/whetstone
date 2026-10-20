@@ -20,6 +20,8 @@ fn dropping_the_guard_restores_every_mode_in_reverse_order() {
             "enable Raw",
             "enable AlternateScreen",
             "enable HiddenCursor",
+            "enable BracketedPaste",
+            "disable BracketedPaste",
             "disable HiddenCursor",
             "disable AlternateScreen",
             "disable Raw",
@@ -40,7 +42,7 @@ fn an_explicit_restore_happens_once() {
             .iter()
             .filter(|entry| entry.starts_with("disable"))
             .count(),
-        3,
+        4,
         "each mode is disabled exactly once: {:?}",
         log.entries()
     );

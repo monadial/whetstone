@@ -10,6 +10,7 @@ use std::io::{self, IsTerminal as _, Write};
 use std::panic;
 use std::sync::{Arc, Mutex, PoisonError, TryLockError};
 
+use ratatui::crossterm::event::{DisableBracketedPaste, EnableBracketedPaste};
 use ratatui::crossterm::{cursor, execute, terminal};
 
 use crate::environment::Environment;
@@ -53,11 +54,18 @@ pub enum TerminalMode {
     AlternateScreen,
     /// The text cursor is hidden.
     HiddenCursor,
+    /// A paste arrives as one event of text, never as key presses.
+    BracketedPaste,
 }
 
 impl TerminalMode {
     /// Every mode the TUI uses, in the order it enables them.
-    pub const TUI: [Self; 3] = [Self::Raw, Self::AlternateScreen, Self::HiddenCursor];
+    pub const TUI: [Self; 4] = [
+        Self::Raw,
+        Self::AlternateScreen,
+        Self::HiddenCursor,
+        Self::BracketedPaste,
+    ];
 }
 
 /// Turns terminal modes on and off for a [`TerminalGuard`].
@@ -182,6 +190,7 @@ impl<W: Write + Send> ModeSwitch for CrosstermSwitch<W> {
             TerminalMode::Raw => terminal::enable_raw_mode(),
             TerminalMode::AlternateScreen => execute!(self.out, terminal::EnterAlternateScreen),
             TerminalMode::HiddenCursor => execute!(self.out, cursor::Hide),
+            TerminalMode::BracketedPaste => execute!(self.out, EnableBracketedPaste),
         }
     }
 
@@ -190,6 +199,7 @@ impl<W: Write + Send> ModeSwitch for CrosstermSwitch<W> {
             TerminalMode::Raw => terminal::disable_raw_mode(),
             TerminalMode::AlternateScreen => execute!(self.out, terminal::LeaveAlternateScreen),
             TerminalMode::HiddenCursor => execute!(self.out, cursor::Show),
+            TerminalMode::BracketedPaste => execute!(self.out, DisableBracketedPaste),
         }
     }
 }
