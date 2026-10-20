@@ -1,0 +1,221 @@
+# Candidate examples: questions as the generator would write them, each
+# with a label for every question its question check asks. See README.md.
+#
+# Seeds by an agent, for the maintainer to review (#99). All three are
+# about "Preserve payment retry identity", and cite its lines as they are
+# just after it: src/provider.rs lines 26-37 are `ChargeRequest::new`, and
+# src/service.rs line 57 is where `pay` builds the charge request.
+
+[[candidate]]
+id = "seed-retry-key"
+commit = "Preserve payment retry identity"
+area = "domain"
+by = "agent"
+on = 2026-10-21
+note = "A sound question: one right option, the other two clearly wrong."
+stem = """
+After this change, what makes every attempt to charge a payment carry the \
+same operation key, a retry of the whole request included?\
+"""
+answer_key = "A"
+why_it_matters = """
+A timed-out charge may still have gone through, so a retry that carried a new \
+key would let the provider charge the customer twice.\
+"""
+hint = """
+Follow where the operation key on a charge request comes from, starting at \
+`PaymentService::pay`.\
+"""
+
+[[candidate.options]]
+letter = "A"
+text = """
+`ChargeRequest::new` now takes only the payment and copies the operation key \
+the payment was created with, so no caller can pass a different key.\
+"""
+rationale = """
+Right: `ChargeRequest::new(payment: &Payment)` sets `operation_key` to \
+`payment.operation_key().clone()` (src/provider.rs, lines 29 to 31), and \
+`pay` builds the request with `ChargeRequest::new(&payment)` (src/service.rs, \
+line 57).\
+"""
+
+[[candidate.options]]
+letter = "B"
+text = """
+`PaymentService::pay` keeps the key it generated for the first attempt and \
+passes the same one again when the request is retried.\
+"""
+rationale = """
+Wrong: the change removes `OperationKey::generate()` from `pay`, which now \
+builds the request with `ChargeRequest::new(&payment)` and passes no key at \
+all (src/service.rs, line 57).\
+"""
+
+[[candidate.options]]
+letter = "C"
+text = """
+The provider client remembers the key of a charge that timed out, and reuses \
+it when the same payment is charged again.\
+"""
+rationale = """
+Wrong: `ProviderClient::charge` retries only the request it is given and \
+keeps nothing between calls (src/provider.rs, lines 81 to 99); the key comes \
+from the payment.\
+"""
+
+[[candidate.rubric]]
+statement = "Explains that the key now comes from the payment itself, not from whoever charges it."
+met = "Says the charge request takes the payment's own operation key, or that callers can no longer pass a key."
+not_met = "Doesn't say where the key comes from, or says the service or the provider client chooses it."
+
+[[candidate.rubric]]
+statement = "Connects the unchanging key to the provider applying a payment's charge at most once."
+met = "Says the provider deduplicates charges on the key, so attempts carrying the same key are one charge."
+not_met = "Doesn't connect the key to the provider applying the charge once."
+
+[[candidate.citations]]
+path = "src/provider.rs"
+first_line = 26
+last_line = 37
+
+[[candidate.citations]]
+path = "src/service.rs"
+first_line = 57
+last_line = 57
+
+[candidate.labels]
+answerable = "yes"
+about_area = "yes"
+needs_change = "yes"
+no_giveaway = "yes"
+criterion_1 = "yes"
+criterion_2 = "yes"
+option_a = "yes"
+option_b = "no"
+option_c = "no"
+rationale_a = "yes"
+rationale_b = "yes"
+rationale_c = "yes"
+why_it_matters = "yes"
+hint_points_to_evidence = "yes"
+hint_hides_answer_key = "yes"
+
+[[candidate]]
+id = "seed-two-right"
+commit = "Preserve payment retry identity"
+area = "domain"
+by = "agent"
+on = 2026-10-21
+note = """
+Hand-made broken: options A and B are both right, since the payment's own \
+key is the first attempt's key. B's rationale calls it wrong, which the \
+evidence contradicts.\
+"""
+stem = "What operation key does a retried charge carry after this change?"
+answer_key = "A"
+why_it_matters = """
+The provider deduplicates charges on the operation key, so the key a retry \
+carries decides whether the customer can be charged twice.\
+"""
+hint = "Look at where `ChargeRequest::new` gets its operation key."
+
+[[candidate.options]]
+letter = "A"
+text = "The operation key the payment was created with."
+rationale = "Right: `ChargeRequest::new` copies `payment.operation_key()` (src/provider.rs, line 31)."
+
+[[candidate.options]]
+letter = "B"
+text = "The same operation key as the payment's first attempt."
+rationale = "Wrong: a retry replaces the first attempt's key with the payment's."
+
+[[candidate.options]]
+letter = "C"
+text = "A freshly generated key, so that the provider doesn't reject the retry as a duplicate."
+rationale = "Wrong: that is what `pay` did before this change; it no longer generates a key."
+
+[[candidate.rubric]]
+statement = "Says the retry carries the payment's own operation key."
+met = "Says the key comes from the payment, so every attempt carries the same one."
+not_met = "Doesn't say which key the retry carries, or says it is a new one."
+
+[[candidate.citations]]
+path = "src/provider.rs"
+first_line = 26
+last_line = 37
+
+[candidate.labels]
+answerable = "yes"
+about_area = "yes"
+needs_change = "yes"
+no_giveaway = "yes"
+criterion_1 = "yes"
+option_a = "yes"
+option_b = "yes"
+option_c = "no"
+rationale_a = "yes"
+rationale_b = "no"
+rationale_c = "yes"
+why_it_matters = "yes"
+hint_points_to_evidence = "yes"
+hint_hides_answer_key = "yes"
+
+[[candidate]]
+id = "seed-giveaway"
+commit = "Preserve payment retry identity"
+area = "domain"
+by = "agent"
+on = 2026-10-21
+note = """
+Hand-made broken: a giveaway. The stem quotes the answer, so the change isn't \
+needed to answer it, and no hint could hide the answer key.\
+"""
+stem = """
+The commit message says every attempt now carries the operation key the \
+payment was created with. Which key does a retry of the whole request carry?\
+"""
+answer_key = "A"
+why_it_matters = "A retry with a new key could charge the customer twice."
+hint = "Read the commit message."
+
+[[candidate.options]]
+letter = "A"
+text = "The operation key the payment was created with."
+rationale = "Right: `ChargeRequest::new` copies `payment.operation_key()` (src/provider.rs, line 31)."
+
+[[candidate.options]]
+letter = "B"
+text = "A freshly generated operation key."
+rationale = "Wrong: `pay` no longer generates a key (src/service.rs, line 57)."
+
+[[candidate.options]]
+letter = "C"
+text = "No operation key at all."
+rationale = "Wrong: every charge request carries the payment's operation key (src/provider.rs, line 31)."
+
+[[candidate.rubric]]
+statement = "Says the retry carries the payment's own operation key."
+met = "Says the key comes from the payment, so every attempt carries the same one."
+not_met = "Doesn't say which key the retry carries, or says it is a new one."
+
+[[candidate.citations]]
+path = "src/provider.rs"
+first_line = 26
+last_line = 37
+
+[candidate.labels]
+answerable = "yes"
+about_area = "yes"
+needs_change = "no"
+no_giveaway = "no"
+criterion_1 = "yes"
+option_a = "yes"
+option_b = "no"
+option_c = "no"
+rationale_a = "yes"
+rationale_b = "yes"
+rationale_c = "yes"
+why_it_matters = "yes"
+hint_points_to_evidence = "yes"
+hint_hides_answer_key = "no"
