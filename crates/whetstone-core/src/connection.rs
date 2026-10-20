@@ -228,6 +228,17 @@ impl Connection {
     pub(crate) fn content(&self) -> &FileContent {
         &self.content
     }
+
+    /// The bytes it would send, its path and its text; a binary file's
+    /// size; or nothing for a submodule or a symbolic link, which have no
+    /// content.
+    pub(crate) fn size(&self) -> Option<usize> {
+        match &self.content {
+            FileContent::Text(text) => Some(self.id.path.len() + text.len()),
+            FileContent::Binary { size } => Some(*size),
+            FileContent::Submodule | FileContent::Symlink => None,
+        }
+    }
 }
 
 impl ConnectionId {
