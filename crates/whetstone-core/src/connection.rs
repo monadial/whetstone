@@ -9,6 +9,7 @@
 //!
 //! [`Evidence::build`]: crate::Evidence::build
 
+use std::collections::BTreeMap;
 use std::fmt;
 
 use crate::change::FileContent;
@@ -241,6 +242,75 @@ impl Connection {
     }
 }
 
+/// `connections` with each file that one of them sends whole sent once, so
+/// that no line is sent twice: every other connection in that file, a range
+/// of it or the whole file again, merges into that one. The merged
+/// connection is in the first of its connections' groups of related test,
+/// related configuration and connected code, and in the higher of their
+/// tiers. It is there for each of their relations, once, in that order of
+/// groups. A file that none of them sends whole keeps its connections as
+/// they are. They come back in path and extent order.
+#[must_use]
+pub fn merge_into_whole_files(connections: Vec<Connection>) -> Vec<Connection> {
+    let mut by_path: BTreeMap<String, Vec<Connection>> = BTreeMap::new();
+    for connection in connections {
+        by_path
+            .entry(connection.id.path.clone())
+            .or_default()
+            .push(connection);
+    }
+    let mut merged: Vec<Connection> = by_path
+        .into_values()
+        .flat_map(|mut in_file| {
+            if in_file
+                .iter()
+                .all(|connection| connection.id.extent != Extent::WholeFile)
+            {
+                return in_file;
+            }
+            in_file
+                .sort_by_key(|connection| (related_first(connection.group), connection.id.extent));
+            let tier = if in_file
+                .iter()
+                .any(|connection| connection.tier == Tier::High)
+            {
+                Tier::High
+            } else {
+                Tier::Medium
+            };
+            let mut relations: Vec<Relation> = Vec::new();
+            for relation in in_file.iter().flat_map(|connection| &connection.relations) {
+                if !relations.contains(relation) {
+                    relations.push(relation.clone());
+                }
+            }
+            let group = in_file[0].group;
+            let whole = in_file
+                .into_iter()
+                .find(|connection| connection.id.extent == Extent::WholeFile)
+                .expect("a file in which a connection is sent whole has that connection");
+            vec![Connection {
+                group,
+                tier,
+                relations,
+                ..whole
+            }]
+        })
+        .collect();
+    merged.sort_by(|a, b| a.id.cmp(&b.id));
+    merged
+}
+
+/// Where `group` comes among the groups a merged connection takes the first
+/// of: related tests, then related configuration, then connected code.
+fn related_first(group: ConnectionGroup) -> u8 {
+    match group {
+        ConnectionGroup::RelatedTest => 0,
+        ConnectionGroup::RelatedConfiguration => 1,
+        ConnectionGroup::ConnectedCode => 2,
+    }
+}
+
 impl ConnectionId {
     /// Where its file is, relative to the repository's root.
     #[must_use]
@@ -394,6 +464,134 @@ mod tests {
                 "test for `src/store.rs`",
                 "manifest for `src/store.rs`",
             ]
+        );
+    }
+
+    /// `relations` in the file at `path`, to `extent` of it, in `group` and
+    /// `tier`, which holds `TEXT`.
+    fn piece(
+        path: &str,
+        extent: Extent,
+        group: ConnectionGroup,
+        tier: Tier,
+        relations: Vec<Relation>,
+    ) -> Connection {
+        Connection::new(
+            path.to_owned(),
+            extent,
+            group,
+            tier,
+            relations,
+            FileContent::Text(TEXT.to_owned()),
+        )
+    }
+
+    /// Every file's text here.
+    const TEXT: &str = "one\ntwo\nthree\n";
+
+    fn lines(first: usize, last: usize) -> Extent {
+        Extent::Lines(LineRange::new(first, last).expect("the range is valid"))
+    }
+
+    fn calls(callable: &str) -> Relation {
+        Relation::Calls {
+            callable: callable.to_owned(),
+            touched_file: "src/store.rs".to_owned(),
+        }
+    }
+
+    /// Each connection as its path, extent, group, tier and relations.
+    fn described(connections: &[Connection]) -> Vec<String> {
+        connections
+            .iter()
+            .map(|connection| {
+                format!(
+                    "{} {} {:?} {:?}: {}",
+                    connection.id().path(),
+                    connection.id().extent(),
+                    connection.group(),
+                    connection.tier(),
+                    relation_texts(connection.relations()).join(", ")
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_file_sent_whole_absorbs_the_ranges_in_it_and_a_related_group_comes_first() {
+        let test_for = Relation::TestFor {
+            touched_file: "src/store.rs".to_owned(),
+        };
+        let found = vec![
+            piece(
+                "tests/store.rs",
+                lines(2, 3),
+                ConnectionGroup::ConnectedCode,
+                Tier::Medium,
+                vec![calls("save"), calls("load")],
+            ),
+            piece(
+                "src/api.rs",
+                lines(1, 2),
+                ConnectionGroup::ConnectedCode,
+                Tier::High,
+                vec![calls("save")],
+            ),
+            piece(
+                "tests/store.rs",
+                Extent::WholeFile,
+                ConnectionGroup::RelatedTest,
+                Tier::High,
+                vec![test_for],
+            ),
+            piece(
+                "tests/store.rs",
+                lines(1, 1),
+                ConnectionGroup::ConnectedCode,
+                Tier::High,
+                vec![calls("save")],
+            ),
+        ];
+
+        let merged = merge_into_whole_files(found);
+
+        assert_eq!(
+            described(&merged),
+            [
+                "src/api.rs lines 1–2 ConnectedCode High: calls `save`",
+                "tests/store.rs whole file RelatedTest High: \
+                 test for `src/store.rs`, calls `save`, calls `load`",
+            ]
+        );
+        assert_eq!(merged[1].content(), &FileContent::Text(TEXT.to_owned()));
+    }
+
+    #[test]
+    fn two_connections_to_a_whole_file_are_one_in_the_higher_tier() {
+        let named = Relation::NamedIn {
+            touched_file: "deploy.yml".to_owned(),
+        };
+        let found = vec![
+            piece(
+                "config/limits.toml",
+                Extent::WholeFile,
+                ConnectionGroup::ConnectedCode,
+                Tier::Medium,
+                vec![named.clone()],
+            ),
+            piece(
+                "config/limits.toml",
+                Extent::WholeFile,
+                ConnectionGroup::ConnectedCode,
+                Tier::High,
+                vec![calls("limit"), named],
+            ),
+        ];
+
+        assert_eq!(
+            described(&merge_into_whole_files(found)),
+            ["config/limits.toml whole file ConnectedCode High: \
+              named in `deploy.yml`, calls `limit`"]
         );
     }
 
