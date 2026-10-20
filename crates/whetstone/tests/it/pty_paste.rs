@@ -20,16 +20,19 @@ struct Mode {
     off: &'static str,
 }
 
-/// The modes these tests check, in the order the guard turns them on. The
-/// alternate screen is here so the order shows: bracketed paste, turned on
-/// last, is turned off first. Raw mode writes no escape sequence, and
-/// Ratatui hides and shows the cursor on its own as well, so neither shows
-/// the guard's order.
+/// The modes these tests check, in the order the guard turns them on, so
+/// the guard's order shows. Raw mode writes no escape sequence, so the
+/// shell's records of the modes cover it instead.
 const MODES: &[Mode] = &[
     Mode {
         name: "the alternate screen",
         on: "\x1b[?1049h",
         off: "\x1b[?1049l",
+    },
+    Mode {
+        name: "the hidden cursor",
+        on: "\x1b[?25l",
+        off: "\x1b[?25h",
     },
     Mode {
         name: "bracketed paste",
@@ -53,8 +56,8 @@ enum Exit {
 }
 
 impl Exit {
-    /// Runs `whetstone` in a pseudo-terminal until it draws home, ends it
-    /// this way, and returns everything the terminal received, with the
+    /// Runs `whetstone` in a pseudo-terminal until it draws home, lets it
+    /// end this way, and returns everything the terminal received, with the
     /// exit code.
     fn run(self) -> Transcript {
         let home = TempDir::new().expect("create a temporary home");
@@ -83,40 +86,18 @@ impl Exit {
         });
         match self {
             Self::Quit | Self::CtrlC | Self::Signal => transcript,
+            // The panic comes before whetstone first polls the terminal: see
+            // `without_pending_input`.
             Self::Panic => without_pending_input(&transcript.0),
         }
     }
 }
 
 impl Transcript {
-    /// Asserts that `whetstone` turned every one of [`MODES`] on, in order,
-    /// and that each was off again by the time it exited, turned off in
-    /// reverse order, as the guard restores them.
+    /// Asserts that `whetstone` turned every one of [`MODES`] on, and that
+    /// each was off again by the time it exited, both in the guard's order.
     fn assert_modes_on_then_off(&self) {
-        let run = self.printed_by_whetstone();
-        for mode in MODES {
-            assert!(
-                run.contains(mode.on),
-                "{} is turned on at start:\n{run:?}",
-                mode.name
-            );
-            let since_on = run.rsplit_once(mode.on).map_or("", |(_, rest)| rest);
-            assert!(
-                since_on.contains(mode.off),
-                "{} is turned off before whetstone exits:\n{run:?}",
-                mode.name
-            );
-        }
-        let first_on = MODES.iter().map(|mode| run.find(mode.on));
-        assert!(
-            first_on.is_sorted(),
-            "the modes are turned on in order:\n{run:?}"
-        );
-        let last_off = MODES.iter().rev().map(|mode| run.rfind(mode.off));
-        assert!(
-            last_off.is_sorted(),
-            "the modes are turned off in reverse order:\n{run:?}"
-        );
+        assert_modes_on_then_off_in(self.printed_by_whetstone());
     }
 
     /// Everything the terminal received from `whetstone`: the shell prints
@@ -128,6 +109,49 @@ impl Transcript {
             .expect("the modes are recorded before whetstone runs");
         let (run, _) = run.split_once("exit code:").expect("whetstone exits");
         run
+    }
+}
+
+/// Asserts that `printed` turns every one of [`MODES`] on in the guard's
+/// order, and then turns each off again in reverse order, as the guard
+/// restores them.
+fn assert_modes_on_then_off_in(printed: &str) {
+    for mode in MODES {
+        assert!(
+            printed.contains(mode.on),
+            "{} is turned on:\n{printed:?}",
+            mode.name
+        );
+        let since_on = printed.rsplit_once(mode.on).map_or("", |(_, rest)| rest);
+        assert!(
+            since_on.contains(mode.off),
+            "{} is turned off again:\n{printed:?}",
+            mode.name
+        );
+    }
+    let mut since_outer_on = printed;
+    for mode in MODES {
+        let turned_on = since_outer_on.split_once(mode.on);
+        assert!(
+            turned_on.is_some(),
+            "{} is turned on in the guard's order:\n{printed:?}",
+            mode.name
+        );
+        since_outer_on = turned_on.map_or("", |(_, rest)| rest);
+    }
+    // Ratatui shows the cursor itself too: before the guard restores on the
+    // way out, and after the panic message as a panic unwinds. So each
+    // mode's last turning off is looked for before the last turning off of
+    // the mode turned on before it.
+    let mut until_outer_off = printed;
+    for mode in MODES {
+        let turned_off = until_outer_off.rsplit_once(mode.off);
+        assert!(
+            turned_off.is_some(),
+            "{} is turned off in the guard's reverse order:\n{printed:?}",
+            mode.name
+        );
+        until_outer_off = turned_off.map_or("", |(rest, _)| rest);
     }
 }
 
@@ -165,22 +189,14 @@ fn the_modes_are_on_while_whetstone_runs_and_off_before_a_real_panic_message_pri
 
     // Rust's exit code for a process whose main thread panicked.
     transcript.assert_exit_code(101);
-    transcript.assert_modes_on_then_off();
-    // Raw mode, which the guard turns off last, writes no escape sequence:
-    // the shell's records of the modes show it.
+    // Raw mode writes no escape sequence: the shell's records of the modes
+    // show it was turned off.
     transcript.assert_terminal_restored();
-    let printed = transcript.printed_by_whetstone();
-    let message = printed
-        .find("panicked at")
+    let (before_message, _) = transcript
+        .printed_by_whetstone()
+        .split_once("panicked at")
         .expect("the panic message prints");
-    for mode in MODES {
-        let off = printed.rfind(mode.off);
-        assert!(
-            off.is_some_and(|off| off < message),
-            "{} is turned off before the panic message prints:\n{printed:?}",
-            mode.name
-        );
-    }
+    assert_modes_on_then_off_in(before_message);
 }
 
 /// From home: open the picker on the showcase project, move past its five
