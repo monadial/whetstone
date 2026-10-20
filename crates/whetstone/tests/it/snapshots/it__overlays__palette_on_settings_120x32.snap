@@ -19,7 +19,7 @@ Buffer {
         "                                                                                                                        ",
         "    Back                              ┌ Actions on Settings ──────────────────────┐                                     ",
         "                                      │   Back      Return to the screen before   │                                     ",
-        "  Where Practice will send its request│ > Home      Go to the home screen         │vider so far.                        ",
+        "  Where Practice sends its requests. O│ > Home      Go to the home screen         │                                     ",
         "  In config.toml: provider = "openrout│   Practice  Choose areas and a change     │                                     ",
         "                                      │   Settings  See what Practice will use    │                                     ",
         "                                      │   Help      Show the keys for this screen │                                     ",
