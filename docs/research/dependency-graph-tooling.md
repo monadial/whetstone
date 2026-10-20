@@ -1,6 +1,6 @@
 # Dependency graph tooling for a change
 
-Research note, 19 October 2026. **Status: input for the decision on [#9 "Choose how to build a change's dependency graph"](https://github.com/monadial/whetstone/issues/9), not a decision.**
+Research note, 19 October 2026. **Status: input for the decision on [#9 "Choose how to build a change's dependency graph"](https://github.com/monadial/whetstone/issues/9), not a decision.** The decision was made on 20 October 2026 in [#28 "Choose the dependency-graph engine and its binary-size cost"](https://github.com/monadial/whetstone/issues/28) and is recorded in [ADR 0002](../adr/0002-embed-cgg-for-connected-code.md).
 
 **Question.** For a change (one commit) in any Git repository, how should Whetstone build a one-hop dependency graph locally, with ordinary code and no AI? The graph covers what the changed code calls, what calls it, and the related tests and config. Whetstone accepts repositories in any language, including repositories that are not code. The graph is best effort: a file without graph support still contributes its diff and its full content to the evidence (#9).
 

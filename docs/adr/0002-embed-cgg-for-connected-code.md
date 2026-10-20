@@ -13,7 +13,7 @@ Whetstone finds the code a change calls and the code that calls it with the `cgg
 - `syn` and rust-analyzer's crates: Rust only; rust-analyzer's API also changes weekly and needs a full toolchain.
 - CodeGraph and the other tools compared on tokenade.net: none ships as an embeddable, permissively licensed crate.
 
-The measurements are in the research note on the never-merged `research/dependency-graph-tooling` branch.
+The measurements are in the research note [Dependency graph tooling for a change](../research/dependency-graph-tooling.md).
 
 ## Consequences
 
