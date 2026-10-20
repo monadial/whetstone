@@ -6,14 +6,18 @@
 use std::fs::{self, OpenOptions, Permissions};
 use std::io::{self, Write as _};
 use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
+use std::panic;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Receiver};
+use std::sync::{Arc, Mutex, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
 use whetstone_core::{DefaultExclusion, ExcludePatterns, FileContent};
 
 use super::detect::{self, Engine};
-use super::{Failure, FileKind, Graph, Snapshot};
+use super::{Failure, FileKind, Graph, Snapshot, SnapshotFile};
 
 /// How every analysis directory's name starts.
 const PREFIX: &str = "whetstone-analysis-";
@@ -21,6 +25,15 @@ const PREFIX: &str = "whetstone-analysis-";
 /// How old a leftover analysis directory is before the startup sweep
 /// removes it. A younger one may belong to another Whetstone still running.
 const LEFTOVER_AGE: Duration = Duration::from_hours(24);
+
+/// How many threads create files at once. Creating files, not reading
+/// them, takes most of the time spent writing a large commit, and file
+/// systems create files in parallel well.
+const WRITERS: usize = 4;
+
+/// How many files wait for a writer at most, which bounds how much of the
+/// commit is held in memory at once.
+const QUEUED: usize = 256;
 
 /// An empty `cgg-deadcode.toml` for the engine. Without one, it would look
 /// for that file above the analysis directory and above the process's
@@ -35,7 +48,7 @@ const NO_ENGINE_CONFIG: &str = "/dev/null";
 #[derive(Debug, Clone)]
 pub(crate) struct AnalysisDirs {
     temp_dir: PathBuf,
-    in_use: Arc<Mutex<InUse>>,
+    in_use: Arc<RwLock<InUse>>,
 }
 
 /// The analysis directories in use, and whether the app is quitting.
@@ -52,7 +65,7 @@ struct InUse {
 /// job, so a job's own [`AnalysisDir`] may never drop: the process can exit
 /// while it writes or the engine reads.
 #[derive(Debug)]
-pub(crate) struct AnalysisDirsGuard(Arc<Mutex<InUse>>);
+pub(crate) struct AnalysisDirsGuard(Arc<RwLock<InUse>>);
 
 impl AnalysisDirs {
     /// Analysis directories in `temp_dir`, the system temporary directory.
@@ -69,20 +82,27 @@ impl AnalysisDirs {
         AnalysisDirsGuard(Arc::clone(&self.in_use))
     }
 
-    fn lock(&self) -> MutexGuard<'_, InUse> {
-        lock(&self.in_use)
+    /// The record, shared, as writing a file into a directory in use takes
+    /// it.
+    fn read(&self) -> RwLockReadGuard<'_, InUse> {
+        self.in_use.read().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The record, to change.
+    fn write(&self) -> RwLockWriteGuard<'_, InUse> {
+        write(&self.in_use)
     }
 }
 
-/// The record of directories in use, even after a panic while it was held:
-/// it is only ever left whole.
-fn lock(in_use: &Mutex<InUse>) -> MutexGuard<'_, InUse> {
-    in_use.lock().unwrap_or_else(PoisonError::into_inner)
+/// The record of directories in use, to change, even after a panic while
+/// it was held: it is only ever left whole.
+fn write(in_use: &RwLock<InUse>) -> RwLockWriteGuard<'_, InUse> {
+    in_use.write().unwrap_or_else(PoisonError::into_inner)
 }
 
 impl Drop for AnalysisDirsGuard {
     fn drop(&mut self) {
-        let mut in_use = lock(&self.0);
+        let mut in_use = write(&self.0);
         in_use.closed = true;
         let (mut removed, mut failed) = (0_usize, 0_usize);
         for dir in in_use.dirs.drain(..) {
@@ -141,33 +161,42 @@ impl AnalysisDir {
         let dir = Self::make(dirs)?;
         let engine = Engine::new();
         let mut tally = Tally::default();
-        for file in &files {
-            let Some(relative) = writable(file.path(), file.kind(), exclude, &mut tally) else {
-                continue;
-            };
-            let contents = snapshot
-                .read(file.path())
-                .map_err(|error| Failure::Snapshot(Box::new(error)))?
-                .unwrap_or_default();
-            if !engine.reads_size(contents.len()) {
-                tally.too_large += 1;
-                continue;
-            }
-            let FileContent::Text(text) = FileContent::from_bytes(contents) else {
-                tally.binary += 1;
-                continue;
-            };
-            if !engine.recognises(file.path(), text.as_bytes()) {
-                tally.not_code += 1;
-                continue;
-            }
-            match dir.write_file(&relative, text.as_bytes())? {
-                Ok(()) => {
-                    tally.written += 1;
-                    tally.bytes += text.len();
-                }
-                Err(error) if clashes(&error) => tally.clashes += 1,
-                Err(error) => return Err(Failure::Write(error)),
+        let (sender, queue) = mpsc::sync_channel::<(PathBuf, String)>(QUEUED);
+        let dir_ref = &dir;
+        let queue = Mutex::new(queue);
+        let failed = AtomicBool::new(false);
+        let (read, written) = thread::scope(|scope| {
+            let writers: Vec<_> = (0..WRITERS)
+                .map(|_| scope.spawn(|| write_queued(&queue, &failed, dir_ref)))
+                .collect();
+            let read = select(
+                snapshot,
+                &files,
+                exclude,
+                &engine,
+                &mut tally,
+                |relative, text| {
+                    !failed.load(Ordering::Relaxed) && sender.send((relative, text)).is_ok()
+                },
+            );
+            drop(sender);
+            let written: Vec<Written> = writers
+                .into_iter()
+                .map(|writer| {
+                    writer
+                        .join()
+                        .unwrap_or_else(|panic| panic::resume_unwind(panic))
+                })
+                .collect();
+            (read, written)
+        });
+        read?;
+        for written in written {
+            tally.written += written.files;
+            tally.bytes += written.bytes;
+            tally.clashes += written.clashes;
+            if let Some(failure) = written.failure {
+                return Err(failure);
             }
         }
         tally.log(files.len(), started.elapsed());
@@ -176,7 +205,7 @@ impl AnalysisDir {
 
     /// A new, empty analysis directory, recorded as in use.
     fn make(dirs: &AnalysisDirs) -> Result<Self, Failure> {
-        let mut in_use = dirs.lock();
+        let mut in_use = dirs.write();
         if in_use.closed {
             return Err(Failure::Quitting);
         }
@@ -193,11 +222,12 @@ impl AnalysisDir {
     }
 
     /// Writes `contents` to `relative` inside the directory, unless the
-    /// [`AnalysisDirsGuard`] has dropped. The record stays locked while it
-    /// writes, so the guard never removes the directory while a file is
-    /// being written into it, which would make it again.
+    /// [`AnalysisDirsGuard`] has dropped. Writers share the record while
+    /// they write, and the guard takes it whole, so it never removes the
+    /// directory while a file is being written into it, which would make it
+    /// again.
     fn write_file(&self, relative: &Path, contents: &[u8]) -> Result<io::Result<()>, Failure> {
-        let in_use = self.dirs.lock();
+        let in_use = self.dirs.read();
         if in_use.closed {
             return Err(Failure::Quitting);
         }
@@ -238,7 +268,7 @@ impl Drop for AnalysisDir {
     /// never exits with it half removed. Its `TempDir` then finds nothing
     /// left to remove.
     fn drop(&mut self) {
-        let mut in_use = self.dirs.lock();
+        let mut in_use = self.dirs.write();
         in_use.dirs.retain(|dir| dir != self.dir.path());
         if let Err(error) = fs::remove_dir_all(self.dir.path())
             && error.kind() != io::ErrorKind::NotFound
@@ -286,6 +316,94 @@ impl Tally {
             ms = elapsed.as_millis(),
             "wrote a commit's files for analysis"
         );
+    }
+}
+
+/// Reads the files of `snapshot` among `files` that the engine reads, and
+/// passes each to `write` with where it goes in the analysis directory,
+/// until `write` says to stop. The rest are counted in `tally`.
+fn select<S: Snapshot>(
+    snapshot: &S,
+    files: &[SnapshotFile],
+    exclude: &ExcludePatterns,
+    engine: &Engine,
+    tally: &mut Tally,
+    mut write: impl FnMut(PathBuf, String) -> bool,
+) -> Result<(), Failure> {
+    for file in files {
+        let Some(relative) = writable(file.path(), file.kind(), exclude, tally) else {
+            continue;
+        };
+        let contents = snapshot
+            .read(file.path())
+            .map_err(|error| Failure::Snapshot(Box::new(error)))?
+            .unwrap_or_default();
+        if !engine.reads_size(contents.len()) {
+            tally.too_large += 1;
+            continue;
+        }
+        let FileContent::Text(text) = FileContent::from_bytes(contents) else {
+            tally.binary += 1;
+            continue;
+        };
+        if !engine.recognises(file.path(), text.as_bytes()) {
+            tally.not_code += 1;
+            continue;
+        }
+        if !write(relative, text) {
+            break;
+        }
+    }
+    Ok(())
+}
+
+/// What one writer wrote.
+#[derive(Debug, Default)]
+struct Written {
+    files: usize,
+    bytes: usize,
+    clashes: usize,
+    /// Why the first write that failed for a reason other than a clash
+    /// failed, or that the app is quitting.
+    failure: Option<Failure>,
+}
+
+/// Writes each file taken from `queue` into `dir` until it is empty and
+/// closed. Once a write fails, or the app quits, it sets `failed` and keeps
+/// taking files without writing them, so the reader never waits on a full
+/// queue.
+fn write_queued(
+    queue: &Mutex<Receiver<(PathBuf, String)>>,
+    failed: &AtomicBool,
+    dir: &AnalysisDir,
+) -> Written {
+    let mut written = Written::default();
+    loop {
+        let next = queue
+            .lock()
+            .expect("no writer panics while taking a file")
+            .recv();
+        let Ok((relative, text)) = next else {
+            return written;
+        };
+        if written.failure.is_some() {
+            continue;
+        }
+        match dir.write_file(&relative, text.as_bytes()) {
+            Ok(Ok(())) => {
+                written.files += 1;
+                written.bytes += text.len();
+            }
+            Ok(Err(error)) if clashes(&error) => written.clashes += 1,
+            Ok(Err(error)) => {
+                failed.store(true, Ordering::Relaxed);
+                written.failure = Some(Failure::Write(error));
+            }
+            Err(failure) => {
+                failed.store(true, Ordering::Relaxed);
+                written.failure = Some(failure);
+            }
+        }
     }
 }
 
