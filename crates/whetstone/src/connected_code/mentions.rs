@@ -1,14 +1,6 @@
 //! Path mentions: the repository files whose paths the change names on the
 //! lines it adds or modifies.
 
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "wired into the outbound review by the #62 integration"
-    )
-)]
-
 use std::collections::BTreeSet;
 
 use aho_corasick::AhoCorasick;
