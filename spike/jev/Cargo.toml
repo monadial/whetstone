@@ -1,0 +1,15 @@
+[package]
+name = "jev-spike"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Throwaway: kept out of Whetstone's workspace.
+[workspace]
+
+[dependencies]
+rig = { version = "=0.45.0", features = ["typesafeai"] }
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

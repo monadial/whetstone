@@ -1,0 +1,22 @@
+{
+  "model": "typesafe/jev-1.14-20261014",
+  "provider_request_id": null,
+  "usage": "Some(Usage { input_tokens: Some(571), output_tokens: Some(73), total_tokens: None, cached_input_tokens: None, cache_creation_input_tokens: None, tool_use_prompt_tokens: None, reasoning_tokens: None, cost: Some(Cost { input: None, output: None, cache_read: None, cache_write: None, total: 2.3982e-5, incomplete: false }) })",
+  "answers": {
+    "gate": {
+      "noul": 0.89
+    },
+    "options": {
+      "choice": "A",
+      "probabilities": {
+        "A": 1.0,
+        "B": 0.0,
+        "C": 0.0
+      },
+      "confidence": 1.0
+    },
+    "criterion": {
+      "noul": 0.91
+    }
+  }
+}

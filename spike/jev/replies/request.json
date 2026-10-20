@@ -1,0 +1,34 @@
+{
+  "model": "typesafe/jev-1.14",
+  "state": {
+    "area": "Safe retries: a retried payment operation must never charge twice.",
+    "change": {
+      "summary": "Retry a card charge after a timeout.",
+      "diff": "-    let key = OperationKey::new();\n+    let key = original.key.clone();\n     client.charge(amount, key).await?;"
+    },
+    "learner_reasoning": "Using the same key means the provider sees one operation, so a retry after a timeout can't take the money twice."
+  },
+  "questions": {
+    "gate": {
+      "type": "noul",
+      "instructions": "The change in the state gives a learner something worth answering about the area in the state."
+    },
+    "options": {
+      "type": "choice",
+      "instructions": "Why does the change reuse the original operation key when it retries a charge?",
+      "criteria": {
+        "A": "So the payment provider treats the retry as the same operation and charges at most once",
+        "B": "So the retry runs faster by skipping validation",
+        "C": "So the logs group both attempts together"
+      }
+    },
+    "criterion": {
+      "type": "noul",
+      "instructions": "The learner's reasoning explains that reusing the key lets the payment provider recognise the retry as a duplicate.",
+      "criteria": {
+        "false": "The reasoning doesn't connect the key to the provider deduplicating the charge",
+        "true": "The reasoning says the provider deduplicates the retried charge by its key"
+      }
+    }
+  }
+}
