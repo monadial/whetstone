@@ -8,6 +8,7 @@
 
 mod area;
 mod change;
+mod connected_code_limit;
 mod connection;
 mod evidence;
 mod exclusion;
@@ -19,6 +20,9 @@ mod toml_error;
 pub use crate::area::{Area, AreaFileError, AreaId, AreaSource, InvalidAreaFile, InvalidAreaId};
 pub use crate::change::{
     Change, CommitId, Comparison, FileContent, InvalidCommitId, Origin, TouchedFile,
+};
+pub use crate::connected_code_limit::{
+    ConnectedCodeLimit, ConnectedCodeLimitError, ConnectedCodeLimitKb, ConnectedCodeLimitSource,
 };
 pub use crate::connection::{
     Connection, ConnectionGroup, ConnectionId, Connections, Extent, InvalidLineRange, LineRange,
