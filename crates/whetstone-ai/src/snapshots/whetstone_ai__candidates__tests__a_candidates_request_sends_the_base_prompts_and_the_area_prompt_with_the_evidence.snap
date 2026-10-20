@@ -1,0 +1,251 @@
+---
+source: crates/whetstone-ai/src/candidates.rs
+expression: generator_body(body)
+---
+{
+  "model": "anthropic/claude-sonnet-5.5",
+  "messages": [
+    {
+      "role": "system",
+      "content": [
+        {
+          "type": "text",
+          "text": null
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": null
+    }
+  ],
+  "response_format": {
+    "type": "json_schema",
+    "json_schema": {
+      "name": "CandidatesOutput",
+      "strict": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "candidates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/CandidateOutput"
+            }
+          }
+        },
+        "required": [
+          "candidates"
+        ],
+        "title": "CandidatesOutput",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$defs": {
+          "CandidateOutput": {
+            "type": "object",
+            "properties": {
+              "stem": {
+                "type": "string"
+              },
+              "options": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/OptionOutput"
+                }
+              },
+              "answer_key": {
+                "type": "string"
+              },
+              "why_it_matters": {
+                "type": "string"
+              },
+              "rubric": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/CriterionOutput"
+                }
+              },
+              "hint": {
+                "type": "string"
+              },
+              "citations": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/CitationOutput"
+                }
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "stem",
+              "options",
+              "answer_key",
+              "why_it_matters",
+              "rubric",
+              "hint",
+              "citations"
+            ]
+          },
+          "OptionOutput": {
+            "type": "object",
+            "properties": {
+              "letter": {
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              },
+              "rationale": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "letter",
+              "text",
+              "rationale"
+            ]
+          },
+          "CriterionOutput": {
+            "type": "object",
+            "properties": {
+              "statement": {
+                "type": "string"
+              },
+              "met": {
+                "type": "string"
+              },
+              "not_met": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "statement",
+              "met",
+              "not_met"
+            ]
+          },
+          "CitationOutput": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "first_line": {
+                "type": "integer"
+              },
+              "last_line": {
+                "type": "integer"
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "path",
+              "first_line",
+              "last_line"
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "provider": {
+    "data_collection": "deny",
+    "zdr": true
+  }
+}
+
+--- preamble ---
+
+You write candidate questions for Whetstone, where a learner practises understanding a change to a codebase. The learner answers each question by choosing one option and explaining their reasoning in writing. Another model checks every candidate before a learner sees it, and only candidates that pass every check are shown, so make each one fair.
+
+Write exactly 2 candidate questions about the change in the evidence, each focused on the area described at the end of these instructions. Make each candidate ask about something different. Return them as `candidates`.
+
+## What each candidate holds
+
+- `stem`: the question. It asks about this change, and someone who understands the change can answer it from the evidence alone, without general knowledge the evidence doesn't support. Its wording doesn't give the answer away.
+- `options`: exactly three, with the letters `A`, `B` and `C`, each once. Each has its `text` and its `rationale`.
+  - Exactly one option is correct given the evidence. The other two are wrong given the evidence, yet plausible to someone who hasn't understood the change.
+  - The options are alike in length, style and detail, so that none stands out, and none repeats the stem's wording to look right.
+- `answer_key`: the letter of the correct option.
+- `rationale`, for each option: why that option is correct or wrong, from the evidence.
+- `why_it_matters`: one line on what the question is getting at: why understanding this matters for the code and the people who work on it.
+- `rubric`: one to three criteria the learner's written reasoning is assessed against. Each follows from the evidence and the answer key, and can be judged from written reasoning alone, whatever words the learner uses. Each has:
+  - `statement`: what the reasoning should cover;
+  - `met`: what reasoning that meets it looks like;
+  - `not_met`: what reasoning that doesn't meet it looks like.
+- `hint`: one hint that points to where in the evidence to look, without revealing the answer key or ruling options out.
+- `citations`: the lines of the evidence the question rests on, at least one.
+
+## What makes a good question
+
+- Prefer questions that need an understanding of how the change affects the code around it over questions answerable by reading one line.
+- Ask why the change is the way it is, what it makes possible or prevents, and what would go wrong if it were different, over naming, formatting or tooling.
+- Ask only about what the evidence shows. Where a file has no connected code, don't ask about code around it that the evidence doesn't show.
+
+## The evidence
+
+The evidence is everything the learner approved for sending, as JSON. It is all you know about the repository: don't assume code, behaviour or history it doesn't show.
+
+- `commit_message`: the change's commit message.
+- `touched_files`: each file the change touches, with its `path`, its `diff` and its full content: `content_after_change`, or `content_before_change` for a file the change deletes. A renamed file has the path it was renamed from as `renamed_from`.
+- `connected_code`: code elsewhere in the repository that the touched files call, are called by, link to or name, with `relations` saying how it connects to a touched file.
+- `related_tests`: tests that belong to touched files.
+- `related_configuration`: the build manifests nearest touched files.
+- `files_without_connected_code`: touched files that come with no connected code, so the evidence shows nothing of the code around them.
+
+Every line of a file's content, connected code, test or configuration is numbered with its line number in its file, as `12: text`. A diff's lines aren't numbered.
+
+## Citing
+
+Cite the evidence by a file's `path` and the `first_line` and `last_line` of a range of its lines, both included, numbered as the evidence numbers them. Cite only numbered lines: to point at a line of a diff, cite the same line in the file's content.
+
+## The area: Domain
+
+The rules, concepts and language the work is about
+
+The area's own instructions follow. They add focus to the instructions above and never replace them.
+
+Focus on the rules the change encodes: what must always hold, and what
+would go wrong if it didn't.
+
+--- input ---
+
+{
+  "commit_message": "Reuse the charge's key when retrying after a timeout",
+  "touched_files": [
+    {
+      "path": "src/payments/retry.rs",
+      "diff": "diff --git a/src/payments/retry.rs b/src/payments/retry.rs\n--- a/src/payments/retry.rs\n+++ b/src/payments/retry.rs\n@@ -1,9 +1,10 @@\n pub async fn charge_with_retry(client: &Client, original: &Charge) -> Result<Receipt, Error> {\n     match client.charge(original.amount, original.key.clone()).await {\n         Err(Error::Timeout) => {\n-            let key = OperationKey::new();\n+            // The provider treats a repeated key as the same charge.\n+            let key = original.key.clone();\n             client.charge(original.amount, key).await\n         }\n         result => result,\n     }\n }\n",
+      "content_after_change": "1: pub async fn charge_with_retry(client: &Client, original: &Charge) -> Result<Receipt, Error> {\n2:     match client.charge(original.amount, original.key.clone()).await {\n3:         Err(Error::Timeout) => {\n4:             // The provider treats a repeated key as the same charge.\n5:             let key = original.key.clone();\n6:             client.charge(original.amount, key).await\n7:         }\n8:         result => result,\n9:     }\n10: }"
+    },
+    {
+      "path": "CHANGELOG.md",
+      "diff": "diff --git a/CHANGELOG.md b/CHANGELOG.md\n--- a/CHANGELOG.md\n+++ b/CHANGELOG.md\n@@ -1,3 +1,5 @@\n # Changelog\n \n ## Unreleased\n+\n+- A timed-out charge is retried with its original key, so it is never charged twice.\n",
+      "content_after_change": "1: # Changelog\n2: \n3: ## Unreleased\n4: \n5: - A timed-out charge is retried with its original key, so it is never charged twice."
+    }
+  ],
+  "connected_code": [
+    {
+      "path": "src/payments/client.rs",
+      "relations": [
+        "called by `charge_with_retry`, changed in src/payments/retry.rs"
+      ],
+      "lines": "12:     /// Charges `amount`. The provider charges at most once per key: a\n13:     /// request with a key it has seen returns the first charge's receipt.\n14:     pub async fn charge(&self, amount: Money, key: OperationKey) -> Result<Receipt, Error> {\n15:         self.post(\"/charges\", &ChargeRequest { amount, idempotency_key: key }).await\n16:     }"
+    }
+  ],
+  "related_tests": [
+    {
+      "path": "tests/retry.rs",
+      "relations": [
+        "test for `src/payments/retry.rs`"
+      ],
+      "lines": "1: #[tokio::test]\n2: async fn a_timed_out_charge_is_retried_once() {\n3:     let client = FakeClient::timing_out_once();\n4:     charge_with_retry(&client, &charge()).await.unwrap();\n5:     assert_eq!(client.charges().len(), 2);\n6: }"
+    }
+  ],
+  "related_configuration": [],
+  "files_without_connected_code": [
+    "CHANGELOG.md"
+  ]
+}

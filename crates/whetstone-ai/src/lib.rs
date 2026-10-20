@@ -17,22 +17,38 @@
 //! [`AiError`]. Nothing is retried (rule 23), and no Rig type crosses this
 //! interface.
 //!
+//! Above that layer, each AI call has a builder and a decoder, between
+//! whetstone-core's domain and these requests: [`candidates_request`] and
+//! [`CandidatesOutput`] write candidates, and [`question_check_request`] and
+//! [`question_check_answers`] check one. Their instructions are Whetstone's
+//! base prompts, bundled into this crate, whose version is
+//! [`base_prompts_version`]. Evidence goes out only as the learner approved
+//! it, and area prompts only to the generator.
+//!
 //! Nothing here logs a key, a prompt, evidence, questions or output (rules 43
 //! and 44): spans carry the model alone, and Rig's content telemetry stays off.
 
+mod answers;
+mod candidates;
 mod connection;
+mod evidence;
 mod failure;
 mod generator;
 mod jev;
 mod port;
+mod prompts;
+mod question_check;
 #[cfg(test)]
 mod record;
 #[cfg(test)]
 mod replay;
+#[cfg(test)]
+mod samples;
 #[cfg(any(test, feature = "scripted"))]
 mod scripted;
 mod usage;
 
+pub use crate::candidates::{CandidatesOutput, candidates_request};
 pub use crate::connection::{
     CONNECT_TIMEOUT, GENERATOR_TIMEOUT, JEV_TIMEOUT, OPENROUTER_BASE_URL, OpenRouter, Timeouts,
 };
@@ -40,6 +56,8 @@ pub use crate::failure::AiError;
 pub use crate::generator::{GeneratorReply, GeneratorRequest};
 pub use crate::jev::{JevAnswer, JevQuestion, JevReply, JevRequest, YesNoMeanings};
 pub use crate::port::{Ai, CandidateCount, Pending, Reply, RequestFailure};
+pub use crate::prompts::base_prompts_version;
+pub use crate::question_check::{question_check_answers, question_check_request};
 #[cfg(any(test, feature = "scripted"))]
 pub use crate::scripted::{Asked, ScriptedAi};
 pub use crate::usage::Usage;

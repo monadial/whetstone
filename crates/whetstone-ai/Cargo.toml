@@ -37,8 +37,14 @@ secrecy = "0.10"
 serde = { version = "1", features = ["derive"] }
 # Jev's state is JSON, as are its questions and replies.
 serde_json = "1"
+# The base prompts' version is a SHA-256 hash over every base-prompt file.
+# Already built for this crate through rig-core, at the same version.
+sha2 = "0.10"
 # Each module that can fail has its own error type (CODING_STANDARDS.md rule 13).
 thiserror = "2"
+# Jev's instructions in the base prompts are TOML files, as area files' front
+# matter is; whetstone-core already depends on it with these features.
+toml = { version = "1.1", default-features = false, features = ["parse", "serde", "std"] }
 # Puts each call's time limit on it (`time`) and races it against its
 # cancellation (`macros`).
 tokio = { version = "1.53", features = ["macros", "time"] }
@@ -47,9 +53,14 @@ tokio = { version = "1.53", features = ["macros", "time"] }
 tokio-util = "0.7"
 # Each call's span names its model and nothing it sends (rule 43).
 tracing = "0.1"
+# The domain the requests are built from and the replies decode into:
+# evidence, areas, candidates, questions and Jev's answers.
 whetstone-core = { path = "../whetstone-core" }
 
 [dev-dependencies]
+# The contract tests keep each exact request body as a reviewed snapshot, so
+# a change to a base prompt shows up as a diff; the binary already uses it.
+insta = "1.49"
 # Time-dependent async tests use a paused clock (CODING_STANDARDS.md rule 49).
 tokio = { version = "1.53", features = ["macros", "rt", "test-util"] }
 # The contract tests run the real calls against a local HTTP server that
