@@ -1,0 +1,16 @@
+# The explanation check: two yes/no questions per explanation paragraph,
+# about the state's `explanations`, beside the `evidence` and the
+# `question`. Each explanation is under its criterion's name, with the
+# criterion, its outcome and the paragraph.
+#
+# Placeholders: `{criterion}` is the criterion's name, such as `criterion_2`.
+
+[supported]
+instructions = "The explanation for {criterion} is supported by the evidence: everything it says about the change and the code around it is true of the evidence."
+yes = "The evidence supports everything the explanation says."
+no = "The explanation says something the evidence doesn't support, or contradicts."
+
+[agrees]
+instructions = "The explanation for {criterion} agrees with its criterion's outcome. For an outcome of not met, it explains what the reasoning missed. For an outcome of needs review, it describes what meeting the criterion would look like, without claiming the learner missed it."
+yes = "The explanation fits the criterion's outcome."
+no = "The explanation contradicts the criterion's outcome, such as treating the criterion as met, or claiming the learner missed a criterion that needs review."

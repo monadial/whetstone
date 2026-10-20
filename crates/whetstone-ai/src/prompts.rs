@@ -24,9 +24,14 @@ pub(crate) const WRITING: &str = include_str!("../prompts/writing.md");
 /// What the evidence holds and how to cite it, for the generator.
 pub(crate) const EVIDENCE: &str = include_str!("../prompts/evidence.md");
 
+/// How the generator explains what reasoning missed.
+pub(crate) const EXPLANATION: &str = include_str!("../prompts/explanation.md");
+
 /// Introduces an area's prompt; `{name}`, `{description}` and `{prompt}` are
 /// the area's.
 pub(crate) const AREA: &str = include_str!("../prompts/area.md");
+
+const EXPLANATION_CHECK_FILE: &str = include_str!("../prompts/explanation-check.toml");
 
 const GATE_FILE: &str = include_str!("../prompts/gate.toml");
 
@@ -38,11 +43,22 @@ const REASONING_FILE: &str = include_str!("../prompts/reasoning.toml");
 const FILES: &[(&str, &str)] = &[
     ("area.md", AREA),
     ("evidence.md", EVIDENCE),
+    ("explanation-check.toml", EXPLANATION_CHECK_FILE),
+    ("explanation.md", EXPLANATION),
     ("gate.toml", GATE_FILE),
     ("question-check.toml", QUESTION_CHECK_FILE),
     ("reasoning.toml", REASONING_FILE),
     ("writing.md", WRITING),
 ];
+
+/// The explanation check's questions about one paragraph; `{criterion}` is
+/// its criterion's name.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ExplanationCheckPrompts {
+    pub(crate) supported: YesNoPrompt,
+    pub(crate) agrees: YesNoPrompt,
+}
 
 /// The relevance gate's question about one area.
 #[derive(Debug, Deserialize)]
@@ -106,6 +122,9 @@ pub(crate) struct YesNoPrompt {
     yes: String,
     no: String,
 }
+
+pub(crate) static EXPLANATION_CHECK: LazyLock<ExplanationCheckPrompts> =
+    LazyLock::new(|| parse(EXPLANATION_CHECK_FILE));
 
 pub(crate) static GATE: LazyLock<GatePrompts> = LazyLock::new(|| parse(GATE_FILE));
 
