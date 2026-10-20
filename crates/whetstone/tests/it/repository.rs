@@ -114,27 +114,27 @@ fn with_an_invalid_config_home_names_the_file_and_the_problem_and_keeps_the_show
     for (config, problem) in [
         (
             "areas = [\"Domain\"]\n",
-            "Practice on payments is unavailable because .whetstone/config.toml is invalid: the key `areas` is not allowed, only `exclude`.",
+            "Practice on payments is unavailable because .whetstone/config.toml is invalid: the key `areas` is not allowed, only `exclude` and `connected_code_limit_kb`.",
         ),
         (
             "exclude = [\"fixtures/\"]\n\n[jev]\nmodel = \"typesafe/jev-1.14\"\n",
-            "Practice on payments is unavailable because .whetstone/config.toml is invalid: the key `jev` is not allowed, only `exclude`.",
+            "Practice on payments is unavailable because .whetstone/config.toml is invalid: the key `jev` is not allowed, only `exclude` and `connected_code_limit_kb`.",
         ),
         (
             "provider = \"openrouter\"\n",
-            "Practice on payments is unavailable because .whetstone/config.toml is invalid: the key `provider` is not allowed, only `exclude`.",
+            "Practice on payments is unavailable because .whetstone/config.toml is invalid: the key `provider` is not allowed, only `exclude` and `connected_code_limit_kb`.",
         ),
         (
             "[generator]\nmodel = \"openai/gpt-6\"\n",
-            "Practice on payments is unavailable because .whetstone/config.toml is invalid: the key `generator` is not allowed, only `exclude`.",
+            "Practice on payments is unavailable because .whetstone/config.toml is invalid: the key `generator` is not allowed, only `exclude` and `connected_code_limit_kb`.",
         ),
         (
             "endpoint = \"https://openrouter.ai/api/v1\"\n",
-            "Practice on payments is unavailable because .whetstone/config.toml is invalid: the key `endpoint` is not allowed, only `exclude`.",
+            "Practice on payments is unavailable because .whetstone/config.toml is invalid: the key `endpoint` is not allowed, only `exclude` and `connected_code_limit_kb`.",
         ),
         (
             "openrouter_api_key = \"from-the-repository\"\n",
-            "Practice on payments is unavailable because .whetstone/config.toml is invalid: the key `openrouter_api_key` is not allowed, only `exclude`.",
+            "Practice on payments is unavailable because .whetstone/config.toml is invalid: the key `openrouter_api_key` is not allowed, only `exclude` and `connected_code_limit_kb`.",
         ),
         (
             "exclude = \"fixtures/\"\n",
@@ -155,6 +155,22 @@ fn with_an_invalid_config_home_names_the_file_and_the_problem_and_keeps_the_show
         (
             "exclude = [\n",
             "Practice on payments is unavailable because .whetstone/config.toml is invalid: line 1 is not valid TOML: unclosed array, expected `]`.",
+        ),
+        (
+            "connected_code_limit_kb = 401\n",
+            "Practice on payments is unavailable because .whetstone/config.toml is invalid: `connected_code_limit_kb` must be a whole number from 0 to 400.",
+        ),
+        (
+            "exclude = [\"fixtures/\"]\nconnected_code_limit_kb = -1\n",
+            "Practice on payments is unavailable because .whetstone/config.toml is invalid: `connected_code_limit_kb` must be a whole number from 0 to 400.",
+        ),
+        (
+            "connected_code_limit_kb = 1.5\n",
+            "Practice on payments is unavailable because .whetstone/config.toml is invalid: `connected_code_limit_kb` must be a whole number from 0 to 400.",
+        ),
+        (
+            "connected_code_limit_kb = \"100\"\n",
+            "Practice on payments is unavailable because .whetstone/config.toml is invalid: `connected_code_limit_kb` must be a whole number from 0 to 400.",
         ),
     ] {
         let repo = payments();
@@ -188,6 +204,25 @@ fn a_config_that_lists_exclude_patterns_is_valid() {
     let session = started_in(repo.root(), 80, 24);
 
     assert_eq!(home_actions(&session)[0], "> Practice on payments");
+}
+
+#[test]
+fn a_config_that_sets_the_connected_code_limit_is_valid() {
+    for config in [
+        "connected_code_limit_kb = 0\n",
+        "exclude = [\"fixtures/\"]\nconnected_code_limit_kb = 400\n",
+    ] {
+        let repo = payments();
+        repo.write(".whetstone/config.toml", config);
+
+        let session = started_in(repo.root(), 80, 24);
+
+        assert_eq!(
+            home_actions(&session)[0],
+            "> Practice on payments",
+            "{config}"
+        );
+    }
 }
 
 /// The heading above the areas.
@@ -579,7 +614,7 @@ fn an_invalid_config_is_found_from_a_subdirectory_and_in_a_linked_worktree() {
             unavailable_paragraph(&session),
             format!(
                 "Practice on {name} is unavailable because .whetstone/config.toml is invalid: \
-                 the key `areas` is not allowed, only `exclude`."
+                 the key `areas` is not allowed, only `exclude` and `connected_code_limit_kb`."
             ),
             "from {}",
             start.display()
