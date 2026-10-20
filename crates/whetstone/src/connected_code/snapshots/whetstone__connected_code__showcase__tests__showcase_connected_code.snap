@@ -2,15 +2,17 @@
 source: crates/whetstone/src/connected_code/showcase.rs
 expression: "table.join(\"\\n\")"
 ---
-# The connected code of every curated showcase change, as Whetstone finds it
-# through the connected-code module, the same way as a learner's commit.
-# Each line is one connection: change | path | extent | group | relations.
-# A change with none has one "none found" line.
+# The connected code, related tests and related configuration of every curated
+# showcase change, as Whetstone finds them through the connected-code module,
+# the same way as for a learner's commit. Each line is one of them:
+# change | path | extent | group | relations. A change with none of them has
+# one "none found" line.
 #
 # Review this table whenever cgg is upgraded (ADR 0002): an upgrade can change
 # what is found. The engine version below follows the cgg pin, so an upgrade
-# fails this check until the table has been reviewed. A failing run writes the
-# table it found beside this one, ending in `.snap.new`, to compare and accept.
+# fails this check until the table has been reviewed. Run locally, a failing
+# check writes the table it found beside this one, ending in `.snap.new`, to
+# compare and accept.
 # Found with cgg 0.11.0.
 #
 # 01 Model the payment lifecycle

@@ -352,7 +352,7 @@ impl Request {
         .unwrap_or((Connections::AnalysisFailed, GraphOrigin::Analysed));
         tracing::info!(
             commit = self.commit.full(),
-            state = state(&connections),
+            state = log_state(&connections),
             origin = ?origin,
             ms = started.elapsed().as_millis(),
             "found a commit's connected code"
@@ -403,7 +403,7 @@ fn connections_at<S: Snapshot>(
 }
 
 /// What the log records of `connections`: whether any were found.
-fn state(connections: &Connections) -> &'static str {
+fn log_state(connections: &Connections) -> &'static str {
     match connections {
         Connections::Found(_) => "found",
         Connections::NoneFound => "none found",
@@ -461,7 +461,7 @@ fn with_sent_text<S: Snapshot>(
         })
         .collect::<Result<_, _>>()
         .inspect_err(|failure| {
-            tracing::warn!(error = %failure, "cannot read a commit's connected code");
+            tracing::warn!(error = %failure, "cannot read the files of a change's connected code");
         })
 }
 
