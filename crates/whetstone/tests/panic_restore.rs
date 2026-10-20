@@ -29,6 +29,8 @@ fn a_panic_restores_every_mode_before_the_panic_message_prints() {
             "enable Raw",
             "enable AlternateScreen",
             "enable HiddenCursor",
+            "enable BracketedPaste",
+            "disable BracketedPaste",
             "disable HiddenCursor",
             "disable AlternateScreen",
             "disable Raw",
