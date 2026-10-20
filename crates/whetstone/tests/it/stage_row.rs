@@ -1,8 +1,10 @@
 //! The row of stages at the top of the outbound review: where Practice is
 //! and what comes next, from reading the change to Jev reviewing the
 //! questions. Finding connected code is current until its result arrives,
-//! from an analysis or from the cache, and its spinner moves only on a tick
-//! while it is found.
+//! from an analysis or from the cache, or until its time limit runs out,
+//! and its spinner moves only on a tick while it is found.
+
+use std::time::Duration;
 
 use tempfile::TempDir;
 
@@ -183,6 +185,35 @@ fn when_the_analysis_fails_finding_connected_code_is_skipped() {
     );
 }
 
+/// Whetstone's time limit on finding connected code.
+const TIME_LIMIT: Duration = Duration::from_secs(20);
+
+#[test]
+fn when_finding_connected_code_takes_too_long_it_is_skipped() {
+    let repo = with_a_caller();
+    let mut session = started_in(repo.root(), 120, 32);
+    session.press(REVIEW_NEWEST);
+
+    session.wait(TIME_LIMIT);
+
+    assert_eq!(
+        session.row_with("Connected code"),
+        "Connected code isn't available for this change: finding it took longer than 20 s."
+    );
+    assert_eq!(
+        stage_row(&session),
+        [
+            "✓ Reading the change → – Finding connected code → ✓ Preparing evidence → ⠋ Outbound review →",
+            "· Checking areas · Jev → · Writing questions · generator → · Reviewing questions · Jev",
+        ]
+    );
+    // The analysis still runs to its end, which changes nothing here.
+    let gave_up = session.frame();
+    session.tick();
+    session.settle();
+    assert_eq!(session.frame(), gave_up);
+}
+
 #[test]
 fn the_spinner_moves_on_each_tick_while_connected_code_is_found_and_stands_still_once_it_arrives() {
     let repo = with_a_caller();
@@ -232,6 +263,8 @@ enum Finding {
     FromCache,
     /// Not available, because the analysis failed.
     AnalysisFailed,
+    /// Not available, because finding it took longer than the time limit.
+    TookTooLong,
 }
 
 /// Snapshots the outbound review of [`with_a_caller`]'s newest commit, once finding
@@ -264,12 +297,15 @@ fn assert_snapshots(name: &str, finding: Finding) {
                 height,
             );
             session.press(REVIEW_NEWEST);
-            if finding != Finding::InProgress {
-                session.settle();
-            }
-            if finding == Finding::FromCache {
-                session.press("q <Enter>");
-                session.settle();
+            match finding {
+                Finding::InProgress => {}
+                Finding::Done | Finding::AnalysisFailed => session.settle(),
+                Finding::FromCache => {
+                    session.settle();
+                    session.press("q <Enter>");
+                    session.settle();
+                }
+                Finding::TookTooLong => session.wait(TIME_LIMIT),
             }
             insta::assert_debug_snapshot!(
                 format!("{name}_{colour}_{width}x{height}"),
@@ -297,4 +333,9 @@ fn the_row_once_connected_code_comes_from_the_cache() {
 #[test]
 fn the_row_when_the_analysis_fails() {
     assert_snapshots("analysis_failed", Finding::AnalysisFailed);
+}
+
+#[test]
+fn the_row_when_finding_connected_code_takes_too_long() {
+    assert_snapshots("took_too_long", Finding::TookTooLong);
 }
