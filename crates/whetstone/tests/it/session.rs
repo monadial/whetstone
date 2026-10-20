@@ -182,13 +182,7 @@ impl Session {
     /// a frame shows the app still waiting.
     pub(crate) fn settle(&mut self) {
         while !self.finished.is_empty() {
-            for finished in mem::take(&mut self.finished) {
-                assert_eq!(
-                    self.send(Message::Finished(finished)),
-                    Flow::Continue,
-                    "a job's result never quits"
-                );
-            }
+            self.settle_once();
         }
     }
 

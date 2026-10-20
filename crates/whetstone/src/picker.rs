@@ -118,7 +118,7 @@ enum AreaChoice {
 enum Source {
     /// The showcase project, with this many curated changes, and whether
     /// Practice can ask Jev and the generator.
-    Showcase { changes: usize, ai: bool },
+    Showcase { changes: usize, ai_available: bool },
     /// The learner's repository, with the commits reachable from HEAD read
     /// so far, newest first, or why they could not be read. The history
     /// holds the repository it reads, so it is boxed.
@@ -150,12 +150,12 @@ pub(crate) struct Picker {
 impl Picker {
     /// The picker over `showcase`, as it first opens: every area selected.
     /// Generate questions starts Practice only if Practice can ask Jev and
-    /// the generator, as `ai` says.
-    pub(crate) fn new(showcase: &ShowcaseProject, ai: bool) -> Self {
+    /// the generator, as `ai_available` says.
+    pub(crate) fn new(showcase: &ShowcaseProject, ai_available: bool) -> Self {
         Self {
             source: Source::Showcase {
                 changes: showcase.changes().len(),
-                ai,
+                ai_available,
             },
             areas: vec![AreaChoice::Valid { selected: true }; showcase.areas().len()],
             chosen: None,
@@ -492,7 +492,7 @@ impl Picker {
     /// Practice on the chosen showcase change, or the outbound review of the
     /// chosen commit, with the choices kept for it. While it is disabled, as
     /// it says, nothing happens.
-    fn proceed_to(&mut self) -> Option<Command> {
+    fn next_screen(&mut self) -> Option<Command> {
         if self.proceed().1.is_some() {
             return None;
         }
@@ -519,8 +519,13 @@ impl Picker {
     /// The control after the lists, and why it is disabled, if it is.
     fn proceed(&self) -> (&'static str, Option<&'static str>) {
         match self.source {
-            Source::Showcase { ai: false, .. } => ("Generate questions", Some(ARRIVES_WITH_JEV)),
-            Source::Showcase { ai: true, .. } => ("Generate questions", self.choices_missing()),
+            Source::Showcase {
+                ai_available: false,
+                ..
+            } => ("Generate questions", Some(ARRIVES_WITH_JEV)),
+            Source::Showcase {
+                ai_available: true, ..
+            } => ("Generate questions", self.choices_missing()),
             Source::Repository { .. } => ("Review what will be sent", self.choices_missing()),
         }
     }
@@ -536,14 +541,14 @@ impl Picker {
         }
     }
 
-    /// The areas chosen, in the order offered: valid and selected.
-    fn chosen_areas<'a>(&self, offered: impl IntoIterator<Item = &'a Area>) -> Vec<Area> {
+    /// The areas chosen among `offered`, in the order offered: those valid
+    /// and selected.
+    fn chosen<T>(&self, offered: impl IntoIterator<Item = T>) -> impl Iterator<Item = T> {
         offered
             .into_iter()
             .zip(&self.areas)
             .filter(|(_, choice)| **choice == AreaChoice::Valid { selected: true })
-            .map(|(area, _)| area.clone())
-            .collect()
+            .map(|(area, _)| area)
     }
 }
 
@@ -798,7 +803,7 @@ impl View for Picker {
                 index,
                 change,
                 tree,
-                self.chosen_areas(context.showcase.areas()),
+                self.chosen(context.showcase.areas()).cloned().collect(),
                 context,
             )?));
         }
@@ -811,12 +816,9 @@ impl View for Picker {
             Ok(change) => change,
             Err(error) => return Some(Box::new(Unreadable::new(route, id, &error))),
         };
-        let areas = repository
-            .areas()
-            .iter()
-            .zip(&self.areas)
-            .filter(|(_, choice)| **choice == AreaChoice::Valid { selected: true })
-            .filter_map(|(area, _)| area.as_ref().ok().cloned())
+        let areas = self
+            .chosen(repository.areas())
+            .filter_map(|area| area.as_ref().ok().cloned())
             .collect();
         let connected_code = Request::new(
             repository.handle(),
@@ -887,7 +889,7 @@ impl View for Picker {
                 self.chosen = Some(index);
                 (command == Command::Open).then_some(Command::Go(Route::Viewer(change)))
             }
-            Control::Proceed => self.proceed_to(),
+            Control::Proceed => self.next_screen(),
         }
     }
 

@@ -165,9 +165,11 @@ impl Questions {
         lines.push(Line::default());
         for letter in OptionLetter::ALL {
             let lead = format!("{letter}  ");
-            let indent = " ".repeat(lead.len());
+            // Measured in cells, as the option's lines are.
+            let lead_width = Line::raw(lead.as_str()).width();
+            let indent = " ".repeat(lead_width);
             for (index, text) in
-                columns::wrap(question.option(letter), width.saturating_sub(lead.len()))
+                columns::wrap(question.option(letter), width.saturating_sub(lead_width))
                     .into_iter()
                     .enumerate()
             {
