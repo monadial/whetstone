@@ -165,10 +165,10 @@ impl Session {
         );
     }
 
-    /// Delivers the report of every background job the app started, and
-    /// of any job it starts on one, as the UI loop does once each job ends.
-    /// Until a test settles, no report arrives, so a frame shows the app
-    /// still waiting.
+    /// Delivers the report of every background job the app started,
+    /// blocking or async, and of any job it starts on one, as the UI loop
+    /// does once each job ends. Until a test settles, no report arrives, so
+    /// a frame shows the app still waiting.
     pub(crate) fn settle(&mut self) {
         while !self.finished.is_empty() {
             for finished in mem::take(&mut self.finished) {
@@ -214,10 +214,11 @@ impl Session {
         }
     }
 
-    /// Hands the app `message`, then runs each job it started, as the UI
-    /// loop does at once, and starts counting each time limit it set. A job
-    /// cancelled later has still run, as it would have begun in the loop,
-    /// but its report waits for the test to settle.
+    /// Hands the app `message`, then runs each job it started to its end,
+    /// as the UI loop starts it at once, and starts counting each time limit
+    /// it set. An async job, such as a request to a scripted AI, runs on a
+    /// runtime of its own. A job cancelled later has still run, as it would
+    /// have begun in the loop, but its report waits for the test to settle.
     fn send(&mut self, message: Message) -> Flow {
         let flow = self.app.handle(message);
         for job in self.app.take_jobs() {

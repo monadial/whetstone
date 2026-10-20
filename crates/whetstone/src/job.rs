@@ -1,9 +1,12 @@
-//! Background jobs: blocking work, such as finding connected code, that runs
-//! off the UI loop so the screen never freezes.
+//! Background jobs: work that runs off the UI loop so the screen never
+//! freezes, either blocking work, such as finding connected code, or async
+//! work, such as a network request.
 //!
-//! The app starts a job with [`Jobs::start`]. The UI loop takes it with
-//! [`App::take_jobs`](crate::App::take_jobs) and runs it on a blocking
-//! thread with [`Workers`]. Its [`Finished`] report comes back through
+//! The app starts a blocking job with [`Jobs::start`] and an async one with
+//! [`Jobs::start_async`]. The UI loop takes it with
+//! [`App::take_jobs`](crate::App::take_jobs) and runs it with [`Workers`]: a
+//! blocking job on a blocking thread, an async one as a task on the runtime.
+//! Its [`Finished`] report comes back through
 //! [`App::handle`](crate::App::handle), the way a key press does.
 //!
 //! Jobs that would compete for the whole machine, as analyses do, start
@@ -13,7 +16,9 @@
 //! cancelling it.
 
 use std::fmt;
+use std::future::Future;
 use std::mem;
+use std::pin::Pin;
 use std::time::Duration;
 
 use tokio::sync::mpsc;
@@ -80,33 +85,74 @@ pub struct Cancelled;
 /// early with [`Cancelled`].
 type Body<T> = Box<dyn FnOnce(&CancellationToken) -> Result<T, Cancelled> + Send>;
 
+/// A job's async work. Cancelling its job drops it where it waits, which is
+/// how a network request stops.
+type AsyncBody<T> = Pin<Box<dyn Future<Output = T> + Send>>;
+
+/// What a job runs.
+enum Work<T> {
+    /// Blocking work, for a blocking thread.
+    Blocking(Body<T>),
+    /// Async work, such as a network request, for the runtime.
+    Async(AsyncBody<T>),
+}
+
 /// A started job, waiting to run.
 pub struct Job<T> {
     id: JobId,
     /// A child of its [`Jobs`]' token (rule 17).
     token: CancellationToken,
-    body: Body<T>,
+    work: Work<T>,
 }
 
 impl<T> Job<T> {
-    /// Runs the job's body on this thread, and reports how it ended. A job
-    /// cancelled before it runs never runs its body. One cancelled by the
-    /// time its body returns reports cancellation, whatever the body
-    /// returned.
+    /// Runs the job to its end on this thread, and reports how it ended, as
+    /// the app-seam harness does. A blocking job's body runs here. An async
+    /// job's runs on a current-thread runtime of its own, in real time, so
+    /// this must not be called on a runtime. A job cancelled before it runs
+    /// never runs its body. One cancelled by the time its body ends reports
+    /// cancellation, whatever the body returned.
     #[must_use]
     pub fn run(self) -> Finished<T> {
-        let outcome = if self.token.is_cancelled() {
-            JobOutcome::Cancelled
-        } else {
-            match (self.body)(&self.token) {
-                Ok(output) if !self.token.is_cancelled() => JobOutcome::Done(output),
-                Ok(_) | Err(Cancelled) => JobOutcome::Cancelled,
-            }
+        let outcome = match self.work {
+            Work::Blocking(body) => run_blocking(&self.token, body),
+            Work::Async(body) => tokio::runtime::Builder::new_current_thread()
+                .enable_time()
+                .build()
+                .expect("a runtime without I/O makes no system call as it is built")
+                .block_on(run_async(&self.token, body)),
         };
         Finished {
             id: self.id,
             outcome,
         }
+    }
+}
+
+/// Runs blocking `body` unless `token` is cancelled first.
+fn run_blocking<T>(token: &CancellationToken, body: Body<T>) -> JobOutcome<T> {
+    if token.is_cancelled() {
+        return JobOutcome::Cancelled;
+    }
+    match body(token) {
+        Ok(output) if !token.is_cancelled() => JobOutcome::Done(output),
+        Ok(_) | Err(Cancelled) => JobOutcome::Cancelled,
+    }
+}
+
+/// Runs async `body` until it ends or `token` is cancelled, whichever comes
+/// first. Cancelling drops the body where it waits, which loses nothing the
+/// app still wants, and `token.cancelled()` is cancel-safe (rule 18).
+async fn run_async<T>(token: &CancellationToken, body: AsyncBody<T>) -> JobOutcome<T> {
+    tokio::select! {
+        // A job cancelled before it runs never runs its body.
+        biased;
+        () = token.cancelled() => JobOutcome::Cancelled,
+        output = body => if token.is_cancelled() {
+            JobOutcome::Cancelled
+        } else {
+            JobOutcome::Done(output)
+        },
     }
 }
 
@@ -170,7 +216,17 @@ impl<T> Jobs<T> {
         &mut self,
         body: impl FnOnce(&CancellationToken) -> Result<T, Cancelled> + Send + 'static,
     ) -> JobId {
-        let job = self.job(body);
+        let job = self.job(Work::Blocking(Box::new(body)));
+        let id = job.id;
+        self.started.push(job);
+        id
+    }
+
+    /// Starts a job that runs `body`, async work such as a network request,
+    /// as a task on the runtime, and returns its identity. Several run at
+    /// once. Cancelling the job drops `body` where it waits.
+    pub fn start_async(&mut self, body: impl Future<Output = T> + Send + 'static) -> JobId {
+        let job = self.job(Work::Async(Box::pin(body)));
         let id = job.id;
         self.started.push(job);
         id
@@ -185,7 +241,7 @@ impl<T> Jobs<T> {
         &mut self,
         body: impl FnOnce(&CancellationToken) -> Result<T, Cancelled> + Send + 'static,
     ) -> JobId {
-        let job = self.job(body);
+        let job = self.job(Work::Blocking(Box::new(body)));
         let id = job.id;
         match &mut self.turn {
             Turn::Free => {
@@ -203,20 +259,13 @@ impl<T> Jobs<T> {
         id
     }
 
-    /// A new job that runs `body`, which the app waits for.
-    fn job(
-        &mut self,
-        body: impl FnOnce(&CancellationToken) -> Result<T, Cancelled> + Send + 'static,
-    ) -> Job<T> {
+    /// A new job that runs `work`, which the app waits for.
+    fn job(&mut self, work: Work<T>) -> Job<T> {
         let id = JobId(self.next_id);
         self.next_id += 1;
         let token = self.root.child_token();
         self.outstanding.push((id, token.clone()));
-        Job {
-            id,
-            token,
-            body: Box::new(body),
-        }
+        Job { id, token, work }
     }
 
     /// Sets a time limit of `duration`, from now, on job `id`, for the UI
@@ -292,12 +341,13 @@ impl<T> Drop for Jobs<T> {
 
 /// How many job results can wait in the channel for the UI loop (rule 21).
 /// The loop takes each one as soon as it arrives, so the channel rarely holds
-/// more than one. A job that finds it full waits on its own blocking thread
-/// until the loop takes one, so the loop itself never waits.
+/// more than one. A job that finds it full waits until the loop takes one,
+/// a blocking job on its own blocking thread and an async one as its own
+/// task, so the loop itself never waits.
 const RESULTS_CAPACITY: usize = 4;
 
-/// Runs jobs on Tokio's blocking threads and hands back their results: the
-/// UI loop's side of background jobs.
+/// Runs jobs on the runtime, blocking ones on its blocking threads, and hands
+/// back their results: the UI loop's side of background jobs.
 #[derive(Debug)]
 pub struct Workers<T> {
     /// Owns every running job (rule 16).
@@ -318,16 +368,25 @@ impl<T: Send + 'static> Workers<T> {
         }
     }
 
-    /// Runs `job` on a blocking thread (rule 19), and sends its report to
+    /// Runs `job`, a blocking one on a blocking thread (rule 19) and an
+    /// async one as a task on the runtime, and sends its report to
     /// [`Workers::finished`]. It must be called on a Tokio runtime.
     pub fn run(&self, job: Job<T>) {
         let sender = self.sender.clone();
-        // The tracker owns the task, so its handle can go (rule 16).
-        drop(self.tracker.spawn_blocking(move || {
-            // Once the workers are gone nothing receives the report, which
-            // is discarded.
-            drop(sender.blocking_send(job.run()));
-        }));
+        let Job { id, token, work } = job;
+        // The tracker owns each task, so its handle can go (rule 16). Once
+        // the workers are gone nothing receives a report, which is
+        // discarded.
+        match work {
+            Work::Blocking(body) => drop(self.tracker.spawn_blocking(move || {
+                let outcome = run_blocking(&token, body);
+                drop(sender.blocking_send(Finished { id, outcome }));
+            })),
+            Work::Async(body) => drop(self.tracker.spawn(async move {
+                let outcome = run_async(&token, body).await;
+                drop(sender.send(Finished { id, outcome }).await);
+            })),
+        }
     }
 
     /// Whether every job these workers ran has ended.

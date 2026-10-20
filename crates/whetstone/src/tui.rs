@@ -157,7 +157,10 @@ async fn run_loop(mut app: App, environment: &Environment) -> Result<Ending, Tui
     // every job's token, and dropping the workers stops listening for
     // results, so a job still running on its blocking thread has its result
     // discarded when it ends, and one waiting for its turn never runs. The
-    // runtime shuts down without waiting for it (see `Runtime`).
+    // runtime shuts down without waiting for it (see `Runtime`). A running
+    // async job, such as a network request, is dropped with the runtime
+    // where it waits, so its request is abandoned and its result, which
+    // nothing would receive, is discarded.
     drop(app);
     drop(workers);
     Ok(ending)
@@ -165,7 +168,8 @@ async fn run_loop(mut app: App, environment: &Environment) -> Result<Ending, Tui
 
 /// The UI loop's current-thread Tokio runtime. It shuts down without
 /// waiting for a background job, as the loop ends, fails or panics: a plain
-/// Tokio runtime waits for every blocking thread when it is dropped.
+/// Tokio runtime waits for every blocking thread when it is dropped. An
+/// async job's task is dropped where it waits.
 #[derive(Debug)]
 struct Runtime(Option<tokio::runtime::Runtime>);
 
