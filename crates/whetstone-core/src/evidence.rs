@@ -2,34 +2,40 @@
 //! and what the outbound review shows beside it.
 //!
 //! [`Evidence::build`] is a pure function of the change, the repository's
-//! exclude patterns, the selected areas and the learner's
-//! [`ReviewChoices`]. The outbound review draws only from its value, and the
-//! AI step will send only what it holds, so what is shown and what is sent
-//! cannot diverge. A file that is left out keeps no text in it.
+//! exclude patterns, the selected areas, the change's connections (or why
+//! there are none) and the learner's [`ReviewChoices`]. The outbound review
+//! draws only from its value, and the AI step will send only what it holds,
+//! so what is shown and what is sent cannot diverge. A file or connection
+//! that is left out keeps no text in it.
 
 use std::collections::{BTreeSet, HashSet};
 use std::fmt;
 
 use crate::area::{Area, AreaId};
 use crate::change::{Change, FileContent, TouchedFile};
+use crate::connection::{Connection, ConnectionGroup, ConnectionId, Connections, Relation, Tier};
 use crate::exclusion::{DefaultExclusion, ExcludePattern, ExcludePatterns};
 use crate::secret::{SecretFinding, find_secrets};
 
 /// What a Practice sends: the commit message; for each included file, its
 /// diff and its full content (the content before the change for a
-/// deletion); and the selected areas with their area prompts.
+/// deletion); the selected areas with their area prompts; and each included
+/// connection's lines or whole file.
 ///
-/// Alongside it, but not sent: every touched file's status, with the reason
-/// a left-out file is left out, the possible secrets found in what is sent,
-/// and the total size against [`Evidence::SIZE_LIMIT`].
+/// Alongside it, but not sent: every touched file's and connection's
+/// status, with the reason one left out is left out, whether connections
+/// were found, the possible secrets found in what is sent, and the total
+/// size against [`Evidence::SIZE_LIMIT`].
 ///
-/// Its `Debug` output shows no message, file text or area prompt, so
-/// logging it cannot spread a secret.
+/// Its `Debug` output shows no message, file text, area prompt or callable
+/// name, so logging it cannot spread a secret.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Evidence {
     message: String,
     files: Vec<EvidenceFile>,
     areas: Vec<Area>,
+    connections: Vec<EvidenceConnection>,
+    connections_state: ConnectionsState,
     findings: Vec<Finding>,
     size: usize,
 }
@@ -51,6 +57,38 @@ pub struct EvidenceFile {
     size: Option<usize>,
     /// What it sends, only while it is included.
     sent: Option<SentText>,
+    /// How many connections of connected code relate to it.
+    connected: usize,
+}
+
+/// A connection, as the evidence holds it: whether it is sent, and what it
+/// sends while it is.
+#[derive(Clone, PartialEq, Eq)]
+pub struct EvidenceConnection {
+    id: ConnectionId,
+    group: ConnectionGroup,
+    tier: Tier,
+    relations: Vec<Relation>,
+    status: FileStatus,
+    /// The bytes it sends while included, or a binary file's size.
+    size: Option<usize>,
+    /// What it sends, only while it is included.
+    sent: Option<String>,
+}
+
+/// Whether the evidence has connections, or why it has none.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConnectionsState {
+    /// They are still being found.
+    Finding,
+    /// It has at least one.
+    Found,
+    /// None were found for this change.
+    NoneFound,
+    /// Finding them took longer than the time limit allows.
+    TookTooLong,
+    /// The analysis that finds them failed.
+    AnalysisFailed,
 }
 
 /// An included file's diff and full content.
@@ -182,7 +220,7 @@ pub struct Finding {
 }
 
 /// Where a finding is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Place {
     /// The commit message.
     CommitMessage,
@@ -191,6 +229,9 @@ pub enum Place {
     /// A line the change removes, in the diff of this file. Lines the diff
     /// adds or keeps are in the file's full content, and are found there.
     Diff(FileIndex),
+    /// What this connection sends. Its line is the line in the
+    /// connection's file.
+    Connection(ConnectionId),
 }
 
 /// Whether a finding still stops **Send**.
@@ -209,18 +250,29 @@ pub enum Unsendable {
     UnresolvedFindings,
     /// It is larger than [`Evidence::SIZE_LIMIT`].
     TooLarge,
-    /// Every touched file is left out.
+    /// Every touched file is left out. Connections are sent only beside
+    /// the change, never instead of it.
     NothingToSend,
 }
 
 /// The learner's choices on the outbound review of one change: the files
-/// they left out or brought back, and the matches they marked as not
-/// secrets. They live only in memory.
+/// and connections they left out or brought back, and the matches they
+/// marked as not secrets. A file is known by its place in the change, and a
+/// connection by its path and extent, so a choice about one holds however
+/// the connections arrive. They live only in memory.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ReviewChoices {
-    left_out: BTreeSet<FileIndex>,
-    brought_back: BTreeSet<FileIndex>,
+    left_out: BTreeSet<Item>,
+    brought_back: BTreeSet<Item>,
     not_secrets: HashSet<(Place, SecretFinding)>,
+}
+
+/// What the learner leaves out or brings back: a touched file, by its place
+/// in the change, or a connection, by its path and extent.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum Item {
+    File(FileIndex),
+    Connection(ConnectionId),
 }
 
 impl Evidence {
@@ -229,32 +281,41 @@ impl Evidence {
     pub const SIZE_LIMIT: usize = 400_000;
 
     /// The evidence for `change`, leaving out what `exclude` and the rules
-    /// before it leave out, with the selected `areas`, as `choices` adjust
-    /// it.
+    /// before it leave out, with the selected `areas` and the change's
+    /// `connections`, as `choices` adjust it.
     ///
-    /// Rules leave a file out in this order, and the first that matches
-    /// gives the reason: binary files, submodules and symbolic links,
-    /// always; lockfiles and common secret paths, by default; the
+    /// Rules leave a file or a connection out in this order, and the first
+    /// that matches gives the reason: binary files, submodules and symbolic
+    /// links, always; lockfiles and common secret paths, by default; the
     /// repository's `exclude` patterns; and the learner. The learner can
-    /// bring back a file the second or third leaves out. A renamed file is
+    /// bring back one the second or third leaves out. A renamed file is
     /// matched by its old path as well as its new one.
     ///
-    /// The commit message and every file sent are checked for secrets, so
-    /// a file brought back is checked as it returns.
+    /// The commit message, every file sent and every connection sent are
+    /// checked for secrets, so one brought back is checked as it returns.
+    /// Connections are kept in their order, and found connections that are
+    /// empty are [`ConnectionsState::NoneFound`].
     #[must_use]
     pub fn build(
         change: &Change,
         exclude: &ExcludePatterns,
         areas: &[Area],
+        connections: &Connections,
         choices: &ReviewChoices,
     ) -> Self {
+        let (connections, connections_state) =
+            EvidenceConnection::all(connections, exclude, choices);
         let files: Vec<EvidenceFile> = change
             .files()
             .iter()
             .zip(change.file_diffs())
             .enumerate()
-            .map(|(index, (file, diff))| {
-                EvidenceFile::new(FileIndex(index), file, diff, exclude, choices)
+            .map(|(index, (file, diff))| EvidenceFile {
+                connected: connections
+                    .iter()
+                    .filter(|connection| connection.is_connected_code_for(file.path()))
+                    .count(),
+                ..EvidenceFile::new(FileIndex(index), file, diff, exclude, choices)
             })
             .collect();
         let mut found: Vec<(Place, SecretFinding)> = find_secrets(change.message())
@@ -281,14 +342,26 @@ impl Evidence {
                 );
             }
         }
+        for connection in &connections {
+            let Some(sent) = connection.sent() else {
+                continue;
+            };
+            found.extend(find_secrets(sent.text).into_iter().map(|matched| {
+                (
+                    Place::Connection(connection.id.clone()),
+                    matched.lines_down(sent.first_line - 1),
+                )
+            }));
+        }
         let findings = found
             .into_iter()
-            .map(|(place, matched)| {
-                let status = if choices.not_secrets.contains(&(place, matched.clone())) {
+            .map(|key| {
+                let status = if choices.not_secrets.contains(&key) {
                     FindingStatus::NotASecret
                 } else {
                     FindingStatus::Unresolved
                 };
+                let (place, matched) = key;
                 Finding {
                     place,
                     matched,
@@ -302,6 +375,11 @@ impl Evidence {
                 .filter(|file| file.sent.is_some())
                 .filter_map(|file| file.size)
                 .sum::<usize>()
+            + connections
+                .iter()
+                .filter(|connection| connection.sent.is_some())
+                .filter_map(|connection| connection.size)
+                .sum::<usize>()
             + areas
                 .iter()
                 .map(|area| area.name().len() + area.prompt().len())
@@ -310,6 +388,8 @@ impl Evidence {
             message: change.message().to_owned(),
             files,
             areas: areas.to_vec(),
+            connections,
+            connections_state,
             findings,
             size,
         }
@@ -339,16 +419,29 @@ impl Evidence {
         &self.areas
     }
 
+    /// Every connection found, in the order found, sent or not.
+    #[must_use]
+    pub fn connections(&self) -> &[EvidenceConnection] {
+        &self.connections
+    }
+
+    /// Whether it has connections, or why it has none.
+    #[must_use]
+    pub fn connections_state(&self) -> ConnectionsState {
+        self.connections_state
+    }
+
     /// The possible secrets in what is sent, the commit message's first,
-    /// then each file's in order.
+    /// then each file's in order, then each connection's in order.
     #[must_use]
     pub fn findings(&self) -> &[Finding] {
         &self.findings
     }
 
     /// How many bytes are sent: every byte of the message, of each
-    /// included file's path, diff and full content, and of each selected
-    /// area's name and prompt.
+    /// included file's path, diff and full content, of each included
+    /// connection's path and sent text, and of each selected area's name and
+    /// prompt.
     #[must_use]
     pub fn size(&self) -> usize {
         self.size
@@ -385,6 +478,8 @@ impl fmt::Debug for Evidence {
                 "areas",
                 &self.areas.iter().map(Area::id).collect::<Vec<&AreaId>>(),
             )
+            .field("connections", &self.connections)
+            .field("connections_state", &self.connections_state)
             .field("findings", &self.findings)
             .field("size", &self.size)
             .finish()
@@ -423,6 +518,42 @@ impl fmt::Debug for SentFile<'_> {
     }
 }
 
+/// What an included connection sends.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct SentConnection<'a> {
+    /// The lines of its extent, with their own line endings.
+    pub text: &'a str,
+    /// The number in its file of the text's first line, which the reader
+    /// shows it from.
+    pub first_line: usize,
+}
+
+/// Shows the text's length, never the text.
+impl fmt::Debug for SentConnection<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SentConnection")
+            .field("text_bytes", &self.text.len())
+            .field("first_line", &self.first_line)
+            .finish()
+    }
+}
+
+/// Shows the sent text's length, never the text, and its relations without
+/// a callable's name.
+impl fmt::Debug for EvidenceConnection {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("EvidenceConnection")
+            .field("id", &self.id)
+            .field("group", &self.group)
+            .field("tier", &self.tier)
+            .field("relations", &self.relations)
+            .field("status", &self.status)
+            .field("size", &self.size)
+            .field("sent_bytes", &self.sent.as_ref().map(String::len))
+            .finish()
+    }
+}
+
 /// Shows the text's lengths, never the text.
 impl fmt::Debug for SentText {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -453,22 +584,8 @@ impl EvidenceFile {
             Kind::Text { .. } => {
                 // A file moved away from a path left out is left out too:
                 // its content is what was there.
-                let paths = || std::iter::once(path).chain(file.renamed_from());
-                let rule = paths()
-                    .find_map(DefaultExclusion::of)
-                    .map(Exclusion::Default)
-                    .or_else(|| {
-                        paths()
-                            .find_map(|path| exclude.first_match(path))
-                            .cloned()
-                            .map(Exclusion::Config)
-                    });
-                match rule {
-                    Some(_) if choices.brought_back.contains(&index) => FileStatus::IncludedByYou,
-                    Some(reason) => FileStatus::LeftOut(reason),
-                    None if choices.left_out.contains(&index) => FileStatus::LeftOutByYou,
-                    None => FileStatus::Included,
-                }
+                let paths: Vec<&str> = std::iter::once(path).chain(file.renamed_from()).collect();
+                text_status(&paths, exclude, choices, &Item::File(index))
             }
         };
         let size = match kind {
@@ -495,6 +612,7 @@ impl EvidenceFile {
             status,
             size,
             sent,
+            connected: 0,
         }
     }
 
@@ -531,6 +649,13 @@ impl EvidenceFile {
         self.size
     }
 
+    /// How many connections of connected code relate to it, sent or not.
+    /// Related tests and related configuration are not counted.
+    #[must_use]
+    pub fn connected(&self) -> usize {
+        self.connected
+    }
+
     /// What it sends, if it is included.
     #[must_use]
     pub fn sent(&self) -> Option<SentFile<'_>> {
@@ -538,6 +663,158 @@ impl EvidenceFile {
             diff: &sent.diff,
             content: &sent.content,
             side: sent.side,
+        })
+    }
+}
+
+/// Whether text at `paths` is sent: left out by the first rule that matches
+/// one of them, a default exclusion and then an `exclude` pattern, unless
+/// the learner brought `item` back; otherwise sent, unless the learner left
+/// it out.
+fn text_status(
+    paths: &[&str],
+    exclude: &ExcludePatterns,
+    choices: &ReviewChoices,
+    item: &Item,
+) -> FileStatus {
+    let rule = paths
+        .iter()
+        .copied()
+        .find_map(DefaultExclusion::of)
+        .map(Exclusion::Default)
+        .or_else(|| {
+            paths
+                .iter()
+                .find_map(|path| exclude.first_match(path))
+                .cloned()
+                .map(Exclusion::Config)
+        });
+    match rule {
+        Some(_) if choices.brought_back.contains(item) => FileStatus::IncludedByYou,
+        Some(reason) => FileStatus::LeftOut(reason),
+        None if choices.left_out.contains(item) => FileStatus::LeftOutByYou,
+        None => FileStatus::Included,
+    }
+}
+
+impl EvidenceConnection {
+    /// The evidence's connections from `connections`, in their order, as
+    /// the rules and `choices` leave them, and whether it has any.
+    fn all(
+        connections: &Connections,
+        exclude: &ExcludePatterns,
+        choices: &ReviewChoices,
+    ) -> (Vec<Self>, ConnectionsState) {
+        match connections {
+            Connections::Found(found) if !found.is_empty() => (
+                found
+                    .iter()
+                    .map(|connection| Self::new(connection, exclude, choices))
+                    .collect(),
+                ConnectionsState::Found,
+            ),
+            Connections::Found(_) | Connections::NoneFound => {
+                (Vec::new(), ConnectionsState::NoneFound)
+            }
+            Connections::Finding => (Vec::new(), ConnectionsState::Finding),
+            Connections::TookTooLong => (Vec::new(), ConnectionsState::TookTooLong),
+            Connections::AnalysisFailed => (Vec::new(), ConnectionsState::AnalysisFailed),
+        }
+    }
+
+    /// The found `connection`, as the rules and `choices` leave it.
+    fn new(connection: &Connection, exclude: &ExcludePatterns, choices: &ReviewChoices) -> Self {
+        let id = connection.id();
+        let content = connection.content();
+        let status = match content {
+            FileContent::Binary { .. } => FileStatus::LeftOut(Exclusion::Binary),
+            FileContent::Submodule => FileStatus::LeftOut(Exclusion::Submodule),
+            FileContent::Symlink => FileStatus::LeftOut(Exclusion::Symlink),
+            FileContent::Text(_) => text_status(
+                &[id.path()],
+                exclude,
+                choices,
+                &Item::Connection(id.clone()),
+            ),
+        };
+        let size = match content {
+            FileContent::Text(text) => Some(id.path().len() + text.len()),
+            FileContent::Binary { size } => Some(*size),
+            FileContent::Submodule | FileContent::Symlink => None,
+        };
+        let sent = match content {
+            FileContent::Text(text)
+                if matches!(status, FileStatus::Included | FileStatus::IncludedByYou) =>
+            {
+                Some(text.clone())
+            }
+            _ => None,
+        };
+        Self {
+            id: id.clone(),
+            group: connection.group(),
+            tier: connection.tier(),
+            relations: connection.relations().to_vec(),
+            status,
+            size,
+            sent,
+        }
+    }
+
+    /// Its path and extent, which identify it.
+    #[must_use]
+    pub fn id(&self) -> &ConnectionId {
+        &self.id
+    }
+
+    /// Which kind of material it is.
+    #[must_use]
+    pub fn group(&self) -> ConnectionGroup {
+        self.group
+    }
+
+    /// How sure Whetstone is of it.
+    #[must_use]
+    pub fn tier(&self) -> Tier {
+        self.tier
+    }
+
+    /// Why it is there.
+    #[must_use]
+    pub fn relations(&self) -> &[Relation] {
+        &self.relations
+    }
+
+    /// Whether it is connected code with a relation to the touched file at
+    /// `path`.
+    fn is_connected_code_for(&self, path: &str) -> bool {
+        self.group == ConnectionGroup::ConnectedCode
+            && self
+                .relations
+                .iter()
+                .any(|relation| relation.touched_file() == path)
+    }
+
+    /// Whether it is sent, and why, as for a touched file.
+    #[must_use]
+    pub fn status(&self) -> &FileStatus {
+        &self.status
+    }
+
+    /// The bytes it sends while included, its path and sent text; a binary
+    /// file's size; or nothing for a submodule or a symbolic link, which
+    /// have no content.
+    #[must_use]
+    pub fn size(&self) -> Option<usize> {
+        self.size
+    }
+
+    /// What it sends, if it is included.
+    #[must_use]
+    pub fn sent(&self) -> Option<SentConnection<'_>> {
+        self.sent.as_deref().map(|text| SentConnection {
+            text,
+            first_line: self.id.extent().first_line(),
         })
     }
 }
@@ -585,8 +862,8 @@ impl fmt::Display for Exclusion {
 impl Finding {
     /// Where it is.
     #[must_use]
-    pub fn place(&self) -> Place {
-        self.place
+    pub fn place(&self) -> &Place {
+        &self.place
     }
 
     /// The match: its line, the rule that matched and the masked excerpt.
@@ -603,12 +880,21 @@ impl Finding {
 }
 
 impl Place {
-    /// The file it is in, unless it is in the commit message.
+    /// The touched file it is in, if it is in one.
     #[must_use]
-    pub fn file(self) -> Option<FileIndex> {
+    pub fn file(&self) -> Option<FileIndex> {
         match self {
-            Self::CommitMessage => None,
-            Self::Content(file) | Self::Diff(file) => Some(file),
+            Self::CommitMessage | Self::Connection(_) => None,
+            Self::Content(file) | Self::Diff(file) => Some(*file),
+        }
+    }
+
+    /// The connection it is in, if it is in one.
+    #[must_use]
+    pub fn connection(&self) -> Option<&ConnectionId> {
+        match self {
+            Self::Connection(connection) => Some(connection),
+            Self::CommitMessage | Self::Content(_) | Self::Diff(_) => None,
         }
     }
 }
@@ -617,31 +903,674 @@ impl ReviewChoices {
     /// Leaves out the file at `index` of `evidence` if it is sent, or
     /// brings it back if it is left out and can be.
     pub fn toggle_file(&mut self, evidence: &Evidence, index: FileIndex) {
-        match evidence.file(index).map(EvidenceFile::status) {
-            Some(FileStatus::Included | FileStatus::IncludedByYou) => self.leave_out(index),
-            Some(FileStatus::LeftOutByYou) => {
-                self.left_out.remove(&index);
-            }
-            Some(FileStatus::LeftOut(reason)) if reason.can_bring_back() => {
-                self.brought_back.insert(index);
-            }
-            Some(FileStatus::LeftOut(_)) | None => {}
-        }
+        self.toggle(
+            Item::File(index),
+            evidence.file(index).map(EvidenceFile::status),
+        );
     }
 
     /// Leaves out the file at `index`: one the learner brought back returns
     /// to the rule that left it out, and any other is left out by them.
     pub fn leave_out(&mut self, index: FileIndex) {
-        if !self.brought_back.remove(&index) {
-            self.left_out.insert(index);
+        self.leave_out_item(Item::File(index));
+    }
+
+    /// Leaves out `connection` if it is sent, or brings it back if it is
+    /// left out and can be. The choice holds for any connection with the
+    /// same path and extent.
+    pub fn toggle_connection(&mut self, connection: &EvidenceConnection) {
+        self.toggle(
+            Item::Connection(connection.id.clone()),
+            Some(&connection.status),
+        );
+    }
+
+    /// Leaves out the connection `id` names: one the learner brought back
+    /// returns to the rule that left it out, and any other is left out by
+    /// them.
+    pub fn leave_out_connection(&mut self, id: &ConnectionId) {
+        self.leave_out_item(Item::Connection(id.clone()));
+    }
+
+    /// Leaves out `item`, whose status is `status`, if it is sent, or brings
+    /// it back if it is left out and can be.
+    fn toggle(&mut self, item: Item, status: Option<&FileStatus>) {
+        match status {
+            Some(FileStatus::Included | FileStatus::IncludedByYou) => self.leave_out_item(item),
+            Some(FileStatus::LeftOutByYou) => {
+                self.left_out.remove(&item);
+            }
+            Some(FileStatus::LeftOut(reason)) if reason.can_bring_back() => {
+                self.brought_back.insert(item);
+            }
+            Some(FileStatus::LeftOut(_)) | None => {}
+        }
+    }
+
+    /// Leaves out `item`: one the learner brought back returns to the rule
+    /// that left it out, and any other is left out by them.
+    fn leave_out_item(&mut self, item: Item) {
+        if !self.brought_back.remove(&item) {
+            self.left_out.insert(item);
         }
     }
 
     /// Marks `finding`'s match as not a secret, or unmarks it.
     pub fn toggle_not_a_secret(&mut self, finding: &Finding) {
-        let key = (finding.place, finding.matched.clone());
+        let key = (finding.place.clone(), finding.matched.clone());
         if !self.not_secrets.remove(&key) {
             self.not_secrets.insert(key);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::change::{CommitId, Comparison};
+    use crate::connection::{Connection, ConnectionGroup, Connections, Extent, LineRange, Tier};
+
+    /// A commit that edits `src/pay.rs` and `src/refund.rs`.
+    fn change() -> Change {
+        Change::from_commit(
+            CommitId::new("419ace2d5c0e1f7b8a9d3e4f5a6b7c8d9e0f1a2b", 7).expect("the ID is valid"),
+            Comparison::Parent,
+            "Retry failed payments".to_owned(),
+            "diff --git a/src/pay.rs b/src/pay.rs\n@@ -1 +1 @@\n-fn pay() {}\n+fn pay() { retry() }\n\
+             diff --git a/src/refund.rs b/src/refund.rs\n@@ -1 +1 @@\n-fn refund() {}\n+fn refund() { pay() }\n"
+                .to_owned(),
+            vec![
+                TouchedFile::modified(
+                    "src/pay.rs".to_owned(),
+                    FileContent::Text("fn pay() {}\n".to_owned()),
+                    FileContent::Text("fn pay() { retry() }\n".to_owned()),
+                ),
+                TouchedFile::modified(
+                    "src/refund.rs".to_owned(),
+                    FileContent::Text("fn refund() {}\n".to_owned()),
+                    FileContent::Text("fn refund() { pay() }\n".to_owned()),
+                ),
+            ],
+        )
+    }
+
+    /// Connected code: the whole of `path`, holding `text`, which calls
+    /// `pay` in `src/pay.rs`.
+    fn caller(path: &str, text: &str) -> Connection {
+        connected(path, FileContent::Text(text.to_owned()))
+    }
+
+    /// Connected code: the whole of `path`, holding `content`, which calls
+    /// `pay` in `src/pay.rs`.
+    fn connected(path: &str, content: FileContent) -> Connection {
+        Connection::new(
+            path.to_owned(),
+            Extent::WholeFile,
+            ConnectionGroup::ConnectedCode,
+            Tier::High,
+            vec![Relation::Calls {
+                callable: "pay".to_owned(),
+                touched_file: "src/pay.rs".to_owned(),
+            }],
+            content,
+        )
+    }
+
+    /// The status of `found`'s first connection, as `choices` leave it.
+    fn status(found: &Connections, choices: &ReviewChoices) -> FileStatus {
+        build(found, choices).connections()[0].status().clone()
+    }
+
+    fn build(connections: &Connections, choices: &ReviewChoices) -> Evidence {
+        build_excluding(&ExcludePatterns::default(), connections, choices)
+    }
+
+    fn build_excluding(
+        exclude: &ExcludePatterns,
+        connections: &Connections,
+        choices: &ReviewChoices,
+    ) -> Evidence {
+        Evidence::build(&change(), exclude, &[], connections, choices)
+    }
+
+    fn paths(evidence: &Evidence) -> Vec<&str> {
+        evidence
+            .connections()
+            .iter()
+            .map(|connection| connection.id().path())
+            .collect()
+    }
+
+    #[test]
+    fn evidence_without_connections_says_why_there_are_none() {
+        for (connections, state) in [
+            (Connections::Finding, ConnectionsState::Finding),
+            (Connections::NoneFound, ConnectionsState::NoneFound),
+            (Connections::Found(Vec::new()), ConnectionsState::NoneFound),
+            (Connections::TookTooLong, ConnectionsState::TookTooLong),
+            (
+                Connections::AnalysisFailed,
+                ConnectionsState::AnalysisFailed,
+            ),
+        ] {
+            let evidence = build(&connections, &ReviewChoices::default());
+
+            assert_eq!(evidence.connections_state(), state, "{connections:?}");
+            assert!(evidence.connections().is_empty(), "{connections:?}");
+        }
+    }
+
+    #[test]
+    fn a_connection_sends_the_lines_of_its_range_from_their_first_number() {
+        let connection = Connection::new(
+            "src/checkout.rs".to_owned(),
+            Extent::Lines(LineRange::new(2, 3).expect("the range is valid")),
+            ConnectionGroup::ConnectedCode,
+            Tier::Medium,
+            Vec::new(),
+            FileContent::Text("use pay;\r\nfn checkout() {\r\n    pay()\r\n}\r\n".to_owned()),
+        );
+
+        let evidence = build(
+            &Connections::Found(vec![connection]),
+            &ReviewChoices::default(),
+        );
+
+        let connection = &evidence.connections()[0];
+        assert_eq!(connection.status(), &FileStatus::Included);
+        assert_eq!(
+            connection.sent(),
+            Some(SentConnection {
+                text: "fn checkout() {\r\n    pay()\r\n",
+                first_line: 2,
+            })
+        );
+    }
+
+    #[test]
+    fn a_connection_sends_only_the_lines_of_its_range_that_its_file_has() {
+        let evidence = build(
+            &Connections::Found(vec![api(lines(3, 9))]),
+            &ReviewChoices::default(),
+        );
+
+        assert_eq!(
+            evidence.connections()[0].sent(),
+            Some(SentConnection {
+                text: "c\nd\n",
+                first_line: 3,
+            })
+        );
+    }
+
+    #[test]
+    fn a_whole_file_connection_sends_all_of_it_from_line_one() {
+        let evidence = build(
+            &Connections::Found(vec![caller("src/api.rs", "fn post() {\n    pay()\n}")]),
+            &ReviewChoices::default(),
+        );
+
+        assert_eq!(
+            evidence.connections()[0].sent(),
+            Some(SentConnection {
+                text: "fn post() {\n    pay()\n}",
+                first_line: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn an_included_connection_counts_its_path_and_sent_text_towards_the_size() {
+        let without = build(&Connections::Finding, &ReviewChoices::default());
+
+        let with = build(
+            &Connections::Found(vec![caller("src/api.rs", "fn post() { pay() }\n")]),
+            &ReviewChoices::default(),
+        );
+
+        // 10 bytes of path and 20 of text.
+        assert_eq!(with.connections()[0].size(), Some(30));
+        assert_eq!(with.size(), without.size() + 30);
+    }
+
+    #[test]
+    fn a_binary_file_symlink_or_submodule_connection_is_always_left_out() {
+        let nothing = build(&Connections::Finding, &ReviewChoices::default()).size();
+        for (content, size, reason) in [
+            (FileContent::Binary { size: 5 }, Some(5), Exclusion::Binary),
+            (FileContent::Symlink, None, Exclusion::Symlink),
+            (FileContent::Submodule, None, Exclusion::Submodule),
+        ] {
+            let found = Connections::Found(vec![connected("vendor/logo", content)]);
+            let mut choices = ReviewChoices::default();
+
+            let evidence = build(&found, &choices);
+            let connection = &evidence.connections()[0];
+            choices.toggle_connection(connection);
+
+            assert_eq!(connection.status(), &FileStatus::LeftOut(reason.clone()));
+            assert_eq!(connection.sent(), None);
+            assert_eq!(connection.size(), size);
+            assert_eq!(evidence.size(), nothing);
+            assert_eq!(status(&found, &choices), FileStatus::LeftOut(reason));
+        }
+    }
+
+    #[test]
+    fn a_lockfile_or_secret_path_connection_is_left_out_by_default_until_brought_back() {
+        for (path, reason) in [
+            ("Cargo.lock", "left out: lockfile"),
+            ("config/.env", "left out: possible secret path"),
+        ] {
+            let found = Connections::Found(vec![caller(path, "KEY=1\n")]);
+            let mut choices = ReviewChoices::default();
+
+            let evidence = build(&found, &choices);
+            assert_eq!(evidence.connections()[0].status().to_string(), reason);
+            assert_eq!(evidence.connections()[0].sent(), None);
+
+            choices.toggle_connection(&evidence.connections()[0]);
+            let brought_back = build(&found, &choices);
+            assert_eq!(
+                brought_back.connections()[0].status(),
+                &FileStatus::IncludedByYou
+            );
+            assert_eq!(
+                brought_back.connections()[0].sent().map(|sent| sent.text),
+                Some("KEY=1\n")
+            );
+
+            choices.toggle_connection(&brought_back.connections()[0]);
+            assert_eq!(status(&found, &choices).to_string(), reason);
+        }
+    }
+
+    #[test]
+    fn a_connection_an_exclude_pattern_matches_is_left_out_with_it_until_brought_back() {
+        let exclude = ExcludePatterns::parse(["fixtures/"]).expect("the pattern is valid");
+        let found = Connections::Found(vec![caller("tests/fixtures/pay.rs", "fn pay() {}\n")]);
+        let mut choices = ReviewChoices::default();
+
+        let evidence = build_excluding(&exclude, &found, &choices);
+        assert_eq!(
+            evidence.connections()[0].status().to_string(),
+            "left out by repository config: fixtures/"
+        );
+        assert_eq!(evidence.connections()[0].sent(), None);
+
+        choices.toggle_connection(&evidence.connections()[0]);
+        let brought_back = build_excluding(&exclude, &found, &choices);
+        assert_eq!(
+            brought_back.connections()[0].status(),
+            &FileStatus::IncludedByYou
+        );
+    }
+
+    #[test]
+    fn a_default_exclusion_comes_before_an_exclude_pattern_for_a_connection() {
+        let exclude = ExcludePatterns::parse(["*.lock"]).expect("the pattern is valid");
+        let found = Connections::Found(vec![caller("Cargo.lock", "version = 4\n")]);
+
+        let evidence = build_excluding(&exclude, &found, &ReviewChoices::default());
+
+        assert_eq!(
+            evidence.connections()[0].status().to_string(),
+            "left out: lockfile"
+        );
+    }
+
+    #[test]
+    fn the_learner_can_leave_out_any_connection_and_take_it_back() {
+        let found = Connections::Found(vec![caller("src/api.rs", "fn post() { pay() }\n")]);
+        let mut choices = ReviewChoices::default();
+        let included = build(&found, &choices);
+
+        choices.toggle_connection(&included.connections()[0]);
+        let left_out = build(&found, &choices);
+
+        assert_eq!(
+            left_out.connections()[0].status(),
+            &FileStatus::LeftOutByYou
+        );
+        assert_eq!(left_out.connections()[0].sent(), None);
+        assert_eq!(left_out.size(), included.size() - 30);
+
+        choices.toggle_connection(&left_out.connections()[0]);
+        assert_eq!(status(&found, &choices), FileStatus::Included);
+    }
+
+    #[test]
+    fn leaving_out_a_connection_returns_one_brought_back_to_its_rule() {
+        let found = Connections::Found(vec![
+            caller("Cargo.lock", "version = 4\n"),
+            caller("src/api.rs", "fn post() { pay() }\n"),
+        ]);
+        let mut choices = ReviewChoices::default();
+        choices.toggle_connection(&build(&found, &choices).connections()[0]);
+
+        for connection in build(&found, &choices).connections() {
+            choices.leave_out_connection(connection.id());
+        }
+
+        let evidence = build(&found, &choices);
+        assert_eq!(
+            evidence.connections()[0].status().to_string(),
+            "left out: lockfile"
+        );
+        assert_eq!(
+            evidence.connections()[1].status(),
+            &FileStatus::LeftOutByYou
+        );
+    }
+
+    /// Connected code: lines 3–4 of `src/aws.rs`, whose fourth line holds
+    /// a key, and `first_line` before them.
+    fn client(first_line: &str) -> Connection {
+        let key = concat!("AKIA", "FAKEFAKEFAKEFAKE");
+        Connection::new(
+            "src/aws.rs".to_owned(),
+            Extent::Lines(LineRange::new(3, 4).expect("the range is valid")),
+            ConnectionGroup::ConnectedCode,
+            Tier::High,
+            Vec::new(),
+            FileContent::Text(format!(
+                "{first_line}\nfn a() {{}}\nfn client() {{\n    let key = \"{key}\";\n}}\n"
+            )),
+        )
+    }
+
+    #[test]
+    fn a_secret_in_a_connection_blocks_send_until_marked_not_a_secret() {
+        let found = Connections::Found(vec![client("fn start() {}")]);
+        let mut choices = ReviewChoices::default();
+
+        let evidence = build(&found, &choices);
+
+        let [finding] = evidence.findings() else {
+            panic!("one finding: {:?}", evidence.findings());
+        };
+        assert_eq!(
+            finding.place().connection().map(ConnectionId::path),
+            Some("src/aws.rs")
+        );
+        assert_eq!(finding.place().file(), None);
+        // The line in the file, as the reader numbers it.
+        assert_eq!(finding.matched().line(), 4);
+        assert_eq!(finding.status(), FindingStatus::Unresolved);
+        assert_eq!(evidence.unsendable(), Some(Unsendable::UnresolvedFindings));
+
+        choices.toggle_not_a_secret(finding);
+        let resolved = build(&found, &choices);
+
+        assert_eq!(resolved.findings()[0].status(), FindingStatus::NotASecret);
+        assert_eq!(resolved.unsendable(), None);
+    }
+
+    #[test]
+    fn leaving_out_a_connection_with_a_secret_resolves_it() {
+        let found = Connections::Found(vec![client("fn start() {}")]);
+        let mut choices = ReviewChoices::default();
+        let evidence = build(&found, &choices);
+
+        choices.leave_out_connection(
+            evidence.findings()[0]
+                .place()
+                .connection()
+                .expect("the finding is in a connection"),
+        );
+        let resolved = build(&found, &choices);
+
+        assert_eq!(resolved.findings(), []);
+        assert_eq!(resolved.unsendable(), None);
+    }
+
+    #[test]
+    fn a_secret_outside_a_connections_range_is_not_sent_or_found() {
+        let other_key = concat!("AKIA", "OTHERFAKEOTHERFA");
+
+        let evidence = build(
+            &Connections::Found(vec![client(&format!("const KEY: &str = \"{other_key}\";"))]),
+            &ReviewChoices::default(),
+        );
+
+        let lines: Vec<usize> = evidence
+            .findings()
+            .iter()
+            .map(|finding| finding.matched().line())
+            .collect();
+        assert_eq!(lines, [4]);
+    }
+
+    /// Connected code: `extent` of `src/api.rs`.
+    fn api(extent: Extent) -> Connection {
+        Connection::new(
+            "src/api.rs".to_owned(),
+            extent,
+            ConnectionGroup::ConnectedCode,
+            Tier::High,
+            Vec::new(),
+            FileContent::Text("a\nb\nc\nd\n".to_owned()),
+        )
+    }
+
+    fn lines(first: usize, last: usize) -> Extent {
+        Extent::Lines(LineRange::new(first, last).expect("the range is valid"))
+    }
+
+    #[test]
+    fn a_choice_follows_a_connection_by_its_path_and_extent() {
+        let mut choices = ReviewChoices::default();
+        let first = build(
+            &Connections::Found(vec![api(lines(1, 2)), api(lines(3, 4))]),
+            &choices,
+        );
+        choices.toggle_connection(&first.connections()[0]);
+
+        // Found again, in another order, beside others in the same file.
+        let again = build(
+            &Connections::Found(vec![
+                api(Extent::WholeFile),
+                api(lines(3, 4)),
+                api(lines(1, 3)),
+                api(lines(1, 2)),
+            ]),
+            &choices,
+        );
+
+        let statuses: Vec<(String, &FileStatus)> = again
+            .connections()
+            .iter()
+            .map(|connection| (connection.id().extent().to_string(), connection.status()))
+            .collect();
+        assert_eq!(
+            statuses,
+            [
+                ("whole file".to_owned(), &FileStatus::Included),
+                ("lines 3–4".to_owned(), &FileStatus::Included),
+                ("lines 1–3".to_owned(), &FileStatus::Included),
+                ("lines 1–2".to_owned(), &FileStatus::LeftOutByYou),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_match_marked_not_a_secret_stays_so_when_its_connection_is_found_again() {
+        let mut choices = ReviewChoices::default();
+        let first = build(&Connections::Found(vec![client("fn start() {}")]), &choices);
+        choices.toggle_not_a_secret(&first.findings()[0]);
+
+        let again = build(
+            &Connections::Found(vec![api(lines(1, 2)), client("fn start() {}")]),
+            &choices,
+        );
+
+        assert_eq!(again.findings()[0].status(), FindingStatus::NotASecret);
+    }
+
+    /// The whole of `path`, in `group`, there for `relations`.
+    fn related(path: &str, group: ConnectionGroup, relations: Vec<Relation>) -> Connection {
+        Connection::new(
+            path.to_owned(),
+            Extent::WholeFile,
+            group,
+            Tier::High,
+            relations,
+            FileContent::Text("x\n".to_owned()),
+        )
+    }
+
+    fn calls(callable: &str, touched_file: &str) -> Relation {
+        Relation::Calls {
+            callable: callable.to_owned(),
+            touched_file: touched_file.to_owned(),
+        }
+    }
+
+    #[test]
+    fn each_touched_file_counts_the_connected_code_that_relates_to_it() {
+        let pay = || "src/pay.rs".to_owned();
+        let refund = || "src/refund.rs".to_owned();
+        let code = ConnectionGroup::ConnectedCode;
+        let found = Connections::Found(vec![
+            related(
+                "src/api.rs",
+                code,
+                vec![calls("pay", "src/pay.rs"), calls("charge", "src/pay.rs")],
+            ),
+            related(
+                "src/ledger.rs",
+                code,
+                vec![
+                    Relation::CalledBy {
+                        callable: "refund".to_owned(),
+                        touched_file: refund(),
+                    },
+                    calls("pay", "src/pay.rs"),
+                ],
+            ),
+            related(
+                "docs/refunds.md",
+                code,
+                vec![Relation::NamedIn {
+                    touched_file: refund(),
+                }],
+            ),
+            // Left out by default, but still connected.
+            related(
+                "config/.env",
+                code,
+                vec![Relation::NamedIn {
+                    touched_file: pay(),
+                }],
+            ),
+            related(
+                "tests/pay.rs",
+                ConnectionGroup::RelatedTest,
+                vec![Relation::TestFor {
+                    touched_file: pay(),
+                }],
+            ),
+            related(
+                "Cargo.toml",
+                ConnectionGroup::RelatedConfiguration,
+                vec![Relation::ManifestFor {
+                    touched_file: pay(),
+                }],
+            ),
+        ]);
+
+        let evidence = build(&found, &ReviewChoices::default());
+
+        let counts: Vec<(&str, usize)> = evidence
+            .files()
+            .iter()
+            .map(|file| (file.path(), file.connected()))
+            .collect();
+        assert_eq!(counts, [("src/pay.rs", 3), ("src/refund.rs", 2)]);
+    }
+
+    #[test]
+    fn found_connections_are_in_the_evidence_in_their_order() {
+        let connections = Connections::Found(vec![
+            caller("src/checkout.rs", "fn checkout() { pay() }\n"),
+            related(
+                "tests/pay.rs",
+                ConnectionGroup::RelatedTest,
+                vec![Relation::TestFor {
+                    touched_file: "src/pay.rs".to_owned(),
+                }],
+            ),
+        ]);
+
+        let evidence = build(&connections, &ReviewChoices::default());
+
+        assert_eq!(evidence.connections_state(), ConnectionsState::Found);
+        assert_eq!(paths(&evidence), ["src/checkout.rs", "tests/pay.rs"]);
+        let test = &evidence.connections()[1];
+        assert_eq!(test.group(), ConnectionGroup::RelatedTest);
+        assert_eq!(test.tier(), Tier::High);
+        assert_eq!(test.relations()[0].to_string(), "test for `src/pay.rs`");
+    }
+
+    #[test]
+    fn connections_never_change_what_touched_files_send() {
+        let without = build(&Connections::Finding, &ReviewChoices::default());
+
+        let with = build(
+            &Connections::Found(vec![caller("src/api.rs", "fn post() { pay() }\n")]),
+            &ReviewChoices::default(),
+        );
+
+        let sent = |evidence: &Evidence| -> Vec<(FileStatus, Option<usize>, Option<String>)> {
+            evidence
+                .files()
+                .iter()
+                .map(|file| {
+                    (
+                        file.status().clone(),
+                        file.size(),
+                        file.sent()
+                            .map(|sent| format!("{}{}", sent.diff, sent.content)),
+                    )
+                })
+                .collect()
+        };
+        assert_eq!(sent(&with), sent(&without));
+    }
+
+    #[test]
+    fn evidence_with_every_touched_file_left_out_has_nothing_to_send_beside_its_connections() {
+        let mut choices = ReviewChoices::default();
+        choices.leave_out(FileIndex(0));
+        choices.leave_out(FileIndex(1));
+
+        let evidence = build(
+            &Connections::Found(vec![caller("src/api.rs", "fn post() { pay() }\n")]),
+            &choices,
+        );
+
+        assert!(evidence.connections()[0].sent().is_some());
+        assert_eq!(evidence.unsendable(), Some(Unsendable::NothingToSend));
+    }
+
+    #[test]
+    fn evidence_debugs_its_connections_without_their_text_or_callable_names() {
+        let evidence = build(
+            &Connections::Found(vec![Connection::new(
+                "src/api.rs".to_owned(),
+                Extent::WholeFile,
+                ConnectionGroup::ConnectedCode,
+                Tier::High,
+                vec![calls("charge_quietly", "src/pay.rs")],
+                FileContent::Text("PASSWORD=hunter2\n".to_owned()),
+            )]),
+            &ReviewChoices::default(),
+        );
+
+        let debug = format!("{evidence:?}");
+
+        assert!(debug.contains("src/api.rs"), "{debug}");
+        assert!(!debug.contains("hunter2"), "{debug}");
+        assert!(!debug.contains("charge_quietly"), "{debug}");
     }
 }

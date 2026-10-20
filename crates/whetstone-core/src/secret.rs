@@ -295,6 +295,15 @@ impl SecretFinding {
     pub fn excerpt(&self) -> &str {
         &self.excerpt
     }
+
+    /// The same match, `lines` lines further down: where it is in a file
+    /// when the text it was found in starts that many lines into it.
+    pub(crate) fn lines_down(self, lines: usize) -> Self {
+        Self {
+            line: self.line + lines,
+            ..self
+        }
+    }
 }
 
 /// Shows the rule by name alone, so a logged finding stays short.
