@@ -40,9 +40,9 @@ serde = { version = "1", features = ["derive"] }
 signal-hook = "0.3"
 thiserror = "2"
 # The UI loop's runtime: one thread (`rt`) waiting with `select!` (`macros`)
-# on input, signals, the bounded channel of job results (`sync`) and the
-# tick while a job runs (`time`). Background jobs run on its blocking
-# threads (CODING_STANDARDS.md rules 16 to 21). 1.53 is an LTS line.
+# on input, signals (`signal`), the bounded channel of job results (`sync`)
+# and the tick while a job runs (`time`). Background jobs run on its
+# blocking threads (CODING_STANDARDS.md rules 16 to 21).
 tokio = { version = "1.53", features = ["macros", "rt", "signal", "sync", "time"] }
 # Owns background jobs (`TaskTracker`, from `rt`) and cancels them
 # (`CancellationToken`).
