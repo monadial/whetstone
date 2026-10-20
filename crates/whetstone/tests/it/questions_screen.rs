@@ -1,6 +1,6 @@
-//! The questions screen, read-only for now: one question at a time, with
-//! its place among them, its area, its stem and options, and the next and
-//! previous question. Only questions that pass every check are shown, and a
+//! The questions screen: one question at a time, with its place among
+//! them, its area, its stem and options, and Next question from each one's
+//! feedback. Only questions that pass every check are shown, and a
 //! shortfall says so. When none pass, No questions passed checks offers
 //! Retry and Pick another change.
 
@@ -9,6 +9,7 @@ use std::sync::Arc;
 use whetstone_ai::{Asked, ScriptedAi};
 use whetstone_core::{WrittenCandidate, WrittenCitation, WrittenCriterion};
 
+use crate::answering::submit;
 use crate::preparing_questions::{
     DOMAIN, PAYMENT_LIFECYCLE, area_id, candidate, generate, ratings, stems, touched_path,
     writing_about_the_domain,
@@ -23,8 +24,9 @@ fn prepared(ai: &Arc<ScriptedAi>, width: u16, height: u16) -> Session {
     session
 }
 
-/// The stems of the questions shown, from the first to the last, moving on
-/// with `l`, after which it is back on the first.
+/// The stems of the questions shown, from the first to the last, answering
+/// each and moving on with Next question, after which the last one's
+/// feedback shows.
 pub(crate) fn every_stem_shown(session: &mut Session, among: &[String]) -> Vec<String> {
     let count = session
         .row_with("Question 1 of ")
@@ -42,9 +44,9 @@ pub(crate) fn every_stem_shown(session: &mut Session, among: &[String]) -> Vec<S
                 .filter(|stem| text.contains(stem.as_str()))
                 .cloned(),
         );
-        session.press("l");
+        submit(session, "a", "Because.");
+        session.press("<Enter>");
     }
-    session.press(&"h ".repeat(count));
     shown
 }
 
@@ -63,9 +65,9 @@ fn a_question_shows_its_place_its_area_its_stem_and_its_options_and_nothing_of_i
             session.row_with("Option C")
         ],
         [
-            "A  Option A of the question",
-            "B  Option B of the question",
-            "C  Option C of the question"
+            "> ( ) A  Option A of the question",
+            "( ) B  Option B of the question",
+            "( ) C  Option C of the question"
         ]
     );
     for hidden in [
@@ -77,36 +79,6 @@ fn a_question_shows_its_place_its_area_its_stem_and_its_options_and_nothing_of_i
     ] {
         assert!(!text.contains(hidden), "{hidden} shows:\n{text}");
     }
-}
-
-#[test]
-fn next_and_previous_move_between_the_questions_and_stop_at_either_end() {
-    let ai = writing_about_the_domain(6, PAYMENT_LIFECYCLE);
-    let mut session = prepared(&ai, 80, 24);
-    assert_eq!(
-        session.row_with("Previous question"),
-        "Previous question (this is the first)"
-    );
-
-    session.press("<Enter>");
-    assert_eq!(session.row_with("Question 2"), "Question 2 of 4 · Domain");
-    assert!(session.text().contains("Domain question 2?"));
-
-    session.press("l l l");
-    assert_eq!(session.row_with("Question 4"), "Question 4 of 4 · Domain");
-    assert_eq!(
-        session.row_with("Next question"),
-        "> Next question (this is the last)"
-    );
-    session.press("<Enter>");
-    assert_eq!(session.row_with("Question 4"), "Question 4 of 4 · Domain");
-
-    session.press("j <Enter>");
-    assert_eq!(session.row_with("Question 3"), "Question 3 of 4 · Domain");
-    session.press("h <Left> h");
-    assert_eq!(session.row_with("Question 1"), "Question 1 of 4 · Domain");
-    session.press("<Right>");
-    assert_eq!(session.row_with("Question 2"), "Question 2 of 4 · Domain");
 }
 
 #[test]
@@ -133,7 +105,10 @@ fn when_fewer_pass_than_were_asked_for_the_shortfall_heads_the_questions() {
 
     assert_eq!(session.rows()[1].trim(), "3 passed checks, 4 asked for");
     assert_eq!(session.row_with("Question 1"), "Question 1 of 3 · Domain");
-    session.press("l l");
+    for _ in 0..2 {
+        submit(&mut session, "a", "Because.");
+        session.press("<Enter>");
+    }
     assert_eq!(session.rows()[1].trim(), "3 passed checks, 4 asked for");
     assert_eq!(session.row_with("Question 3"), "Question 3 of 3 · Domain");
 }
@@ -365,7 +340,8 @@ fn the_questions_screen_at_80x24() {
 fn the_questions_screen_with_a_shortfall_at_80x24() {
     let ai = writing_about_the_domain(3, PAYMENT_LIFECYCLE);
     let mut session = prepared(&ai, 80, 24);
-    session.press("l");
+    submit(&mut session, "a", "Because.");
+    session.press("<Enter>");
 
     insta::assert_debug_snapshot!("questions_with_a_shortfall_80x24", session.frame());
 }

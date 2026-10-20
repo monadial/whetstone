@@ -1,0 +1,42 @@
+---
+source: crates/whetstone/tests/it/answering.rs
+expression: session.frame()
+---
+Buffer {
+    area: Rect { x: 0, y: 0, width: 80, height: 24 },
+    content: [
+        "                                                                                ",
+        "  Question 1 of 4 · Domain                                                      ",
+        "                                                                                ",
+        "  Domain question 1?                                                            ",
+        "                                                                                ",
+        "    ( ) A  Option A of the question                                             ",
+        "    (x) B  Option B of the question                                             ",
+        "    ( ) C  Option C of the question                                             ",
+        "                                                                                ",
+        "  ┌ > Your reasoning ────────────────────────────────────────────────────────┐  ",
+        "  │ Retries reuse the key, so the provider                                   │  ",
+        "  │ dedupes them.                                                            │  ",
+        "  │                                                                          │  ",
+        "  │                                                                          │  ",
+        "  │                                                                          │  ",
+        "  │                                                                          │  ",
+        "  │                                                                          │  ",
+        "  │                                                                          │  ",
+        "  └──────────────────────────────────────────────────────────────────────────┘  ",
+        "                                                                                ",
+        "    Submit response                                                             ",
+        "    Inspect source                                                              ",
+        "  Esc stop editing  Tab next                                                    ",
+        "                                                                                ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 17, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 4, y: 9, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 20, y: 9, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 17, y: 11, fg: Reset, bg: Reset, underline: Reset, modifier: REVERSED,
+        x: 18, y: 11, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+    ]
+}

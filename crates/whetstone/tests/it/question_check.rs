@@ -77,9 +77,9 @@ fn assert_withheld_unless_clear_yes(tested: &WrittenCandidate, check: CandidateC
 fn a_question_that_passes_every_check_is_shown() {
     let mut session = prepared(tested(), []);
 
-    assert!(is_shown(&mut session));
     assert_eq!(session.row_with("Question 1"), "Question 1 of 4 · Domain");
     assert!(!session.text().contains("asked for"), "{}", session.text());
+    assert!(is_shown(&mut session));
 }
 
 #[test]

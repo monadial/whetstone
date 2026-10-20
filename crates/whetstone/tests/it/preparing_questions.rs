@@ -14,6 +14,7 @@ use whetstone_core::{
     WrittenCandidate, WrittenCitation, WrittenCriterion, WrittenOption,
 };
 
+use crate::answering::submit;
 use crate::session::{NO_COLOR, Session, Setup};
 
 /// The showcase project's areas, in the order the picker offers them.
@@ -273,7 +274,8 @@ fn one_generator_call_per_chosen_area_goes_out_at_once_then_one_check_per_candid
     let mut areas = Vec::new();
     for _ in 0..4 {
         areas.push(session.row_with("Question "));
-        session.press("l");
+        submit(&mut session, "a", "Because.");
+        session.press("<Enter>");
     }
     assert_eq!(
         areas,
@@ -673,7 +675,8 @@ fn retry_after_a_failed_write_asks_again_only_for_the_area_that_failed() {
         "neither the gate nor the domain area is asked again"
     );
     assert_eq!(asked.len(), 10, "then every candidate is checked once");
-    session.press("l");
+    submit(&mut session, "a", "Because.");
+    session.press("<Enter>");
     assert_eq!(
         session.row_with("Question 2"),
         "Question 2 of 4 · Infrastructure"

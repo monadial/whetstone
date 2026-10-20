@@ -9,6 +9,7 @@ use std::sync::Arc;
 use whetstone_ai::{Asked, RequestFailure, ScriptedAi};
 use whetstone_core::{CandidateCheck, Probability};
 
+use crate::answering::submit;
 use crate::preparing_questions::{
     DOMAIN, INFRASTRUCTURE, SERVE_OVER_HTTP, answer, area_id, candidate, generate, stems,
 };
@@ -151,7 +152,8 @@ fn an_unclear_verdict_lets_its_area_through() {
         [("domain".to_owned(), 3), ("infrastructure".to_owned(), 3)],
         "both areas are written about, for (4 + 2) / 2 each"
     );
-    session.press("l");
+    submit(&mut session, "a", "Because.");
+    session.press("<Enter>");
     assert_eq!(
         session.row_with("Question 2"),
         "Question 2 of 4 · Infrastructure"
@@ -169,7 +171,7 @@ fn below_the_first_question_one_line_names_the_chosen_areas_not_asked_about() {
     let rows = rows(&session);
     let options = rows
         .iter()
-        .position(|row| row.starts_with("C  "))
+        .position(|row| row.starts_with("( ) C  "))
         .expect("the first question's options show");
     assert_eq!(
         rows[options + 1],
@@ -177,7 +179,8 @@ fn below_the_first_question_one_line_names_the_chosen_areas_not_asked_about() {
         "{rows:#?}"
     );
 
-    session.press("l");
+    submit(&mut session, "a", "Because.");
+    session.press("<Enter>");
     assert!(
         !session.text().contains("Not asked about"),
         "only below the first question:\n{}",
