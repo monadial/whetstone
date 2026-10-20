@@ -12,9 +12,9 @@ use super::mentions::named_files;
 use super::touched_text::{Target, TouchedText};
 use super::{Failure, FileKind, Snapshot, read_file};
 
-/// `callers_and_callees`, those of `change`'s callables, with the
+/// `callers_and_callees`, those of `change`'s callables, followed by the
 /// repository files that `change` links to and names in the commit
-/// `snapshot` shows, in path and line order.
+/// `snapshot` shows, in path order.
 ///
 /// Each file it links to or names is sent whole, with one relation for
 /// each touched file that does. A file that a touched Markdown file links
@@ -23,8 +23,9 @@ use super::{Failure, FileKind, Snapshot, read_file};
 /// touched file that links to a file is not also said to name it. Callers
 /// and callees in a file that is sent whole stay as they are, for
 /// [`merge_into_whole_files`] to merge into it with everything else found
-/// there: their relations come first, and it takes the higher of their
-/// tiers.
+/// there: their relations come after those of a related test or related
+/// configuration and before the links and mentions, and it takes the
+/// higher of their tiers.
 ///
 /// [`merge_into_whole_files`]: whetstone_core::merge_into_whole_files
 ///
@@ -105,7 +106,6 @@ pub(super) fn with_linked_and_named<S: Snapshot>(
             whole_file(snapshot, kind, path).map_err(logged)?,
         ));
     }
-    connections.sort_by(|a, b| a.id().cmp(b.id()));
     Ok(connections)
 }
 
