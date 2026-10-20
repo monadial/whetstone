@@ -24,8 +24,9 @@ pub(crate) struct TooManyPaths(#[from] aho_corasick::BuildError);
 /// `README`, never counts. A path counts on a changed line of a touched
 /// file that is text at the commit, where it stands alone, not inside a
 /// longer path or word: the characters right before and after it are not
-/// letters, digits or `_ - . / \ ~`. A `./` right before it and dots ending
-/// a sentence right after it are allowed. A touched file is never a target.
+/// letters, digits or `_ - . / \ ~`. A `./` or a `/` right before it, with
+/// no such character before them, and dots ending a sentence right after it
+/// are allowed. A touched file is never a target.
 ///
 /// Fails only when the tree has more paths than one search can hold.
 pub(crate) fn named_files(
@@ -55,12 +56,16 @@ pub(crate) fn named_files(
 
 /// Whether the bytes `start..end` of `line` stand alone, not inside a
 /// longer path or word: no character that carries a path or word on comes
-/// right before or after them. A `./` right before them names the same path
-/// from the root, as a command does. Dots right after them end a sentence,
-/// unless such a character follows the dots.
+/// right before or after them. A `./` or a `/` right before them names the
+/// same path from the root, as a command or a root-relative path does.
+/// Dots right after them end a sentence, unless such a character follows
+/// the dots.
 fn stands_alone(line: &str, start: usize, end: usize) -> bool {
     let before = line.get(..start).unwrap_or_default();
-    let before = before.strip_suffix("./").unwrap_or(before);
+    let before = before
+        .strip_suffix("./")
+        .or_else(|| before.strip_suffix('/'))
+        .unwrap_or(before);
     let after = line.get(end..).unwrap_or_default();
     let starts_alone = before
         .chars()
@@ -166,6 +171,21 @@ mod tests {
         let found = named(&files, &[all_added(&notes)]);
 
         assert_eq!(found, []);
+    }
+
+    #[test]
+    fn a_path_written_from_the_root_with_a_slash_is_a_mention() {
+        let notes = created("notes.md", "Raise the cap in /config/limits.toml first.\n");
+        let links = created(
+            "links.md",
+            "Not /etc/config/limits.toml, //config/limits.toml or\n\
+             https://example.com/config/limits.toml.\n",
+        );
+        let files = tree(&["config/limits.toml", "links.md", "notes.md"]);
+
+        let found = named(&files, &[all_added(&notes), all_added(&links)]);
+
+        assert_eq!(found, [target("config/limits.toml", &["notes.md"])]);
     }
 
     #[test]
