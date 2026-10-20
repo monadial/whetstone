@@ -34,7 +34,7 @@ Some rules are both. Rules about code that does not exist yet (async workers, AI
 | 12 | `expect` is used only for invariants, and its message states the invariant: `.expect("signal numbers are positive")`. (`clippy::expect_used` is deliberately off.) | **Review**. |
 | 13 | Each module that can fail has its own `thiserror` error type, which is `Error + Send + Sync + 'static`, never `()`. Messages are lowercase, with no trailing period. `anyhow` appears only at the binary edge: the command boundary in `lib.rs` and the CLI output path that reports its error. | **Review**. |
 | 14 | No `std::process::exit`. Return an `ExitCode` to `main`, and from it, so that `Drop` guards run. | **Lint/CI**: `clippy::exit`, outside `main`. **Review**: inside `main`, which the lint ignores. |
-| 15 | Keep `panic = "unwind"` in every profile. The terminal guard restores the terminal from both `Drop` and its panic hook. | **Review**: profile changes. |
+| 15 | Keep `panic = "unwind"` in every profile. The terminal guard restores the terminal from both `Drop` and its panic hook. So that a test can crash the real binary, a debug build panics right after its first draw when `WHETSTONE_CRASH_AFTER_FIRST_DRAW` is set and not empty. Release builds compile this crash trigger out. | **Review**: profile changes. **Lint/CI**: the real-panic pseudo-terminal test (`tests/it/pty_terminal.rs`) and `tests/panic_restore.rs`. |
 
 ## Async work
 
@@ -58,8 +58,8 @@ The walking skeleton has no async code: its UI loop is synchronous. These rules 
 | --- | --- | --- |
 | 25 | Drawing is pure: `render` does no I/O, network, storage or spawning, and changes no state (`App::render` takes `&self`). | **Review**. |
 | 26 | One input source. The UI loop in `tui.rs` is the only place that reads terminal events, and only key presses (`KeyEventKind::Press`) act, filtered once in `App::handle`, where input enters the app. | **Review**. **Lint/CI** once the loop moves to `EventStream`: `disallowed-methods` for crossterm's `read` and `poll`. |
-| 27 | One terminal guard enables everything the TUI turns on (raw mode, alternate screen, hidden cursor, and later paste and keyboard flags) and undoes it in reverse order on exit, on `Drop` and from its panic hook. | **Lint/CI**: the pseudo-terminal smoke test (`tests/it/pty.rs`) on Linux and macOS, x86_64 and arm64; guard tests (`tests/it/terminal_guard.rs`, `tests/panic_restore.rs`). |
-| 28 | In raw mode Ctrl+C is a reserved key, handled before focus dispatch. SIGINT, SIGTERM and SIGHUP from outside follow the same shutdown path and restore the terminal. | **Lint/CI**: pseudo-terminal tests for `q`, Ctrl+C and SIGTERM. **Review**: SIGINT and SIGHUP, which no test sends. |
+| 27 | One terminal guard enables everything the TUI turns on (raw mode, alternate screen, hidden cursor, and later paste) and undoes it in reverse order on exit, on `Drop` and from its panic hook. Mouse capture and keyboard enhancement flags are never enabled or required. | **Lint/CI**: the pseudo-terminal tests (`tests/it/pty.rs`, and `tests/it/pty_terminal.rs`, which also checks that no mouse mode or keyboard enhancement is ever written) on Linux and macOS, x86_64 and arm64; guard tests (`tests/it/terminal_guard.rs`, `tests/panic_restore.rs`). |
+| 28 | In raw mode Ctrl+C is a reserved key, handled before focus dispatch. SIGINT, SIGTERM and SIGHUP from outside follow the same shutdown path and restore the terminal. | **Lint/CI**: pseudo-terminal tests for `q`, Ctrl+C and SIGTERM (`tests/it/pty.rs`), and for SIGINT and SIGHUP (`tests/it/pty_terminal.rs`). |
 | 29 | *From overlays and editors:* key dispatch follows focus: reserved keys, then the top overlay, then the focused control. While an editor has focus, every non-reserved key is text. | **Lint/CI**: keystroke tests at the app seam. |
 | 30 | *From submission:* submitting never depends on a modified Enter. Tab → Submit → Enter always works. | **Lint/CI**: a keystroke test. |
 | 31 | Text is measured in cells and edited by grapheme. No byte-length layout and no byte slicing of user text. | **Lint/CI**: `clippy::string_slice`; property tests once the editor lands. **Review**. |
@@ -162,4 +162,4 @@ Spec #11 and the walking skeleton (#12) decided these differently from the note'
 - **UI loop:** synchronous, with crossterm's blocking `poll` and `read`, because spec #11 has no async work. `EventStream` and its `disallowed-methods` arrive with the first workers (rule 26).
 - **Logging:** written synchronously through `tracing-subscriber`, without `tracing-appender`, so there is no `WorkerGuard` yet (rule 44).
 - **Snapshots:** two sizes, 120×32 and 80×24, not four breakpoints (rule 47).
-- **Panic restore:** tested through the terminal guard's interface, not by forcing a panic in a pseudo-terminal (rule 27).
+- **Keyboard flags:** the note's guard turns on keyboard enhancement flags. The terminal support decision ([#4](https://github.com/monadial/whetstone/issues/4)) instead never enables or requires them, so every action works with the keys a terminal sends without special settings (rule 27).
