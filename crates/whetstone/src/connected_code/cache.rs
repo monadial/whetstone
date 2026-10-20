@@ -16,7 +16,10 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 /// Whetstone's cache format version. Bump it whenever the way a graph is
-/// stored changes, so entries written the old way are never read.
+/// stored changes, so entries written the old way are never read. A
+/// commit's key does not hold Whetstone's version, so bump it too whenever
+/// what goes into a graph changes, such as which files are written for the
+/// engine or what the graph drops.
 const FORMAT: u32 = 1;
 
 /// The on-disk store of connected-code graphs, one compressed JSON file per
