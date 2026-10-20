@@ -4,13 +4,11 @@
 //! from an analysis or from the cache, or until its time limit runs out,
 //! and its spinner moves only on a tick while it is found.
 
-use std::time::Duration;
-
 use tempfile::TempDir;
 
 use crate::repo::TestRepo;
 use crate::repository::started_in;
-use crate::session::{Session, Setup};
+use crate::session::{Session, Setup, TIME_LIMIT};
 
 /// From home: open the repository's picker, choose the newest commit, and
 /// open its outbound review, with the five default areas selected.
@@ -33,7 +31,7 @@ fn stage_row(session: &Session) -> Vec<String> {
 
 /// A Python repository in which `report` calls `total`, and a commit that
 /// changes `total`.
-fn with_a_caller() -> TestRepo {
+pub(crate) fn with_a_caller() -> TestRepo {
     let repo = TestRepo::new("ledger");
     repo.write("ledger.py", "def total(items):\n    return sum(items)\n")
         .write(
@@ -184,9 +182,6 @@ fn when_the_analysis_fails_finding_connected_code_is_skipped() {
         "✓ Reading the change → – Finding connected code → ✓ Preparing evidence → ⠋ Outbound review →"
     );
 }
-
-/// Whetstone's time limit on finding connected code.
-const TIME_LIMIT: Duration = Duration::from_secs(20);
 
 #[test]
 fn when_finding_connected_code_takes_too_long_it_is_skipped() {

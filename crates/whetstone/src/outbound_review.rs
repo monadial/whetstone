@@ -1189,7 +1189,8 @@ impl View for OutboundReview {
         if !self.waits_for(job) {
             return;
         }
-        // Not analysed, nor from the cache: there is no graph.
+        // No graph came, so its origin is `Analysed`, as for any result
+        // without one.
         self.finish_lookup(Connections::TookTooLong, GraphOrigin::Analysed);
         tracing::info!(
             commit = self.id.full(),

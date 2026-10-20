@@ -318,7 +318,7 @@ fn time_limits_set_on_jobs_are_handed_over_once_for_the_ui_loop_to_time() {
         jobs.take_time_limits(),
         [TimeLimit {
             job: id,
-            after: Duration::from_secs(20)
+            duration: Duration::from_secs(20)
         }]
     );
     assert_eq!(jobs.take_time_limits(), []);

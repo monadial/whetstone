@@ -4,31 +4,17 @@
 //! time, so switching quickly between commits analyses only the newest.
 
 use std::fs;
-use std::path::Path;
 use std::time::Duration;
 
 use tempfile::TempDir;
 use whetstone::Flow;
 
 use crate::connected_code::{REVIEW_NEWEST, connected_code};
+use crate::graph_cache::{graphs, started_with};
 use crate::repo::TestRepo;
 use crate::repository::started_in;
-use crate::session::{Session, Setup};
-
-/// A Python repository in which `report` calls `total`, and a commit that
-/// changes `total`.
-fn with_a_caller() -> TestRepo {
-    let repo = TestRepo::new("ledger");
-    repo.write("ledger.py", "def total(items):\n    return sum(items)\n")
-        .write(
-            "report.py",
-            "from ledger import total\n\n\ndef report(items):\n    return total(items)\n",
-        );
-    repo.commit("Start the ledger");
-    repo.write("ledger.py", "def total(items):\n    return sum(items, 0)\n");
-    repo.commit("Count from zero");
-    repo
-}
+use crate::session::{Session, Setup, TIME_LIMIT};
+use crate::stage_row::with_a_caller;
 
 /// Starts the app without colour in `repo`, in a 120 by 60 terminal, with
 /// `time_limit` on finding connected code.
@@ -90,7 +76,10 @@ fn connected_code_not_found_within_20_s_of_the_review_opening_is_not_available_a
     let mut session = started_in(repo.root(), 120, 60);
     session.press(REVIEW_NEWEST);
 
-    session.wait(Duration::from_millis(19_999));
+    let just_short = TIME_LIMIT
+        .checked_sub(Duration::from_millis(1))
+        .expect("the time limit is longer than a millisecond");
+    session.wait(just_short);
     assert_eq!(connected_code(&session), ["Connected code: finding…"]);
     session.wait(Duration::from_millis(1));
 
@@ -105,6 +94,20 @@ fn connected_code_not_found_within_20_s_of_the_review_opening_is_not_available_a
 }
 
 #[test]
+fn connected_code_found_in_time_stays_once_the_time_limit_runs_out() {
+    let repo = with_a_caller();
+    let mut session = started_in(repo.root(), 120, 60);
+    session.press(REVIEW_NEWEST);
+    session.settle();
+    let found = connected_code(&session);
+
+    session.wait(TIME_LIMIT);
+
+    assert_eq!(connected_code(&session), found);
+    assert_eq!(found[0], "Connected code: 1 range · 1 KB of 100 KB limit");
+}
+
+#[test]
 fn the_time_limit_covers_finding_connected_code_in_the_cache() {
     let repo = with_a_caller();
     let mut session = started_in(repo.root(), 120, 60);
@@ -114,7 +117,7 @@ fn the_time_limit_covers_finding_connected_code_in_the_cache() {
     // Back to the picker, and review the same commit again, whose graph is
     // in the cache, but let the time limit run out before it loads.
     session.press("q <Enter>");
-    session.wait(Duration::from_secs(20));
+    session.wait(TIME_LIMIT);
     session.settle();
 
     assert_eq!(
@@ -145,35 +148,12 @@ fn review_another(up: usize) -> String {
     format!("q {}<Space> {}<Enter>", "k ".repeat(up), "j ".repeat(up))
 }
 
-/// Starts the app without colour in `repo`, in a 120 by 60 terminal, with
-/// `cache_home` as `XDG_CACHE_HOME`.
-fn started_with_a_cache(repo: &TestRepo, cache_home: &Path) -> Session {
-    Session::start(
-        Setup {
-            variables: &[
-                ("NO_COLOR", "1"),
-                ("XDG_CACHE_HOME", cache_home.to_str().expect("a UTF-8 path")),
-            ],
-            start: Some(repo.root()),
-            ..Setup::default()
-        },
-        120,
-        60,
-    )
-}
-
-/// How many graphs the graph cache under `cache_home` holds.
-fn graphs(cache_home: &Path) -> usize {
-    fs::read_dir(cache_home.join("whetstone/graphs"))
-        .expect("read the graphs folder")
-        .count()
-}
-
 #[test]
 fn switching_quickly_between_commits_analyses_only_the_newest() {
     let repo = with_three_changes();
     let cache_home = TempDir::new().expect("create a cache home");
-    let mut session = started_with_a_cache(&repo, cache_home.path());
+    let temp = TempDir::new().expect("create a system temporary directory");
+    let mut session = started_with(&repo, cache_home.path(), temp.path());
     // Review the newest commit, then, before its connected code is found,
     // the one before it, then the one before that.
     session.press(REVIEW_NEWEST);
@@ -187,7 +167,11 @@ fn switching_quickly_between_commits_analyses_only_the_newest() {
         connected_code(&session)[0],
         "Connected code: 1 range · 1 KB of 100 KB limit"
     );
-    assert_eq!(graphs(cache_home.path()), 2, "the newest and the last");
+    assert_eq!(
+        graphs(cache_home.path()).len(),
+        2,
+        "the newest and the last"
+    );
 
     // Reviewing the one in between again analyses it for the first time.
     session.press(&review_another(3));
@@ -197,7 +181,7 @@ fn switching_quickly_between_commits_analyses_only_the_newest() {
         connected_code(&session)[0],
         "Connected code: 1 range · 1 KB of 100 KB limit"
     );
-    assert_eq!(graphs(cache_home.path()), 3);
+    assert_eq!(graphs(cache_home.path()).len(), 3);
 }
 
 #[test]
@@ -235,22 +219,7 @@ fn quitting_during_an_analysis_quits_at_once_and_analyses_nothing_that_waits() {
     let repo = with_three_changes();
     let cache_home = TempDir::new().expect("create a cache home");
     let temp = TempDir::new().expect("create a system temporary directory");
-    let mut session = Session::start(
-        Setup {
-            variables: &[
-                ("NO_COLOR", "1"),
-                (
-                    "XDG_CACHE_HOME",
-                    cache_home.path().to_str().expect("a UTF-8 path"),
-                ),
-                ("TMPDIR", temp.path().to_str().expect("a UTF-8 path")),
-            ],
-            start: Some(repo.root()),
-            ..Setup::default()
-        },
-        120,
-        60,
-    );
+    let mut session = started_with(&repo, cache_home.path(), temp.path());
     // The newest commit is analysed, and the one before it waits its turn.
     session.press(REVIEW_NEWEST);
     session.press(&review_another(3));
@@ -258,7 +227,11 @@ fn quitting_during_an_analysis_quits_at_once_and_analyses_nothing_that_waits() {
     assert_eq!(session.press("<C-c>"), Flow::Quit);
     drop(session);
 
-    assert_eq!(graphs(cache_home.path()), 1, "only the newest commit's");
+    assert_eq!(
+        graphs(cache_home.path()).len(),
+        1,
+        "only the newest commit's"
+    );
     let left: Vec<_> = fs::read_dir(temp.path())
         .expect("read the temporary directory")
         .collect();

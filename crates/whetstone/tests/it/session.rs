@@ -45,6 +45,10 @@ pub(crate) struct Setup<'a> {
 /// attributes, so they stay short.
 pub(crate) const NO_COLOR: &[(&str, &str)] = &[("NO_COLOR", "1")];
 
+/// Whetstone's own time limit on finding connected code, which the spec
+/// sets, for the tests that let it run out.
+pub(crate) const TIME_LIMIT: Duration = Duration::from_secs(20);
+
 /// A running app in a terminal of a given size. Its home directory is a
 /// fresh temporary directory, so the real one is never read, and so is its
 /// system temporary directory, unless the test sets `TMPDIR`. Its graph
@@ -220,7 +224,8 @@ impl Session {
             self.finished.push(job.run());
         }
         for limit in self.app.take_time_limits() {
-            self.time_limits.push((self.now + limit.after, limit.job));
+            self.time_limits
+                .push((self.now + limit.duration, limit.job));
         }
         flow
     }

@@ -131,6 +131,7 @@ async fn run_loop(mut app: App, environment: &Environment) -> Result<Ending, Tui
             Flow::Continue => {}
             Flow::Quit => break Ending::Quit,
             Flow::Suspend => {
+                let suspended = Instant::now();
                 guard.suspend().map_err(TuiError::Restore)?;
                 // A stop signal received before the stop, or while stopped,
                 // ends the app without taking the terminal back.
@@ -144,6 +145,9 @@ async fn run_loop(mut app: App, environment: &Environment) -> Result<Ending, Tui
                     break Ending::Stopped { signal };
                 }
                 resume(&mut guard, &mut terminal, &mut app)?;
+                // A stopped app's jobs are stopped too, so the time it spent
+                // suspended never counts towards a time limit.
+                time_limits.postpone(suspended.elapsed());
             }
         }
     };
@@ -303,8 +307,15 @@ impl TimeLimits {
         self.0.extend(
             limits
                 .into_iter()
-                .map(|limit| (now + limit.after, limit.job)),
+                .map(|limit| (now + limit.duration, limit.job)),
         );
+    }
+
+    /// Moves every time limit's end `by` later.
+    fn postpone(&mut self, by: Duration) {
+        for (runs_out, _) in &mut self.0 {
+            *runs_out += by;
+        }
     }
 
     /// The job whose time limit runs out next, once it has, which never
@@ -586,5 +597,20 @@ mod tests {
                 .is_err(),
             "each runs out once"
         );
+    }
+    #[tokio::test(start_paused = true)]
+    async fn time_spent_suspended_never_counts_towards_a_time_limit() {
+        let mut jobs = Jobs::<()>::new();
+        let job = jobs.start(|_| Ok(()));
+        let mut time_limits = TimeLimits::default();
+        let started = Instant::now();
+        jobs.limit(job, Duration::from_secs(20));
+        time_limits.start(jobs.take_time_limits());
+
+        time::advance(Duration::from_secs(5)).await;
+        time_limits.postpone(Duration::from_secs(30));
+
+        assert_eq!(time_limits.run_out().await, job);
+        assert_eq!(started.elapsed(), Duration::from_secs(50));
     }
 }
