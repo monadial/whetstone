@@ -4,6 +4,7 @@ use ratatui::text::{Line, Span};
 use unicode_segmentation::UnicodeSegmentation as _;
 
 use crate::keymap::Command;
+use crate::paste;
 use crate::theme::Theme;
 
 /// The text typed so far. The cursor is always at its end.
@@ -26,6 +27,13 @@ impl TextEntry {
             }
             _ => {}
         }
+    }
+
+    /// Inserts pasted `text` at the end, as one insertion, on one line:
+    /// each line break and tab is a space, and control characters are
+    /// dropped (rule 57).
+    pub(crate) fn paste(&mut self, text: &str) {
+        self.text.push_str(&paste::on_one_line(text));
     }
 
     /// The text typed so far.

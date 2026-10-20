@@ -751,6 +751,12 @@ impl View for Picker {
         }
     }
 
+    fn paste(&mut self, text: &str) {
+        if let Some(search_box) = &mut self.search_box {
+            search_box.paste(text);
+        }
+    }
+
     fn actions(&self) -> &'static [Action] {
         match self.source {
             Source::Showcase { .. } => ACTIONS,

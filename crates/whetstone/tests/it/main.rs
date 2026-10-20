@@ -16,6 +16,7 @@ mod dirs;
 mod navigation;
 mod outbound_review;
 mod overlays;
+mod paste;
 mod picker;
 mod pty;
 mod pty_colours;

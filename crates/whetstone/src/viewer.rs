@@ -727,6 +727,12 @@ impl View for Viewer {
         }
     }
 
+    fn paste(&mut self, text: &str) {
+        if let Some(search_box) = &mut self.search_box {
+            search_box.paste(text);
+        }
+    }
+
     fn apply(&mut self, command: Command, area: Rect) -> Option<Command> {
         let page = self.page(area);
         if self.search_box.is_some() {
