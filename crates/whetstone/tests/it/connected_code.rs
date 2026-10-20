@@ -561,8 +561,9 @@ fn connected_code_found_for_a_review_that_has_closed_is_never_applied_to_another
         format!("> {}  Add the other way round", short_id(&repo, "HEAD~1"))
     );
 
-    // The newest commit's connected code arrives last.
-    session.settle_newest_first();
+    // The newest commit's connected code arrives once its review has
+    // closed, and only then is the one before it found, in its turn.
+    session.settle();
 
     assert_eq!(
         connected_rows(&session),

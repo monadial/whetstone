@@ -1,11 +1,13 @@
 //! The app seam's harness: build the app from injected inputs, then drive it
 //! the way the UI loop does, with key presses and resizes, drawing each frame
 //! on ratatui's test backend. Background jobs' results and ticks arrive only
-//! when a test asks, so every frame is deterministic.
+//! when a test asks, and time passes only when a test waits, so every frame
+//! is deterministic.
 
 use std::fs;
 use std::mem;
 use std::path::Path;
+use std::time::Duration;
 
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -13,15 +15,16 @@ use ratatui::buffer::{Buffer, Cell};
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use tempfile::TempDir;
 use whetstone::{
-    App, Dirs, Environment, Finished, Flow, JobOutput, Message, Repository, Settings, Theme,
+    App, Dirs, Environment, Finished, Flow, JobId, JobOutput, Message, Repository, Settings, Theme,
 };
 use whetstone_core::ShowcaseProject;
 
 /// What the app starts from: a global config file, if any, the environment
-/// variables besides `HOME`, the showcase project, and the directory
-/// Whetstone starts in. Unless the variables set `TMPDIR`, the system
-/// temporary directory is one of the session's own, and unless they set
-/// `XDG_CACHE_HOME`, the cache folder is in the session's home directory.
+/// variables besides `HOME`, the showcase project, the directory Whetstone
+/// starts in, and the time limit on finding connected code. Unless the
+/// variables set `TMPDIR`, the system temporary directory is one of the
+/// session's own, and unless they set `XDG_CACHE_HOME`, the cache folder is
+/// in the session's home directory.
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct Setup<'a> {
     /// The contents of `config.toml` in the global config directory.
@@ -33,6 +36,9 @@ pub(crate) struct Setup<'a> {
     /// repository. Without one it starts in the session's home directory,
     /// outside any repository.
     pub(crate) start: Option<&'a Path>,
+    /// How long the outbound review waits for connected code, if not
+    /// Whetstone's own time limit.
+    pub(crate) time_limit: Option<Duration>,
 }
 
 /// A terminal with colour turned off: snapshots then list only text
@@ -52,6 +58,11 @@ pub(crate) struct Session {
     /// The reports of the background jobs the app started, waiting for the
     /// test to settle.
     finished: Vec<Finished<JobOutput>>,
+    /// How much time the test has let pass since the app started.
+    now: Duration,
+    /// The time limits the app set on its jobs, each with when it runs out,
+    /// waiting for the test to let that time pass.
+    time_limits: Vec<(Duration, JobId)>,
     _home: TempDir,
     _temp: TempDir,
 }
@@ -78,21 +89,27 @@ impl Session {
         let settings = Settings::load(&dirs.config, &environment).expect("the config loads");
         let theme = Theme::new(settings.color_support());
         let repository = Repository::open(setup.start.unwrap_or(home.path()));
+        let app = App::new(
+            theme,
+            settings,
+            setup
+                .showcase
+                .cloned()
+                .unwrap_or_else(whetstone::embedded_showcase),
+            repository,
+            environment.temp_dir(),
+            &dirs.cache,
+        );
         let mut session = Self {
-            app: App::new(
-                theme,
-                settings,
-                setup
-                    .showcase
-                    .cloned()
-                    .unwrap_or_else(whetstone::embedded_showcase),
-                repository,
-                environment.temp_dir(),
-                &dirs.cache,
-            ),
+            app: match setup.time_limit {
+                Some(time_limit) => app.with_time_limit(time_limit),
+                None => app,
+            },
             width,
             height,
             finished: Vec::new(),
+            now: Duration::ZERO,
+            time_limits: Vec::new(),
             _home: home,
             _temp: temp,
         };
@@ -160,14 +177,6 @@ impl Session {
         }
     }
 
-    /// Delivers the reports as [`Session::settle`] does, but the newest
-    /// first, as the UI loop can when a later job ends before an earlier
-    /// one.
-    pub(crate) fn settle_newest_first(&mut self) {
-        self.finished.reverse();
-        self.settle();
-    }
-
     /// Ticks once, as the UI loop does while a job runs.
     pub(crate) fn tick(&mut self) {
         assert_eq!(
@@ -177,13 +186,41 @@ impl Session {
         );
     }
 
+    /// Lets `duration` pass, as the UI loop does while it waits: each time
+    /// limit that runs out by then is delivered, the earliest first. Until a
+    /// test waits, no time limit runs out, so a frame shows the app still
+    /// waiting, and a time limit of 0 runs out on the first wait, even one
+    /// of no time. Waiting delivers no job's report and no tick.
+    pub(crate) fn wait(&mut self, duration: Duration) {
+        self.now += duration;
+        while let Some(at) = self
+            .time_limits
+            .iter()
+            .enumerate()
+            .filter(|(_, (runs_out, _))| *runs_out <= self.now)
+            .min_by_key(|(_, (runs_out, _))| *runs_out)
+            .map(|(at, _)| at)
+        {
+            let (_, job) = self.time_limits.remove(at);
+            assert_eq!(
+                self.send(Message::TimeUp(job)),
+                Flow::Continue,
+                "a time limit never quits"
+            );
+        }
+    }
+
     /// Hands the app `message`, then runs each job it started, as the UI
-    /// loop does at once. A job cancelled later has still run, as it would
-    /// have begun in the loop, but its report waits for the test to settle.
+    /// loop does at once, and starts counting each time limit it set. A job
+    /// cancelled later has still run, as it would have begun in the loop,
+    /// but its report waits for the test to settle.
     fn send(&mut self, message: Message) -> Flow {
         let flow = self.app.handle(message);
         for job in self.app.take_jobs() {
             self.finished.push(job.run());
+        }
+        for limit in self.app.take_time_limits() {
+            self.time_limits.push((self.now + limit.after, limit.job));
         }
         flow
     }
