@@ -5,6 +5,7 @@
 use std::cell::RefCell;
 use std::ops::Range;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use ratatui::Frame;
 use ratatui::crossterm::event::KeyCode;
@@ -788,6 +789,7 @@ impl View for Picker {
             change.clone(),
             repository.config().exclude().clone(),
             context.analysis.clone(),
+            Arc::clone(context.cache),
         );
         Some(Box::new(OutboundReview::new(
             id,

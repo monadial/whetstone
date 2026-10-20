@@ -38,6 +38,7 @@ mod viewer;
 
 pub use crate::app::{App, Flow, Message};
 pub use crate::config::{ConfigError, Settings};
+pub use crate::connected_code::GraphOrigin;
 pub use crate::environment::{Dirs, Environment, NoHome};
 pub use crate::job::{Cancelled, Finished, Job, JobId, JobOutcome, JobOutput, Jobs, Workers};
 pub use crate::repository::{Repository, Unavailable};
@@ -96,7 +97,14 @@ fn launch(environment: &Environment) -> anyhow::Result<ExitCode> {
     let repository = Repository::open(environment.current_dir());
     repository::log(&repository);
     match tui::run(
-        App::new(theme, settings, embedded_showcase(), repository, temp_dir),
+        App::new(
+            theme,
+            settings,
+            embedded_showcase(),
+            repository,
+            temp_dir,
+            &dirs.cache,
+        ),
         environment,
     )? {
         Ending::Quit => {

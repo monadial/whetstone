@@ -19,6 +19,11 @@ use whetstone_core::{DefaultExclusion, ExcludePatterns, FileContent};
 use super::detect::{self, Engine};
 use super::{Failure, FileKind, Graph, Snapshot, SnapshotFile};
 
+/// The engine's exact version, which `Cargo.toml` pins. Each graph is
+/// cached under it, so a graph another version found is never used. A test
+/// keeps it equal to the pin.
+pub(super) const ENGINE_VERSION: &str = "0.11.0";
+
 /// How every analysis directory's name starts.
 const PREFIX: &str = "whetstone-analysis-";
 

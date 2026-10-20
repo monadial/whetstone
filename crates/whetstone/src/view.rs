@@ -3,13 +3,14 @@
 //! it up from there.
 
 use std::fmt;
+use std::sync::Arc;
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use whetstone_core::{Change, CommitId, Comparison, FileIndex, ShowcaseProject};
 
 use crate::config::Settings;
-use crate::connected_code::AnalysisDirs;
+use crate::connected_code::{AnalysisDirs, GraphCache};
 use crate::home::Home;
 use crate::job::{JobId, JobOutput, Jobs};
 use crate::keymap::{Command, Input, Keymap};
@@ -93,6 +94,8 @@ pub(crate) struct Context<'a> {
     pub(crate) analysis: &'a AnalysisDirs,
     /// How many times the UI loop has ticked, for a spinner's frame.
     pub(crate) ticks: usize,
+    /// The graphs connected code was found in before.
+    pub(crate) cache: &'a Arc<GraphCache>,
 }
 
 /// What Practice runs on.

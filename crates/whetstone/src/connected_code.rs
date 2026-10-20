@@ -8,16 +8,18 @@
 //! The outbound review asks for a commit's connected code with a
 //! [`Request`], which a background job runs. It gives the change's
 //! [`Connections`], each with the text it would send, read from the commit,
-//! or why there are none. They include the change's related tests and
-//! related configuration, found from the commit's paths by convention.
+//! or why there are none, and whether they were analysed now or came from
+//! the cache. They include the change's related tests and related
+//! configuration, found from the commit's paths by convention.
 //!
 //! [`find`] is the engine's part of that, for any [`Snapshot`] of a commit,
-//! and blocks while it runs, so callers run it off the UI thread. It writes
-//! the files the engine reads into a private [`AnalysisDir`], analyses them
-//! there, removes the directory, and returns the callers and callees as
-//! line ranges, with the whole [`Graph`] so it can be cached and asked about
-//! the change again. The app's [`AnalysisDirsGuard`] removes any directory
-//! still in use when the app quits.
+//! and blocks while it runs, so callers run it off the UI thread. It keeps
+//! each tree's whole [`Graph`] in a [`GraphCache`], so asking about a tree
+//! analysed before writes and analyses nothing. Otherwise it writes the
+//! files the engine reads into a private [`AnalysisDir`], analyses them
+//! there, removes the directory and caches the graph. Either way it returns
+//! the callers and callees as line ranges. The app's [`AnalysisDirsGuard`]
+//! removes any directory still in use when the app quits.
 //!
 //! The log records counts, sizes, timings and reasons, never file
 //! contents, callable names or the graph.
@@ -38,6 +40,7 @@ mod touched_text;
 use std::error::Error;
 use std::io;
 use std::panic::{self, AssertUnwindSafe};
+use std::sync::Arc;
 use std::time::Instant;
 
 use whetstone_core::{
@@ -48,6 +51,7 @@ use whetstone_core::{
 use crate::repository::{CommitTree, LoadError, RepositoryHandle, TreeEntryKind};
 
 pub(crate) use analysis::{AnalysisDir, AnalysisDirs, AnalysisDirsGuard, sweep};
+pub(crate) use cache::{GraphCache, SnapshotId};
 pub(crate) use graph::{Connection, Graph, Relation, Tier};
 
 /// A commit's whole tree as finding connected code reads it: every file's
@@ -58,6 +62,9 @@ pub(crate) use graph::{Connection, Graph, Relation, Tier};
 pub(crate) trait Snapshot {
     /// Why the tree could not be read.
     type Error: Error + Send + Sync + 'static;
+
+    /// Which tree it is, which names its graph in the cache.
+    fn id(&self) -> SnapshotId;
 
     /// Every file in the tree, in any order. Directories are not files.
     fn files(&self) -> Result<Vec<SnapshotFile>, Self::Error>;
@@ -108,6 +115,10 @@ impl SnapshotFile {
 impl Snapshot for CommitTree<'_> {
     type Error = LoadError;
 
+    fn id(&self) -> SnapshotId {
+        SnapshotId::Tree(CommitTree::id(self))
+    }
+
     fn files(&self) -> Result<Vec<SnapshotFile>, LoadError> {
         Ok(self
             .entries()
@@ -157,19 +168,36 @@ pub(crate) enum Failure {
     Quitting,
 }
 
-/// What [`find`] found: the change's connected code, and the whole graph
-/// it came from.
+/// What [`find`] found: the change's connected code, the whole graph it
+/// came from, and how that graph was found.
 #[derive(Debug)]
 pub(crate) struct Found {
     connections: Vec<Connection>,
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "kept for the graph cache (#63)")
-    )]
     graph: Graph,
+    origin: GraphOrigin,
+}
+
+/// How a commit's graph was found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GraphOrigin {
+    /// The engine analysed the commit's files.
+    Analysed,
+    /// An earlier analysis of the same tree was in the cache, so nothing
+    /// was written or analysed: the review marks it "from cache".
+    Cached,
 }
 
 impl Found {
+    /// The connected code of `change` in `graph`, which was found as
+    /// `origin` says.
+    fn new(graph: Graph, change: &Change, origin: GraphOrigin) -> Self {
+        Self {
+            connections: graph.connections(change),
+            graph,
+            origin,
+        }
+    }
+
     /// The callers and callees of the change's callables, in path and
     /// line order. Empty when none were found.
     pub(crate) fn connections(&self) -> &[Connection] {
@@ -178,12 +206,13 @@ impl Found {
 
     /// The whole call graph of the commit, which can give the connected
     /// code of any change at that commit with [`Graph::connections`].
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "kept for the graph cache (#63)")
-    )]
     pub(crate) fn graph(&self) -> &Graph {
         &self.graph
+    }
+
+    /// Whether the graph was analysed now or came from the cache.
+    pub(crate) fn origin(&self) -> GraphOrigin {
+        self.origin
     }
 }
 
@@ -191,30 +220,39 @@ impl Found {
 /// shows: the callers and callees of the callables it adds or modifies,
 /// one hop away, as [`Graph::connections`] describes them.
 ///
-/// It writes the commit's code to a new private directory among `dirs`,
-/// leaving out what `exclude` and the default exclusions leave out, as
-/// [`AnalysisDir::write`] describes, analyses it there, and removes the
-/// directory before it returns, whatever the outcome, a panic included,
-/// which it reports as [`Failure::Panicked`]. It blocks until the engine is
-/// done, which the engine cannot be made to stop early.
+/// If `cache` holds the graph of the snapshot's tree, found by this
+/// version of the engine, the connected code comes from it, and nothing is
+/// written or analysed. Otherwise it writes the commit's code to a new
+/// private directory among `dirs`, leaving out what `exclude` and the
+/// default exclusions leave out, as [`AnalysisDir::write`] describes,
+/// analyses it there, removes the directory, whatever the outcome, and
+/// caches the graph. A panic is reported as [`Failure::Panicked`]. It
+/// blocks until the engine is done, which the engine cannot be made to
+/// stop early.
 pub(crate) fn find<S: Snapshot>(
     snapshot: &S,
     change: &Change,
     exclude: &ExcludePatterns,
     dirs: &AnalysisDirs,
+    cache: &GraphCache,
 ) -> Result<Found, Failure> {
     let started = Instant::now();
     let found = catching(|| {
-        AnalysisDir::write(snapshot, exclude, dirs)
-            .and_then(|dir| dir.analyse())
-            .map(|graph| Found {
-                connections: graph.connections(change),
-                graph,
-            })
+        let key = cache::GraphKey::of(snapshot.id(), analysis::ENGINE_VERSION);
+        if let Some(graph) = cache.get::<Graph>(&key) {
+            return Ok(Found::new(graph, change, GraphOrigin::Cached));
+        }
+        // The directory is removed at the end of this statement, before
+        // the graph is cached.
+        let graph = AnalysisDir::write(snapshot, exclude, dirs)?.analyse()?;
+        let found = Found::new(graph, change, GraphOrigin::Analysed);
+        cache.put(&key, found.graph());
+        Ok(found)
     });
     match &found {
         Ok(found) => tracing::info!(
             connections = found.connections.len(),
+            origin = ?found.origin,
             ms = started.elapsed().as_millis(),
             "found connected code"
         ),
@@ -242,7 +280,8 @@ fn catching<T>(work: impl FnOnce() -> Result<T, Failure>) -> Result<T, Failure> 
 
 /// What a background job needs to find one commit's connected code: its
 /// own handle on the repository, the commit and its change, the
-/// repository's exclude patterns, and where to analyse it.
+/// repository's exclude patterns, where to analyse it and the cache of
+/// graphs analysed before.
 #[derive(Debug)]
 pub(crate) struct Request {
     repository: RepositoryHandle,
@@ -250,18 +289,20 @@ pub(crate) struct Request {
     change: Change,
     exclude: ExcludePatterns,
     dirs: AnalysisDirs,
+    cache: Arc<GraphCache>,
 }
 
 impl Request {
     /// A request for the connected code of `change`, the commit `commit`
     /// of `repository`, leaving out what `exclude` leaves out, analysed
-    /// among `dirs`.
+    /// among `dirs` unless `cache` holds its graph.
     pub(crate) fn new(
         repository: RepositoryHandle,
         commit: CommitId,
         change: Change,
         exclude: ExcludePatterns,
         dirs: AnalysisDirs,
+        cache: Arc<GraphCache>,
     ) -> Self {
         Self {
             repository,
@@ -269,6 +310,7 @@ impl Request {
             change,
             exclude,
             dirs,
+            cache,
         }
     }
 
@@ -285,13 +327,19 @@ impl Request {
     /// finds them, and its related tests and related configuration, each
     /// whole, as [`related::connections`] finds them, read from the commit,
     /// with any range in a file sent whole merged into it; or none found, or
-    /// the analysis failed, a panic included.
-    pub(crate) fn find(&self) -> Connections {
+    /// the analysis failed, a panic included. Links, names, related tests
+    /// and related configuration are read from the commit, never from the
+    /// graph, so they are found whether or not the graph came from the
+    /// cache. It also says how the graph was found, which is
+    /// [`GraphOrigin::Analysed`] if none was.
+    pub(crate) fn find(&self) -> (Connections, GraphOrigin) {
         let started = Instant::now();
+        let mut origin = GraphOrigin::Analysed;
         let found = catching(|| {
             self.repository
                 .with_tree(self.commit, |tree| {
-                    let found = find(tree, &self.change, &self.exclude, &self.dirs)?;
+                    let found = find(tree, &self.change, &self.exclude, &self.dirs, &self.cache)?;
+                    origin = found.origin();
                     let code = with_sent_text(tree, found.connections())?;
                     let mut connections =
                         linked_and_named::with_linked_and_named(tree, &self.change, code)?;
@@ -314,10 +362,11 @@ impl Request {
                     "analysis failed"
                 }
             },
+            origin = ?origin,
             ms = started.elapsed().as_millis(),
             "found a commit's connected code"
         );
-        connections
+        (connections, origin)
     }
 }
 
