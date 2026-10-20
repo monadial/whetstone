@@ -146,7 +146,7 @@ mod tests {
     use crate::assessment_policy::AssessmentPolicy;
     use crate::question::OptionLetter;
     use crate::question::tests::area;
-    use crate::question_check::tests::{candidate, options};
+    use crate::question_check::tests::{candidate, passing};
     use crate::question_check::{QuestionCheckAnswers, show_rule};
 
     fn count(count: i64) -> QuestionCount {
@@ -155,12 +155,9 @@ mod tests {
 
     /// A question about `area_id`, written in place `written_at`.
     fn question(area_id: &str, written_at: usize) -> Question {
-        show_rule(
-            candidate(area_id, written_at, OptionLetter::A),
-            QuestionCheckAnswers::new(options(0.9, 0.1, 0.1)),
-            AssessmentPolicy::current(),
-        )
-        .expect("shown")
+        let candidate = candidate(area_id, written_at, OptionLetter::A);
+        let answers = QuestionCheckAnswers::new(passing(&candidate));
+        show_rule(candidate, answers, AssessmentPolicy::current()).expect("shown")
     }
 
     fn areas(ids: &[&str]) -> Vec<AreaId> {
