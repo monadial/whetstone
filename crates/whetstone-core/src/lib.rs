@@ -7,6 +7,7 @@
 //! lints catch most breaches; review covers the rest.
 
 mod area;
+mod assessment;
 mod assessment_policy;
 mod change;
 mod connected_code_limit;
@@ -25,6 +26,7 @@ mod showcase;
 mod toml_error;
 
 pub use crate::area::{Area, AreaFileError, AreaId, AreaSource, InvalidAreaFile, InvalidAreaId};
+pub use crate::assessment::{Assessed, ChoiceOutcome, MissingReasoning, OptionRating, Response};
 pub use crate::assessment_policy::{AssessmentPolicy, Band, Job, PolicyVersion, Validation};
 pub use crate::change::{
     Change, CommitId, Comparison, FileContent, InvalidCommitId, Origin, TouchedFile,
