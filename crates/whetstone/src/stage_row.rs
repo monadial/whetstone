@@ -6,14 +6,6 @@
 //! percentages or timers. The row wraps only between stages, never inside
 //! one.
 
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "wired into the outbound review by the #59 integration"
-    )
-)]
-
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
@@ -153,12 +145,6 @@ impl<'a> StageRow<'a> {
         lines
     }
 
-    /// How many lines the row takes `width` cells wide, so a screen can
-    /// give it room before laying out the rest.
-    pub(crate) fn line_count(&self, width: u16) -> usize {
-        self.lines(width).len()
-    }
-
     /// One stage: its mark, its label, and the arrow to the next unless it is
     /// the `last`. A label too long for a line `width` cells wide is cut, so
     /// that the stage still fits on one line, mark and arrow included.
@@ -215,9 +201,9 @@ mod tests {
     const CONNECTED_CODE_SKIPPED: [StageState; 7] =
         [Done, Skipped, Done, Current, Upcoming, Upcoming, Upcoming];
 
-    /// `row` drawn `width` cells wide, on as many lines as it says it needs.
+    /// `row` drawn `width` cells wide, on as many lines as it is laid out on.
     fn drawn(row: &StageRow<'_>, width: u16) -> Buffer {
-        let height = u16::try_from(row.line_count(width)).expect("the row is a few lines high");
+        let height = u16::try_from(row.lines(width).len()).expect("the row is a few lines high");
         let mut buffer = Buffer::empty(Rect::new(0, 0, width, height));
         row.render(buffer.area, &mut buffer);
         buffer

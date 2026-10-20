@@ -59,9 +59,11 @@ fn startup_removes_old_analysis_directories_and_a_review_leaves_none_of_its_own(
     session.send(REVIEW_NEWEST).expect("open the review");
     session.flush().expect("flush the keys");
     // Ratatui moves the cursor between words, so wait for a single word of
-    // "Connected code: 1 range · 1 KB".
+    // the touched file's "· 1 connected", once the review is drawn. At 80×24
+    // the stage row pushes the Connected code section off the screen.
+    session.exp_string("included").expect("the review is drawn");
     session
-        .exp_string("range")
+        .exp_string("connected")
         .expect("connected code is found");
     session.send("\x03").expect("send Ctrl+C");
     session.flush().expect("flush Ctrl+C");

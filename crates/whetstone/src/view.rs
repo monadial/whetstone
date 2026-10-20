@@ -91,6 +91,8 @@ pub(crate) struct Context<'a> {
     pub(crate) repository: Result<&'a Repository, &'a Unavailable>,
     /// Where connected code is analysed.
     pub(crate) analysis: &'a AnalysisDirs,
+    /// How many times the UI loop has ticked, for a spinner's frame.
+    pub(crate) ticks: usize,
 }
 
 /// What Practice runs on.
