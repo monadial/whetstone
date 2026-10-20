@@ -11,13 +11,13 @@ use ratatui::widgets::{List, Paragraph, Wrap};
 
 use crate::columns;
 use crate::config::{
-    Colours, ConfigFile, DEFAULT_GENERATOR_MODEL, DEFAULT_JEV_MODEL, KeyStatus,
-    OPENROUTER_KEY_VARIABLE, Origin, Setting, Settings,
+    ConfigFile, DEFAULT_GENERATOR_MODEL, DEFAULT_JEV_MODEL, KeyStatus, OPENROUTER_KEY_VARIABLE,
+    Origin, Setting, Settings,
 };
 use crate::focus::Position;
 use crate::keymap::{self, Command, Keymap};
 use crate::palette::Action;
-use crate::theme::{ControlState, Theme};
+use crate::theme::{Colours, ControlState, NoColorStatus, Theme};
 use crate::view::{Context, Route, View};
 
 /// Settings' own keys: `q` and Esc go back.
@@ -85,7 +85,9 @@ impl Control {
             Self::Colours => {
                 let (value, default_note) = shown(&settings.colours);
                 let value = match settings.colours.value {
-                    Colours::Auto => format!("{value} ({} detected)", settings.detected_colours),
+                    Colours::Auto => {
+                        format!("{value} ({} detected)", settings.detected_color_support)
+                    }
                     _ => value,
                 };
                 (value, default_note)
@@ -117,15 +119,18 @@ impl Control {
                     .to_owned(),
             },
             Self::Colours => {
-                let no_color = if no_color_overrides(settings) {
-                    "NO_COLOR is set, so nothing is coloured, whatever this says."
-                } else {
-                    "A non-empty NO_COLOR turns colour off, whatever this says."
+                let no_color = match settings.no_color {
+                    NoColorStatus::Set => {
+                        "NO_COLOR is set, so nothing is coloured, whatever this says."
+                    }
+                    NoColorStatus::NotSet => {
+                        "A non-empty NO_COLOR turns colour off, whatever this says."
+                    }
                 };
                 format!(
                     "How much colour Whetstone draws with: auto, 24-bit, 256, 16 or none. Auto \
-                     reads COLORTERM, then TERM; set a level when your terminal shows more \
-                     than it reports, as over SSH. {no_color}"
+                     reads COLORTERM, then TERM. Set a level when your terminal shows more than \
+                     it reports, as over SSH, or less when colours look wrong. {no_color}"
                 )
             }
             Self::Back => "Back to home.".to_owned(),
@@ -239,17 +244,6 @@ fn shown<T: fmt::Display>(setting: &Setting<T>) -> (String, Option<&'static str>
         setting.value.to_string(),
         (setting.origin == Origin::Default).then_some(" (default)"),
     )
-}
-
-/// Whether `NO_COLOR` turns colour off where the `colours` setting, or what
-/// auto detects, would draw some.
-fn no_color_overrides(settings: &Settings) -> bool {
-    let chosen = settings
-        .colours
-        .value
-        .level()
-        .unwrap_or(settings.detected_colours);
-    settings.color_support() != chosen
 }
 
 /// Where the title, the note on the config file, the setting rows, Back and
