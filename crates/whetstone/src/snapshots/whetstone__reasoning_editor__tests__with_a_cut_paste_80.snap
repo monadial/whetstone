@@ -1,0 +1,20 @@
+---
+source: crates/whetstone/src/reasoning_editor.rs
+expression: "drawn_with(editor, caret, width, 6)"
+---
+Buffer {
+    area: Rect { x: 0, y: 0, width: 80, height: 6 },
+    content: [
+        "The key dedupes. The key dedupes. The key dedupes. The key dedupes. The key     ",
+        "dedupes. The key dedupes. The key dedupes. The key dedupes. The key dedupes.    ",
+        "The key dedupes. The key dedupes. The key dedupes. The key dedupes. The key     ",
+        "dedupes. The key dedupes. The key dedupes. The key dedupes. The key dedupes.    ",
+        "The key dedupes. The p                                                          ",
+        "Paste cut at the 4,000-character limit: 25 characters left out.                 ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 22, y: 4, fg: Reset, bg: Reset, underline: Reset, modifier: REVERSED,
+        x: 23, y: 4, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+    ]
+}
