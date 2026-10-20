@@ -520,6 +520,23 @@ mod tests {
     }
 
     #[test]
+    fn a_showcase_graph_saved_by_another_whetstone_version_is_never_used() {
+        let folder = tempfile::tempdir().expect("a temporary folder");
+        let cache = GraphCache::open(folder.path(), GraphCache::CAP);
+        let current = GraphKey::showcase(0, "0.11.0");
+        let other_release = GraphKey {
+            source: Source::Showcase {
+                whetstone: "0.0.1",
+                position: 0,
+            },
+            ..current.clone()
+        };
+        cache.put(&other_release, &graph("older"));
+
+        assert_eq!(cache.get::<Graph>(&current), None);
+    }
+
+    #[test]
     fn a_damaged_graph_is_a_miss_and_is_removed() {
         let folder = tempfile::tempdir().expect("a temporary folder");
         let cache = GraphCache::open(folder.path(), GraphCache::CAP);
