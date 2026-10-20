@@ -356,8 +356,8 @@ impl<'a> Tree<'a> {
     }
 
     /// `s.test.*` or `s.spec.*` in the same directory, or `__tests__/s.*`,
-    /// with any script extension. Everything under a `__tests__` directory
-    /// is a test itself.
+    /// which is also `s.test.*` or `s.spec.*` there, with any script
+    /// extension. Everything under a `__tests__` directory is a test itself.
     fn script_tests(&self, dir: &str, stem: &str) -> Vec<String> {
         if matches!(stem.rsplit_once('.'), Some((_, "test" | "spec")))
             || ancestors(dir).any(|ancestor| split(ancestor).1 == "__tests__")
@@ -372,6 +372,8 @@ impl<'a> Tree<'a> {
                     self.file(dir, &format!("{stem}.test.{extension}")),
                     self.file(dir, &format!("{stem}.spec.{extension}")),
                     self.file(&tests_dir, &format!("{stem}.{extension}")),
+                    self.file(&tests_dir, &format!("{stem}.test.{extension}")),
+                    self.file(&tests_dir, &format!("{stem}.spec.{extension}")),
                 ]
             })
             .flatten()

@@ -182,12 +182,23 @@ fn a_typescript_change_lists_its_test_and_spec_files_and_those_under_tests() {
                 "web/src/cart.test.ts",
                 "web/src/cart.spec.js",
                 "web/src/__tests__/cart.tsx",
+                "web/src/__tests__/cart.test.ts",
+                "web/src/__tests__/cart.spec.js",
                 "web/src/__tests__/cart.json",
+                "web/src/__tests__/cart.fixture.ts",
                 "web/src/cart.tests.ts",
             ],
         ),
         [
             ["web/package.json", "manifest for `web/src/cart.ts`"],
+            [
+                "web/src/__tests__/cart.spec.js",
+                "test for `web/src/cart.ts`"
+            ],
+            [
+                "web/src/__tests__/cart.test.ts",
+                "test for `web/src/cart.ts`"
+            ],
             ["web/src/__tests__/cart.tsx", "test for `web/src/cart.ts`"],
             ["web/src/cart.spec.js", "test for `web/src/cart.ts`"],
             ["web/src/cart.test.ts", "test for `web/src/cart.ts`"],
