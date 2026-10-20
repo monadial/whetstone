@@ -18,14 +18,16 @@
 //!
 //! The values above are the defaults, used for anything the file leaves out
 //! and for everything when there is no file. The API key never lives in the
-//! file: it is read from `OPENROUTER_API_KEY`.
+//! file: it is read from `OPENROUTER_API_KEY`, once, when Whetstone builds
+//! the Jev and generator Practice asks ([`Settings::openrouter`]).
 
 use std::path::{Path, PathBuf};
 use std::{fmt, fs, io};
 
 use serde::{Deserialize, Deserializer};
+use whetstone_ai::{Models, OpenRouter, OpenRouterAi, SecretString};
 use whetstone_core::{
-    ConnectedCodeLimit, ConnectedCodeLimitError, ConnectedCodeLimitKb, QuestionCount,
+    ConnectedCodeLimit, ConnectedCodeLimitError, ConnectedCodeLimitKb, ModelId, QuestionCount,
     QuestionCountError, RepositoryConfig,
 };
 
@@ -97,7 +99,8 @@ pub(crate) enum ConfigFile {
     Missing { shown: String },
 }
 
-/// Whether the environment sets `OPENROUTER_API_KEY`.
+/// Whether the environment sets `OPENROUTER_API_KEY` to a key: text that
+/// isn't blank.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum KeyStatus {
     Set,
@@ -183,15 +186,33 @@ impl Settings {
             ),
             questions: Setting::or_default(contents.questions, QuestionCount::DEFAULT),
             file,
-            openrouter_key: if environment
-                .get(OPENROUTER_KEY_VARIABLE)
-                .is_some_and(|value| !value.is_empty())
-            {
+            openrouter_key: if openrouter_key(environment).is_some() {
                 KeyStatus::Set
             } else {
                 KeyStatus::NotSet
             },
         })
+    }
+
+    /// Jev and the generator on `OpenRouter`, asked for the models this
+    /// config names, when `environment` sets `OPENROUTER_API_KEY`. The key is
+    /// read here, once, into a `SecretString`, which only the auth header
+    /// exposes (rule 41). Without a key there is none, and Practice can't
+    /// start.
+    #[must_use]
+    pub fn openrouter(&self, environment: &Environment) -> Option<OpenRouterAi> {
+        let key = SecretString::from(openrouter_key(environment)?.to_owned());
+        let models = Models {
+            jev: ModelId::new(self.jev_model.value.clone()),
+            generator: ModelId::new(self.generator_model.value.clone()),
+        };
+        match OpenRouter::new(Some(key)) {
+            Ok(connection) => Some(OpenRouterAi::new(connection, models)),
+            Err(failure) => {
+                tracing::warn!(%failure, "Practice can't reach OpenRouter");
+                None
+            }
+        }
     }
 
     /// The colour level to draw with: none under a non-empty `NO_COLOR`,
@@ -232,6 +253,15 @@ impl<T> Setting<T> {
             },
         }
     }
+}
+
+/// The key `environment` sets in `OPENROUTER_API_KEY`, if it sets one:
+/// text that isn't blank.
+fn openrouter_key(environment: &Environment) -> Option<&str> {
+    environment
+        .get(OPENROUTER_KEY_VARIABLE)?
+        .to_str()
+        .filter(|key| !key.trim().is_empty())
 }
 
 /// Reads `connected_code_limit_kb`, which must be a whole number from 0 to

@@ -219,7 +219,7 @@ const VIEWS: [(&str, &str, &[&str]); 12] = [
             "> (x) Domain",
             "( ) Model the payment lifecycle",
             "( ) Run rustfmt over the HTTP layer",
-            "Generate questions (arrives with Jev)",
+            "Generate questions (needs OPENROUTER_API_KEY)",
             "? keys  : actions  Space toggle  Enter open  q back",
         ],
     ),

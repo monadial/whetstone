@@ -200,6 +200,10 @@ impl ChangeIndex {
 /// can be used.
 pub(crate) const ARRIVES_WITH_JEV: &str = "arrives with Jev";
 
+/// Why Generate questions can't start Practice: no `OpenRouter` key was
+/// found, so Whetstone can't ask Jev and the generator.
+pub(crate) const NEEDS_KEY: &str = "needs OPENROUTER_API_KEY";
+
 /// What a commit's row in the picker and its title in the viewer say about
 /// what it was compared with, unless it was simply its parent.
 pub(crate) fn comparison_label(comparison: Comparison) -> Option<&'static str> {
