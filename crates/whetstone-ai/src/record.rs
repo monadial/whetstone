@@ -21,7 +21,11 @@ use tokio_util::sync::CancellationToken;
 use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
 use crate::replay::{API, SampleQuestion, sample_generator_request, sample_jev_request};
-use crate::{AiError, GeneratorRequest, OpenRouter, SecretString, Timeouts};
+use crate::samples::{area, candidate, evidence, generator_model, jev_model};
+use crate::{
+    AiError, CandidatesOutput, GeneratorRequest, OpenRouter, SecretString, Timeouts,
+    candidates_request, question_check_request,
+};
 
 const UPSTREAM: &str = "https://openrouter.ai";
 
@@ -171,6 +175,39 @@ async fn record_key_refused() {
     assert_eq!(reply.err(), Some(AiError::KeyRefused));
 }
 
+#[tokio::test]
+#[ignore = "calls OpenRouter with the maintainer's key"]
+async fn record_candidates() {
+    let (_server, connection) = recording("candidates", "/chat/completions", &live_key()).await;
+    let request = candidates_request(
+        &generator_model(),
+        &evidence(),
+        &area(),
+        std::num::NonZeroUsize::new(2).expect("2 is not 0"),
+    );
+
+    let reply = connection
+        .generate::<CandidatesOutput>(&request, &CancellationToken::new())
+        .await;
+
+    println!("{reply:#?}");
+    assert!(reply.is_ok());
+}
+
+#[tokio::test]
+#[ignore = "calls OpenRouter with the maintainer's key"]
+async fn record_question_check() {
+    let (_server, connection) = recording("question-check", "/systemone", &live_key()).await;
+    let request = question_check_request(&jev_model(), &evidence(), &candidate());
+
+    let reply = connection
+        .evaluate(&request, &CancellationToken::new())
+        .await;
+
+    println!("{reply:#?}");
+    assert!(reply.is_ok());
+}
+
 /// The recorded fixtures are JSON, so a failed recording can't save
 /// something else unnoticed.
 #[test]
@@ -181,6 +218,8 @@ fn recorded_fixtures_are_json() {
         "generator-output",
         "generator-no-zero-retention",
         "key-refused",
+        "candidates",
+        "question-check",
     ] {
         let text = std::fs::read_to_string(fixture(name)).expect("the fixture exists");
         serde_json::from_str::<Value>(&text).expect("the fixture is JSON");
