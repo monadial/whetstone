@@ -87,7 +87,10 @@ fn launch(environment: &Environment) -> anyhow::Result<ExitCode> {
     let theme = Theme::new(settings.color_support());
     let repository = Repository::open(environment.current_dir());
     repository::log(&repository);
-    match tui::run(App::new(theme, settings, embedded_showcase(), repository))? {
+    match tui::run(
+        App::new(theme, settings, embedded_showcase(), repository),
+        environment,
+    )? {
         Ending::Quit => {
             tracing::info!("whetstone quit");
             Ok(ExitCode::SUCCESS)

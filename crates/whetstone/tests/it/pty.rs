@@ -48,7 +48,7 @@ const HIDE_CURSOR: &str = "\x1b[?25l";
 const SHOW_CURSOR: &str = "\x1b[?25h";
 
 /// Everything the shell printed, from start to end of file.
-pub(super) struct Transcript(String);
+pub(super) struct Transcript(pub(super) String);
 
 /// Starts the script in a pseudo-terminal. `env` is the whole environment
 /// besides `PATH` and `TERM`, so the real home directory is never used, and
@@ -79,7 +79,10 @@ pub(super) fn quit_with_q(session: &mut PtySession) -> Transcript {
 }
 
 /// Waits for the home screen, sends `keys`, and reads until the shell exits.
-fn quit_with(session: &mut PtySession, send_keys: impl FnOnce(&mut PtySession)) -> Transcript {
+pub(super) fn quit_with(
+    session: &mut PtySession,
+    send_keys: impl FnOnce(&mut PtySession),
+) -> Transcript {
     // Ratatui moves the cursor between words, so wait for a single word: the
     // home screen's last action.
     let until_home = session.exp_string("Quit").expect("home screen is drawn");
@@ -102,7 +105,7 @@ impl Transcript {
             .expect("section ends")
     }
 
-    fn assert_terminal_restored(&self) {
+    pub(super) fn assert_terminal_restored(&self) {
         self.assert_modes_unchanged();
 
         let tui = self
