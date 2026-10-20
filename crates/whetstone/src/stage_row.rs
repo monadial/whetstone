@@ -102,7 +102,8 @@ const ARROW: &str = " →";
 #[derive(Debug, Clone)]
 pub(crate) struct StageRow<'a> {
     stages: Vec<Stage<'a>>,
-    tick: usize,
+    /// How many ticks so far, which sets the spinner's frame.
+    ticks: usize,
     /// An upcoming stage's style.
     upcoming: Style,
     /// A skipped stage's style, and the arrows'.
@@ -111,15 +112,15 @@ pub(crate) struct StageRow<'a> {
 
 impl<'a> StageRow<'a> {
     /// The row of `stages` in `theme`'s styles, with the current stage's
-    /// spinner at its frame for `tick`, the number of ticks so far.
+    /// spinner at its frame for `ticks`, the number of ticks so far.
     pub(crate) fn new(
         stages: impl IntoIterator<Item = Stage<'a>>,
-        tick: usize,
+        ticks: usize,
         theme: &Theme,
     ) -> Self {
         Self {
             stages: stages.into_iter().collect(),
-            tick,
+            ticks,
             upcoming: theme.upcoming_stage,
             muted: theme.muted,
         }
@@ -151,7 +152,7 @@ impl<'a> StageRow<'a> {
     fn stage(&self, stage: &Stage<'a>, last: bool, width: usize) -> Vec<Span<'a>> {
         let (mark, style) = match stage.state {
             StageState::Done => (DONE, Style::new()),
-            StageState::Current => (SPINNER[self.tick % SPINNER.len()], Style::new()),
+            StageState::Current => (SPINNER[self.ticks % SPINNER.len()], Style::new()),
             StageState::Upcoming => (UPCOMING, self.upcoming),
             StageState::Skipped => (SKIPPED, self.muted),
         };

@@ -15,7 +15,7 @@ const REVIEW_NEWEST: &str = "<Enter> j j j j j <Space> k k k k k <S-Tab> <Enter>
 /// The outbound review's title, which the row sits above.
 const TITLE: &str = "Review what will be sent";
 
-/// The stage row: the rows above the review's title, trimmed, without the
+/// The stage row: the rows above the outbound review's title, trimmed, without the
 /// blank ones.
 fn stage_row(session: &Session) -> Vec<String> {
     let rows = session.rows();
@@ -44,7 +44,7 @@ fn with_a_caller() -> TestRepo {
 }
 
 #[test]
-fn the_review_opens_with_the_change_read_and_connected_code_being_found() {
+fn the_outbound_review_opens_with_the_change_read_and_connected_code_being_found() {
     let repo = with_a_caller();
     let mut session = started_in(repo.root(), 120, 32);
 
@@ -121,24 +121,23 @@ fn at_80x24_the_row_wraps_between_stages_never_inside_one() {
 }
 
 /// A system temporary directory inside a `build` directory, where the
-/// engine never reads, so nothing written there can be analysed.
-fn where_the_analysis_fails() -> TempDir {
+/// engine never reads, so nothing written there can be analysed: the
+/// directory that holds it, and its path for `TMPDIR`.
+fn where_the_analysis_fails() -> (TempDir, String) {
     let temp = TempDir::new().expect("create a temporary directory");
-    std::fs::create_dir(temp.path().join("build")).expect("create a build directory");
-    temp
+    let build = temp.path().join("build");
+    std::fs::create_dir(&build).expect("create a build directory");
+    let build = build.to_str().expect("a UTF-8 path").to_owned();
+    (temp, build)
 }
 
 #[test]
 fn when_the_analysis_fails_finding_connected_code_is_skipped() {
     let repo = with_a_caller();
-    let temp = where_the_analysis_fails();
-    let build = temp.path().join("build");
+    let (_temp, build) = where_the_analysis_fails();
     let mut session = Session::start(
         Setup {
-            variables: &[
-                ("NO_COLOR", "1"),
-                ("TMPDIR", build.to_str().expect("a UTF-8 path")),
-            ],
+            variables: &[("NO_COLOR", "1"), ("TMPDIR", &build)],
             start: Some(repo.root()),
             ..Setup::default()
         },
@@ -208,14 +207,13 @@ enum Finding {
     AnalysisFailed,
 }
 
-/// Snapshots the review of [`with_a_caller`]'s newest commit, once finding
+/// Snapshots the outbound review of [`with_a_caller`]'s newest commit, once finding
 /// its connected code has got as far as `finding`, at 120×32 and 80×24, in
 /// colour and under `NO_COLOR`.
 fn assert_snapshots(name: &str, finding: Finding) {
     let repo = with_a_caller();
-    let temp = where_the_analysis_fails();
-    let build = temp.path().join("build");
-    let failing = [("TMPDIR", build.to_str().expect("a UTF-8 path"))];
+    let (_temp, build) = where_the_analysis_fails();
+    let failing = [("TMPDIR", build.as_str())];
     for (width, height) in [(120, 32), (80, 24)] {
         for (colour, colours) in [
             ("in_colour", ("COLORTERM", "truecolor")),

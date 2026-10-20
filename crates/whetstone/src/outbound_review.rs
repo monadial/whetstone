@@ -426,7 +426,7 @@ impl OutboundReview {
     /// Practice is. The spinner moves with `ticks` only while connected code
     /// is found, and stands still on the outbound review.
     fn stage_row(&self, theme: &Theme, ticks: usize) -> StageRow<'static> {
-        let finding = match self.evidence.connections_state() {
+        let finding_connected_code = match self.evidence.connections_state() {
             ConnectionsState::Finding => StageState::Current,
             ConnectionsState::Found | ConnectionsState::NoneFound => StageState::Done,
             ConnectionsState::TookTooLong | ConnectionsState::AnalysisFailed => StageState::Skipped,
@@ -434,9 +434,9 @@ impl OutboundReview {
         let stages = PracticeStage::ALL.map(|stage| Stage {
             label: stage.label(),
             state: match stage {
-                PracticeStage::FindingConnectedCode => finding,
+                PracticeStage::FindingConnectedCode => finding_connected_code,
                 PracticeStage::PreparingEvidence | PracticeStage::OutboundReview
-                    if finding == StageState::Current =>
+                    if finding_connected_code == StageState::Current =>
                 {
                     StageState::Upcoming
                 }
@@ -450,12 +450,12 @@ impl OutboundReview {
                 | PracticeStage::ReviewingQuestions => StageState::Upcoming,
             },
         });
-        let tick = if finding == StageState::Current {
+        let ticks = if finding_connected_code == StageState::Current {
             ticks
         } else {
             0
         };
-        StageRow::new(stages, tick, theme)
+        StageRow::new(stages, ticks, theme)
     }
 
     /// The title, then where the evidence goes, how it is routed, and what
