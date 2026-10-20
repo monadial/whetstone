@@ -1,0 +1,18 @@
+---
+source: crates/whetstone/src/reasoning_editor.rs
+expression: "drawn_with(editor, caret, width, 6)"
+---
+Buffer {
+    area: Rect { x: 0, y: 0, width: 120, height: 6 },
+    content: [
+        "B: the retry sends the same idempotency key as the first request, so the payment provider sees one payment, however     ",
+        "many times the request is sent. A fresh key per attempt would charge again.                                             ",
+        "C caps the retries, but a cap alone doesn't stop a double charge.                                                       ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+    ]
+}

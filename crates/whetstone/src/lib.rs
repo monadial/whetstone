@@ -28,6 +28,7 @@ mod picker;
 mod practice;
 mod questions;
 mod reader;
+mod reasoning_editor;
 mod repository;
 mod search;
 mod session_record;
