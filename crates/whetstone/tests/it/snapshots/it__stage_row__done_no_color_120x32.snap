@@ -24,7 +24,7 @@ Buffer {
         "  Files                                                                                                                 ",
         "    ledger.py  1 KB  included · 1 connected                                                                             ",
         "                                                                                                                        ",
-        "  Connected code: 1 range · 1 KB                                                                                        ",
+        "  Connected code: 1 range · 1 KB of 100 KB limit                                                                        ",
         "    report.py  lines 4–5  1 KB  included  calls `total`                                                                 ",
         "                                                                                                                        ",
         "  Areas                                                                                                                 ",

@@ -24,7 +24,7 @@ Buffer {
         "  Files                                                                         ",
         "    ops.py  1 KB  included · 6 connected                                        ",
         "                                                                                ",
-        "  Connected code: 5 ranges · 1 KB                                               ",
+        "  Connected code: 5 ranges · 1 KB of 100 KB limit                               ",
         "  > callers.py  lines 4–7    1 KB  left out by you                              ",
         "      calls `add`, calls `mul`, +1 more                                         ",
         "  ? keys  : actions  Space toggle  Enter read  q back                           ",
