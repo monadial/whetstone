@@ -10,15 +10,19 @@
 //!
 //! Opening it starts a background job that finds the change's connected
 //! code, with its related tests and related configuration, which have a
-//! section of their own after it. The review is usable meanwhile, and the
-//! evidence is built again when the job's result arrives, if it is the
-//! result this review waits for, for this commit (rule 24). The row of
-//! stages at its top shows finding connected code as current until then.
+//! section of their own after it, once no other commit's analysis runs. The
+//! review is usable meanwhile, and the evidence is built again when the
+//! job's result arrives, if it is the result this review waits for, for
+//! this commit (rule 24). The row of stages at its top shows finding
+//! connected code as current until then. If the time limit runs out first,
+//! the review carries on without connected code, and stays that way while
+//! the job runs on and caches its graph for the commit's next review.
 
 use std::cell::RefCell;
 use std::mem;
 use std::ops::Range;
 use std::rc::Rc;
+use std::time::Duration;
 
 use ratatui::Frame;
 use ratatui::crossterm::event::KeyCode;
@@ -34,7 +38,6 @@ use whetstone_core::{
 };
 
 use crate::columns;
-use crate::config::Settings;
 use crate::connected_code::{GraphOrigin, Request};
 use crate::focus::Position;
 use crate::job::{JobId, JobOutput, Jobs};
@@ -158,6 +161,8 @@ pub(crate) struct OutboundReview {
     choices: Rc<RefCell<ReviewChoices>>,
     /// Where finding the change's connected code is.
     lookup: Lookup,
+    /// How long the review waits for its connected code, from when it opens.
+    time_limit: Duration,
     /// What the change, areas, patterns, connected code and choices make.
     evidence: Evidence,
     focus: Position,
@@ -170,8 +175,8 @@ pub(crate) struct OutboundReview {
 enum Lookup {
     /// Asked for, until the review opens and starts the job that finds it.
     Requested(Box<Request>),
-    /// Being found by the job with this identity, which the review waits
-    /// for.
+    /// Being found by the job with this identity, or waiting for its turn
+    /// to be, which the review waits for until its time limit runs out.
     Running(JobId),
     /// Found, or why there is none, and how its graph was found.
     Done(Connections, GraphOrigin),
@@ -241,19 +246,21 @@ impl<'a> Document<'a> {
 
 impl OutboundReview {
     /// The review of the commit `id`, whose change is `change`, sent where
-    /// `settings` say, with the selected `areas`, leaving out what the
-    /// repository's `config` leaves out, within the connected code limit
-    /// that `settings` and `config` make, as the learner's `choices` adjust
-    /// it. Its connected code is found with `connected_code` once it opens.
+    /// the settings in `context` say, with the selected `areas`, leaving out
+    /// what the repository's `config` leaves out, within the connected code
+    /// limit that the settings and `config` make, as the learner's `choices`
+    /// adjust it. Its connected code is found with `connected_code` once it
+    /// opens, within the time limit in `context`.
     pub(crate) fn new(
         id: CommitId,
-        settings: &Settings,
+        context: &Context<'_>,
         change: Change,
         areas: Vec<Area>,
         config: &RepositoryConfig,
         choices: Rc<RefCell<ReviewChoices>>,
         connected_code: Request,
     ) -> Self {
+        let settings = context.settings;
         let exclude = config.exclude().clone();
         let connected_code_limit = settings.connected_code_limit(config);
         let lookup = Lookup::Requested(Box::new(connected_code));
@@ -289,6 +296,7 @@ impl OutboundReview {
             connected_code_limit,
             choices,
             lookup,
+            time_limit: context.time_limit,
             evidence,
             focus: Position::default(),
             top: 0,
@@ -313,9 +321,7 @@ impl OutboundReview {
     }
 
     /// Applies `connections`, found for the commit `commit` from a graph
-    /// found as `origin` says: the evidence is built again with them, so
-    /// the size and the secret check cover them, and focus stays on the
-    /// control it was on.
+    /// found as `origin` says.
     fn apply_connections(
         &mut self,
         commit: CommitId,
@@ -325,16 +331,7 @@ impl OutboundReview {
         if commit != self.id {
             return;
         }
-        self.lookup = Lookup::Done(connections, origin);
-        let focused = self.focused();
-        self.rebuild();
-        if let Some(at) = self
-            .controls()
-            .iter()
-            .position(|control| *control == focused)
-        {
-            self.focus = Position::at(at);
-        }
+        self.finish_lookup(connections, origin);
         tracing::info!(
             commit = self.id.full(),
             connections = self.evidence.connections().len(),
@@ -348,6 +345,23 @@ impl OutboundReview {
             bytes = self.evidence.size(),
             "applied connected code to the outbound review"
         );
+    }
+
+    /// Ends finding connected code with `connections`, found from a graph
+    /// found as `origin` says, or why there are none: the evidence is built
+    /// again with them, so the size and the secret check cover them, and
+    /// focus stays on the control it was on.
+    fn finish_lookup(&mut self, connections: Connections, origin: GraphOrigin) {
+        self.lookup = Lookup::Done(connections, origin);
+        let focused = self.focused();
+        self.rebuild();
+        if let Some(at) = self
+            .controls()
+            .iter()
+            .position(|control| *control == focused)
+        {
+            self.focus = Position::at(at);
+        }
     }
 
     /// The controls, in focus order.
@@ -855,11 +869,10 @@ impl OutboundReview {
             ConnectionsState::Found | ConnectionsState::NoneFound => {
                 "Connected code: none found for this change.".to_owned()
             }
-            // Nothing gives up on finding it yet: the time limit is #64's.
-            ConnectionsState::TookTooLong => {
-                "Connected code isn't available for this change: finding it took longer than 20 s."
-                    .to_owned()
-            }
+            ConnectionsState::TookTooLong => format!(
+                "Connected code isn't available for this change: finding it took longer than {} s.",
+                self.time_limit.as_secs()
+            ),
             ConnectionsState::AnalysisFailed => {
                 "Connected code isn't available for this change: the analysis failed.".to_owned()
             }
@@ -903,7 +916,8 @@ impl OutboundReview {
                 format!("{RELATED}: none found for this change.")
             }
             ConnectionsState::TookTooLong => format!(
-                "{RELATED} aren't available for this change: finding them took longer than 20 s."
+                "{RELATED} aren't available for this change: finding them took longer than {} s.",
+                self.time_limit.as_secs()
             ),
             ConnectionsState::AnalysisFailed => {
                 format!("{RELATED} aren't available for this change: the analysis failed.")
@@ -1133,14 +1147,23 @@ impl View for OutboundReview {
             &mut self.lookup,
             Lookup::Done(Connections::Finding, GraphOrigin::Analysed),
         ) {
-            Lookup::Requested(request) => Lookup::Running(jobs.start(move |_token| {
-                let (connections, origin) = request.find();
-                Ok(JobOutput::ConnectedCode {
-                    commit: request.commit(),
-                    connections,
-                    origin,
-                })
-            })),
+            Lookup::Requested(request) => {
+                // The engine can't be stopped once it starts, and two
+                // analyses would compete for the machine, so they take
+                // turns, and only the newest commit's waits.
+                let job = jobs.start_one_at_a_time(move |_token| {
+                    let (connections, origin) = request.find();
+                    Ok(JobOutput::ConnectedCode {
+                        commit: request.commit(),
+                        connections,
+                        origin,
+                    })
+                });
+                // From now, as the review opens, whether the job runs at
+                // once or waits for its turn.
+                jobs.limit(job, self.time_limit);
+                Lookup::Running(job)
+            }
             lookup => lookup,
         };
     }
@@ -1160,6 +1183,19 @@ impl View for OutboundReview {
                 origin,
             } => self.apply_connections(commit, connections, origin),
         }
+    }
+
+    fn time_up(&mut self, job: JobId) {
+        if !self.waits_for(job) {
+            return;
+        }
+        // Not analysed, nor from the cache: there is no graph.
+        self.finish_lookup(Connections::TookTooLong, GraphOrigin::Analysed);
+        tracing::info!(
+            commit = self.id.full(),
+            limit_s = self.time_limit.as_secs(),
+            "gave up finding connected code for the outbound review"
+        );
     }
 
     fn open(&self, route: Route, _context: &Context<'_>) -> Option<Box<dyn View>> {

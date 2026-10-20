@@ -793,7 +793,7 @@ impl View for Picker {
         );
         Some(Box::new(OutboundReview::new(
             id,
-            context.settings,
+            context,
             change,
             areas,
             repository.config(),

@@ -41,7 +41,7 @@ use std::error::Error;
 use std::io;
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use whetstone_core::{
     Change, CommitId, ConnectionGroup, Connections, ExcludePatterns, Extent, FileContent,
@@ -53,6 +53,20 @@ use crate::repository::{CommitTree, LoadError, RepositoryHandle, TreeEntryKind};
 pub(crate) use analysis::{AnalysisDir, AnalysisDirs, AnalysisDirsGuard, sweep};
 pub(crate) use cache::{GraphCache, SnapshotId};
 pub(crate) use graph::{Connection, Graph, Relation, Tier};
+
+/// How long the outbound review waits for a commit's connected code before
+/// it carries on without it, counted from when the review opens: any wait
+/// for another commit's analysis, the cache lookup, writing the commit's
+/// files and analysing them.
+///
+/// Measured on an Apple M4 Max, a release build finds it for tokio (557
+/// files) in under 0.5 s, and for rust-lang/rust (63,812 files) in about
+/// 28 s, of which about 21 s is the analysis and 1.6 s is caching the
+/// graph. A cached graph loads in under 1 s for either. So the limit only
+/// gives up on very large repositories, or large ones on slower machines,
+/// and the next review of that commit takes its connected code from the
+/// cache.
+pub(crate) const TIME_LIMIT: Duration = Duration::from_secs(20);
 
 /// A commit's whole tree as finding connected code reads it: every file's
 /// path and kind, and any regular file's contents by path. It is a view of

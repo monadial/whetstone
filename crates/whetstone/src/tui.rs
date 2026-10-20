@@ -2,8 +2,8 @@
 //! back while the app is suspended.
 //!
 //! It runs on a current-thread Tokio runtime and waits for terminal input,
-//! signals, background job results and, while a job runs, a tick. Nothing
-//! else wakes it.
+//! signals, background job results, the time limits the app set on its jobs
+//! and, while a job runs, a tick. Nothing else wakes it.
 
 use std::ffi::c_int;
 use std::future::{self, Future};
@@ -27,7 +27,7 @@ use tokio::time::{self, Instant, Interval, MissedTickBehavior};
 
 use crate::app::{App, Flow, Message};
 use crate::environment::Environment;
-use crate::job::{JobOutput, Workers};
+use crate::job::{JobId, JobOutput, TimeLimit, Workers};
 use crate::terminal::{CrosstermSwitch, TerminalGuard, TerminalMode};
 
 /// How often the screen is drawn while a background job runs, so what shows
@@ -95,17 +95,27 @@ async fn run_loop(mut app: App, environment: &Environment) -> Result<Ending, Tui
     report_size(&terminal, &mut app)?;
     let mut events = EventStream::new();
     let mut workers = Workers::new();
+    let mut time_limits = TimeLimits::default();
     let mut ticker = Ticker::default();
     let ending = loop {
         for job in app.take_jobs() {
             workers.run(job);
         }
+        // Each counted from now, as the app has just set it.
+        time_limits.start(app.take_time_limits());
         ticker.run_while(!workers.is_idle());
         terminal
             .draw(|frame| app.render(frame))
             .map_err(TuiError::Draw)?;
         crash.after_draw();
-        let flow = match next_input(&mut signals, &mut events, &mut workers, &mut ticker).await? {
+        let input = next_input(
+            &mut signals,
+            &mut events,
+            &mut workers,
+            &mut time_limits,
+            &mut ticker,
+        );
+        let flow = match input.await? {
             Input::Message(message) => app.handle(message),
             Input::Stop { signal } => break Ending::Stopped { signal },
             Input::Suspend => Flow::Suspend,
@@ -142,8 +152,8 @@ async fn run_loop(mut app: App, environment: &Environment) -> Result<Ending, Tui
     // Quitting never waits for a background job. Dropping the app cancels
     // every job's token, and dropping the workers stops listening for
     // results, so a job still running on its blocking thread has its result
-    // discarded when it ends. The runtime shuts down without waiting for it
-    // (see `Runtime`).
+    // discarded when it ends, and one waiting for its turn never runs. The
+    // runtime shuts down without waiting for it (see `Runtime`).
     drop(app);
     drop(workers);
     Ok(ending)
@@ -229,7 +239,8 @@ fn resume(
 
 #[derive(Debug)]
 enum Input {
-    /// A terminal event, a background job's result or a tick, for the app.
+    /// A terminal event, a background job's result, the end of a job's time
+    /// limit or a tick, for the app.
     Message(Message),
     /// SIGHUP, SIGINT or SIGTERM.
     Stop { signal: c_int },
@@ -241,12 +252,13 @@ enum Input {
 }
 
 /// Waits for the next terminal event, the loop's only input source (rule
-/// 26), for a signal, for a background job's result, or for a tick while a
-/// job runs.
+/// 26), for a signal, for a background job's result, for a job's time limit
+/// to run out, or for a tick while a job runs.
 async fn next_input(
     signals: &mut Signals,
     events: &mut EventStream,
     workers: &mut Workers<JobOutput>,
+    time_limits: &mut TimeLimits,
     ticker: &mut Ticker,
 ) -> Result<Input, TuiError> {
     loop {
@@ -273,8 +285,43 @@ async fn next_input(
             finished = workers.finished() => {
                 return Ok(Input::Message(Message::Finished(finished)));
             }
+            // After a result, so one that arrives in time is applied first.
+            job = time_limits.run_out() => return Ok(Input::Message(Message::TimeUp(job))),
             () = ticker.tick() => return Ok(Input::Message(Message::Tick)),
         }
+    }
+}
+
+/// The time limits the app set on its jobs, each with when it runs out.
+#[derive(Debug, Default)]
+struct TimeLimits(Vec<(Instant, JobId)>);
+
+impl TimeLimits {
+    /// Starts counting each of `limits` from now.
+    fn start(&mut self, limits: Vec<TimeLimit>) {
+        let now = Instant::now();
+        self.0.extend(
+            limits
+                .into_iter()
+                .map(|limit| (now + limit.after, limit.job)),
+        );
+    }
+
+    /// The job whose time limit runs out next, once it has, which never
+    /// comes while no time limit is set. It is cancel-safe (rule 18): a
+    /// limit is taken only when this returns. A job that has ended still
+    /// has its limit run out, which the app ignores.
+    async fn run_out(&mut self) -> JobId {
+        let Some((at, &(runs_out, _))) = self
+            .0
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, (runs_out, _))| *runs_out)
+        else {
+            return future::pending().await;
+        };
+        time::sleep_until(runs_out).await;
+        self.0.swap_remove(at).1
     }
 }
 
@@ -478,6 +525,7 @@ fn crash() -> ! {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::job::Jobs;
 
     /// Longer than any tick.
     const A_MINUTE: Duration = Duration::from_secs(60);
@@ -502,6 +550,41 @@ mod tests {
         assert!(
             time::timeout(A_MINUTE, ticker.tick()).await.is_err(),
             "no tick once no job runs"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn each_time_limit_runs_out_once_at_its_time_the_earliest_first() {
+        let mut jobs = Jobs::<()>::new();
+        let [slow, quick] = [jobs.start(|_| Ok(())), jobs.start(|_| Ok(()))];
+        let mut time_limits = TimeLimits::default();
+        assert!(
+            time::timeout(A_MINUTE, time_limits.run_out())
+                .await
+                .is_err(),
+            "nothing runs out before a time limit is set"
+        );
+
+        let started = Instant::now();
+        jobs.limit(slow, Duration::from_secs(20));
+        jobs.limit(quick, Duration::from_secs(5));
+        time_limits.start(jobs.take_time_limits());
+        assert_eq!(time_limits.run_out().await, quick);
+        assert_eq!(started.elapsed(), Duration::from_secs(5));
+        // One that loses a race takes nothing.
+        assert!(
+            time::timeout(Duration::from_secs(1), time_limits.run_out())
+                .await
+                .is_err()
+        );
+        assert_eq!(time_limits.run_out().await, slow);
+        assert_eq!(started.elapsed(), Duration::from_secs(20));
+
+        assert!(
+            time::timeout(A_MINUTE, time_limits.run_out())
+                .await
+                .is_err(),
+            "each runs out once"
         );
     }
 }
