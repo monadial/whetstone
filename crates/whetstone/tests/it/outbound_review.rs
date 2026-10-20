@@ -144,7 +144,7 @@ fn every_touched_file_is_listed_with_its_size_and_whether_it_is_sent_or_why_not(
     assert_eq!(
         files(&session),
         [
-            [".env.example", "1 KB", "left out: common secret path"].as_slice(),
+            [".env.example", "1 KB", "left out: possible secret path"].as_slice(),
             &[".gitmodules", "1 KB", "included"],
             &["Cargo.lock", "1 KB", "left out: lockfile"],
             &["docs/logo.png", "1 KB", "left out: binary file"],
@@ -152,7 +152,7 @@ fn every_touched_file_is_listed_with_its_size_and_whether_it_is_sent_or_why_not(
             &[
                 "fixtures/cards.json",
                 "1 KB",
-                "left out: exclude pattern fixtures/"
+                "left out by repository config: fixtures/"
             ],
             &["src/retry.rs", "1 KB", "included"],
             &["vendor/ledger", "–", "left out: submodule"],
@@ -178,12 +178,12 @@ fn space_brings_back_a_file_left_out_by_default_or_by_config_and_leaves_it_out_a
     assert_eq!(
         statuses(&session)[0..6],
         [
-            "left out: common secret path",
+            "left out: possible secret path",
             "included",
             "left out: lockfile",
             "left out: binary file",
             "left out: symlink",
-            "left out: exclude pattern fixtures/",
+            "left out by repository config: fixtures/",
         ]
     );
 }
@@ -256,13 +256,13 @@ fn a_file_renamed_away_from_a_path_left_out_is_left_out_for_its_old_path() {
                 "cards.json",
                 "← fixtures/cards.json",
                 "1 KB",
-                "left out: exclude pattern fixtures/"
+                "left out by repository config: fixtures/"
             ],
             [
                 "settings.txt",
                 "← .env",
                 "1 KB",
-                "left out: common secret path"
+                "left out: possible secret path"
             ],
         ]
     );
@@ -278,7 +278,7 @@ fn a_config_pattern_never_replaces_the_default_reason_a_file_is_left_out() {
     repo.write(".whetstone/config.toml", "exclude = [\".env*\"]\n");
     let mut session = started_in(repo.root(), 120, 60);
     session.press(REVIEW_NEWEST);
-    assert_eq!(statuses(&session), ["left out: common secret path"]);
+    assert_eq!(statuses(&session), ["left out: possible secret path"]);
 
     session.press("j <Space>");
 
@@ -378,6 +378,64 @@ fn leaving_out_the_file_or_marking_the_match_as_not_a_secret_resolves_a_finding(
 }
 
 #[test]
+fn not_a_secret_dismisses_only_the_match_it_marks() {
+    let repo = with_secrets();
+    let mut session = started_in(repo.root(), 120, 60);
+    session.press(REVIEW_NEWEST);
+
+    // From the change round to Back, then up to the commit message's
+    // finding.
+    session.press("<S-Tab> k k k k <Space>");
+
+    assert_eq!(
+        session.section("Secret check"),
+        [
+            "Possible secret in the commit message, line 3: GitHub token, ghp_********",
+            "> (x) Not a secret",
+            "Possible secret in src/settings.py, line 2: AWS access key ID, AKIA********",
+            "Leave out the file",
+            "( ) Not a secret",
+            "Whetstone checks for common secret formats and can't guarantee there are none.",
+        ]
+    );
+    assert_eq!(send(&session), "Send (resolve the possible secrets)");
+}
+
+#[test]
+fn two_matches_of_one_rule_on_one_line_are_marked_as_not_secrets_apart() {
+    let other_key = concat!("AKIA", "EKAFEKAFEKAFEKAF");
+    let repo = TestRepo::new("payments");
+    repo.write("README.md", "# Payments\n");
+    repo.commit("Start the payments service");
+    repo.write(
+        "src/settings.py",
+        format!("KEYS = [\"{AWS_KEY}\", \"{other_key}\"]\n"),
+    );
+    repo.commit("Configure the payments client");
+    let mut session = started_in(repo.root(), 120, 60);
+    session.press(REVIEW_NEWEST);
+    let finding = "Possible secret in src/settings.py, line 1: AWS access key ID, AKIA********";
+
+    // From the change round to Back, then up past Send and the second
+    // match's actions to the first match's Not a secret.
+    session.press("<S-Tab> k k k k <Space>");
+
+    assert_eq!(
+        session.section("Secret check"),
+        [
+            finding,
+            "Leave out the file",
+            "> (x) Not a secret",
+            finding,
+            "Leave out the file",
+            "( ) Not a secret",
+            "Whetstone checks for common secret formats and can't guarantee there are none.",
+        ]
+    );
+    assert_eq!(send(&session), "Send (resolve the possible secrets)");
+}
+
+#[test]
 fn a_finding_in_the_commit_message_can_only_be_marked_as_not_a_secret() {
     let repo = TestRepo::new("payments");
     repo.write("README.md", "# Payments\n");
@@ -402,7 +460,7 @@ fn a_file_brought_back_is_checked_for_secrets_as_it_returns() {
     session.press(REVIEW_NEWEST);
     assert_eq!(
         files(&session)[0],
-        [".env", "1 KB", "left out: common secret path"]
+        [".env", "1 KB", "left out: possible secret path"]
     );
 
     session.press("j <Space>");
@@ -469,6 +527,45 @@ fn over_the_limit_the_review_says_the_change_is_too_large_until_files_are_left_o
     assert_eq!(size.len(), 1, "{size:?}");
     assert!(size[0].ends_with(" KB of 400 KB"), "{size:?}");
     assert_eq!(files(&session)[0][2], "left out by you");
+}
+
+#[test]
+fn a_file_brought_back_counts_towards_the_size() {
+    // A file left out by default, and one left out by the repository's
+    // config, each of 300 KB.
+    for (path, config) in [
+        ("Cargo.lock", None),
+        ("fixtures/cards.txt", Some("exclude = [\"fixtures/\"]\n")),
+    ] {
+        let repo = TestRepo::new("payments");
+        repo.write("README.md", "# Payments\n");
+        repo.commit("Start the payments service");
+        repo.write("src/retry.rs", "pub fn retry() {}\n")
+            .write(path, "[[package]]\n".repeat(25_000));
+        repo.commit("Retry failed payments");
+        if let Some(config) = config {
+            repo.write(".whetstone/config.toml", config);
+        }
+        let mut session = started_in(repo.root(), 120, 60);
+        session.press(REVIEW_NEWEST);
+        // Only the source file, the message and the area prompts count.
+        assert_eq!(session.section("Size"), ["6 KB of 400 KB"], "{path}");
+
+        session.press("j <Space>");
+
+        assert_eq!(files(&session)[0][0], path);
+        assert_eq!(statuses(&session)[0], "included by you", "{path}");
+        let size = session.section("Size");
+        let kilobytes: usize = size[0]
+            .strip_suffix(" KB of 400 KB")
+            .and_then(|kilobytes| kilobytes.parse().ok())
+            .unwrap_or_default();
+        assert!(kilobytes > 600, "its diff and content count: {size:?}");
+        assert_eq!(
+            size[1], "This change is too large to practise on.",
+            "{size:?}"
+        );
+    }
 }
 
 #[test]
@@ -701,8 +798,28 @@ fn review_choices_survive_going_back_to_the_picker_and_reset_for_another_commit(
     // Choose the first commit, then the newest again, and review it.
     session.press("q k <Space> k <Space> j j <Enter>");
     assert_eq!(session.rows()[1].trim(), "Review what will be sent");
-    assert_eq!(statuses(&session)[0], "left out: common secret path");
+    assert_eq!(statuses(&session)[0], "left out: possible secret path");
     assert_eq!(statuses(&session)[6], "included");
+}
+
+#[test]
+fn back_returns_to_the_picker_and_keeps_the_choices_for_the_same_commit() {
+    let repo = with_every_kind_of_file();
+    let mut session = started_in(repo.root(), 120, 60);
+    session.press("<Enter> j j j j j <Space> k k k k k <S-Tab>");
+    let picker = session.text();
+    session.press("<Enter> j <Space>");
+    let chosen = statuses(&session);
+    assert_eq!(chosen[0], "included by you");
+
+    // From the first file, round to Back.
+    session.press("k <S-Tab>");
+    assert_eq!(session.row_with("Back"), "> Back");
+    session.press("<Enter>");
+
+    assert_eq!(session.text(), picker);
+    session.press("<Enter>");
+    assert_eq!(statuses(&session), chosen);
 }
 
 #[test]

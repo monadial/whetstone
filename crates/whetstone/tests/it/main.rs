@@ -4,6 +4,9 @@
 mod app;
 mod areas;
 mod areas_init;
+/// The build script's checks on areas, which it shares with these tests.
+#[path = "../../build/areas.rs"]
+mod build_areas;
 mod cli;
 mod colors;
 mod commit_viewer;

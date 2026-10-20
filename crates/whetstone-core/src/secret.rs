@@ -265,10 +265,13 @@ impl SecretRule {
 
 /// A possible secret in a text: where it starts, the rule that matched and a
 /// masked excerpt. It never holds the matched value, so its `Debug` output
-/// is safe to log.
+/// is safe to log. Two matches are two findings even when they share a
+/// line, a rule and an excerpt, since they start in different columns.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct SecretFinding {
     line: usize,
+    /// The 1-based byte on its line where the match starts.
+    column: usize,
     rule: &'static SecretRule,
     excerpt: String,
 }
@@ -299,6 +302,7 @@ impl fmt::Debug for SecretFinding {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SecretFinding")
             .field("line", &self.line)
+            .field("column", &self.column)
             .field("rule", &self.rule.name)
             .field("excerpt", &self.excerpt)
             .finish()
@@ -333,15 +337,19 @@ pub fn find_secrets(text: &str) -> Vec<SecretFinding> {
     });
     matches
         .into_iter()
-        .map(|(rule, found)| SecretFinding {
-            line: line_starts.partition_point(|&start| start <= found.start()),
-            rule,
-            excerpt: found
-                .as_str()
-                .chars()
-                .take(4)
-                .chain("********".chars())
-                .collect(),
+        .map(|(rule, found)| {
+            let line = line_starts.partition_point(|&start| start <= found.start());
+            SecretFinding {
+                line,
+                column: found.start() - line_starts[line - 1] + 1,
+                rule,
+                excerpt: found
+                    .as_str()
+                    .chars()
+                    .take(4)
+                    .chain("********".chars())
+                    .collect(),
+            }
         })
         .collect()
 }

@@ -1,10 +1,13 @@
 //! Whetstone's default areas: the area files in its source, embedded in the
-//! binary.
+//! binary, which the build checks.
 
+use std::error::Error as _;
 use std::fs;
 use std::path::Path;
 
-use whetstone_core::Area;
+use whetstone_core::{Area, AreaId};
+
+use crate::build_areas;
 
 #[test]
 fn the_embedded_default_area_files_are_exactly_the_files_in_the_source() {
@@ -34,4 +37,38 @@ fn the_embedded_default_area_files_are_exactly_the_files_in_the_source() {
         "`showcase/check-history.sh` reads the IDs from the directory"
     );
     assert!(embedded == on_disk, "the embedded contents match the files");
+}
+
+#[test]
+fn the_build_takes_the_ids_of_the_default_area_files_which_are_all_valid() {
+    let ids = build_areas::default_ids(Area::default_files()).expect("the defaults are valid");
+
+    assert_eq!(
+        ids.iter().map(AreaId::as_str).collect::<Vec<_>>(),
+        [
+            "domain",
+            "infrastructure",
+            "observability",
+            "scalability",
+            "system-design"
+        ]
+    );
+}
+
+#[test]
+fn the_build_fails_on_a_default_area_file_that_is_invalid() {
+    let domain = Area::default_files()[0];
+    let without_a_description: &[u8] = b"+++\nname = \"Infrastructure\"\n+++\n\nLook at it.\n";
+
+    let error = build_areas::default_ids(&[domain, ("infrastructure.md", without_a_description)])
+        .expect_err("a default area file is invalid");
+
+    assert_eq!(
+        error.to_string(),
+        "infrastructure.md is not a valid area file"
+    );
+    assert_eq!(
+        error.source().map(ToString::to_string).as_deref(),
+        Some("the front matter has no `description`")
+    );
 }

@@ -23,7 +23,7 @@ Buffer {
         "    Author, committer, dates and the commit ID are not sent.                    ",
         "                                                                                ",
         "  Files                                                                         ",
-        "    .env.example         1 KB  left out: common secret path                     ",
+        "    .env.example         1 KB  left out: possible secret path                   ",
         "    .gitmodules          1 KB  included                                         ",
         "    Cargo.lock           1 KB  left out: lockfile                               ",
         "    docs/logo.png        1 KB  left out: binary file                            ",

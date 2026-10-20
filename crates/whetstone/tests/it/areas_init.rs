@@ -11,6 +11,8 @@ use tempfile::TempDir;
 use whetstone_core::Area;
 
 use crate::repo::TestRepo;
+use crate::repository::started_in;
+use crate::session::columns;
 
 /// Runs `whetstone` with `args` in `dir`, in a clean environment whose home
 /// is a fresh temporary directory, without a terminal.
@@ -174,6 +176,70 @@ fn help_lists_the_areas_command_and_its_init_subcommand() {
             .lines()
             .any(|line| line.trim_start().starts_with("init ")),
         "areas help lists init:\n{areas_help}"
+    );
+
+    let init = whetstone_in(outside.path(), &["areas", "init", "--help"]);
+    assert_eq!(init.status.code(), Some(0), "{}", stderr(&init));
+    let init_help = stdout(&init);
+    assert!(
+        init_help.starts_with(
+            "Copy Whetstone's five default area files into `.whetstone/areas/` at the repository's root"
+        ) && init_help.contains("Refuses if area files are already there"),
+        "init help describes it:\n{init_help}"
+    );
+    assert!(
+        init_help.contains("Usage: whetstone areas init"),
+        "{init_help}"
+    );
+}
+
+#[test]
+fn the_files_areas_init_writes_load_as_the_repositorys_areas() {
+    let repo = TestRepo::new("payments");
+    repo.write("README.md", "# Payments\n");
+    repo.commit("Start the payments service");
+    let output = whetstone_in(repo.root(), &["areas", "init"]);
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+
+    let mut session = started_in(repo.root(), 120, 60);
+    session.press("<Enter>");
+    assert_eq!(
+        columns(&session.section("Areas the questions focus on")),
+        [
+            vec![
+                "> (x) Domain",
+                "The rules, concepts and language the work is about"
+            ],
+            vec![
+                "(x) Infrastructure",
+                "Where the work runs and what it depends on"
+            ],
+            vec![
+                "(x) Observability",
+                "How you can tell what the work is doing and why"
+            ],
+            vec![
+                "(x) Scalability",
+                "How the work holds up as use and data grow"
+            ],
+            vec![
+                "(x) System design",
+                "How the parts fit together, and why this way"
+            ],
+        ]
+    );
+
+    // Choose the commit and review it: the areas come from the repository.
+    session.press("j j j j j <Space> k k k k k <S-Tab> <Enter>");
+    assert_eq!(
+        columns(&session.section("Areas")),
+        [
+            ["Domain", "this repository"],
+            ["Infrastructure", "this repository"],
+            ["Observability", "this repository"],
+            ["Scalability", "this repository"],
+            ["System design", "this repository"],
+        ]
     );
 }
 

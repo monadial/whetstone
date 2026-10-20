@@ -548,6 +548,9 @@ impl fmt::Display for FileStatus {
             Self::Included => f.write_str("included"),
             Self::IncludedByYou => f.write_str("included by you"),
             Self::LeftOutByYou => f.write_str("left out by you"),
+            Self::LeftOut(Exclusion::Config(pattern)) => {
+                write!(f, "left out by repository config: {}", pattern.as_str())
+            }
             Self::LeftOut(reason) => write!(f, "left out: {reason}"),
         }
     }
@@ -563,8 +566,10 @@ impl Exclusion {
     }
 }
 
-/// The reason as the outbound review shows it: "binary file", "lockfile",
-/// or "exclude pattern fixtures/".
+/// The reason on its own: "binary file", "lockfile" or "exclude pattern
+/// fixtures/". [`FileStatus`] shows it after "left out:", but a file an
+/// `exclude` pattern leaves out as "left out by repository config:
+/// fixtures/".
 impl fmt::Display for Exclusion {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

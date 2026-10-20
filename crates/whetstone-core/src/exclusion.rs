@@ -201,13 +201,13 @@ impl DefaultExclusion {
 /// use whetstone_core::DefaultExclusionKind;
 ///
 /// assert_eq!(DefaultExclusionKind::Lockfile.to_string(), "lockfile");
-/// assert_eq!(DefaultExclusionKind::SecretPath.to_string(), "common secret path");
+/// assert_eq!(DefaultExclusionKind::SecretPath.to_string(), "possible secret path");
 /// ```
 impl fmt::Display for DefaultExclusionKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Self::Lockfile => "lockfile",
-            Self::SecretPath => "common secret path",
+            Self::SecretPath => "possible secret path",
         })
     }
 }
@@ -756,7 +756,7 @@ mod tests {
         assert_eq!(reason("Cargo.lock").as_deref(), Some("lockfile"));
         assert_eq!(
             reason(".env.example").as_deref(),
-            Some("common secret path")
+            Some("possible secret path")
         );
     }
 

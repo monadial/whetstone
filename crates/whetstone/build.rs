@@ -11,9 +11,11 @@
 //! file before and after.
 //!
 //! The output depends only on those files and the default areas, so the
-//! build is deterministic. A hunk that does not apply exactly, a trailer that
-//! names anything but a default area's ID, or anything else the replay does
-//! not understand fails the build.
+//! build is deterministic. A default area file that is invalid, a hunk that
+//! does not apply exactly, a trailer that names anything but a default
+//! area's ID, or anything else the replay does not understand fails the
+//! build. `build/areas.rs` holds the checks on areas, which the integration
+//! tests share.
 
 use std::collections::BTreeMap;
 use std::error::Error as _;
@@ -23,6 +25,9 @@ use std::process::ExitCode;
 use std::{env, fs, io};
 
 use whetstone_core::{Area, AreaId};
+
+#[path = "build/areas.rs"]
+mod areas;
 
 /// The showcase project's patch series, relative to this crate.
 const HISTORY: &str = "../../showcase/payments-history";
@@ -68,6 +73,8 @@ enum EmbedError {
         #[source]
         source: io::Error,
     },
+    #[error("a default area it offers is invalid")]
+    DefaultArea(#[source] whetstone_core::InvalidAreaFile),
     #[error("{}", path.display())]
     History {
         path: PathBuf,
@@ -90,11 +97,9 @@ fn embed() -> Result<(), EmbedError> {
     tell_cargo(&[HISTORY]);
     let out = PathBuf::from(env::var_os("OUT_DIR").ok_or(EmbedError::NoOutDir)?);
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    // A trailer may name only the areas a learner is offered: the defaults.
-    let defaults: Vec<AreaId> = Area::defaults()
-        .iter()
-        .map(|area| area.id().clone())
-        .collect();
+    // A trailer may name only the areas a learner is offered: the defaults,
+    // which must all be valid.
+    let defaults = areas::default_ids(Area::default_files()).map_err(EmbedError::DefaultArea)?;
     let mut replay = Replay::default();
     for path in patch_files(&crate_dir.join(HISTORY))? {
         let text = read(&path)?;
@@ -241,21 +246,7 @@ impl<'a> Patch<'a> {
     /// Fails unless every area the trailer names is the ID of one of the
     /// `defaults`.
     fn check_areas(&self, defaults: &[AreaId]) -> Result<(), HistoryError> {
-        match self.areas.iter().find(|area| {
-            !area
-                .parse::<AreaId>()
-                .is_ok_and(|id| defaults.contains(&id))
-        }) {
-            Some(area) => Err(malformed(format!(
-                "the `Areas:` trailer names {area:?}, which is not the ID of a default area: {}",
-                defaults
-                    .iter()
-                    .map(AreaId::as_str)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ))),
-            None => Ok(()),
-        }
+        areas::check_trailer(&self.areas, defaults).map_err(|error| malformed(error.to_string()))
     }
 }
 
