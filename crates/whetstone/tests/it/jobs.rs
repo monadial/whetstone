@@ -9,7 +9,7 @@ use std::sync::mpsc;
 
 use tokio::runtime;
 use tokio_util::sync::CancellationToken;
-use whetstone::{Cancelled, Finished, JobId, Jobs, Outcome, Workers};
+use whetstone::{Cancelled, Finished, JobId, JobOutcome, Jobs, Workers};
 
 use crate::session::Session;
 
@@ -35,7 +35,7 @@ fn a_job_s_result_arrives_with_the_job_s_identity() {
         let finished = workers.finished().await;
 
         assert_eq!(finished.id, id);
-        assert_eq!(finished.outcome, Outcome::Done(42));
+        assert_eq!(finished.outcome, JobOutcome::Done(42));
     });
 }
 
@@ -56,7 +56,7 @@ fn the_workers_are_busy_only_while_a_job_runs() {
         }
         assert!(!workers.is_idle(), "busy while the job runs");
         go_on.send(()).expect("let the job end");
-        assert_eq!(workers.finished().await.outcome, Outcome::Done(42));
+        assert_eq!(workers.finished().await.outcome, JobOutcome::Done(42));
 
         // Its thread may still be returning once its report is sent.
         while !workers.is_idle() {
@@ -86,7 +86,7 @@ fn a_job_cancelled_before_it_runs_reports_cancellation_and_never_runs_its_body()
         let finished = workers.finished().await;
 
         assert_eq!(finished.id, id);
-        assert_eq!(finished.outcome, Outcome::Cancelled);
+        assert_eq!(finished.outcome, JobOutcome::Cancelled);
         assert!(!ran.load(Ordering::SeqCst), "its body never ran");
     });
 }
@@ -125,7 +125,7 @@ fn a_job_cancelled_while_it_runs_reports_cancellation_even_if_its_body_runs_to_i
     let (id, finished) = cancelled_while_running(|_| Ok(42));
 
     assert_eq!(finished.id, id);
-    assert_eq!(finished.outcome, Outcome::Cancelled);
+    assert_eq!(finished.outcome, JobOutcome::Cancelled);
 }
 
 #[test]
@@ -136,7 +136,7 @@ fn a_job_s_body_can_see_its_cancellation_and_stop_early() {
     });
 
     assert_eq!(finished.id, id);
-    assert_eq!(finished.outcome, Outcome::Cancelled);
+    assert_eq!(finished.outcome, JobOutcome::Cancelled);
 }
 
 #[test]
@@ -158,7 +158,7 @@ fn a_result_is_accepted_only_from_a_job_the_app_still_waits_for() {
             }
         }
 
-        assert_eq!(accepted, [(current, Outcome::Done("current"))]);
+        assert_eq!(accepted, [(current, JobOutcome::Done("current"))]);
     });
 }
 

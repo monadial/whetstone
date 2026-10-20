@@ -14,7 +14,7 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
 /// A job's identity, unique among the jobs one [`Jobs`] starts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct JobId(u64);
 
 /// What the app's background jobs produce. Each kind of job adds its
@@ -26,7 +26,7 @@ pub enum JobOutput {}
 
 /// How a job ended.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Outcome<T> {
+pub enum JobOutcome<T> {
     /// Its body returned this.
     Done(T),
     /// It was cancelled before it ended (rule 17).
@@ -39,7 +39,7 @@ pub struct Finished<T> {
     /// The job that ended.
     pub id: JobId,
     /// How it ended.
-    pub outcome: Outcome<T>,
+    pub outcome: JobOutcome<T>,
 }
 
 /// What a job's body returns when it stops early because its job was
@@ -67,11 +67,11 @@ impl<T> Job<T> {
     #[must_use]
     pub fn run(self) -> Finished<T> {
         let outcome = if self.token.is_cancelled() {
-            Outcome::Cancelled
+            JobOutcome::Cancelled
         } else {
             match (self.body)(&self.token) {
-                Ok(output) if !self.token.is_cancelled() => Outcome::Done(output),
-                Ok(_) | Err(Cancelled) => Outcome::Cancelled,
+                Ok(output) if !self.token.is_cancelled() => JobOutcome::Done(output),
+                Ok(_) | Err(Cancelled) => JobOutcome::Cancelled,
             }
         };
         Finished {
@@ -98,7 +98,7 @@ pub struct Jobs<T> {
     /// The parent of every job's token.
     root: CancellationToken,
     /// The identity the next job gets.
-    next: u64,
+    next_id: u64,
     /// Jobs started since the UI loop last took them.
     started: Vec<Job<T>>,
     /// The jobs the app waits for, with their tokens: started, and neither
@@ -112,7 +112,7 @@ impl<T> Jobs<T> {
     pub fn new() -> Self {
         Self {
             root: CancellationToken::new(),
-            next: 0,
+            next_id: 0,
             started: Vec::new(),
             outstanding: Vec::new(),
         }
@@ -124,8 +124,8 @@ impl<T> Jobs<T> {
         &mut self,
         body: impl FnOnce(&CancellationToken) -> Result<T, Cancelled> + Send + 'static,
     ) -> JobId {
-        let id = JobId(self.next);
-        self.next += 1;
+        let id = JobId(self.next_id);
+        self.next_id += 1;
         let token = self.root.child_token();
         self.outstanding.push((id, token.clone()));
         self.started.push(Job {
@@ -137,7 +137,7 @@ impl<T> Jobs<T> {
     }
 
     /// Cancels job `id`, if the app still waits for it. Its body may still
-    /// run to its end, but it reports [`Outcome::Cancelled`].
+    /// run to its end, but it reports [`JobOutcome::Cancelled`].
     pub fn cancel(&mut self, id: JobId) {
         if let Some(token) = self.stop_waiting(id) {
             token.cancel();
@@ -180,7 +180,7 @@ impl<T> Drop for Jobs<T> {
 /// The loop takes each one as soon as it arrives, so the channel rarely holds
 /// more than one. A job that finds it full waits on its own blocking thread
 /// until the loop takes one, so the loop itself never waits.
-const WAITING_RESULTS: usize = 4;
+const RESULTS_CAPACITY: usize = 4;
 
 /// Runs jobs on Tokio's blocking threads and hands back their results: the
 /// UI loop's side of background jobs.
@@ -196,7 +196,7 @@ impl<T: Send + 'static> Workers<T> {
     /// No jobs running yet.
     #[must_use]
     pub fn new() -> Self {
-        let (sender, results) = mpsc::channel(WAITING_RESULTS);
+        let (sender, results) = mpsc::channel(RESULTS_CAPACITY);
         Self {
             tracker: TaskTracker::new(),
             sender,

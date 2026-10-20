@@ -9,7 +9,7 @@ Each rule says how it is enforced:
 - **Lint/CI**: a lint, test or CI job fails the build. CI denies all warnings, so a lint set to `warn` in the workspace still fails CI.
 - **Review**: a reviewer checks it. Nothing mechanical catches it.
 
-Some rules are both. Rules about code that does not exist yet (async workers, AI, storage) are marked *from …*, or sit in a section that says when it applies. They apply as soon as that code lands, and their checks arrive with it.
+Some rules are both. Rules about code that does not exist yet (network code, AI, storage) are marked *from …*, or sit in a section that says when it applies. They apply as soon as that code lands, and their checks arrive with it.
 
 ## Toolchain, workspace and dependencies
 
@@ -50,7 +50,7 @@ The UI loop (`tui.rs`) runs on a current-thread Tokio runtime. It waits with `se
 | 21 | Channels are bounded, with a documented capacity. An unbounded channel needs a written reason. | **Review**. |
 | 22 | *From network code:* every network stage has an explicit timeout. The HTTP client is built with `connect_timeout` and `timeout`. | **Review**. **Lint/CI**: adapter tests. |
 | 23 | *From network code:* automatic retries use `backon` with jitter and an explicit retryable predicate. They never replay a paid request the user has not authorised. | **Review**. |
-| 24 | A worker result is applied only when its session, question version, attempt and job identities match the outstanding job. | **Lint/CI**: the job tests (`tests/it/jobs.rs`); reducer tests at the app seam for each kind of job. |
+| 24 | A worker result is applied only when its job identity matches the outstanding job, and so do its session, question version and attempt identities once those exist. | **Lint/CI**: the job tests (`tests/it/jobs.rs`); reducer tests at the app seam for each kind of job. |
 
 ## Terminal UI
 

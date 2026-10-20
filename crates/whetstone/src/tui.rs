@@ -34,6 +34,12 @@ use crate::terminal::{CrosstermSwitch, TerminalGuard, TerminalMode};
 /// it running can move.
 const TICK: Duration = Duration::from_millis(100);
 
+/// The signals that stop the app, as Ctrl+C does.
+const STOP_SIGNALS: [c_int; 3] = [SIGHUP, SIGINT, SIGTERM];
+
+/// The signals that suspend the app, as Ctrl+Z does, and continue it.
+const JOB_CONTROL_SIGNALS: [c_int; 2] = [SIGTSTP, SIGCONT];
+
 /// Why the UI loop ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Ending {
@@ -221,6 +227,7 @@ fn resume(
         .map_err(TuiError::Draw)
 }
 
+#[derive(Debug)]
 enum Input {
     /// A terminal event, a background job's result or a tick, for the app.
     Message(Message),
@@ -324,12 +331,13 @@ struct Signals {
 impl Signals {
     /// Must be called on the loop's runtime.
     fn listen() -> io::Result<Self> {
-        let stop = LastSignal::listen(&[SIGHUP, SIGINT, SIGTERM])?;
-        let job_control = LastSignal::listen(&[SIGTSTP, SIGCONT])?;
+        let stop = LastSignal::listen(&STOP_SIGNALS)?;
+        let job_control = LastSignal::listen(&JOB_CONTROL_SIGNALS)?;
         // Registered after the flags, so a signal's flag is set before it
         // wakes the loop.
-        let arrivals = [SIGHUP, SIGINT, SIGTERM, SIGTSTP, SIGCONT]
+        let arrivals = STOP_SIGNALS
             .into_iter()
+            .chain(JOB_CONTROL_SIGNALS)
             .map(|signal| unix_signal::signal(SignalKind::from_raw(signal)))
             .collect::<io::Result<_>>()?;
         Ok(Self {
