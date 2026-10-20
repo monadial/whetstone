@@ -95,12 +95,13 @@ impl Session {
     /// Presses each key in `script`, separated by spaces: a character such
     /// as `j`, `?` or `:`, or a named key such as `<Enter>`, `<Space>`,
     /// `<Tab>`, `<S-Tab>`, `<Esc>`, `<BS>` (Backspace), `<Up>`, `<Down>`,
-    /// `<Left>`, `<Right>`, `<C-c>`, `<C-d>` or `<C-u>`. Returns what the
-    /// last key asked of the loop, and stops at a quit, as the loop does.
+    /// `<Left>`, `<Right>`, `<C-c>`, `<C-d>`, `<C-u>` or `<C-z>`. Returns
+    /// what the last key asked of the loop, and stops at a quit, as the loop
+    /// does. After a suspend the loop carries on, so keys can follow it.
     pub(crate) fn press(&mut self, script: &str) -> Flow {
         let mut flow = Flow::Continue;
         for name in script.split_whitespace() {
-            assert_eq!(flow, Flow::Continue, "{name} pressed after the app quit");
+            assert_ne!(flow, Flow::Quit, "{name} pressed after the app quit");
             flow = self.app.handle(&Event::Key(key(name)));
         }
         flow
@@ -244,6 +245,7 @@ fn key(name: &str) -> KeyEvent {
         "<C-c>" => (KeyCode::Char('c'), KeyModifiers::CONTROL),
         "<C-d>" => (KeyCode::Char('d'), KeyModifiers::CONTROL),
         "<C-u>" => (KeyCode::Char('u'), KeyModifiers::CONTROL),
+        "<C-z>" => (KeyCode::Char('z'), KeyModifiers::CONTROL),
         // Terminals report `?` with Shift held.
         "?" => (KeyCode::Char('?'), KeyModifiers::SHIFT),
         _ => {
