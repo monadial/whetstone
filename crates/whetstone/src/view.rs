@@ -4,6 +4,7 @@
 
 use std::fmt;
 use std::sync::Arc;
+use std::time::Duration;
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -68,6 +69,12 @@ pub(crate) trait View: fmt::Debug {
     /// [`View::waits_for`] says so.
     fn finish_job(&mut self, _job: JobId, _output: JobOutput) {}
 
+    /// Carries on without the result of the job `job`, which the screen
+    /// waited for until its time limit ran out. The job runs on to its end,
+    /// and its result is never applied. The app calls it only when
+    /// [`View::waits_for`] says so.
+    fn time_up(&mut self, _job: JobId) {}
+
     /// Inserts pasted `text` into the focused text entry as one insertion.
     /// The app calls it only while [`View::input`] is text, so a screen
     /// with a text entry implements both.
@@ -96,6 +103,9 @@ pub(crate) struct Context<'a> {
     pub(crate) ticks: usize,
     /// The graphs connected code was found in before.
     pub(crate) cache: &'a Arc<GraphCache>,
+    /// How long the outbound review waits for connected code, from when it
+    /// opens, before it carries on without it.
+    pub(crate) time_limit: Duration,
 }
 
 /// What Practice runs on.

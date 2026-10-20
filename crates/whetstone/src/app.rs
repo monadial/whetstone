@@ -13,10 +13,12 @@
 //! text entry as one insertion, and anywhere else it does nothing.
 //!
 //! A background job's result enters the same way, and is applied only if
-//! the app still waits for that job.
+//! the app still waits for that job. So does the end of a job's time limit,
+//! after which the app no longer waits for it.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use ratatui::Frame;
 use ratatui::crossterm::event::{Event, KeyEvent, KeyEventKind};
@@ -26,10 +28,10 @@ use ratatui::widgets::{Block, Paragraph, Wrap};
 use whetstone_core::ShowcaseProject;
 
 use crate::config::Settings;
-use crate::connected_code::{AnalysisDirs, AnalysisDirsGuard, GraphCache};
+use crate::connected_code::{self, AnalysisDirs, AnalysisDirsGuard, GraphCache};
 use crate::help::KeyHelp;
 use crate::home::Home;
-use crate::job::{Finished, Job, JobId, JobOutcome, JobOutput, Jobs};
+use crate::job::{Finished, Job, JobId, JobOutcome, JobOutput, Jobs, TimeLimit};
 use crate::keymap::{self, Command, Input};
 use crate::overlay::{Outcome, Overlay};
 use crate::palette::Palette;
@@ -70,10 +72,13 @@ pub struct App {
     /// The graphs connected code was found in before, one cache for the
     /// whole run, shared with the jobs that find connected code.
     cache: Arc<GraphCache>,
+    /// How long the outbound review waits for connected code.
+    time_limit: Duration,
 }
 
 /// Something for the app to apply: a terminal event the UI loop read, a
-/// background job's result, or a tick while a job runs.
+/// background job's result, the end of a job's time limit, or a tick while
+/// a job runs.
 #[derive(Debug)]
 pub enum Message {
     /// Only key presses and pastes act (rule 26). A resize changes only how
@@ -81,6 +86,9 @@ pub enum Message {
     Terminal(Event),
     /// A background job ended.
     Finished(Finished<JobOutput>),
+    /// The time limit the app set on this job ran out. Unless the job has
+    /// ended, the app gives up waiting for it, without cancelling it.
+    TimeUp(JobId),
     /// While a job runs, the UI loop ticks to draw the next frame.
     Tick,
 }
@@ -176,7 +184,8 @@ impl App {
     /// on it is unavailable. Connected code is analysed in `temp_dir`, the
     /// system temporary directory, and the graphs it is found in are cached
     /// in `cache_dir`, the learner's cache directory, which it creates if it
-    /// can.
+    /// can. The outbound review waits for connected code for Whetstone's
+    /// time limit.
     #[must_use]
     pub fn new(
         theme: Theme,
@@ -205,7 +214,15 @@ impl App {
             _analysis_guard: analysis.guard(),
             analysis,
             cache: Arc::new(GraphCache::open(cache_dir, GraphCache::CAP)),
+            time_limit: connected_code::TIME_LIMIT,
         }
+    }
+
+    /// The same app, except that the outbound review waits `time_limit` for
+    /// connected code, as a test sets it.
+    #[must_use]
+    pub fn with_time_limit(self, time_limit: Duration) -> Self {
+        Self { time_limit, ..self }
     }
 
     /// Applies one message. Key presses act, a paste goes into the focused
@@ -229,6 +246,10 @@ impl App {
                 self.apply_job(finished);
                 Flow::Continue
             }
+            Message::TimeUp(job) => {
+                self.time_up(job);
+                Flow::Continue
+            }
             Message::Tick => {
                 self.ticks = self.ticks.wrapping_add(1);
                 Flow::Continue
@@ -241,6 +262,12 @@ impl App {
     /// loop to run.
     pub fn take_jobs(&mut self) -> Vec<Job<JobOutput>> {
         self.jobs.take_started()
+    }
+
+    /// The time limits the app set on its jobs since the last take, for the
+    /// UI loop to time.
+    pub fn take_time_limits(&mut self) -> Vec<TimeLimit> {
+        self.jobs.take_time_limits()
     }
 
     /// Rule 24: applies a job's result only if the app still waits for that
@@ -261,6 +288,18 @@ impl App {
             }
             // A job the app waits for is cancelled only as the app quits.
             JobOutcome::Cancelled => {}
+        }
+    }
+
+    /// Gives up waiting for the job `job`, whose time limit ran out, unless
+    /// it ended in time. It is not cancelled: it runs to its end, and its
+    /// result is ignored when it comes.
+    fn time_up(&mut self, job: JobId) {
+        if !self.jobs.forget(job) {
+            return;
+        }
+        if let Some(screen) = self.screens.waiting_for(job) {
+            screen.time_up(job);
         }
     }
 
@@ -343,6 +382,7 @@ impl App {
                     analysis: &self.analysis,
                     ticks: self.ticks,
                     cache: &self.cache,
+                    time_limit: self.time_limit,
                 };
                 self.screens.go(route, &context, &mut self.jobs);
             }
@@ -377,6 +417,7 @@ impl App {
             analysis: &self.analysis,
             ticks: self.ticks,
             cache: &self.cache,
+            time_limit: self.time_limit,
         };
         screen.render(&context, frame, body);
         // While a text entry has focus, the keys that work everywhere type.
