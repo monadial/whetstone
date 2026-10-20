@@ -32,6 +32,7 @@ mod pty_graph_cache;
 mod pty_paste;
 mod pty_suspend;
 mod pty_terminal;
+mod questions_setting;
 mod related;
 mod repo;
 mod repository;

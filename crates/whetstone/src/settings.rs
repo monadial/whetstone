@@ -8,7 +8,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{List, Paragraph, Wrap};
-use whetstone_core::ConnectedCodeLimitKb;
+use whetstone_core::{ConnectedCodeLimitKb, QuestionCount};
 
 use crate::columns;
 use crate::config::{
@@ -40,26 +40,29 @@ enum Control {
     OpenRouterKey,
     Colours,
     ConnectedCodeLimit,
+    Questions,
     Back,
 }
 
 impl Control {
-    const ALL: [Self; 7] = [
+    const ALL: [Self; 8] = [
         Self::Provider,
         Self::JevModel,
         Self::GeneratorModel,
         Self::OpenRouterKey,
         Self::Colours,
         Self::ConnectedCodeLimit,
+        Self::Questions,
         Self::Back,
     ];
-    const ROWS: [Self; 6] = [
+    const ROWS: [Self; 7] = [
         Self::Provider,
         Self::JevModel,
         Self::GeneratorModel,
         Self::OpenRouterKey,
         Self::Colours,
         Self::ConnectedCodeLimit,
+        Self::Questions,
     ];
 
     fn label(self) -> &'static str {
@@ -70,6 +73,7 @@ impl Control {
             Self::OpenRouterKey => "OpenRouter key",
             Self::Colours => "Colours",
             Self::ConnectedCodeLimit => "Connected code limit",
+            Self::Questions => "Questions",
             Self::Back => "Back",
         }
     }
@@ -98,6 +102,7 @@ impl Control {
                 (value, default_note)
             }
             Self::ConnectedCodeLimit => shown(&settings.connected_code_limit),
+            Self::Questions => shown(&settings.questions),
             Self::Back => (String::new(), None),
         }
     }
@@ -146,6 +151,10 @@ impl Control {
                  .whetstone/config.toml can lower it, never raise it. The default is {}.",
                 ConnectedCodeLimitKb::DEFAULT
             ),
+            Self::Questions => format!(
+                "How many questions a Practice asks for, from 3 to 5. The default is {}.",
+                QuestionCount::DEFAULT
+            ),
             Self::Back => "Back to home.".to_owned(),
         }
     }
@@ -172,6 +181,10 @@ impl Control {
             Self::ConnectedCodeLimit => Some(format!(
                 "In config.toml: connected_code_limit_kb = {}",
                 settings.connected_code_limit.value.get()
+            )),
+            Self::Questions => Some(format!(
+                "In config.toml: questions = {}",
+                settings.questions.value
             )),
             Self::Back => None,
         }
