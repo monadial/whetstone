@@ -15,9 +15,10 @@ use super::lines;
 /// The whole call graph of a commit's analysed files: every callable with
 /// its file and lines, and every call between them with its confidence.
 /// File paths are relative to the repository's root, so the graph outlives
-/// the directory it was found in, and it holds names, paths and line
-/// numbers, never file contents. It serialises, so it can be cached and
-/// asked about another change at the same commit.
+/// the directory it was found in. It holds names, paths and line numbers,
+/// never file contents: the engine's signature previews and attribute
+/// texts, which copy source, are dropped. It serialises, so it can be
+/// cached and asked about another change at the same commit.
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]
 pub(crate) struct Graph(cgg::Graph);
@@ -112,8 +113,13 @@ struct Hop {
 
 impl Graph {
     /// The graph `graph` found in the directory `root`, with its files'
-    /// paths made relative to `root`.
+    /// paths made relative to `root`, and without the copies of source its
+    /// callables carry.
     pub(super) fn found_in(mut graph: cgg::Graph, root: &Path) -> Self {
+        for callable in graph.callables.values_mut() {
+            callable.signature_hint.clear();
+            callable.attributes.clear();
+        }
         let relative = |path: &mut std::path::PathBuf| {
             if let Ok(inside) = path.strip_prefix(root) {
                 *path = inside.to_path_buf();
@@ -146,11 +152,15 @@ impl Graph {
     /// A changed callable is one in a file the change leaves at the commit
     /// whose lines include a line the change adds or modifies, or lines the
     /// change removes, as [`Touched::touches`](lines::Touched::touches)
-    /// decides. Callables the engine made up, with no lines of their own,
-    /// are never changed or connected. A function the change
-    /// deletes is not in the graph, so it has no connected code. Calls of
-    /// low confidence are left out, and so is any callable in a file the
-    /// change touches, which is sent already.
+    /// decides. A function the change deletes is not in the graph, so it
+    /// has no connected code.
+    ///
+    /// Callables the engine marks synthetic are never changed or
+    /// connected: those it makes up with no lines of their own, such as a
+    /// framework's entry point, and also the inline route handlers it names
+    /// itself in JavaScript, which do have lines. Calls of low confidence
+    /// are left out, and so is any callable in a file the change touches,
+    /// which is sent already.
     pub(crate) fn connections(&self, change: &Change) -> Vec<Connection> {
         let touched = lines::touched(change);
         let paths: HashMap<FileId, &str> = self
@@ -256,4 +266,41 @@ fn merged(mut hops: Vec<Hop>) -> Vec<Hop> {
         }
     }
     merged
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use tempfile::TempDir;
+
+    use super::*;
+
+    #[test]
+    fn the_graph_keeps_paths_relative_to_the_repository_and_no_copies_of_source() {
+        let root = TempDir::new().expect("create a temporary directory");
+        fs::create_dir(root.path().join("app")).expect("create a directory");
+        fs::write(
+            root.path().join("app/routes.py"),
+            "@app.route(\"/secret-admin\")\ndef index(token=\"hunter2\"):\n    return token\n",
+        )
+        .expect("write a file");
+        let options = cgg::RunOptions::new(vec![root.path().to_path_buf()]);
+        let graph = cgg::analyze(&options).expect("analyse the file").graph;
+        let has_source = |graph: &cgg::Graph| {
+            graph.callables.values().any(|callable| {
+                !callable.signature_hint.is_empty() || !callable.attributes.is_empty()
+            })
+        };
+        assert!(has_source(&graph), "the engine copies source");
+
+        let Graph(graph) = Graph::found_in(graph, root.path());
+
+        assert!(!has_source(&graph));
+        let paths: Vec<_> = graph.files.values().map(|file| file.path.clone()).collect();
+        assert!(
+            paths.contains(&Path::new("app/routes.py").to_path_buf()),
+            "{paths:?}"
+        );
+    }
 }
