@@ -39,22 +39,16 @@ impl Conventions {
     pub(super) fn parse(text: &str) -> Result<Self, ConventionsError> {
         let File { ecosystems } = toml::from_str(text).map_err(ConventionsError::Toml)?;
         let mut by_extension = HashMap::new();
-        let mut manifests = HashMap::new();
         for (index, ecosystem) in ecosystems.iter().enumerate() {
             ecosystem.validate()?;
             for extension in &ecosystem.extensions {
-                if let Some(first) = by_extension.insert(extension.clone(), index) {
+                // An ecosystem that lists an extension twice still claims it
+                // alone.
+                if let Some(first) = by_extension.insert(extension.clone(), index)
+                    && first != index
+                {
                     return Err(ConventionsError::ExtensionClaimedTwice {
                         extension: extension.clone(),
-                        first: ecosystems[first].name.clone(),
-                        second: ecosystem.name.clone(),
-                    });
-                }
-            }
-            for manifest in &ecosystem.manifests {
-                if let Some(first) = manifests.insert(manifest, index) {
-                    return Err(ConventionsError::ManifestListedTwice {
-                        manifest: manifest.clone(),
                         first: ecosystems[first].name.clone(),
                         second: ecosystem.name.clone(),
                     });
@@ -74,7 +68,9 @@ impl Conventions {
             .map(|&index| &self.ecosystems[index])
     }
 
-    /// Every ecosystem's manifests, in order of preference.
+    /// Every ecosystem's manifests, in order of preference. A manifest that
+    /// several ecosystems list builds each of them, and comes where the first
+    /// lists it.
     pub(super) fn manifests(&self) -> impl Iterator<Item = &str> {
         self.ecosystems
             .iter()
@@ -100,14 +96,6 @@ pub(super) enum ConventionsError {
     #[error("both {first} and {second} claim the extension `{extension}`")]
     ExtensionClaimedTwice {
         extension: String,
-        first: String,
-        second: String,
-    },
-    /// Two ecosystems list the same manifest, so which one it builds is
-    /// unclear.
-    #[error("both {first} and {second} list the manifest `{manifest}`")]
-    ManifestListedTwice {
-        manifest: String,
         first: String,
         second: String,
     },
@@ -549,20 +537,23 @@ mod tests {
     }
 
     #[test]
-    fn a_manifest_listed_by_two_ecosystems_is_an_error() {
+    fn ecosystems_may_share_a_manifest_and_one_may_repeat_what_it_lists() {
         let text = "[[ecosystem]]\n\
                     name = \"Java\"\n\
-                    extensions = [\"java\"]\n\
-                    manifests = [\"pom.xml\", \"build.gradle\"]\n\
+                    extensions = [\"java\", \"java\"]\n\
+                    manifests = [\"pom.xml\", \"build.gradle\", \"pom.xml\"]\n\
                     [[ecosystem]]\n\
                     name = \"Kotlin\"\n\
                     extensions = [\"kt\"]\n\
                     manifests = [\"build.gradle\"]\n";
 
-        assert_eq!(
-            why_invalid(text),
-            "both Java and Kotlin list the manifest `build.gradle`"
-        );
+        let conventions = Conventions::parse(text).expect("the conventions are valid");
+
+        assert!(["java", "kt"].iter().all(|extension| {
+            conventions
+                .by_extension(extension)
+                .is_some_and(|ecosystem| ecosystem.builds_with("build.gradle"))
+        }));
     }
 
     #[test]
