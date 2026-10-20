@@ -11,6 +11,11 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[features]
+# The scripted AI, which stands in for Jev and the generator in tests. Only
+# test builds turn it on, so it never ships.
+scripted = []
+
 [dependencies]
 # Each module that can fail has its own error type (CODING_STANDARDS.md rule 13).
 thiserror = "2"

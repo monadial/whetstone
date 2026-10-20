@@ -24,7 +24,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::Line;
 use ratatui::widgets::{List, Paragraph};
-use whetstone_ai::{Ai, CandidateCount, Reply, RequestFailure};
+use whetstone_ai::{Ai, CandidateCount, Pending, Reply, RequestFailure};
 use whetstone_core::{
     Area, AreaId, AssessmentPolicy, Candidate, CandidateId, Change, ConnectedCodeLimit,
     Connections, ConnectionsState, Evidence, ExcludePatterns, QuestionCheckAnswers, QuestionCount,
@@ -53,8 +53,9 @@ const KEYMAP: Keymap = &[
     },
 ];
 
-/// The keys once no question passed: `q` and Esc go back.
-const NONE_PASSED_KEYMAP: Keymap = &[
+/// The keys once a request failed, or no question passed: `q` and Esc go
+/// back, stopping any request still running.
+const BACK_KEYMAP: Keymap = &[
     keymap::MOVE,
     keymap::ACTIVATE,
     Binding {
@@ -70,8 +71,8 @@ const ACTIONS: &[Action] = &[Action {
     command: Command::Back,
 }];
 
-/// The questions screen's own action in the palette, and No questions
-/// passed checks'.
+/// The action in the palette once a request failed, on No questions passed
+/// checks, and on the questions screen.
 const BACK_ACTIONS: &[Action] = &[Action {
     label: "Back",
     does: "Go back to the areas and changes",
@@ -82,7 +83,7 @@ const BACK_ACTIONS: &[Action] = &[Action {
 #[derive(Debug)]
 pub(crate) struct Practice {
     /// The change, as its route names it.
-    at: ChangeRef,
+    change_ref: ChangeRef,
     change: Change,
     /// The chosen areas, in the order offered.
     areas: Vec<Area>,
@@ -92,8 +93,8 @@ pub(crate) struct Practice {
     connected_code_limit: ConnectedCodeLimit,
     /// How long it waits for connected code.
     time_limit: Duration,
-    lookup: Lookup,
-    /// The evidence, once connected code is found or given up on.
+    /// The evidence, prepared once connected code is found or given up on:
+    /// none only while it is found.
     evidence: Option<Evidence>,
     stage: Stage,
     /// The requests to Jev and the generator it waits for, each with what
@@ -106,11 +107,9 @@ pub(crate) struct Practice {
 #[derive(Debug)]
 enum Lookup {
     /// Not started yet: the job starts as the screen opens.
-    Requested(Box<ShowcaseLookup>),
+    Requested(Arc<ShowcaseLookup>),
     /// The job finding it, which the screen waits for.
     Running(JobId),
-    /// Found, or given up on.
-    Done,
 }
 
 /// What the job that finds a showcase change's connected code needs.
@@ -122,9 +121,12 @@ struct ShowcaseLookup {
     cache: Arc<GraphCache>,
 }
 
-/// Where Practice stands once the evidence is prepared.
+/// Where Practice stands.
 #[derive(Debug)]
 enum Stage {
+    /// Finding the change's connected code, before the evidence is
+    /// prepared.
+    FindingConnectedCode(Lookup),
     /// The generator writes candidates about each chosen area, in area
     /// order: what passed the plain checks.
     Writing(Vec<Request<Vec<Candidate>>>),
@@ -209,6 +211,19 @@ impl<T> Request<T> {
     }
 }
 
+/// Starts `request` as a background job, whose result `output` makes the
+/// app's, and waits for it as what it asked, `asking` (rule 24).
+fn send<T: Send + 'static>(
+    jobs: &mut Jobs<JobOutput>,
+    waiting: &mut Waiting<Asking>,
+    asking: Asking,
+    request: Pending<T>,
+    output: impl FnOnce(Result<Reply<T>, RequestFailure>) -> JobOutput + Send + 'static,
+) {
+    let job = jobs.start_async(async move { output(request.await) });
+    waiting.wait_for(job, asking);
+}
+
 impl Practice {
     /// Practice on the showcase change at `index`, which is `change`, whose
     /// tree is `tree`, about the chosen `areas`, if Practice can ask Jev and
@@ -228,7 +243,7 @@ impl Practice {
             "opened Preparing questions on a showcase change"
         );
         Some(Self {
-            at: ChangeRef::Showcase(index),
+            change_ref: ChangeRef::Showcase(index),
             change,
             areas,
             count: settings.questions.value,
@@ -237,14 +252,13 @@ impl Practice {
             // check, so only the learner's limit applies.
             connected_code_limit: settings.connected_code_limit(&RepositoryConfig::default()),
             time_limit: context.time_limit,
-            lookup: Lookup::Requested(Box::new(ShowcaseLookup {
+            evidence: None,
+            stage: Stage::FindingConnectedCode(Lookup::Requested(Arc::new(ShowcaseLookup {
                 tree,
                 position: index.get(),
                 dirs: context.analysis.clone(),
                 cache: Arc::clone(context.cache),
-            })),
-            evidence: None,
-            stage: Stage::Writing(Vec::new()),
+            }))),
             waiting: Waiting::new(),
             focus: Position::default(),
         })
@@ -254,7 +268,6 @@ impl Practice {
     /// none, and prepares the evidence from them, for the generator to
     /// write from.
     fn prepare_evidence(&mut self, connections: &Connections) {
-        self.lookup = Lookup::Done;
         let evidence = Evidence::build(
             &self.change,
             &ExcludePatterns::default(),
@@ -406,8 +419,13 @@ impl Practice {
         match &self.stage {
             Stage::Writing(writes) => writes.iter().find_map(Request::failure),
             Stage::Checking(checks) => checks.iter().find_map(|(_, check)| check.failure()),
-            Stage::Shown(_) | Stage::NonePassed => None,
+            Stage::FindingConnectedCode(_) | Stage::Shown(_) | Stage::NonePassed => None,
         }
+    }
+
+    /// Whether it waits for job `job` to find connected code.
+    fn finds_connected_code_with(&self, job: JobId) -> bool {
+        matches!(self.stage, Stage::FindingConnectedCode(Lookup::Running(waiting)) if waiting == job)
     }
 
     /// Asks again only what failed in the current stage, or, when no
@@ -417,7 +435,7 @@ impl Practice {
             Stage::Writing(writes) => writes.iter_mut().for_each(Request::retry),
             Stage::Checking(checks) => checks.iter_mut().for_each(|(_, check)| check.retry()),
             Stage::NonePassed => self.write(),
-            Stage::Shown(_) => {}
+            Stage::FindingConnectedCode(_) | Stage::Shown(_) => {}
         }
         self.focus = Position::default();
     }
@@ -442,6 +460,9 @@ impl Practice {
 
     /// Where finding connected code stands.
     fn finding_connected_code(&self) -> StageState {
+        if let Stage::FindingConnectedCode(_) = self.stage {
+            return StageState::Current;
+        }
         match self.evidence.as_ref().map(Evidence::connections_state) {
             None | Some(ConnectionsState::Finding) => StageState::Current,
             Some(ConnectionsState::Found | ConnectionsState::NoneFound) => StageState::Done,
@@ -457,13 +478,13 @@ impl Practice {
     fn stage_row(&self, theme: &Theme, ticks: usize) -> StageRow<'static> {
         let finding = self.finding_connected_code();
         let failed = self.failure().is_some();
-        let (writing, checking) = match (&self.stage, finding) {
-            (_, StageState::Current) => (StageState::Upcoming, StageState::Upcoming),
-            (Stage::Writing(_), _) if failed => (StageState::Failed, StageState::Upcoming),
-            (Stage::Writing(_), _) => (StageState::Current, StageState::Upcoming),
-            (Stage::Checking(_), _) if failed => (StageState::Done, StageState::Failed),
-            (Stage::Checking(_), _) => (StageState::Done, StageState::Current),
-            (Stage::Shown(_) | Stage::NonePassed, _) => (StageState::Done, StageState::Done),
+        let (writing, checking) = match self.stage {
+            Stage::FindingConnectedCode(_) => (StageState::Upcoming, StageState::Upcoming),
+            Stage::Writing(_) if failed => (StageState::Failed, StageState::Upcoming),
+            Stage::Writing(_) => (StageState::Current, StageState::Upcoming),
+            Stage::Checking(_) if failed => (StageState::Done, StageState::Failed),
+            Stage::Checking(_) => (StageState::Done, StageState::Current),
+            Stage::Shown(_) | Stage::NonePassed => (StageState::Done, StageState::Done),
         };
         let stages = PracticeStage::ALL
             .into_iter()
@@ -532,55 +553,51 @@ impl Practice {
 
 impl View for Practice {
     fn route(&self) -> Route {
-        Route::Practice(self.at)
+        Route::Practice(self.change_ref)
     }
 
     fn name(&self) -> &'static str {
         match self.stage {
             Stage::Shown(_) => "Questions",
             Stage::NonePassed => "No questions passed checks",
-            Stage::Writing(_) | Stage::Checking(_) => "Preparing questions",
+            Stage::FindingConnectedCode(_) | Stage::Writing(_) | Stage::Checking(_) => {
+                "Preparing questions"
+            }
         }
     }
 
     fn keymap(&self) -> Keymap {
         match self.stage {
-            Stage::Writing(_) | Stage::Checking(_) => KEYMAP,
             Stage::Shown(_) => questions::KEYMAP,
-            Stage::NonePassed => NONE_PASSED_KEYMAP,
+            Stage::NonePassed => BACK_KEYMAP,
+            _ if self.failure().is_some() => BACK_KEYMAP,
+            Stage::FindingConnectedCode(_) | Stage::Writing(_) | Stage::Checking(_) => KEYMAP,
         }
     }
 
     fn actions(&self) -> &'static [Action] {
         match self.stage {
-            Stage::Writing(_) | Stage::Checking(_) => ACTIONS,
             Stage::Shown(_) | Stage::NonePassed => BACK_ACTIONS,
+            _ if self.failure().is_some() => BACK_ACTIONS,
+            Stage::FindingConnectedCode(_) | Stage::Writing(_) | Stage::Checking(_) => ACTIONS,
         }
     }
 
     fn start_jobs(&mut self, jobs: &mut Jobs<JobOutput>) {
-        if let Lookup::Requested(_) = self.lookup {
-            let Lookup::Requested(lookup) = mem::replace(&mut self.lookup, Lookup::Done) else {
-                return;
-            };
-            let ShowcaseLookup {
-                tree,
-                position,
-                dirs,
-                cache,
-            } = *lookup;
+        if let Stage::FindingConnectedCode(Lookup::Requested(lookup)) = &self.stage {
+            let lookup = Arc::clone(lookup);
             // As for the outbound review: the engine can't be stopped once
             // it starts, so analyses take turns, and only the newest waits.
             let job = jobs.start_one_at_a_time(move |_token| {
-                let (connections, origin) = tree.find(&dirs, &cache);
+                let (connections, origin) = lookup.tree.find(&lookup.dirs, &lookup.cache);
                 Ok(JobOutput::ShowcaseConnectedCode {
-                    position,
+                    position: lookup.position,
                     connections,
                     origin,
                 })
             });
             jobs.limit(job, self.time_limit);
-            self.lookup = Lookup::Running(job);
+            self.stage = Stage::FindingConnectedCode(Lookup::Running(job));
         }
         let Some(evidence) = &self.evidence else {
             return;
@@ -590,15 +607,14 @@ impl View for Practice {
                 let count = CandidateCount::per_area(self.count, self.areas.len());
                 for (area, write) in self.areas.iter().zip(writes) {
                     if let Request::Unsent = write {
-                        let request = self.ai.write_candidates(evidence, area, count);
                         let id = area.id().clone();
-                        let job = jobs.start_async(async move {
-                            JobOutput::Written {
-                                area: id,
-                                reply: request.await,
-                            }
-                        });
-                        self.waiting.wait_for(job, Asking::Write(area.id().clone()));
+                        send(
+                            jobs,
+                            &mut self.waiting,
+                            Asking::Write(id.clone()),
+                            self.ai.write_candidates(evidence, area, count),
+                            |reply| JobOutput::Written { area: id, reply },
+                        );
                         *write = Request::Sent;
                     }
                 }
@@ -606,27 +622,27 @@ impl View for Practice {
             Stage::Checking(checks) => {
                 for (candidate, check) in checks {
                     if let Request::Unsent = check {
-                        let request = self.ai.check_question(evidence, candidate);
                         let id = candidate.id().clone();
-                        let job = jobs.start_async(async move {
-                            JobOutput::Checked {
+                        send(
+                            jobs,
+                            &mut self.waiting,
+                            Asking::Check(id.clone()),
+                            self.ai.check_question(evidence, candidate),
+                            |reply| JobOutput::Checked {
                                 candidate: id,
-                                reply: request.await,
-                            }
-                        });
-                        self.waiting
-                            .wait_for(job, Asking::Check(candidate.id().clone()));
+                                reply,
+                            },
+                        );
                         *check = Request::Sent;
                     }
                 }
             }
-            Stage::Shown(_) | Stage::NonePassed => {}
+            Stage::FindingConnectedCode(_) | Stage::Shown(_) | Stage::NonePassed => {}
         }
     }
 
     fn waits_for(&self, job: JobId) -> bool {
-        matches!(self.lookup, Lookup::Running(waiting) if waiting == job)
-            || self.waiting.waits_for(job)
+        self.finds_connected_code_with(job) || self.waiting.waits_for(job)
     }
 
     fn finish_job(&mut self, job: JobId, output: JobOutput) {
@@ -636,8 +652,8 @@ impl View for Practice {
                 connections,
                 ..
             } => {
-                if matches!(self.lookup, Lookup::Running(waiting) if waiting == job)
-                    && self.at == ChangeRef::Showcase(ChangeIndex::new(position))
+                if self.finds_connected_code_with(job)
+                    && self.change_ref == ChangeRef::Showcase(ChangeIndex::new(position))
                 {
                     self.prepare_evidence(&connections);
                 }
@@ -657,7 +673,7 @@ impl View for Practice {
     }
 
     fn time_up(&mut self, job: JobId) {
-        if matches!(self.lookup, Lookup::Running(waiting) if waiting == job) {
+        if self.finds_connected_code_with(job) {
             tracing::info!(
                 limit_s = self.time_limit.as_secs(),
                 "gave up finding connected code for Preparing questions"
@@ -670,7 +686,7 @@ impl View for Practice {
         // The learner pays for each request, so none runs on.
         self.waiting.cancel(jobs);
         // The analysis runs on, to be cached, and its result is ignored.
-        if let Lookup::Running(job) = self.lookup {
+        if let Stage::FindingConnectedCode(Lookup::Running(job)) = self.stage {
             jobs.forget(job);
         }
     }

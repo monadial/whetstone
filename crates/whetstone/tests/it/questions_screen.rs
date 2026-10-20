@@ -146,9 +146,9 @@ fn as_many_as_were_asked_for_are_shown_with_no_shortfall() {
     assert!(!session.text().contains("asked for"), "{}", session.text());
 }
 
-/// A scripted AI writing the candidate `stem`, whose answer key is A,
-/// answered `odd` by Jev, among three that pass.
-fn among_three_that_pass(stem: &str, odd: [f64; 3]) -> (Arc<ScriptedAi>, Vec<String>) {
+/// A scripted AI writing the candidate `stem`, whose answer key is A, and
+/// whose options Jev rates `ratings`, among three that pass.
+fn among_three_that_pass(stem: &str, ratings: [f64; 3]) -> (Arc<ScriptedAi>, Vec<String>) {
     let ai = Arc::new(ScriptedAi::new());
     let mut written = vec![stem.to_owned()];
     written.extend(stems("Domain", 3));
@@ -159,7 +159,7 @@ fn among_three_that_pass(stem: &str, odd: [f64; 3]) -> (Arc<ScriptedAi>, Vec<Str
             .map(|stem| candidate(stem, "A", PAYMENT_LIFECYCLE))
             .collect()),
     );
-    let [a, b, c] = odd;
+    let [a, b, c] = ratings;
     ai.on_check(stem, Ok(answers(a, b, c)));
     for passing in &written[1..] {
         ai.on_check(passing, Ok(a_is_clearly_right()));
@@ -168,9 +168,9 @@ fn among_three_that_pass(stem: &str, odd: [f64; 3]) -> (Arc<ScriptedAi>, Vec<Str
 }
 
 /// Whether the candidate `stem`, whose answer key is A and whose options Jev
-/// answered `odd`, is shown among three that pass.
-fn shown(stem: &str, odd: [f64; 3]) -> bool {
-    let (ai, written) = among_three_that_pass(stem, odd);
+/// rates `ratings`, is shown among three that pass.
+fn shown(stem: &str, ratings: [f64; 3]) -> bool {
+    let (ai, written) = among_three_that_pass(stem, ratings);
     let mut session = prepared(&ai, 120, 32);
     every_stem_shown(&mut session, &written).contains(&stem.to_owned())
 }

@@ -5,16 +5,13 @@
 //! picking chooses up to `questions` of them.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use whetstone_ai::{Asked, RequestFailure, ScriptedAi};
 use whetstone_core::{
-    CandidateCheck, OptionLetter, Probability, QuestionCheckAnswers, QuestionType,
-    WrittenCandidate, WrittenCitation, WrittenCriterion, WrittenOption,
+    AreaId, CandidateCheck, ConnectionsState, OptionLetter, Probability, QuestionCheckAnswers,
+    QuestionType, WrittenCandidate, WrittenCitation, WrittenCriterion, WrittenOption,
 };
-
-use std::time::Duration;
-
-use whetstone_core::ConnectionsState;
 
 use crate::session::{NO_COLOR, Session, Setup};
 
@@ -33,7 +30,7 @@ const CHANGES: usize = 10;
 const AREAS: usize = 5;
 
 /// The ID of the showcase area at `place` in the picker.
-pub(crate) fn area_id(place: usize) -> whetstone_core::AreaId {
+pub(crate) fn area_id(place: usize) -> AreaId {
     whetstone::embedded_showcase().areas()[place].id().clone()
 }
 
@@ -285,6 +282,13 @@ fn one_generator_call_per_chosen_area_goes_out_at_once_then_one_check_per_candid
 /// answered clearly right at A, for the change at `change`.
 pub(crate) fn writing_about_the_domain(count: usize, change: usize) -> Arc<ScriptedAi> {
     let ai = Arc::new(ScriptedAi::new());
+    write_about_the_domain(&ai, count, change);
+    ai
+}
+
+/// Scripts `ai` to write `count` candidates about the domain area once
+/// more, each answered clearly right at A, for the change at `change`.
+fn write_about_the_domain(ai: &ScriptedAi, count: usize, change: usize) {
     let stems = stems("Domain", count);
     ai.on_write(
         &area_id(DOMAIN),
@@ -296,7 +300,6 @@ pub(crate) fn writing_about_the_domain(count: usize, change: usize) -> Arc<Scrip
     for stem in &stems {
         ai.on_check(stem, Ok(a_is_clearly_right()));
     }
-    ai
 }
 
 #[test]
@@ -547,16 +550,7 @@ fn going_home_while_preparing_cancels_too() {
 #[test]
 fn generate_questions_again_after_cancel_prepares_afresh() {
     let ai = writing_about_the_domain(6, PAYMENT_LIFECYCLE);
-    for stem in stems("Domain", 6) {
-        ai.on_check(&stem, Ok(a_is_clearly_right()));
-    }
-    ai.on_write(
-        &area_id(DOMAIN),
-        Ok(stems("Domain", 6)
-            .iter()
-            .map(|stem| candidate(stem, "A", PAYMENT_LIFECYCLE))
-            .collect()),
-    );
+    write_about_the_domain(&ai, 6, PAYMENT_LIFECYCLE);
     let mut session = generate(&ai, &[DOMAIN], PAYMENT_LIFECYCLE, 80, 24);
     session.settle_once();
     session.press("q");

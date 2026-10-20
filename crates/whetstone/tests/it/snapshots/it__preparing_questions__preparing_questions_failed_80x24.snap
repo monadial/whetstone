@@ -27,7 +27,7 @@ Buffer {
         "                                                                                ",
         "                                                                                ",
         "                                                                                ",
-        "  ? keys  : actions  q cancel                                                   ",
+        "  ? keys  : actions  q back                                                     ",
         "                                                                                ",
     ],
     styles: [
