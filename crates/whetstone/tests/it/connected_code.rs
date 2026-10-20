@@ -736,7 +736,9 @@ fn connected_code_in_the_review_at_120x32() {
     let mut session = started_in(repo.root(), 120, 32);
     session.press(REVIEW_NEWEST);
     session.settle();
-    session.press("j j");
+    // Leave out the first piece, whose relations then go under its row in
+    // a narrow window.
+    session.press("j j <Space>");
 
     insta::assert_debug_snapshot!("connected_code_120x32", session.frame());
 }
@@ -747,7 +749,9 @@ fn connected_code_in_the_review_at_80x24() {
     let mut session = started_in(repo.root(), 80, 24);
     session.press(REVIEW_NEWEST);
     session.settle();
-    session.press("j j");
+    // Leave out the first piece, whose relations then go under its row in
+    // a narrow window.
+    session.press("j j <Space>");
 
     insta::assert_debug_snapshot!("connected_code_80x24", session.frame());
 }
