@@ -16,8 +16,12 @@ The commit a Practice is built from: its message, its diff and the files it touc
 _Avoid_: patch, diff (for the whole change).
 
 **Evidence**:
-Everything a Practice sends and can cite: the change, the chosen areas with their area prompts, what the change connects to elsewhere in the repository at that commit, and related tests and configuration.
+Everything a Practice sends and can cite: the change, the chosen areas with their area prompts, its connected code, and related tests and configuration.
 _Avoid_: context, payload, manifest.
+
+**Connected code**:
+What the touched files call, are called by, link to or name elsewhere in the repository at the change's commit.
+_Avoid_: dependency code, which reads as third-party library source; connections; context.
 
 **Area**:
 A lens on a change that questions focus on, chosen by the learner from the areas the repository defines, or from Whetstone's defaults when it defines none: domain, infrastructure, observability, scalability and system design.
