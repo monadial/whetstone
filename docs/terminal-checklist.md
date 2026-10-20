@@ -1,13 +1,13 @@
 # Pre-release terminal checklist
 
-Before each release, check by hand that Whetstone keeps its [terminal support](../README.md#terminal-support) claim in every supported terminal. CI already runs the same behaviour in a pseudo-terminal on every change. This checklist covers what CI can't: the real terminals, their fonts and colours, tmux and SSH.
+Before each release, check by hand that Whetstone keeps its [terminal support](../README.md#terminal-support) claim in every supported terminal. CI already checks the same behaviour on every change. This checklist covers what CI can't: the real terminals, their fonts and colours, tmux and SSH.
 
 ## Runs
 
-Work through [the steps](#steps) once for each supported terminal, run three ways: 15 runs in all.
+Work through [the steps](#steps) once for each supported terminal, run three ways.
 
 - **Directly:** from a shell in the terminal itself.
-- **In tmux:** from a shell in a tmux pane, inside the terminal, with `escape-time` set low as the README's tip says.
+- **In tmux:** from a shell in a tmux pane, inside the terminal, with `escape-time` set low, as the [README's tip](../README.md#terminal-support) says.
 - **Over SSH:** from a shell on another Linux or macOS machine, reached with `ssh` from the terminal.
 
 Always start `whetstone` from a shell, never as a tmux pane's own command or with `ssh -t host whetstone`. Step 5 needs a shell to suspend to.
@@ -25,6 +25,7 @@ Mark each run once all six steps pass:
 ## Before you start
 
 - Install the build you are about to release, on this machine and on the SSH host.
+- Start Whetstone in a directory outside any Git repository, so home offers the showcase project first.
 - Copy this text, three lines with keys that would act if they arrived as keys, for step 3:
 
   ```text
@@ -35,20 +36,20 @@ Mark each run once all six steps pass:
 
 ## Steps
 
-Each step names the CI test that checks the same behaviour in a pseudo-terminal, under `crates/whetstone/tests/it/`. A step that fails here while its test passes points at the terminal, tmux or SSH.
+Each step names the CI tests that check the same behaviour, in a pseudo-terminal or at the app seam, under `crates/whetstone/tests/it/`. A step that fails here while its tests pass points at the terminal, tmux or SSH.
 
 ### 1. Start, and one Practice at 80×24
 
 Set the window to 80 columns by 24 rows (`stty size` prints `24 80`), and run `whetstone`.
 
-1. Home shows whole, with the logo, **Practice on the showcase project**, **Settings** and **Quit**, and the key hints on the last row.
+1. Home shows whole, with the logo, **Practice on the showcase project**, **Settings** and **Quit**, and the key hints at the bottom.
 2. Choose **Practice on the showcase project**. The areas and the showcase project's changes show whole, and **Generate questions** is disabled until Jev arrives.
 3. Move to **Preserve payment retry identity** and press Enter. The change opens, with its files on the left and its diff on the right.
 4. `l` and `h` move between the panes, and `j`/`k` move through each.
 
 It passes when every screen fits, borders are unbroken lines, nothing overlaps, and the focused control stands out in colour.
 
-CI: every screen fitting at 80×24, at the app seam (`resize.rs`).
+CI: `every_screen_and_overlay_fits_whole_at_120x32_100x28_and_80x24` (`resize.rs`).
 
 ### 2. Shrink below 50×12, and back
 
@@ -58,7 +59,7 @@ With the change open and its diff scrolled down a little, shrink the window belo
 2. `q` does nothing.
 3. Grow the window back to 80×24. The change comes back as you left it: the same pane focused and the same scroll.
 
-CI: `below_50x12_the_notice_shows_and_growing_back_brings_the_screen_back` (`pty_terminal.rs`).
+CI: `below_50x12_the_notice_shows_and_growing_back_brings_the_screen_back` (`pty_terminal.rs`), and `keys_do_nothing_while_the_window_is_too_small` and `resizing_back_restores_the_screen_and_focus` (`resize.rs`).
 
 ### 3. A multi-line paste
 
