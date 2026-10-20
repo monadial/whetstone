@@ -289,3 +289,48 @@ impl<W: Write + Send> ModeSwitch for CrosstermSwitch<W> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A switch that records each mode it turns on and off.
+    #[derive(Debug, Clone, Default)]
+    struct Recording(Arc<Mutex<Vec<String>>>);
+
+    impl ModeSwitch for Recording {
+        fn enable(&mut self, mode: TerminalMode) -> io::Result<()> {
+            self.0
+                .lock()
+                .expect("log lock")
+                .push(format!("enable {mode:?}"));
+            Ok(())
+        }
+
+        fn disable(&mut self, mode: TerminalMode) -> io::Result<()> {
+            self.0
+                .lock()
+                .expect("log lock")
+                .push(format!("disable {mode:?}"));
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_panic_caught_for_the_app_to_carry_on_leaves_the_terminal_as_it_is() {
+        let switch = Recording::default();
+        let guard =
+            TerminalGuard::enable(switch.clone(), &[TerminalMode::Raw]).expect("enable raw mode");
+
+        let caught = catch_panic(|| panic!("a background job panicked"));
+
+        assert_eq!(caught, Err(Panicked));
+        assert_eq!(*switch.0.lock().expect("log lock"), ["enable Raw"]);
+        assert_eq!(catch_panic(|| 7), Ok(7));
+        drop(guard);
+        assert_eq!(
+            *switch.0.lock().expect("log lock"),
+            ["enable Raw", "disable Raw"]
+        );
+    }
+}
