@@ -12,8 +12,8 @@ use std::fmt;
 
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
+use serde::Deserialize;
 
-use crate::config::Colours;
 use crate::environment::Environment;
 
 /// How much colour the terminal can show.
@@ -30,18 +30,15 @@ pub enum ColorSupport {
 }
 
 impl ColorSupport {
-    /// The colour level to draw with. A non-empty `NO_COLOR` turns colour
-    /// off. Otherwise `colours` is used as set, unless it is auto, which
-    /// [detects](Self::detect) the level from `environment`.
+    /// The colour level to draw with: none while `NO_COLOR` is set,
+    /// otherwise the level `colours` names, otherwise `detected`, what auto
+    /// [detects](Self::detect) from the terminal.
     #[must_use]
-    pub(crate) fn choose(colours: Colours, environment: &Environment) -> Self {
-        if environment
-            .get("NO_COLOR")
-            .is_some_and(|value| !value.is_empty())
-        {
-            Self::NoColor
-        } else {
-            colours.level().unwrap_or_else(|| Self::detect(environment))
+    pub(crate) fn choose(no_color: NoColorStatus, colours: Colours, detected: Self) -> Self {
+        match (no_color, colours.level()) {
+            (NoColorStatus::Set, _) => Self::NoColor,
+            (NoColorStatus::NotSet, Some(level)) => level,
+            (NoColorStatus::NotSet, None) => detected,
         }
     }
 
@@ -70,6 +67,67 @@ impl fmt::Display for ColorSupport {
             Self::Ansi16 => "16",
             Self::NoColor => "none",
         })
+    }
+}
+
+/// The Colours setting: a colour level, or auto to detect it from the
+/// terminal. `NO_COLOR` wins over every value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub(crate) enum Colours {
+    #[serde(rename = "auto")]
+    Auto,
+    #[serde(rename = "24-bit")]
+    TrueColor,
+    #[serde(rename = "256")]
+    Ansi256,
+    #[serde(rename = "16")]
+    Ansi16,
+    #[serde(rename = "none")]
+    NoColor,
+}
+
+impl Colours {
+    /// The level the setting names, or `None` for auto.
+    fn level(self) -> Option<ColorSupport> {
+        match self {
+            Self::Auto => None,
+            Self::TrueColor => Some(ColorSupport::TrueColor),
+            Self::Ansi256 => Some(ColorSupport::Ansi256),
+            Self::Ansi16 => Some(ColorSupport::Ansi16),
+            Self::NoColor => Some(ColorSupport::NoColor),
+        }
+    }
+}
+
+/// The value as the config file writes it.
+impl fmt::Display for Colours {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.level() {
+            None => f.write_str("auto"),
+            Some(level) => level.fmt(f),
+        }
+    }
+}
+
+/// Whether the environment asks for no colour with a non-empty `NO_COLOR`
+/// (no-color.org).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NoColorStatus {
+    Set,
+    NotSet,
+}
+
+impl NoColorStatus {
+    /// Reads `NO_COLOR` from `environment`.
+    pub(crate) fn read(environment: &Environment) -> Self {
+        if environment
+            .get("NO_COLOR")
+            .is_some_and(|value| !value.is_empty())
+        {
+            Self::Set
+        } else {
+            Self::NotSet
+        }
     }
 }
 
