@@ -3,7 +3,8 @@
 //! it and what they cost.
 //!
 //! Each request to Jev or the generator has its own [`Provenance`]. Usage
-//! and cost are kept only as a reply reports them, never estimated.
+//! and cost are kept only as a reply reports them, never estimated, and a
+//! session's [`SessionCost`] adds up what was reported.
 
 use std::fmt;
 
@@ -47,6 +48,15 @@ pub struct Cost(f64);
 #[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
 #[error("{0} is not a cost: it must be a finite number of dollars, 0 or more")]
 pub struct InvalidCost(f64);
+
+/// A Practice's cost: what each reply reported, added up for Jev and for the
+/// generator, and how many requests reported none. It never estimates.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SessionCost {
+    jev: Cost,
+    generator: Cost,
+    not_reported: usize,
+}
 
 /// What produced one request's result: who it went to, the model asked for
 /// and the model that answered, and its usage and cost where the reply
@@ -94,6 +104,54 @@ impl Cost {
     #[must_use]
     pub fn usd(self) -> f64 {
         self.0
+    }
+}
+
+impl SessionCost {
+    /// The cost of a Practice whose requests are `requests`: the costs their
+    /// replies reported, added up by role, and how many reported none.
+    #[must_use]
+    pub fn of<'a>(requests: impl IntoIterator<Item = &'a Provenance>) -> Self {
+        let mut jev = 0.0;
+        let mut generator = 0.0;
+        let mut not_reported = 0;
+        for request in requests {
+            match (request.role, request.cost) {
+                (Role::Jev, Some(cost)) => jev += cost.0,
+                (Role::Generator, Some(cost)) => generator += cost.0,
+                (_, None) => not_reported += 1,
+            }
+        }
+        Self {
+            jev: Cost(jev),
+            generator: Cost(generator),
+            not_reported,
+        }
+    }
+
+    /// What Jev's replies reported.
+    #[must_use]
+    pub fn jev(self) -> Cost {
+        self.jev
+    }
+
+    /// What the generator's replies reported.
+    #[must_use]
+    pub fn generator(self) -> Cost {
+        self.generator
+    }
+
+    /// What every reply reported, Jev's and the generator's together.
+    #[must_use]
+    pub fn total(self) -> Cost {
+        Cost(self.jev.0 + self.generator.0)
+    }
+
+    /// How many requests' replies reported no cost: the summary says "not
+    /// reported for *n* requests" instead of estimating theirs.
+    #[must_use]
+    pub fn not_reported(self) -> usize {
+        self.not_reported
     }
 }
 
@@ -209,6 +267,55 @@ mod tests {
         );
         assert_eq!(provenance.usage(), usage);
         assert_eq!(provenance.cost(), Some(cost));
+    }
+
+    fn request(role: Role, usd: Option<f64>) -> Provenance {
+        let provenance = Provenance::new(role, model("some/model"));
+        match usd {
+            Some(usd) => provenance.with_cost(Cost::new(usd).expect("a cost")),
+            None => provenance,
+        }
+    }
+
+    #[test]
+    fn a_sessions_cost_adds_up_what_each_reply_reported_by_role() {
+        let requests = [
+            request(Role::Jev, Some(0.25)),
+            request(Role::Generator, Some(1.5)),
+            request(Role::Jev, Some(0.125)),
+            request(Role::Generator, Some(0.5)),
+        ];
+
+        let cost = SessionCost::of(&requests);
+
+        assert_eq!(cost.jev(), Cost::new(0.375).expect("a cost"));
+        assert_eq!(cost.generator(), Cost::new(2.0).expect("a cost"));
+        assert_eq!(cost.total(), Cost::new(2.375).expect("a cost"));
+        assert_eq!(cost.not_reported(), 0);
+    }
+
+    #[test]
+    fn a_request_without_a_reported_cost_is_counted_never_estimated() {
+        let requests = [
+            request(Role::Jev, Some(0.25)),
+            request(Role::Jev, None),
+            request(Role::Generator, None),
+        ];
+
+        let cost = SessionCost::of(&requests);
+
+        assert_eq!(cost.jev(), Cost::new(0.25).expect("a cost"));
+        assert_eq!(cost.generator(), Cost::new(0.0).expect("a cost"));
+        assert_eq!(cost.total(), Cost::new(0.25).expect("a cost"));
+        assert_eq!(cost.not_reported(), 2);
+    }
+
+    #[test]
+    fn a_session_without_requests_cost_nothing() {
+        let cost = SessionCost::of([]);
+
+        assert_eq!(cost.total(), Cost::new(0.0).expect("a cost"));
+        assert_eq!(cost.not_reported(), 0);
     }
 
     #[test]

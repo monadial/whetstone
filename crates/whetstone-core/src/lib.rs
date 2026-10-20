@@ -50,7 +50,7 @@ pub use crate::exclusion::{
 };
 pub use crate::jev::{InvalidProbability, Probability};
 pub use crate::picking::{Picked, QuestionCount, QuestionCountError, pick};
-pub use crate::provenance::{Cost, InvalidCost, ModelId, Provenance, Role, Usage};
+pub use crate::provenance::{Cost, InvalidCost, ModelId, Provenance, Role, SessionCost, Usage};
 pub use crate::question::{
     Candidate, CandidateId, Citation, Criterion, DropReason, Hint, OptionLetter, Part, PlainChecks,
     QuestionType, WrittenCandidate, WrittenCitation, WrittenCriterion, WrittenOption, plain_checks,
