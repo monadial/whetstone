@@ -5,9 +5,16 @@
 //! [`App::take_jobs`](crate::App::take_jobs) and runs it on a blocking
 //! thread with [`Workers`]. Its [`Finished`] report comes back through
 //! [`App::handle`](crate::App::handle), the way a key press does.
+//!
+//! Jobs that would compete for the whole machine, as analyses do, start
+//! with [`Jobs::start_one_at_a_time`] and take turns. The app can give up
+//! waiting for a job after a [`TimeLimit`], which the UI loop times with
+//! [`App::take_time_limits`](crate::App::take_time_limits), without
+//! cancelling it.
 
 use std::fmt;
 use std::mem;
+use std::time::Duration;
 
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -42,6 +49,17 @@ pub enum JobOutcome<T> {
     Done(T),
     /// It was cancelled before it ended (rule 17).
     Cancelled,
+}
+
+/// How long the app waits for a job before it gives up on it: once `after`
+/// has passed from when it was set, unless the job has ended by then, the
+/// UI loop hands the app [`Message::TimeUp`](crate::Message::TimeUp).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TimeLimit {
+    /// The job it is for.
+    pub job: JobId,
+    /// How long it runs, from when the app set it.
+    pub after: Duration,
 }
 
 /// A job's report, sent when it ends.
@@ -113,8 +131,16 @@ pub struct Jobs<T> {
     /// Jobs started since the UI loop last took them.
     started: Vec<Job<T>>,
     /// The jobs the app waits for, with their tokens: started, and neither
-    /// cancelled nor accepted.
+    /// cancelled, forgotten nor accepted.
     outstanding: Vec<(JobId, CancellationToken)>,
+    /// The job started one at a time whose turn it is, from when it is
+    /// handed to the UI loop until its report comes back.
+    turn: Option<JobId>,
+    /// The newest job started one at a time while another had its turn,
+    /// waiting for that one to end.
+    next_turn: Option<Job<T>>,
+    /// Time limits set since the UI loop last took them.
+    time_limits: Vec<TimeLimit>,
 }
 
 impl<T> Jobs<T> {
@@ -126,6 +152,9 @@ impl<T> Jobs<T> {
             next_id: 0,
             started: Vec::new(),
             outstanding: Vec::new(),
+            turn: None,
+            next_turn: None,
+            time_limits: Vec::new(),
         }
     }
 
@@ -135,16 +164,54 @@ impl<T> Jobs<T> {
         &mut self,
         body: impl FnOnce(&CancellationToken) -> Result<T, Cancelled> + Send + 'static,
     ) -> JobId {
+        let job = self.job(body);
+        let id = job.id;
+        self.started.push(job);
+        id
+    }
+
+    /// Starts a job as [`Jobs::start`] does, except that jobs started this
+    /// way take turns. While another has its turn, this one waits until that
+    /// one's report comes back, whether the app still waits for it or not.
+    /// Only the newest such job waits: one already waiting is cancelled, so
+    /// it reports cancellation without running its body.
+    pub fn start_one_at_a_time(
+        &mut self,
+        body: impl FnOnce(&CancellationToken) -> Result<T, Cancelled> + Send + 'static,
+    ) -> JobId {
+        let job = self.job(body);
+        let id = job.id;
+        if self.turn.is_none() {
+            self.turn = Some(id);
+            self.started.push(job);
+        } else if let Some(replaced) = self.next_turn.replace(job) {
+            self.stop_waiting(replaced.id);
+            replaced.token.cancel();
+            self.started.push(replaced);
+        }
+        id
+    }
+
+    /// A new job that runs `body`, which the app waits for.
+    fn job(
+        &mut self,
+        body: impl FnOnce(&CancellationToken) -> Result<T, Cancelled> + Send + 'static,
+    ) -> Job<T> {
         let id = JobId(self.next_id);
         self.next_id += 1;
         let token = self.root.child_token();
         self.outstanding.push((id, token.clone()));
-        self.started.push(Job {
+        Job {
             id,
             token,
             body: Box::new(body),
-        });
-        id
+        }
+    }
+
+    /// Sets a time limit of `after`, from now, on job `id`, for the UI loop
+    /// to time.
+    pub fn limit(&mut self, id: JobId, after: Duration) {
+        self.time_limits.push(TimeLimit { job: id, after });
     }
 
     /// Cancels job `id`, if the app still waits for it. Its body may still
@@ -155,10 +222,25 @@ impl<T> Jobs<T> {
         }
     }
 
+    /// Stops waiting for job `id` without cancelling it, and says whether
+    /// the app waited for it. The job runs to its end, as it would have, and
+    /// its report is ignored.
+    pub fn forget(&mut self, id: JobId) -> bool {
+        self.stop_waiting(id).is_some()
+    }
+
     /// Rule 24: returns `finished` if the app still waits for its job, which
-    /// it then no longer does. The result of a job it cancelled, or already
-    /// accepted, is ignored.
+    /// it then no longer does. The result of a job it cancelled, forgot or
+    /// already accepted is ignored. Every report comes here, so a job's end
+    /// passes its turn on, if it had one, however it ended.
     pub fn accept(&mut self, finished: Finished<T>) -> Option<Finished<T>> {
+        if self.turn == Some(finished.id) {
+            self.turn = self.next_turn.take().map(|next| {
+                let id = next.id;
+                self.started.push(next);
+                id
+            });
+        }
         self.stop_waiting(finished.id).map(|_| finished)
     }
 
@@ -172,6 +254,11 @@ impl<T> Jobs<T> {
     /// The jobs started since the last take, for the UI loop to run.
     pub fn take_started(&mut self) -> Vec<Job<T>> {
         mem::take(&mut self.started)
+    }
+
+    /// The time limits set since the last take, for the UI loop to time.
+    pub fn take_time_limits(&mut self) -> Vec<TimeLimit> {
+        mem::take(&mut self.time_limits)
     }
 }
 
