@@ -31,6 +31,13 @@ _Avoid_: category, topic, tag.
 An area's instructions for what to look for in a change; it adds focus to Whetstone's own question instructions and never replaces them.
 _Avoid_: master prompt.
 
+**Session record**:
+The local record of one Practice: its questions, the evidence that was sent, the learner's responses and every outcome, with the models, versions and assessment policy that produced them.
+
+**Session export**:
+A session record written out as one file the learner can keep or share.
+_Avoid_: report, which a learner's **Report** already uses; evidence report.
+
 **Outbound review**:
 The learner's check of exactly what a Practice on their own repository will send and where, before anything leaves the machine; approving it covers that evidence, those destinations and the learner's later responses in the session.
 _Avoid_: consent screen; review alone, which **Needs review** uses.
@@ -70,6 +77,34 @@ _Avoid_: mastery score, competence certificate.
 **Needs review**:
 An outcome whose support or reliability has not been established well enough to call it supported or not.
 _Avoid_: treating it as incorrect.
+
+**Assessment policy**:
+The versioned cut-off values that turn Jev's probabilities into clear yes, unclear or clear no for each kind of check.
+_Avoid_: threshold alone; confidence.
+
+## Questions
+
+**Question type**:
+The form a question takes, such as a single choice from A, B and C with written reasoning; it sets what the generator writes, what the question check asks and how a response becomes outcomes.
+
+**Answer key**:
+The option the generator marks as a question's correct answer.
+
+**Rubric**:
+The criteria a question's written reasoning is assessed against, written with the question.
+
+**Criterion**:
+One point of a rubric, with what meeting it and not meeting it look like.
+
+**Relevance gate**:
+Jev's decision, for each chosen area, whether a change is worth asking about.
+
+**Question check**:
+Jev's check of a generated question before it is shown, including its option ratings; only questions that pass are shown.
+_Avoid_: question review, which clashes with **Needs review** and **Outbound review**.
+
+**Option rating**:
+Supported, Not supported or Needs review for one option of a question, decided in its question check before the learner sees it.
 
 ## AI roles
 
