@@ -1,7 +1,8 @@
 //! The row of stages at the top of the outbound review: where Practice is
 //! and what comes next, from reading the change to Jev reviewing the
 //! questions. Finding connected code is current until its result arrives,
-//! and its spinner moves only on a tick while it is found.
+//! from an analysis or from the cache, and its spinner moves only on a tick
+//! while it is found.
 
 use tempfile::TempDir;
 
@@ -120,6 +121,30 @@ fn at_80x24_the_row_wraps_between_stages_never_inside_one() {
     );
 }
 
+#[test]
+fn connected_code_from_the_cache_still_finishes_finding_it() {
+    let repo = with_a_caller();
+    let mut session = started_in(repo.root(), 120, 32);
+    session.press(REVIEW_NEWEST);
+    session.settle();
+
+    // Back to the picker, and review the same commit again.
+    session.press("q <Enter>");
+    session.settle();
+
+    assert_eq!(
+        session.row_with("Connected code"),
+        "Connected code: 1 range · 1 KB of 100 KB limit · from cache"
+    );
+    assert_eq!(
+        stage_row(&session),
+        [
+            "✓ Reading the change → ✓ Finding connected code → ✓ Preparing evidence → ⠋ Outbound review →",
+            "· Checking areas · Jev → · Writing questions · generator → · Reviewing questions · Jev",
+        ]
+    );
+}
+
 /// A system temporary directory inside a `build` directory, where the
 /// engine never reads, so nothing written there can be analysed: the
 /// directory that holds it, and its path for `TMPDIR`.
@@ -203,6 +228,8 @@ enum Finding {
     InProgress,
     /// Found.
     Done,
+    /// Found in the cache, by reviewing the commit a second time.
+    FromCache,
     /// Not available, because the analysis failed.
     AnalysisFailed,
 }
@@ -240,6 +267,10 @@ fn assert_snapshots(name: &str, finding: Finding) {
             if finding != Finding::InProgress {
                 session.settle();
             }
+            if finding == Finding::FromCache {
+                session.press("q <Enter>");
+                session.settle();
+            }
             insta::assert_debug_snapshot!(
                 format!("{name}_{colour}_{width}x{height}"),
                 session.frame()
@@ -256,6 +287,11 @@ fn the_row_while_connected_code_is_found() {
 #[test]
 fn the_row_once_connected_code_is_found() {
     assert_snapshots("done", Finding::Done);
+}
+
+#[test]
+fn the_row_once_connected_code_comes_from_the_cache() {
+    assert_snapshots("from_cache", Finding::FromCache);
 }
 
 #[test]
