@@ -26,7 +26,9 @@ mod analysis;
 mod detect;
 mod graph;
 mod lines;
+mod links;
 mod related;
+mod touched_text;
 
 use std::error::Error;
 use std::io;

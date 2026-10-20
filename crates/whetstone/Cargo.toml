@@ -41,6 +41,11 @@ futures-util = { version = "0.3", default-features = false }
 # and unified line diffs. gix makes a breaking 0.x release about monthly, so
 # the minor version is pinned and upgraded on purpose.
 gix = { version = "0.89", default-features = false, features = ["sha1", "blob-diff"] }
+# Reads the links in touched Markdown as CommonMark defines them, with
+# reference links resolved and source positions for each. Without default
+# features it is the parser alone, with no HTML renderer and no command-line
+# options.
+pulldown-cmark = { version = "0.13", default-features = false }
 # `Paragraph::line_count` sizes wrapped text so no control is pushed off a
 # short screen. Ratatui exempts `unstable-*` features from semver, so check it
 # still builds when moving off the locked 0.30.x.
