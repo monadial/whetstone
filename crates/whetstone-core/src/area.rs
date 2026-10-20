@@ -245,7 +245,7 @@ impl Area {
             .iter()
             .map(|&(file_name, contents)| {
                 Self::parse(file_name, contents, AreaSource::Default)
-                    .expect("Whetstone's default area files are valid")
+                    .expect("build.rs checks that Whetstone's default area files are valid")
             })
             .collect()
     }

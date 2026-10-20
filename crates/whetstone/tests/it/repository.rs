@@ -121,6 +121,22 @@ fn with_an_invalid_config_home_names_the_file_and_the_problem_and_keeps_the_show
             "Practice on payments is unavailable because .whetstone/config.toml is invalid: the key `jev` is not allowed, only `exclude`.",
         ),
         (
+            "provider = \"openrouter\"\n",
+            "Practice on payments is unavailable because .whetstone/config.toml is invalid: the key `provider` is not allowed, only `exclude`.",
+        ),
+        (
+            "[generator]\nmodel = \"openai/gpt-6\"\n",
+            "Practice on payments is unavailable because .whetstone/config.toml is invalid: the key `generator` is not allowed, only `exclude`.",
+        ),
+        (
+            "endpoint = \"https://openrouter.ai/api/v1\"\n",
+            "Practice on payments is unavailable because .whetstone/config.toml is invalid: the key `endpoint` is not allowed, only `exclude`.",
+        ),
+        (
+            "openrouter_api_key = \"from-the-repository\"\n",
+            "Practice on payments is unavailable because .whetstone/config.toml is invalid: the key `openrouter_api_key` is not allowed, only `exclude`.",
+        ),
+        (
             "exclude = \"fixtures/\"\n",
             "Practice on payments is unavailable because .whetstone/config.toml is invalid: `exclude` must be a list of patterns.",
         ),
@@ -144,7 +160,7 @@ fn with_an_invalid_config_home_names_the_file_and_the_problem_and_keeps_the_show
         let repo = payments();
         repo.write(".whetstone/config.toml", config);
 
-        let session = started_in(repo.root(), 120, 32);
+        let mut session = started_in(repo.root(), 120, 32);
 
         assert_eq!(
             home_actions(&session),
@@ -152,6 +168,12 @@ fn with_an_invalid_config_home_names_the_file_and_the_problem_and_keeps_the_show
             "{config}"
         );
         assert_eq!(unavailable_paragraph(&session), problem, "{config}");
+        session.press("<Enter>");
+        assert_eq!(
+            session.rows()[1].trim(),
+            "Practice on the showcase project",
+            "{config}"
+        );
     }
 }
 
@@ -277,6 +299,10 @@ fn with_invalid_area_files() -> TestRepo {
         ".whetstone/areas/owner.md",
         "+++\nname = \"Owner\"\ndescription = \"Who owns it\"\nowner = \"ada\"\n+++\nLook.\n",
     )
+    .write(
+        ".whetstone/areas/anon.md",
+        "+++\nname = \"\"\ndescription = \"Who wrote it\"\n+++\nLook.\n",
+    )
     .write(".whetstone/areas/blank.md", area_file("Blank", " "))
     .write(
         ".whetstone/areas/empty.md",
@@ -298,6 +324,7 @@ fn invalid_area_files_are_listed_in_file_name_order_disabled_with_their_reasons(
             "> ( ) Privacy.md (invalid)  the file name must be an area ID followed by `.md`: lowercase letters, digits and",
             "hyphens",
             "(x) Accessibility         Who can use it",
+            "( ) anon.md (invalid)     `name` is empty",
             "( ) big.md (invalid)      the file is larger than 16 KB",
             "( ) blank.md (invalid)    `description` is empty",
             "( ) cost.md (invalid)     the front matter has no closing `+++` line",

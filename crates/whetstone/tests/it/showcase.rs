@@ -7,6 +7,8 @@ use std::path::{Path, PathBuf};
 
 use whetstone_core::{Area, AreaId, FileContent, TouchedFile};
 
+use crate::build_areas;
+
 #[test]
 fn the_embedded_showcase_has_all_ten_curated_changes_with_the_area_ids_their_trailers_name() {
     let showcase = whetstone::embedded_showcase();
@@ -78,6 +80,27 @@ fn the_showcase_project_ships_no_area_files_and_offers_the_defaults() {
     let showcase = whetstone::embedded_showcase();
 
     assert_eq!(showcase.areas(), Area::defaults());
+}
+
+#[test]
+fn the_build_fails_on_an_areas_trailer_that_names_anything_but_a_default_area_id() {
+    let defaults =
+        build_areas::default_ids(Area::default_files()).expect("the default areas are valid");
+    build_areas::check_trailer(&["domain", "system-design"], &defaults)
+        .expect("the trailer names default areas");
+
+    for unknown in ["security", "system design", "System-Design"] {
+        let error = build_areas::check_trailer(&["domain", unknown], &defaults)
+            .expect_err("the trailer names an unknown area");
+
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "the `Areas:` trailer names {unknown:?}, which is not the ID of a default area: \
+                 domain, infrastructure, observability, scalability, system-design"
+            )
+        );
+    }
 }
 
 #[test]

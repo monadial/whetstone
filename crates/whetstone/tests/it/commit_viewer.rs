@@ -74,6 +74,41 @@ fn enter_on_a_commit_opens_it_on_the_diff_of_its_first_file_as_git_diff_shows_it
 }
 
 #[test]
+fn a_deleted_file_shows_its_content_before_the_change() {
+    let repo = with_an_edit();
+    repo.git(&["rm", "--quiet", "src/payment.rs"]);
+    repo.commit("Stop taking payments");
+    let mut session = started_in(repo.root(), 120, 32);
+
+    session.press(OPEN_NEWEST);
+
+    assert_eq!(
+        session
+            .box_rows("Files")
+            .into_iter()
+            .filter(|row| !row.is_empty())
+            .collect::<Vec<_>>(),
+        ["(x) src/payment.rs"]
+    );
+    assert_eq!(
+        code_lines(&session),
+        git_diff(&repo, "HEAD", "src/payment.rs")
+    );
+    session.press("l");
+    assert_eq!(
+        code_lines(&session),
+        [
+            "1 1", "2 2", "3 3", "4 4", "5 5", "6 6", "7 7", "8 8", "9 nine", "10 10"
+        ]
+    );
+    session.press("l");
+    assert_eq!(
+        code_lines(&session),
+        ["This change deletes src/payment.rs, so it has no code after."]
+    );
+}
+
+#[test]
 fn a_subject_over_two_lines_reads_as_git_log_has_it_in_the_picker_and_the_viewer() {
     let repo = TestRepo::new("payments");
     repo.write("README.md", "# Payments\n");
