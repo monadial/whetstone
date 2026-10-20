@@ -5,6 +5,7 @@
 //!
 //! ```toml
 //! provider = "openrouter"
+//! colours = "auto"
 //!
 //! [jev]
 //! model = "typesafe/jev-1.14"
@@ -23,6 +24,7 @@ use std::{fmt, fs, io};
 use serde::Deserialize;
 
 use crate::environment::Environment;
+use crate::theme::ColorSupport;
 
 /// The model Jev runs on when the config names none.
 pub(crate) const DEFAULT_JEV_MODEL: &str = "typesafe/jev-1.14";
@@ -38,6 +40,11 @@ pub struct Settings {
     pub(crate) provider: Setting<Provider>,
     pub(crate) jev_model: Setting<String>,
     pub(crate) generator_model: Setting<String>,
+    pub(crate) colours: Setting<Colours>,
+    /// The level auto detects from the terminal, whatever `colours` says.
+    pub(crate) detected_colours: ColorSupport,
+    /// The level the screens are drawn at.
+    color_support: ColorSupport,
     pub(crate) file: ConfigFile,
     pub(crate) openrouter_key: KeyStatus,
 }
@@ -70,6 +77,45 @@ impl fmt::Display for Provider {
         f.write_str(match self {
             Self::OpenRouter => "OpenRouter",
         })
+    }
+}
+
+/// How much colour to draw with: a level, or auto to detect it from the
+/// terminal. `NO_COLOR` wins over every value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub(crate) enum Colours {
+    #[serde(rename = "auto")]
+    Auto,
+    #[serde(rename = "24-bit")]
+    TrueColor,
+    #[serde(rename = "256")]
+    Ansi256,
+    #[serde(rename = "16")]
+    Ansi16,
+    #[serde(rename = "none")]
+    NoColor,
+}
+
+impl Colours {
+    /// The level the setting names, or `None` for auto.
+    pub(crate) fn level(self) -> Option<ColorSupport> {
+        match self {
+            Self::Auto => None,
+            Self::TrueColor => Some(ColorSupport::TrueColor),
+            Self::Ansi256 => Some(ColorSupport::Ansi256),
+            Self::Ansi16 => Some(ColorSupport::Ansi16),
+            Self::NoColor => Some(ColorSupport::NoColor),
+        }
+    }
+}
+
+/// The value as the config file writes it.
+impl fmt::Display for Colours {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.level() {
+            None => f.write_str("auto"),
+            Some(level) => level.fmt(f),
+        }
     }
 }
 
@@ -113,6 +159,7 @@ pub enum ConfigError {
 #[serde(deny_unknown_fields)]
 struct File {
     provider: Option<Provider>,
+    colours: Option<Colours>,
     jev: Option<Role>,
     generator: Option<Role>,
 }
@@ -149,10 +196,14 @@ impl Settings {
         let model = |role: Option<Role>, default: &str| {
             Setting::or_default(role.and_then(|role| role.model), default.to_owned())
         };
+        let colours = Setting::or_default(contents.colours, Colours::Auto);
         Ok(Self {
             provider: Setting::or_default(contents.provider, Provider::OpenRouter),
             jev_model: model(contents.jev, DEFAULT_JEV_MODEL),
             generator_model: model(contents.generator, DEFAULT_GENERATOR_MODEL),
+            detected_colours: ColorSupport::detect(environment),
+            color_support: ColorSupport::choose(colours.value, environment),
+            colours,
             file,
             openrouter_key: if environment
                 .get(OPENROUTER_KEY_VARIABLE)
@@ -163,6 +214,13 @@ impl Settings {
                 KeyStatus::NotSet
             },
         })
+    }
+
+    /// The colour level to draw with: none under a non-empty `NO_COLOR`,
+    /// otherwise the `colours` setting, otherwise what the terminal reports.
+    #[must_use]
+    pub fn color_support(&self) -> ColorSupport {
+        self.color_support
     }
 }
 

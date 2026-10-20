@@ -1,5 +1,6 @@
-//! The Settings screen: what Practice will use, read-only. Each setting is a
-//! control, and the focused one says what it is for and how to change it.
+//! The Settings screen: what Practice will use and how much colour Whetstone
+//! draws with, read-only. Each setting is a control, and the focused one says
+//! what it is for and how to change it.
 
 use std::fmt;
 
@@ -10,8 +11,8 @@ use ratatui::widgets::{List, Paragraph, Wrap};
 
 use crate::columns;
 use crate::config::{
-    ConfigFile, DEFAULT_GENERATOR_MODEL, DEFAULT_JEV_MODEL, KeyStatus, OPENROUTER_KEY_VARIABLE,
-    Origin, Setting, Settings,
+    Colours, ConfigFile, DEFAULT_GENERATOR_MODEL, DEFAULT_JEV_MODEL, KeyStatus,
+    OPENROUTER_KEY_VARIABLE, Origin, Setting, Settings,
 };
 use crate::focus::Position;
 use crate::keymap::{self, Command, Keymap};
@@ -36,22 +37,25 @@ enum Control {
     JevModel,
     GeneratorModel,
     OpenRouterKey,
+    Colours,
     Back,
 }
 
 impl Control {
-    const ALL: [Self; 5] = [
+    const ALL: [Self; 6] = [
         Self::Provider,
         Self::JevModel,
         Self::GeneratorModel,
         Self::OpenRouterKey,
+        Self::Colours,
         Self::Back,
     ];
-    const ROWS: [Self; 4] = [
+    const ROWS: [Self; 5] = [
         Self::Provider,
         Self::JevModel,
         Self::GeneratorModel,
         Self::OpenRouterKey,
+        Self::Colours,
     ];
 
     fn label(self) -> &'static str {
@@ -60,6 +64,7 @@ impl Control {
             Self::JevModel => "Jev model",
             Self::GeneratorModel => "Generator model",
             Self::OpenRouterKey => "OpenRouter key",
+            Self::Colours => "Colours",
             Self::Back => "Back",
         }
     }
@@ -77,6 +82,14 @@ impl Control {
                 },
                 None,
             ),
+            Self::Colours => {
+                let (value, default_note) = shown(&settings.colours);
+                let value = match settings.colours.value {
+                    Colours::Auto => format!("{value} ({} detected)", settings.detected_colours),
+                    _ => value,
+                };
+                (value, default_note)
+            }
             Self::Back => (String::new(), None),
         }
     }
@@ -103,6 +116,18 @@ impl Control {
                     never shown."
                     .to_owned(),
             },
+            Self::Colours => {
+                let no_color = if no_color_overrides(settings) {
+                    "NO_COLOR is set, so nothing is coloured, whatever this says."
+                } else {
+                    "A non-empty NO_COLOR turns colour off, whatever this says."
+                };
+                format!(
+                    "How much colour Whetstone draws with: auto, 24-bit, 256, 16 or none. Auto \
+                     reads COLORTERM, then TERM; set a level when your terminal shows more \
+                     than it reports, as over SSH. {no_color}"
+                )
+            }
             Self::Back => "Back to home.".to_owned(),
         }
     }
@@ -121,6 +146,10 @@ impl Control {
             )),
             Self::OpenRouterKey => Some(format!(
                 "Never read from a file: set {OPENROUTER_KEY_VARIABLE} in your shell."
+            )),
+            Self::Colours => Some(format!(
+                "In config.toml: colours = \"{}\"",
+                settings.colours.value
             )),
             Self::Back => None,
         }
@@ -210,6 +239,17 @@ fn shown<T: fmt::Display>(setting: &Setting<T>) -> (String, Option<&'static str>
         setting.value.to_string(),
         (setting.origin == Origin::Default).then_some(" (default)"),
     )
+}
+
+/// Whether `NO_COLOR` turns colour off where the `colours` setting, or what
+/// auto detects, would draw some.
+fn no_color_overrides(settings: &Settings) -> bool {
+    let chosen = settings
+        .colours
+        .value
+        .level()
+        .unwrap_or(settings.detected_colours);
+    settings.color_support() != chosen
 }
 
 /// Where the title, the note on the config file, the setting rows, Back and

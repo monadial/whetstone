@@ -84,7 +84,7 @@ fn launch(environment: &Environment) -> anyhow::Result<ExitCode> {
         "whetstone started"
     );
     let settings = Settings::load(&dirs.config, environment)?;
-    let theme = Theme::new(ColorSupport::detect(environment));
+    let theme = Theme::new(settings.color_support());
     let repository = Repository::open(environment.current_dir());
     repository::log(&repository);
     match tui::run(App::new(theme, settings, embedded_showcase(), repository))? {
