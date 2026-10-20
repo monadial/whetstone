@@ -28,6 +28,7 @@ mod lines;
 
 use std::error::Error;
 use std::io;
+use std::panic::{self, AssertUnwindSafe};
 use std::time::Instant;
 
 use whetstone_core::{
@@ -35,7 +36,6 @@ use whetstone_core::{
 };
 
 use crate::repository::{CommitTree, LoadError, RepositoryHandle, TreeEntryKind};
-use crate::terminal::{self, Panicked};
 
 pub(crate) use analysis::{AnalysisDir, AnalysisDirs, AnalysisDirsGuard, sweep};
 pub(crate) use graph::{Connection, Graph, Relation, Tier};
@@ -138,6 +138,10 @@ pub(crate) enum Failure {
     /// Reading the commit or analysing it panicked.
     #[error("finding connected code panicked")]
     Panicked,
+    /// The engine connected a file that is not a regular file in the
+    /// commit.
+    #[error("the engine connected a file that is not in the commit")]
+    NotInCommit,
     /// The app is quitting, and has removed its analysis directories.
     #[error("the app is quitting")]
     Quitting,
@@ -190,15 +194,14 @@ pub(crate) fn find<S: Snapshot>(
     dirs: &AnalysisDirs,
 ) -> Result<Found, Failure> {
     let started = Instant::now();
-    let found = terminal::catch_panic(|| {
+    let found = catching(|| {
         AnalysisDir::write(snapshot, exclude, dirs)
             .and_then(|dir| dir.analyse())
             .map(|graph| Found {
                 connections: graph.connections(change),
                 graph,
             })
-    })
-    .unwrap_or_else(|Panicked| Err(Failure::Panicked));
+    });
     match &found {
         Ok(found) => tracing::info!(
             connections = found.connections.len(),
@@ -207,11 +210,24 @@ pub(crate) fn find<S: Snapshot>(
         ),
         Err(failure) => tracing::warn!(
             error = %failure,
-            reason = failure.source().map(ToString::to_string),
+            // Only an I/O error's kind: the engine's and Git's own errors
+            // can name the learner's files.
+            io = match failure {
+                Failure::Write(error) => Some(error.kind().to_string()),
+                _ => None,
+            },
             "cannot find connected code"
         ),
     }
     found
+}
+
+/// What `work` returns, or [`Failure::Panicked`] once a panic in it has
+/// unwound, dropping what it held, such as an analysis directory. The
+/// terminal guard's panic hook leaves the terminal alone for a panic off
+/// the UI thread, so the app carries on.
+fn catching<T>(work: impl FnOnce() -> Result<T, Failure>) -> Result<T, Failure> {
+    panic::catch_unwind(AssertUnwindSafe(work)).unwrap_or(Err(Failure::Panicked))
 }
 
 /// What a background job needs to find one commit's connected code: its
@@ -251,34 +267,34 @@ impl Request {
         self.commit
     }
 
-    /// The commit's connected code: the callers and callees of the
-    /// callables its change adds or modifies, as [`find`] finds them, each
-    /// with the lines it would send, read from the commit; or none found,
-    /// or the analysis failed. It blocks until the engine is done.
-    pub(crate) fn connections(&self) -> Connections {
+    /// Finds the commit's connected code, blocking until the engine is
+    /// done: the callers and callees of the callables its change adds or
+    /// modifies, as [`find`] finds them, each with the lines it would send,
+    /// read from the commit; or none found, or the analysis failed, a panic
+    /// included.
+    pub(crate) fn find(&self) -> Connections {
         let started = Instant::now();
-        let connections = self
-            .repository
-            .with_tree(self.commit, |tree| {
-                let found = find(tree, &self.change, &self.exclude, &self.dirs).ok()?;
-                with_sent_text(tree, found.connections())
-            })
-            .ok()
-            .flatten()
-            .map_or(Connections::AnalysisFailed, |connections| {
-                if connections.is_empty() {
-                    Connections::NoneFound
-                } else {
-                    Connections::Found(connections)
-                }
-            });
+        let found = catching(|| {
+            self.repository
+                .with_tree(self.commit, |tree| {
+                    let found = find(tree, &self.change, &self.exclude, &self.dirs)?;
+                    with_sent_text(tree, found.connections())
+                })
+                .map_err(|error| Failure::Snapshot(Box::new(error)))?
+        });
+        let connections = match found {
+            Ok(connections) if connections.is_empty() => Connections::NoneFound,
+            Ok(connections) => Connections::Found(connections),
+            Err(_) => Connections::AnalysisFailed,
+        };
         tracing::info!(
             commit = self.commit.full(),
             state = match &connections {
                 Connections::Found(_) => "found",
                 Connections::NoneFound => "none found",
-                Connections::AnalysisFailed => "analysis failed",
-                Connections::Finding | Connections::TookTooLong => "unexpected",
+                Connections::Finding | Connections::TookTooLong | Connections::AnalysisFailed => {
+                    "analysis failed"
+                }
             },
             ms = started.elapsed().as_millis(),
             "found a commit's connected code"
@@ -289,26 +305,24 @@ impl Request {
 
 /// `connections` in the commit `tree` shows, as the evidence takes them:
 /// connected code, each with its file's text at the commit, of which it
-/// keeps only its lines. `None` if a file cannot be read.
+/// keeps only its lines. It fails if a file cannot be read.
 fn with_sent_text(
     tree: &CommitTree<'_>,
     connections: &[Connection],
-) -> Option<Vec<whetstone_core::Connection>> {
+) -> Result<Vec<whetstone_core::Connection>, Failure> {
     connections
         .iter()
         .map(|connection| {
             let content = match tree.read(connection.path()) {
                 Ok(Some(bytes)) => FileContent::from_bytes(bytes),
-                // The engine read every file it connects from this tree.
-                Ok(None) | Err(_) => return None,
+                Ok(None) => return Err(Failure::NotInCommit),
+                Err(error) => return Err(Failure::Snapshot(Box::new(error))),
             };
             let lines = connection.lines();
-            let range = LineRange::new(
-                usize::try_from(*lines.start()).ok()?,
-                usize::try_from(*lines.end()).ok()?,
-            )
-            .ok()?;
-            Some(whetstone_core::Connection::new(
+            let line = |number: u32| usize::try_from(number).expect("a line number fits in usize");
+            let range = LineRange::new(line(*lines.start()), line(*lines.end()))
+                .expect("the engine's ranges start at line 1 and never end before they start");
+            Ok(whetstone_core::Connection::new(
                 connection.path().to_owned(),
                 Extent::Lines(range),
                 ConnectionGroup::ConnectedCode,
@@ -339,7 +353,10 @@ fn with_sent_text(
                 content,
             ))
         })
-        .collect()
+        .collect::<Result<_, _>>()
+        .inspect_err(|failure| {
+            tracing::warn!(error = %failure, "cannot read a commit's connected code");
+        })
 }
 
 #[cfg(test)]

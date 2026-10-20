@@ -716,7 +716,11 @@ fn a_session_finding_connected_code_writes_nothing_leaves_no_analysis_directory_
         .expect("read the temporary directory")
         .collect();
     assert!(left.is_empty(), "left in the temporary directory: {left:?}");
-    assert!(log.contains("found a commit's connected code"), "{log}");
+    assert_eq!(
+        log.matches("found a commit's connected code").count(),
+        2,
+        "one analysis each time the review opens: {log}"
+    );
     assert!(log.contains("applied connected code"), "{log}");
     for unlogged in [
         AWS_KEY,

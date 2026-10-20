@@ -853,3 +853,25 @@ fn the_sweep_removes_only_analysis_directories_unchanged_for_more_than_a_day() {
     );
     assert!(temp.path().join("linked-old/src/main.rs").exists());
 }
+
+#[test]
+fn calls_of_medium_confidence_are_connected_code_in_the_medium_tier() {
+    let repo = TestRepo::new();
+    let billing = |amount: &str| {
+        format!("class Billing:\n    def charge(self, amount):\n        return {amount}\n")
+    };
+    // Nothing says what `processor` is, so the engine links its `charge`
+    // to the only one there is, at medium confidence.
+    repo.write("billing.py", billing("amount")).write(
+        "pay.py",
+        "def pay(processor):\n    return processor.charge(1)\n",
+    );
+    repo.commit("Start billing");
+    repo.write("billing.py", billing("amount * 2"));
+    let id = repo.commit("Double the charge");
+
+    assert_eq!(
+        connected(&repo, id),
+        ["pay.py 1-2 medium: calls charge in billing.py"]
+    );
+}
