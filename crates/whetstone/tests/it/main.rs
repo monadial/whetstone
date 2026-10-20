@@ -18,6 +18,7 @@ mod outbound_review;
 mod overlays;
 mod picker;
 mod pty;
+mod pty_colours;
 mod pty_dumb;
 mod repo;
 mod repository;
