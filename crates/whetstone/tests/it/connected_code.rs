@@ -400,7 +400,7 @@ fn space_leaves_out_connected_code_and_brings_it_back_and_the_size_follows() {
 }
 
 /// The reader's rows under its title, trimmed.
-fn reader(session: &Session) -> Vec<String> {
+pub(crate) fn reader(session: &Session) -> Vec<String> {
     session
         .rows()
         .iter()
@@ -451,10 +451,10 @@ fn enter_on_connected_code_reads_exactly_the_lines_it_sends_numbered_as_in_the_f
 
 /// A fake AWS access key ID, split so that no secret scanner finds it in
 /// the source.
-const AWS_KEY: &str = concat!("AKIA", "FAKEFAKEFAKEFAKE");
+pub(crate) const AWS_KEY: &str = concat!("AKIA", "FAKEFAKEFAKEFAKE");
 
 /// The Send control's row, trimmed, without the focus marker.
-fn send(session: &Session) -> String {
+pub(crate) fn send(session: &Session) -> String {
     session
         .row_with("Send (")
         .trim_start_matches("> ")

@@ -141,9 +141,9 @@ pub(crate) enum Failure {
     /// Reading the commit or analysing it panicked.
     #[error("finding connected code panicked")]
     Panicked,
-    /// The engine connected a file that is not a regular file in the
-    /// commit.
-    #[error("the engine connected a file that is not in the commit")]
+    /// Connected code was found in a file that is not a regular file in
+    /// the commit.
+    #[error("connected code was found in a file that is not in the commit")]
     NotInCommit,
     /// The app is quitting, and has removed its analysis directories.
     #[error("the app is quitting")]

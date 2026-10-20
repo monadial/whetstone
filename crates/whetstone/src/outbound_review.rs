@@ -11,10 +11,9 @@
 //! Opening it starts a background job that finds the change's connected
 //! code, with its related tests and related configuration, which have a
 //! section of their own after it. The review is usable meanwhile, and the
-//! evidence is built again
-//! when the job's result arrives, if it is the result this review waits
-//! for, for this commit (rule 24). The row of stages at its top shows
-//! finding connected code as current until then.
+//! evidence is built again when the job's result arrives, if it is the
+//! result this review waits for, for this commit (rule 24). The row of
+//! stages at its top shows finding connected code as current until then.
 
 use std::cell::RefCell;
 use std::mem;

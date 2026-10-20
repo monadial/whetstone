@@ -268,8 +268,9 @@ pub fn merge_into_whole_files(connections: Vec<Connection>) -> Vec<Connection> {
             {
                 return in_file;
             }
-            in_file
-                .sort_by_key(|connection| (related_first(connection.group), connection.id.extent));
+            in_file.sort_by_key(|connection| {
+                (merge_precedence(connection.group), connection.id.extent)
+            });
             let tier = if in_file
                 .iter()
                 .any(|connection| connection.tier == Tier::High)
@@ -303,7 +304,7 @@ pub fn merge_into_whole_files(connections: Vec<Connection>) -> Vec<Connection> {
 
 /// Where `group` comes among the groups a merged connection takes the first
 /// of: related tests, then related configuration, then connected code.
-fn related_first(group: ConnectionGroup) -> u8 {
+fn merge_precedence(group: ConnectionGroup) -> u8 {
     match group {
         ConnectionGroup::RelatedTest => 0,
         ConnectionGroup::RelatedConfiguration => 1,
@@ -489,10 +490,12 @@ mod tests {
     /// Every file's text here.
     const TEXT: &str = "one\ntwo\nthree\n";
 
+    /// Lines `first` to `last` of a file.
     fn lines(first: usize, last: usize) -> Extent {
         Extent::Lines(LineRange::new(first, last).expect("the range is valid"))
     }
 
+    /// A caller of `callable` in `src/store.rs`.
     fn calls(callable: &str) -> Relation {
         Relation::Calls {
             callable: callable.to_owned(),

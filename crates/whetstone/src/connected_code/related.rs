@@ -55,22 +55,16 @@ pub(super) fn connections<S: Snapshot>(
                     }
                 }
             };
-            let (group, relation): (_, fn(String) -> Relation) = match file.group() {
-                RelatedGroup::Test => (ConnectionGroup::RelatedTest, |touched_file| {
-                    Relation::TestFor { touched_file }
-                }),
-                RelatedGroup::Configuration => {
-                    (ConnectionGroup::RelatedConfiguration, |touched_file| {
-                        Relation::ManifestFor { touched_file }
-                    })
-                }
-            };
+            let group = file.group();
             Ok(Connection::new(
                 file.path().to_owned(),
                 Extent::WholeFile,
-                group,
+                group.connection_group(),
                 Tier::High,
-                file.related_to().iter().cloned().map(relation).collect(),
+                file.related_to()
+                    .iter()
+                    .map(|touched_file| group.relation(touched_file.clone()))
+                    .collect(),
                 content,
             ))
         })
@@ -116,6 +110,25 @@ pub(crate) enum RelatedGroup {
     /// Related configuration: it is the nearest build manifest for each
     /// touched file it relates to.
     Configuration,
+}
+
+impl RelatedGroup {
+    /// The evidence's group for it.
+    fn connection_group(self) -> ConnectionGroup {
+        match self {
+            Self::Test => ConnectionGroup::RelatedTest,
+            Self::Configuration => ConnectionGroup::RelatedConfiguration,
+        }
+    }
+
+    /// Why a file in it is related to `touched_file`: it is its test, or
+    /// its manifest.
+    fn relation(self, touched_file: String) -> Relation {
+        match self {
+            Self::Test => Relation::TestFor { touched_file },
+            Self::Configuration => Relation::ManifestFor { touched_file },
+        }
+    }
 }
 
 /// Finds the related tests and related configuration for a change's
@@ -179,10 +192,12 @@ struct Source<'a> {
     dir: &'a str,
     /// Its file name without the last extension.
     stem: &'a str,
+    /// The ecosystem its extension picks, if any.
     ecosystem: Option<Ecosystem>,
 }
 
 impl<'a> Source<'a> {
+    /// The touched file at `path`, taken apart.
     fn parse(path: &'a str) -> Self {
         let (dir, name) = split(path);
         let (stem, ecosystem) = match name.rsplit_once('.') {
@@ -204,20 +219,26 @@ impl<'a> Source<'a> {
 /// and which manifest it prefers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Ecosystem {
+    /// Rust.
     Rust,
+    /// Go.
     Go,
+    /// Python.
     Python,
     /// JavaScript and TypeScript.
     Script,
     /// Java and Kotlin.
     Jvm,
+    /// Ruby.
     Ruby,
+    /// Elixir.
     Elixir,
     /// PHP, which has a manifest but no test convention here.
     Php,
 }
 
 impl Ecosystem {
+    /// The ecosystem of a source file with `extension`, if it is one's.
     fn by_extension(extension: &str) -> Option<Self> {
         match extension {
             "rs" => Some(Self::Rust),
@@ -255,12 +276,14 @@ const SCRIPT_EXTENSIONS: [&str; 8] = ["js", "jsx", "mjs", "cjs", "ts", "tsx", "m
 /// The file paths in the tree at the change's commit.
 #[derive(Debug)]
 struct Tree<'a> {
+    /// Every path, in order.
     paths: BTreeSet<&'a str>,
     /// The same paths, by file name.
     by_name: HashMap<&'a str, Vec<&'a str>>,
 }
 
 impl<'a> Tree<'a> {
+    /// The tree of `paths`.
     fn new(paths: impl IntoIterator<Item = &'a str>) -> Self {
         let paths: BTreeSet<&str> = paths.into_iter().collect();
         let mut by_name: HashMap<&str, Vec<&str>> = HashMap::new();
@@ -501,6 +524,7 @@ mod tests {
         in_group(found(tree, touched), RelatedGroup::Configuration)
     }
 
+    /// The entries of `found` in the group `wanted`, without their group.
     fn in_group(
         found: Vec<(String, RelatedGroup, Vec<String>)>,
         wanted: RelatedGroup,
