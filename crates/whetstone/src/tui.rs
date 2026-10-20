@@ -1,27 +1,38 @@
 //! The single UI loop: it owns the terminal while the app runs, and gives it
 //! back while the app is suspended.
+//!
+//! It runs on a current-thread Tokio runtime and waits for terminal input,
+//! signals, background job results and, while a job runs, a tick. Nothing
+//! else wakes it.
 
 use std::ffi::c_int;
+use std::future::{self, Future};
 use std::io;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::task::Poll;
 use std::time::Duration;
 
+use futures_util::StreamExt as _;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
-use ratatui::crossterm::event::{self, Event};
+use ratatui::crossterm::event::{Event, EventStream};
 use ratatui::crossterm::style;
 use ratatui::layout::{Position, Rect, Size};
 use rustix::process::{self, Signal};
 use signal_hook::SigId;
 use signal_hook::consts::{SIGCONT, SIGHUP, SIGINT, SIGTERM, SIGTSTP};
+use tokio::signal::unix::{self as unix_signal, SignalKind};
+use tokio::time::{self, Instant, Interval, MissedTickBehavior};
 
 use crate::app::{App, Flow, Message};
 use crate::environment::Environment;
+use crate::job::{JobOutput, Workers};
 use crate::terminal::{CrosstermSwitch, TerminalGuard, TerminalMode};
 
-/// How long the loop waits for input before checking for a signal.
-const SIGNAL_CHECK_INTERVAL: Duration = Duration::from_millis(100);
+/// How often the screen is drawn while a background job runs, so what shows
+/// it running can move.
+const TICK: Duration = Duration::from_millis(100);
 
 /// Why the UI loop ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,6 +46,8 @@ pub(crate) enum Ending {
 /// The terminal could not be used.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum TuiError {
+    #[error("cannot start the async runtime")]
+    Runtime(#[source] io::Error),
     #[error("cannot listen for signals")]
     Signals(#[source] io::Error),
     #[error("cannot take over the terminal")]
@@ -53,7 +66,13 @@ pub(crate) enum TuiError {
 /// then gives the terminal back exactly as it was. Suspending gives the
 /// terminal back until the process is continued. `environment` can set the
 /// [`CrashTrigger`].
-pub(crate) fn run(mut app: App, environment: &Environment) -> Result<Ending, TuiError> {
+pub(crate) fn run(app: App, environment: &Environment) -> Result<Ending, TuiError> {
+    Runtime::new()
+        .map_err(TuiError::Runtime)?
+        .block_on(run_loop(app, environment))
+}
+
+async fn run_loop(mut app: App, environment: &Environment) -> Result<Ending, TuiError> {
     let crash = CrashTrigger::read(environment);
     // The theme alone honours NO_COLOR. Under NO_COLOR crossterm 0.29 writes
     // each colour, even a reset, as a bare `CSI m`, which also clears the
@@ -61,20 +80,27 @@ pub(crate) fn run(mut app: App, environment: &Environment) -> Result<Ending, Tui
     style::force_color_output(true);
     // Listen before taking over the terminal, so no signal can leave it in
     // raw mode.
-    let signals = Signals::listen().map_err(TuiError::Signals)?;
+    let mut signals = Signals::listen().map_err(TuiError::Signals)?;
     let mut guard = TerminalGuard::enable(CrosstermSwitch::new(io::stdout()), &TerminalMode::TUI)
         .map_err(TuiError::Enable)?;
     let mut terminal =
         Terminal::new(CrosstermBackend::new(io::stdout())).map_err(TuiError::Draw)?;
     // The terminal reports later sizes as resize events, but not the first.
     report_size(&terminal, &mut app)?;
+    let mut events = EventStream::new();
+    let mut workers = Workers::new();
+    let mut ticker = Ticker::default();
     let ending = loop {
+        for job in app.take_jobs() {
+            workers.run(job);
+        }
+        ticker.run_while(!workers.is_idle());
         terminal
             .draw(|frame| app.render(frame))
             .map_err(TuiError::Draw)?;
         crash.after_draw();
-        let flow = match next_input(&signals)? {
-            Input::Event(event) => app.handle(Message::Terminal(event)),
+        let flow = match next_input(&mut signals, &mut events, &mut workers, &mut ticker).await? {
+            Input::Message(message) => app.handle(message),
             Input::Stop { signal } => break Ending::Stopped { signal },
             Input::Suspend => Flow::Suspend,
             // Continued without suspending first, perhaps after a stop the
@@ -107,7 +133,44 @@ pub(crate) fn run(mut app: App, environment: &Environment) -> Result<Ending, Tui
     };
     drop(terminal);
     guard.restore().map_err(TuiError::Restore)?;
+    // Quitting never waits for a background job. Dropping the app cancels
+    // every job's token, and dropping the workers stops listening for
+    // results, so a job still running on its blocking thread has its result
+    // discarded when it ends. The runtime shuts down without waiting for it
+    // (see `Runtime`).
+    drop(app);
+    drop(workers);
     Ok(ending)
+}
+
+/// The UI loop's current-thread Tokio runtime. It shuts down without
+/// waiting for a background job, as the loop ends, fails or panics: a plain
+/// Tokio runtime waits for every blocking thread when it is dropped.
+#[derive(Debug)]
+struct Runtime(Option<tokio::runtime::Runtime>);
+
+impl Runtime {
+    fn new() -> io::Result<Self> {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        Ok(Self(Some(runtime)))
+    }
+
+    fn block_on<F: Future>(&self, future: F) -> F::Output {
+        self.0
+            .as_ref()
+            .expect("the runtime is there until it is dropped")
+            .block_on(future)
+    }
+}
+
+impl Drop for Runtime {
+    fn drop(&mut self) {
+        if let Some(runtime) = self.0.take() {
+            runtime.shutdown_background();
+        }
+    }
 }
 
 /// Tells `app` the size `terminal` has now, and returns it.
@@ -159,8 +222,8 @@ fn resume(
 }
 
 enum Input {
-    /// A terminal event.
-    Event(Event),
+    /// A terminal event, a background job's result or a tick, for the app.
+    Message(Message),
     /// SIGHUP, SIGINT or SIGTERM.
     Stop { signal: c_int },
     /// SIGTSTP.
@@ -170,9 +233,15 @@ enum Input {
     Continue,
 }
 
-/// Waits for the next terminal event, the loop's only input source, or for a
-/// signal.
-fn next_input(signals: &Signals) -> Result<Input, TuiError> {
+/// Waits for the next terminal event, the loop's only input source (rule
+/// 26), for a signal, for a background job's result, or for a tick while a
+/// job runs.
+async fn next_input(
+    signals: &mut Signals,
+    events: &mut EventStream,
+    workers: &mut Workers<JobOutput>,
+    ticker: &mut Ticker,
+) -> Result<Input, TuiError> {
     loop {
         if let Some(signal) = signals.stop.last() {
             return Ok(Input::Stop { signal });
@@ -182,11 +251,54 @@ fn next_input(signals: &Signals) -> Result<Input, TuiError> {
             Some(_) => return Ok(Input::Continue),
             None => {}
         }
-        match event::poll(SIGNAL_CHECK_INTERVAL) {
-            Ok(true) => return event::read().map(Input::Event).map_err(TuiError::Input),
-            Ok(false) => {}
-            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
-            Err(error) => return Err(TuiError::Input(error)),
+        // Every branch is cancel-safe (rule 18): one that loses takes
+        // nothing.
+        tokio::select! {
+            // A signal is acted on before anything that arrives with it.
+            biased;
+            () = signals.arrival() => {}
+            event = events.next() => match event {
+                Some(Ok(event)) => return Ok(Input::Message(Message::Terminal(event))),
+                Some(Err(error)) if error.kind() == io::ErrorKind::Interrupted => {}
+                Some(Err(error)) => return Err(TuiError::Input(error)),
+                None => return Err(TuiError::Input(io::ErrorKind::UnexpectedEof.into())),
+            },
+            finished = workers.finished() => {
+                return Ok(Input::Message(Message::Finished(finished)));
+            }
+            () = ticker.tick() => return Ok(Input::Message(Message::Tick)),
+        }
+    }
+}
+
+/// Ticks while a background job runs, so the screen is drawn again, and is
+/// silent otherwise.
+#[derive(Debug, Default)]
+struct Ticker(Option<Interval>);
+
+impl Ticker {
+    /// Starts ticking while `running`, the first tick [`TICK`] from now, and
+    /// stops when not.
+    fn run_while(&mut self, running: bool) {
+        match (running, &self.0) {
+            (true, None) => {
+                let mut interval = time::interval_at(Instant::now() + TICK, TICK);
+                // After a suspend, one tick, not one for every tick missed.
+                interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
+                self.0 = Some(interval);
+            }
+            (false, Some(_)) => self.0 = None,
+            (true, Some(_)) | (false, None) => {}
+        }
+    }
+
+    /// The next tick, which never comes while no job runs.
+    async fn tick(&mut self) {
+        match &mut self.0 {
+            Some(interval) => {
+                interval.tick().await;
+            }
+            None => future::pending().await,
         }
     }
 }
@@ -203,14 +315,44 @@ struct Signals {
     /// outside. As with the kernel's own stop and continue, only the later
     /// of the two counts.
     job_control: LastSignal,
+    /// Wakes the loop when any of those signals arrives. Which one arrived
+    /// is read from `stop` and `job_control`, which keep what matters about
+    /// their order.
+    arrivals: Vec<unix_signal::Signal>,
 }
 
 impl Signals {
+    /// Must be called on the loop's runtime.
     fn listen() -> io::Result<Self> {
+        let stop = LastSignal::listen(&[SIGHUP, SIGINT, SIGTERM])?;
+        let job_control = LastSignal::listen(&[SIGTSTP, SIGCONT])?;
+        // Registered after the flags, so a signal's flag is set before it
+        // wakes the loop.
+        let arrivals = [SIGHUP, SIGINT, SIGTERM, SIGTSTP, SIGCONT]
+            .into_iter()
+            .map(|signal| unix_signal::signal(SignalKind::from_raw(signal)))
+            .collect::<io::Result<_>>()?;
         Ok(Self {
-            stop: LastSignal::listen(&[SIGHUP, SIGINT, SIGTERM])?,
-            job_control: LastSignal::listen(&[SIGTSTP, SIGCONT])?,
+            stop,
+            job_control,
+            arrivals,
         })
+    }
+
+    /// Waits until one of the signals arrives. It is cancel-safe (rule 18).
+    async fn arrival(&mut self) {
+        future::poll_fn(|context| {
+            if self
+                .arrivals
+                .iter_mut()
+                .any(|arrival| arrival.poll_recv(context).is_ready())
+            {
+                Poll::Ready(())
+            } else {
+                Poll::Pending
+            }
+        })
+        .await;
     }
 }
 
