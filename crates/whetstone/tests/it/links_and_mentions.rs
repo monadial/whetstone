@@ -2,7 +2,7 @@
 //! files that touched Markdown links to on changed lines, and the
 //! repository paths that changed lines name, each sent whole.
 
-use crate::connected_code::{REVIEW_NEWEST, connected_code, connected_rows};
+use crate::connected_code::{REVIEW_NEWEST, connected_code, connected_rows, logged};
 use crate::repo::TestRepo;
 use crate::repository::started_in;
 
@@ -246,4 +246,65 @@ fn connected_code_from_links_and_mentions_in_the_review_at_80x24() {
     session.press("j j j");
 
     insta::assert_debug_snapshot!("links_and_mentions_80x24", session.frame());
+}
+
+#[test]
+fn a_linked_symlink_or_a_named_binary_file_is_listed_but_always_left_out() {
+    let repo = course();
+    repo.symlink("lessons/latest.md", "loops.md")
+        .write("images/loop.png", b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR");
+    repo.commit("Add the latest lesson and a picture");
+    repo.write(
+        "README.md",
+        "# Course\n\nRead [the latest lesson](lessons/latest.md), drawn in images/loop.png.\n",
+    );
+    repo.commit("Point to the latest lesson");
+    let mut session = started_in(repo.root(), 120, 60);
+    session.press(REVIEW_NEWEST);
+
+    session.settle();
+
+    assert_eq!(
+        connected_rows(&session),
+        [
+            [
+                "images/loop.png",
+                "whole file",
+                "1 KB",
+                "left out: binary file",
+                "named in `README.md`"
+            ],
+            [
+                "lessons/latest.md",
+                "whole file",
+                "–",
+                "left out: symlink",
+                "linked from `README.md`"
+            ],
+        ]
+    );
+}
+
+#[test]
+fn finding_what_a_change_links_to_and_names_logs_counts_but_never_the_files() {
+    let repo = course();
+    repo.write(
+        "README.md",
+        "# Course\n\nStart with [the intro](lessons/intro.md).\n\nThen try exercises/loops.txt.\n",
+    );
+    repo.commit("Point to the first lesson and exercise");
+
+    let log = logged(|| {
+        let mut session = started_in(repo.root(), 80, 24);
+        session.press(REVIEW_NEWEST);
+        session.settle();
+    });
+
+    assert!(
+        log.contains("found the files a change links to and names linked=1 named=2"),
+        "{log}"
+    );
+    for unlogged in ["lessons/intro.md", "exercises/loops.txt", "Welcome"] {
+        assert!(!log.contains(unlogged), "{unlogged:?} in the log:\n{log}");
+    }
 }

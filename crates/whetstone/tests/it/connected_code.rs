@@ -654,7 +654,7 @@ fn callers_in_secret_paths_or_in_files_the_repository_excludes_are_never_connect
 }
 
 /// Everything recorded in the log while `run` runs, at every level.
-fn logged(run: impl FnOnce()) -> String {
+pub(crate) fn logged(run: impl FnOnce()) -> String {
     use std::io;
     use std::sync::{Arc, Mutex};
 
