@@ -1,0 +1,17 @@
+[package]
+name = "whetstone-ai"
+description = "Whetstone's AI port: Jev and the generator, behind Whetstone types."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# Each module that can fail has its own error type (CODING_STANDARDS.md rule 13).
+thiserror = "2"
+whetstone-core = { path = "../whetstone-core" }
