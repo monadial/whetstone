@@ -90,7 +90,7 @@ fn continues_path(c: char) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use whetstone_core::TouchedFile;
+    use whetstone_core::{FileContent, TouchedFile};
 
     use crate::connected_code::links::linked_files;
 
@@ -231,18 +231,23 @@ mod tests {
     fn a_touched_file_is_never_named_and_a_target_lists_every_file_naming_it() {
         let deploy = created(
             "ci/deploy.yml",
-            "run: scripts/release.sh --notes docs/release.md\n",
+            "run: scripts/release.sh --notes docs/release.md --logo assets/logo.png\n",
         );
         let release = created(
             "docs/release.md",
-            "Run scripts/release.sh to cut a release.\n",
+            "Run scripts/release.sh, which loads scripts/common.sh.\n",
         );
         let script = TouchedFile::modified(
             "scripts/release.sh".to_owned(),
             "#!/bin/sh\n".to_owned(),
             "#!/bin/sh\n. scripts/common.sh\n".to_owned(),
         );
+        let logo = TouchedFile::created(
+            "assets/logo.png".to_owned(),
+            FileContent::Binary { size: 2048 },
+        );
         let files = tree(&[
+            "assets/logo.png",
             "ci/deploy.yml",
             "docs/release.md",
             "scripts/common.sh",
@@ -252,15 +257,19 @@ mod tests {
         let found = named(
             &files,
             &[
-                all_added(&release),
+                all_added(&script),
                 all_added(&deploy),
-                TouchedText::new(&script, BTreeSet::from([2])),
+                all_added(&logo),
+                all_added(&release),
             ],
         );
 
         assert_eq!(
             found,
-            [target("scripts/common.sh", &["scripts/release.sh"])]
+            [target(
+                "scripts/common.sh",
+                &["docs/release.md", "scripts/release.sh"]
+            )]
         );
     }
 

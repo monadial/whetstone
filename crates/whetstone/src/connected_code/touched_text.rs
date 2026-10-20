@@ -11,18 +11,30 @@
 )]
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
 
 use whetstone_core::{FileContent, TouchedFile};
 
 /// A touched file as links and mentions read it: its path, its text at the
 /// commit if it has text there, and the lines the change adds or modifies.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(crate) struct TouchedText<'a> {
     path: &'a str,
     /// None for a file that is binary, a symlink or a submodule at the
     /// commit, or that the change deletes.
     text: Option<&'a str>,
     changed: BTreeSet<usize>,
+}
+
+/// Shows the text's length, never the text, which may hold a secret.
+impl fmt::Debug for TouchedText<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TouchedText")
+            .field("path", &self.path)
+            .field("text_bytes", &self.text.map(str::len))
+            .field("changed", &self.changed)
+            .finish()
+    }
 }
 
 impl<'a> TouchedText<'a> {
@@ -172,5 +184,16 @@ mod tests {
         assert_eq!(added_lines(created), BTreeSet::from([1, 2, 3]));
         assert_eq!(added_lines(removal), BTreeSet::new());
         assert_eq!(added_lines(binary), BTreeSet::new());
+    }
+
+    #[test]
+    fn a_touched_text_debugs_its_length_never_its_text() {
+        let file = TouchedFile::created(".env".to_owned(), "TOKEN=hunter2\n".to_owned());
+
+        let debug = format!("{:?}", TouchedText::new(&file, BTreeSet::from([1])));
+
+        assert!(!debug.contains("hunter2"), "{debug}");
+        assert!(debug.contains(".env"), "{debug}");
+        assert!(debug.contains("14"), "{debug}");
     }
 }
