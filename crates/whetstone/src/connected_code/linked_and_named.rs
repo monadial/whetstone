@@ -1,6 +1,6 @@
 //! The connected code a change links to and names: the repository files
 //! that touched Markdown links to and that changed lines name, each sent
-//! whole, merged with the callers and callees found in the same files.
+//! whole.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -21,8 +21,12 @@ use super::{Failure, FileKind, Snapshot, read_file};
 /// to, as [`linked_files`] finds them, is in the high tier; one that is
 /// only named, as [`named_files`] finds them, is in the medium tier. A
 /// touched file that links to a file is not also said to name it. Callers
-/// and callees in a file that is sent whole merge into it: their relations
-/// come first, and it takes the higher of their tiers.
+/// and callees in a file that is sent whole stay as they are, for
+/// [`merge_into_whole_files`] to merge into it with everything else found
+/// there: their relations come first, and it takes the higher of their
+/// tiers.
+///
+/// [`merge_into_whole_files`]: whetstone_core::merge_into_whole_files
 ///
 /// If the commit has more paths than one search for mentions can hold, it
 /// logs that and carries on with the links. It fails if the commit's tree
@@ -54,33 +58,28 @@ pub(super) fn with_linked_and_named<S: Snapshot>(
     let linked = by_path(&links);
     let named = by_path(&mentions);
     let sent_whole: BTreeSet<&str> = linked.keys().chain(named.keys()).copied().collect();
-    let (merging, mut connections): (Vec<Connection>, Vec<Connection>) =
-        callers_and_callees.into_iter().partition(|connection| {
-            connection.group() == ConnectionGroup::ConnectedCode
-                && sent_whole.contains(connection.id().path())
-        });
     tracing::info!(
         linked = linked.len(),
         named = sent_whole.len() - linked.len(),
-        merged_ranges = merging.len(),
+        merged_ranges = callers_and_callees
+            .iter()
+            .filter(|connection| {
+                connection.group() == ConnectionGroup::ConnectedCode
+                    && sent_whole.contains(connection.id().path())
+            })
+            .count(),
         "found the files a change links to and names"
     );
+    let mut connections = callers_and_callees;
     for path in sent_whole {
-        let in_file: Vec<&Connection> = merging
-            .iter()
-            .filter(|connection| connection.id().path() == path)
-            .collect();
         let linked_from = linked.get(path).copied().unwrap_or_default();
         let named_in = named.get(path).copied().unwrap_or_default();
-        let mut relations: Vec<Relation> = Vec::new();
-        for relation in in_file.iter().flat_map(|connection| connection.relations()) {
-            if !relations.contains(relation) {
-                relations.push(relation.clone());
-            }
-        }
-        relations.extend(linked_from.iter().map(|touched_file| Relation::LinkedFrom {
-            touched_file: touched_file.clone(),
-        }));
+        let mut relations: Vec<Relation> = linked_from
+            .iter()
+            .map(|touched_file| Relation::LinkedFrom {
+                touched_file: touched_file.clone(),
+            })
+            .collect();
         relations.extend(
             named_in
                 .iter()
@@ -89,14 +88,10 @@ pub(super) fn with_linked_and_named<S: Snapshot>(
                     touched_file: touched_file.clone(),
                 }),
         );
-        let tier = if !linked_from.is_empty()
-            || in_file
-                .iter()
-                .any(|connection| connection.tier() == Tier::High)
-        {
-            Tier::High
-        } else {
+        let tier = if linked_from.is_empty() {
             Tier::Medium
+        } else {
+            Tier::High
         };
         let kind = *kinds
             .get(path)
@@ -144,23 +139,26 @@ fn logged(failure: Failure) -> Failure {
 
 #[cfg(test)]
 mod tests {
-    use whetstone_core::{CommitId, LineRange};
+    use whetstone_core::{CommitId, LineRange, merge_into_whole_files};
 
     use super::*;
     use crate::repository::test_repo::TestRepo;
 
     /// The connected code of the commit `id` of `repo`, given its
-    /// `callers_and_callees`, each piece as `path extent tier: relations`.
+    /// `callers_and_callees`, merged into the files sent whole as
+    /// [`Request::find`](super::super::Request::find) merges it, each piece
+    /// as `path extent tier: relations`.
     fn sent(repo: &TestRepo, id: CommitId, callers_and_callees: Vec<Connection>) -> Vec<String> {
         let repository = repo.open();
         let change = repository.load(id).expect("load the change");
-        repository
+        let found = repository
             .handle()
             .with_tree(id, |tree| {
                 with_linked_and_named(tree, &change, callers_and_callees)
             })
             .expect("read the commit's tree")
-            .expect("read what the change links to and names")
+            .expect("read what the change links to and names");
+        merge_into_whole_files(found)
             .iter()
             .map(|connection| {
                 let tier = match connection.tier() {

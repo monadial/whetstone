@@ -514,6 +514,47 @@ fn a_related_test_that_calls_the_change_is_sent_whole_once_as_a_test_that_calls_
 }
 
 #[test]
+fn a_related_test_the_change_also_names_is_sent_whole_once_as_a_test_with_every_relation() {
+    let repo = with_a_test_that_calls_the_change();
+    repo.write(
+        "shop/store.py",
+        "def save(order):\n    # Tested in shop/test_store.py.\n    return [order]\n",
+    );
+    repo.commit("Say where saving is tested");
+    let mut session = reviewed(&repo);
+
+    assert_eq!(
+        related(&session),
+        [
+            "Related tests and configuration: 1 test · 1 KB",
+            "shop/test_store.py  whole file  1 KB  included  \
+             test for `shop/store.py`, calls `save`, +1 more",
+        ]
+    );
+    assert_eq!(
+        connected_rows(&session),
+        [[
+            "shop/cart.py",
+            "lines 4–5",
+            "1 KB",
+            "included",
+            "calls `save`"
+        ]]
+    );
+    // The change, the touched file, the caller, then the test.
+    session.press("j j j <Enter>");
+    assert_eq!(
+        reader(&session)[..4],
+        [
+            "Why it is sent",
+            "test for `shop/store.py`",
+            "calls `save`",
+            "named in `shop/store.py`",
+        ]
+    );
+}
+
+#[test]
 fn choices_on_related_tests_survive_going_back_to_the_same_commit_and_reset_for_another() {
     let repo = with_a_test_that_calls_the_change();
     let mut session = reviewed(&repo);
