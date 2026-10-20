@@ -3,7 +3,8 @@
 //! [`TerminalGuard`] turns terminal modes on and guarantees they are turned
 //! off again: when it is restored or dropped, and from a panic hook that runs
 //! before the panic message prints. Ratatui's own restore only covers raw mode
-//! and the alternate screen, so Whetstone owns this.
+//! and the alternate screen, so Whetstone owns this. While Whetstone is
+//! suspended, the guard turns the same modes off and later back on.
 
 use std::ffi::OsStr;
 use std::io::{self, IsTerminal as _, Write};
@@ -77,13 +78,16 @@ pub trait ModeSwitch: Send {
 }
 
 /// Restores every terminal mode it enabled, exactly once: on [`restore`],
-/// on drop, or from its panic hook, whichever comes first.
+/// on drop, or from its panic hook, whichever comes first. In between,
+/// [`suspend`] turns them off and [`resume`] turns them back on.
 ///
 /// The panic hook stays installed after the guard is gone and does nothing
 /// from then on. Install other panic hooks before enabling a guard, so this
 /// one runs first.
 ///
 /// [`restore`]: TerminalGuard::restore
+/// [`suspend`]: TerminalGuard::suspend
+/// [`resume`]: TerminalGuard::resume
 #[derive(Debug)]
 pub struct TerminalGuard {
     session: Arc<Mutex<Session>>,
@@ -91,6 +95,8 @@ pub struct TerminalGuard {
 
 struct Session {
     switch: Box<dyn ModeSwitch>,
+    /// Every mode the guard turns on, in order.
+    modes: Vec<TerminalMode>,
     /// Modes currently on, in the order they were enabled.
     enabled: Vec<TerminalMode>,
 }
@@ -110,6 +116,7 @@ impl TerminalGuard {
     pub fn enable(switch: impl ModeSwitch + 'static, modes: &[TerminalMode]) -> io::Result<Self> {
         let session = Arc::new(Mutex::new(Session {
             switch: Box::new(switch),
+            modes: modes.to_vec(),
             enabled: Vec::with_capacity(modes.len()),
         }));
         install_panic_hook(Arc::clone(&session));
@@ -128,6 +135,20 @@ impl TerminalGuard {
         self.lock().restore()
     }
 
+    /// Turns every mode off, as [`restore`](Self::restore) does, but keeps
+    /// the guard, so [`resume`](Self::resume) can turn them back on.
+    pub fn suspend(&mut self) -> io::Result<()> {
+        self.lock().restore()
+    }
+
+    /// Turns back on, in order, every mode that is off since
+    /// [`suspend`](Self::suspend). With every mode on, it does nothing. If a
+    /// mode fails to turn on, the error is returned, and the modes already
+    /// back on are restored with the rest.
+    pub fn resume(&mut self) -> io::Result<()> {
+        self.lock().resume()
+    }
+
     fn lock(&self) -> std::sync::MutexGuard<'_, Session> {
         self.session.lock().unwrap_or_else(PoisonError::into_inner)
     }
@@ -141,6 +162,16 @@ impl Drop for TerminalGuard {
 }
 
 impl Session {
+    fn resume(&mut self) -> io::Result<()> {
+        for &mode in &self.modes {
+            if !self.enabled.contains(&mode) {
+                self.switch.enable(mode)?;
+                self.enabled.push(mode);
+            }
+        }
+        Ok(())
+    }
+
     fn restore(&mut self) -> io::Result<()> {
         let mut outcome = Ok(());
         while let Some(mode) = self.enabled.pop() {
