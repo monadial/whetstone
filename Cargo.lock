@@ -9638,15 +9638,19 @@ dependencies = [
 name = "whetstone-ai"
 version = "0.1.0"
 dependencies = [
+ "insta",
  "rig",
  "schemars 1.2.3",
  "secrecy",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror 2.0.21",
  "tokio",
  "tokio-util",
+ "toml 1.1.8+spec-1.1.0",
  "tracing",
+ "whetstone-core",
  "wiremock",
 ]
 

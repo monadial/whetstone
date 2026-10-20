@@ -1,0 +1,10 @@
+# The question check: Jev's questions about one candidate question, which
+# the state holds as `candidate`, beside the `evidence`. Each yes/no question
+# has its instructions and what yes and no mean.
+#
+# Placeholders: `{letter}` is an option's letter.
+
+[option]
+instructions = "Given the evidence, option {letter} correctly answers the candidate's stem. Judge it from the evidence alone, not from the candidate's answer key or rationales."
+yes = "The evidence shows that option {letter} is a correct answer to the stem."
+no = "The evidence doesn't show that option {letter} answers the stem correctly, or shows that it doesn't."
