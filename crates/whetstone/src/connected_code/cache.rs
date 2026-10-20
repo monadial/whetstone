@@ -29,11 +29,12 @@ const FORMAT: u32 = 1;
 /// caller's contract is that it holds only names, paths and line numbers,
 /// never file contents, since the cache keeps it on disk.
 ///
-/// The calls block on file I/O, so the app makes them from a blocking job.
-/// None of them fails the caller: anything that cannot be read is a miss,
-/// and a graph that cannot be written is not cached. The first time the
-/// cache folder cannot be written, a warning is logged that names the cache
-/// folder and no path inside it.
+/// Its calls block on file I/O. The app opens it once, at launch, and gets
+/// and puts graphs from a blocking job. None of them fails the caller:
+/// anything that cannot be read is a miss, and a graph that cannot be
+/// written is not cached. The first time the cache folder cannot be
+/// written, a warning is logged that names the cache folder and no path
+/// inside it.
 #[derive(Debug)]
 pub(crate) struct GraphCache {
     /// Whetstone's cache folder.

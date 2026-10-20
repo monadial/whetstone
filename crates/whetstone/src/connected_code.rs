@@ -319,19 +319,19 @@ impl Request {
         self.commit
     }
 
-    /// Finds the commit's connected code, blocking until the engine is
-    /// done: the callers and callees of the callables its change adds or
-    /// modifies, as [`find`] finds them, each with the lines it would send,
-    /// the files its change links to and names, each whole, as
+    /// Finds the commit's connected code, blocking until it is found: the
+    /// callers and callees of the callables its change adds or modifies, as
+    /// [`find`] finds them in a cached graph or the engine's, each with the
+    /// lines it would send, the files its change links to and names, each
+    /// whole, as
     /// [`with_linked_and_named`](linked_and_named::with_linked_and_named)
     /// finds them, and its related tests and related configuration, each
-    /// whole, as [`related::connections`] finds them, read from the commit,
-    /// with any range in a file sent whole merged into it; or none found, or
-    /// the analysis failed, a panic included. Links, names, related tests
-    /// and related configuration are read from the commit, never from the
-    /// graph, so they are found whether or not the graph came from the
-    /// cache. It also says how the graph was found, which is
-    /// [`GraphOrigin::Analysed`] if none was.
+    /// whole, as [`related::connections`] finds them, with any range in a
+    /// file sent whole merged into it; or none found, or the analysis
+    /// failed, a panic included. Everything but the graph is read from the
+    /// commit, so links, names, related tests and related configuration are
+    /// found whether or not the graph came from the cache. It also says how
+    /// the graph was found, which is [`GraphOrigin::Analysed`] if none was.
     pub(crate) fn find(&self) -> (Connections, GraphOrigin) {
         let started = Instant::now();
         let mut origin = GraphOrigin::Analysed;
