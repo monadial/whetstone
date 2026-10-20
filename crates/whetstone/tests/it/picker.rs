@@ -168,19 +168,19 @@ fn space_on_a_change_chooses_it_and_only_it() {
 }
 
 #[test]
-fn generate_questions_is_visible_but_disabled_until_jev_arrives() {
+fn generate_questions_is_visible_but_disabled_without_an_openrouter_key() {
     let mut session = Session::plain(80, 24);
     session.press("<Enter>");
     assert_eq!(
         session.row_with("Generate questions"),
-        "Generate questions (arrives with Jev)"
+        "Generate questions (needs OPENROUTER_API_KEY)"
     );
 
     // Shift+Tab wraps from the first control to the last.
     session.press("<S-Tab>");
     assert_eq!(
         session.row_with("Generate questions"),
-        "> Generate questions (arrives with Jev)"
+        "> Generate questions (needs OPENROUTER_API_KEY)"
     );
     let picker = session.text();
     assert_eq!(session.press("<Enter> <Space>"), Flow::Continue);

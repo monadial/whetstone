@@ -52,6 +52,7 @@ pub use crate::theme::{ColorSupport, ControlKind, ControlState, Theme};
 
 use std::ffi::OsString;
 use std::process::ExitCode;
+use std::sync::Arc;
 use std::time::SystemTime;
 
 use clap::Parser as _;
@@ -100,17 +101,21 @@ fn launch(environment: &Environment) -> anyhow::Result<ExitCode> {
     let theme = Theme::new(settings.color_support());
     let repository = Repository::open(environment.current_dir());
     repository::log(&repository);
-    match tui::run(
-        App::new(
-            theme,
-            settings,
-            embedded_showcase(),
-            repository,
-            temp_dir,
-            &dirs.cache,
-        ),
-        environment,
-    )? {
+    let ai = settings.openrouter(environment);
+    tracing::info!(found = ai.is_some(), "the OpenRouter key");
+    let app = App::new(
+        theme,
+        settings,
+        embedded_showcase(),
+        repository,
+        temp_dir,
+        &dirs.cache,
+    );
+    let app = match ai {
+        Some(ai) => app.with_ai(Arc::new(ai)),
+        None => app,
+    };
+    match tui::run(app, environment)? {
         Ending::Quit => {
             tracing::info!("whetstone quit");
             Ok(ExitCode::SUCCESS)

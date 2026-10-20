@@ -20,6 +20,7 @@ mod graph_cache;
 mod jobs;
 mod links_and_mentions;
 mod navigation;
+mod openrouter_key;
 mod outbound_review;
 mod overlays;
 mod paste;

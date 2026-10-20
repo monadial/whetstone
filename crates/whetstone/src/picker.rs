@@ -26,7 +26,7 @@ use crate::repository::{Availability, Commit, History, HistoryEnd, HistoryError,
 use crate::search::{self, Query};
 use crate::theme::{ControlKind, ControlState, Theme};
 use crate::view::{
-    ARRIVES_WITH_JEV, ChangeIndex, ChangeRef, Context, Project, Route, View, comparison_label,
+    ChangeIndex, ChangeRef, Context, NEEDS_KEY, Project, Route, View, comparison_label,
 };
 use crate::viewer::Unreadable;
 
@@ -522,7 +522,7 @@ impl Picker {
             Source::Showcase {
                 ai_available: false,
                 ..
-            } => ("Generate questions", Some(ARRIVES_WITH_JEV)),
+            } => ("Generate questions", Some(NEEDS_KEY)),
             Source::Showcase {
                 ai_available: true, ..
             } => ("Generate questions", self.choices_missing()),

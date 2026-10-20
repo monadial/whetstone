@@ -26,7 +26,7 @@ Buffer {
         "    ( ) R└ j/k scroll  Esc close ──────────────────────────────────────┘ain     ",
         "    ( ) Run rustfmt over the HTTP layer                      Infrastructure     ",
         "                                                                                ",
-        "    Generate questions (arrives with Jev)                                       ",
+        "    Generate questions (needs OPENROUTER_API_KEY)                               ",
         "  ? keys  : actions  Space toggle  Enter open  q back                           ",
         "                                                                                ",
     ],
@@ -57,6 +57,6 @@ Buffer {
         x: 11, y: 17, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
         x: 17, y: 17, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 4, y: 21, fg: Reset, bg: Reset, underline: Reset, modifier: DIM | ITALIC,
-        x: 41, y: 21, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 49, y: 21, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
     ]
 }

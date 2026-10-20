@@ -26,7 +26,7 @@ Buffer {
         "    ( ) Rename ChargeOutcome to ProviderOutcome                      Domain     ",
         "    ( ) Run rustfmt over the HTTP layer                      Infrastructure     ",
         "                                                                                ",
-        "  > Generate questions (arrives with Jev)                                       ",
+        "  > Generate questions (needs OPENROUTER_API_KEY)                               ",
         "  ? keys  : actions  Space toggle  Enter open  q back                           ",
         "                                                                                ",
     ],
@@ -80,7 +80,7 @@ Buffer {
         x: 75, y: 19, fg: Rgb(245, 243, 237), bg: Rgb(27, 30, 32), underline: Reset, modifier: NONE,
         x: 2, y: 21, fg: Rgb(154, 171, 255), bg: Rgb(27, 30, 32), underline: Reset, modifier: BOLD,
         x: 4, y: 21, fg: Rgb(178, 188, 188), bg: Rgb(27, 30, 32), underline: Reset, modifier: DIM | ITALIC,
-        x: 41, y: 21, fg: Rgb(245, 243, 237), bg: Rgb(27, 30, 32), underline: Reset, modifier: NONE,
+        x: 49, y: 21, fg: Rgb(245, 243, 237), bg: Rgb(27, 30, 32), underline: Reset, modifier: NONE,
         x: 2, y: 22, fg: Rgb(178, 188, 188), bg: Rgb(27, 30, 32), underline: Reset, modifier: NONE,
         x: 53, y: 22, fg: Rgb(245, 243, 237), bg: Rgb(27, 30, 32), underline: Reset, modifier: NONE,
     ]

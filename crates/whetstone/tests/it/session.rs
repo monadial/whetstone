@@ -43,8 +43,11 @@ pub(crate) struct Setup<'a> {
     /// showcase project, wait for connected code, if not Whetstone's own
     /// time limit.
     pub(crate) time_limit: Option<Duration>,
-    /// Jev and the generator, scripted by the test. Without them, as in the
-    /// real binary until Whetstone reaches them, Practice cannot ask them.
+    /// Jev and the generator, scripted by the test. Without them, Practice
+    /// asks the real ones when the variables set `OPENROUTER_API_KEY`, as
+    /// the binary does, and otherwise can't ask them. A test that sets a key
+    /// without them sends no request (rule 48), except the ignored live
+    /// tests.
     pub(crate) ai: Option<&'a Arc<ScriptedAi>>,
 }
 
@@ -98,6 +101,12 @@ impl Session {
             fs::write(dirs.config.join("config.toml"), config).expect("write the config file");
         }
         let settings = Settings::load(&dirs.config, &environment).expect("the config loads");
+        let ai: Option<Arc<dyn Ai>> = match setup.ai {
+            Some(scripted) => Some(Arc::clone(scripted) as Arc<dyn Ai>),
+            None => settings
+                .openrouter(&environment)
+                .map(|real| Arc::new(real) as Arc<dyn Ai>),
+        };
         let theme = Theme::new(settings.color_support());
         let repository = Repository::open(setup.start.unwrap_or(home.path()));
         let app = App::new(
@@ -116,8 +125,8 @@ impl Session {
             None => app,
         };
         let mut session = Self {
-            app: match setup.ai {
-                Some(ai) => app.with_ai(Arc::clone(ai) as Arc<dyn Ai>),
+            app: match ai {
+                Some(ai) => app.with_ai(ai),
                 None => app,
             },
             width,
