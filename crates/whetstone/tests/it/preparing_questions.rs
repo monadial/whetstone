@@ -59,7 +59,7 @@ pub(crate) fn generate(
 }
 
 /// The same as [`generate`], in a session started as `setup` says.
-fn generate_in(
+pub(crate) fn generate_in(
     setup: Setup<'_>,
     areas: &[usize],
     change: usize,

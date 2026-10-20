@@ -145,18 +145,19 @@ pub struct Job<T> {
 impl<T> Job<T> {
     /// Runs the job to its end on this thread, and reports how it ended, as
     /// the app-seam harness does. A blocking job's body runs here. An async
-    /// job's runs on a current-thread runtime of its own, in real time, so
-    /// this must not be called on a runtime. A job cancelled before it runs
-    /// never runs its body. One cancelled by the time its body ends reports
-    /// cancellation, whatever the body returned.
+    /// job's runs on a current-thread runtime of its own, in real time and
+    /// with network I/O, as the UI loop's runtime has, so this must not be
+    /// called on a runtime. A job cancelled before it runs never runs its
+    /// body. One cancelled by the time its body ends reports cancellation,
+    /// whatever the body returned.
     #[must_use]
     pub fn run(self) -> Finished<T> {
         let outcome = match self.work {
             Work::Blocking(body) => run_blocking(&self.token, body),
             Work::Async(body) => tokio::runtime::Builder::new_current_thread()
-                .enable_time()
+                .enable_all()
                 .build()
-                .expect("a runtime without I/O makes no system call as it is built")
+                .expect("the harness's machine can start a runtime's I/O and timers")
                 .block_on(run_async(&self.token, body)),
         };
         Finished {
