@@ -17,7 +17,8 @@
 #   has several, one of the touched file's own ecosystem comes first, then
 #   the first in this file's order: ecosystem by ecosystem, top to bottom,
 #   and each ecosystem's `manifests` left to right. A file of no ecosystem
-#   gets the first in that order. Two ecosystems never list the same one.
+#   gets the first in that order. Ecosystems may share a manifest, which
+#   then builds each of them.
 # - `tests`: its test rules, if any. A rule looks for files named one of its
 #   `names` in one place, `look_in`. A touched file's related tests are what
 #   every rule finds.
