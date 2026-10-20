@@ -3,6 +3,7 @@
 
 use std::collections::BTreeMap;
 use std::convert::Infallible;
+use std::fmt;
 use std::fs;
 use std::io;
 use std::os::unix::fs::PermissionsExt as _;
@@ -617,6 +618,108 @@ fn the_analysis_directory_is_removed_after_the_analysis_and_after_a_panic() {
     }));
 
     assert!(interrupted.is_err());
+    assert_eq!(files_under(temp.path()), Vec::<String>::new());
+}
+
+/// A snapshot that runs `on_read` before it reads any file, as something
+/// can happen while a job writes a commit's files.
+struct Interrupted<'a, F: Fn()> {
+    snapshot: &'a Memory,
+    on_read: F,
+}
+
+impl<F: Fn()> fmt::Debug for Interrupted<'_, F> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Interrupted").finish_non_exhaustive()
+    }
+}
+
+impl<F: Fn()> Snapshot for Interrupted<'_, F> {
+    type Error = Infallible;
+
+    fn files(&self) -> Result<Vec<SnapshotFile>, Infallible> {
+        self.snapshot.files()
+    }
+
+    fn read(&self, path: &str) -> Result<Option<Vec<u8>>, Infallible> {
+        (self.on_read)();
+        self.snapshot.read(path)
+    }
+}
+
+/// A snapshot of two source files.
+fn two_files() -> Memory {
+    Memory::default()
+        .with("src/main.rs", FileKind::Blob, "fn main() {}\n")
+        .with("src/lib.rs", FileKind::Blob, "pub fn lib() {}\n")
+}
+
+#[test]
+fn quitting_removes_an_analysis_directory_in_use_and_stops_any_more_from_being_written() {
+    let temp = TempDir::new().expect("create a temporary directory");
+    let dirs = AnalysisDirs::new(temp.path().to_path_buf());
+    let guard = dirs.guard();
+    let snapshot = two_files();
+
+    let dir =
+        AnalysisDir::write(&snapshot, &ExcludePatterns::default(), &dirs).expect("write the files");
+    assert_eq!(files_under(dir.path()), ["src/lib.rs", "src/main.rs"]);
+    drop(guard);
+
+    assert_eq!(files_under(temp.path()), Vec::<String>::new());
+    let change = Change::new(String::new(), Vec::new(), String::new(), Vec::new());
+    let failure = find(&snapshot, &change, &ExcludePatterns::default(), &dirs)
+        .expect_err("nothing is written once the app quits");
+    assert!(matches!(failure, Failure::Quitting), "{failure:?}");
+    drop(dir);
+    assert_eq!(files_under(temp.path()), Vec::<String>::new());
+}
+
+#[test]
+fn quitting_while_a_commits_files_are_written_stops_before_the_next_and_leaves_nothing() {
+    let temp = TempDir::new().expect("create a temporary directory");
+    let dirs = AnalysisDirs::new(temp.path().to_path_buf());
+    let guard = std::cell::RefCell::new(Some(dirs.guard()));
+    let snapshot = two_files();
+    let written = std::cell::Cell::new(0);
+    let quitting = Interrupted {
+        snapshot: &snapshot,
+        // Quit as the second file is read.
+        on_read: || {
+            written.set(written.get() + 1);
+            if written.get() == 2 {
+                guard.borrow_mut().take();
+            }
+        },
+    };
+    let change = Change::new(String::new(), Vec::new(), String::new(), Vec::new());
+
+    let failure =
+        find(&quitting, &change, &ExcludePatterns::default(), &dirs).expect_err("the app quit");
+
+    assert!(matches!(failure, Failure::Quitting), "{failure:?}");
+    assert_eq!(files_under(temp.path()), Vec::<String>::new());
+}
+
+#[test]
+fn a_panic_while_finding_connected_code_is_a_failure_and_leaves_nothing() {
+    let temp = TempDir::new().expect("create a temporary directory");
+    let snapshot = two_files();
+    let panicking = Interrupted {
+        snapshot: &snapshot,
+        on_read: || panic!("a file cannot be read"),
+    };
+    let change = Change::new(String::new(), Vec::new(), String::new(), Vec::new());
+
+    let failure = find(
+        &panicking,
+        &change,
+        &ExcludePatterns::default(),
+        &AnalysisDirs::new(temp.path().to_path_buf()),
+    )
+    .expect_err("finding connected code panicked");
+
+    assert!(matches!(failure, Failure::Panicked), "{failure:?}");
     assert_eq!(files_under(temp.path()), Vec::<String>::new());
 }
 
