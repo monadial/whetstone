@@ -290,6 +290,57 @@ fn what_a_change_links_to_and_names_is_read_from_the_commit_on_a_cache_hit_too()
     );
 }
 
+#[test]
+fn related_tests_and_configuration_are_read_from_the_commit_on_a_cache_hit_too() {
+    let repo = rust_payments();
+    repo.write("Cargo.toml", "[package]\nname = \"shop\"\n")
+        .write("tests/pay.rs", "// The payments' tests.\n");
+    repo.commit("Add the manifest and the payments' tests");
+    repo.write("src/pay.rs", rust_pay("validate(amount * 2)"));
+    repo.commit("Double the charge");
+    let mut session = started_in(repo.root(), 120, 60);
+    session.press(REVIEW_NEWEST);
+    session.settle();
+
+    session.press("q <Enter>");
+    session.settle();
+
+    assert_eq!(
+        connected_code(&session)[0],
+        "Connected code: 2 ranges · 1 KB of 100 KB limit · from cache"
+    );
+    assert_eq!(
+        session.row_with("Related tests and configuration"),
+        "Related tests and configuration: 1 test and 1 manifest · 1 KB"
+    );
+    assert_eq!(
+        session.row_with("tests/pay.rs  "),
+        "tests/pay.rs  whole file  1 KB  included  test for `src/pay.rs`"
+    );
+    assert_eq!(
+        session.row_with("Cargo.toml  "),
+        "Cargo.toml    whole file  1 KB  included  manifest for `src/pay.rs`"
+    );
+}
+
+#[test]
+fn from_cache_comes_before_a_limit_the_repository_lowered() {
+    let repo = double_the_charge();
+    repo.write(".whetstone/config.toml", "connected_code_limit_kb = 50\n");
+    let mut session = started_in(repo.root(), 120, 60);
+    session.press(REVIEW_NEWEST);
+    session.settle();
+
+    session.press("q <Enter>");
+    session.settle();
+
+    assert_eq!(
+        connected_code(&session)[0],
+        "Connected code: 2 ranges · 1 KB of 50 KB limit · from cache · \
+         limit lowered by this repository"
+    );
+}
+
 /// The outbound review of [`double_the_charge`]'s commit, reviewed a second
 /// time in a `width` by `height` terminal, with its connected code from
 /// the cache.
@@ -314,7 +365,7 @@ fn connected_code_from_the_cache_in_the_review_at_120x32() {
 fn connected_code_from_the_cache_in_the_review_at_80x24() {
     let mut session = reviewed_again(80, 24);
     // Down to the first piece of connected code, past the touched file, so
-    // that the summary is on the screen below the stage row.
+    // that the summary, below the stage row, scrolls onto the screen.
     session.press("j j");
 
     insta::assert_debug_snapshot!("connected_code_from_cache_80x24", session.frame());
