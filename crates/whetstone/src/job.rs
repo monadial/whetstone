@@ -97,6 +97,15 @@ enum Work<T> {
     Async(AsyncBody<T>),
 }
 
+impl<T> fmt::Debug for Work<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Blocking(_) => "Blocking",
+            Self::Async(_) => "Async",
+        })
+    }
+}
+
 /// A started job, waiting to run.
 pub struct Job<T> {
     id: JobId,
@@ -161,7 +170,8 @@ impl<T> fmt::Debug for Job<T> {
         f.debug_struct("Job")
             .field("id", &self.id)
             .field("token", &self.token)
-            .finish_non_exhaustive()
+            .field("work", &self.work)
+            .finish()
     }
 }
 
@@ -216,17 +226,19 @@ impl<T> Jobs<T> {
         &mut self,
         body: impl FnOnce(&CancellationToken) -> Result<T, Cancelled> + Send + 'static,
     ) -> JobId {
-        let job = self.job(Work::Blocking(Box::new(body)));
-        let id = job.id;
-        self.started.push(job);
-        id
+        self.start_work(Work::Blocking(Box::new(body)))
     }
 
     /// Starts a job that runs `body`, async work such as a network request,
     /// as a task on the runtime, and returns its identity. Several run at
     /// once. Cancelling the job drops `body` where it waits.
     pub fn start_async(&mut self, body: impl Future<Output = T> + Send + 'static) -> JobId {
-        let job = self.job(Work::Async(Box::pin(body)));
+        self.start_work(Work::Async(Box::pin(body)))
+    }
+
+    /// Starts a job that runs `work`, for the UI loop to take at once.
+    fn start_work(&mut self, work: Work<T>) -> JobId {
+        let job = self.job(work);
         let id = job.id;
         self.started.push(job);
         id
@@ -347,31 +359,32 @@ impl<T> Drop for Jobs<T> {
 /// carries, which [`Waiting::accept`] checks.
 #[derive(Debug)]
 pub struct Waiting<K> {
-    jobs: Vec<(JobId, K)>,
+    /// Each job it waits for, with the key its result must carry.
+    keys: Vec<(JobId, K)>,
 }
 
 impl<K> Waiting<K> {
     /// Waiting for no job.
     #[must_use]
     pub fn new() -> Self {
-        Self { jobs: Vec::new() }
+        Self { keys: Vec::new() }
     }
 
     /// Waits for job `job`, whose result must carry `key`.
     pub fn wait_for(&mut self, job: JobId, key: K) {
-        self.jobs.push((job, key));
+        self.keys.push((job, key));
     }
 
     /// Whether it waits for job `job`.
     #[must_use]
     pub fn waits_for(&self, job: JobId) -> bool {
-        self.jobs.iter().any(|(waiting, _)| *waiting == job)
+        self.keys.iter().any(|(waiting, _)| *waiting == job)
     }
 
     /// Whether it waits for no job, as when every result has come.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.jobs.is_empty()
+        self.keys.is_empty()
     }
 
     /// Rule 24: whether a result from job `job` carrying `key` is to be
@@ -381,17 +394,17 @@ impl<K> Waiting<K> {
     where
         K: PartialEq,
     {
-        let Some(at) = self.jobs.iter().position(|(waiting, _)| *waiting == job) else {
+        let Some(at) = self.keys.iter().position(|(waiting, _)| *waiting == job) else {
             return false;
         };
-        let (_, waited) = self.jobs.swap_remove(at);
+        let (_, waited) = self.keys.swap_remove(at);
         waited == *key
     }
 
     /// Stops waiting for every job, and cancels each with `jobs`, as Cancel
     /// does: none of their results is applied, and their requests stop.
     pub fn cancel<T>(&mut self, jobs: &mut Jobs<T>) {
-        for (job, _) in self.jobs.drain(..) {
+        for (job, _) in self.keys.drain(..) {
             jobs.cancel(job);
         }
     }
