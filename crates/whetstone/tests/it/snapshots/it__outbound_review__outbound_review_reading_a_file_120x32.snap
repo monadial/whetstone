@@ -1,5 +1,5 @@
 ---
-source: crates/whetstone/tests/it/review.rs
+source: crates/whetstone/tests/it/outbound_review.rs
 expression: session.frame()
 ---
 Buffer {

@@ -5,14 +5,14 @@
 //! exclude patterns, the selected areas and the learner's
 //! [`ReviewChoices`]. The outbound review draws only from its value, and the
 //! AI step will send only what it holds, so what is shown and what is sent
-//! cannot diverge.
+//! cannot diverge. A file that is left out keeps no text in it.
 
 use std::collections::{BTreeSet, HashSet};
 use std::fmt;
 
-use crate::area::Area;
+use crate::area::{Area, AreaId};
 use crate::change::{Change, FileContent, TouchedFile};
-use crate::exclusion::{DefaultExclusion, ExcludePatterns};
+use crate::exclusion::{DefaultExclusion, ExcludePattern, ExcludePatterns};
 use crate::secret::{SecretFinding, find_secrets};
 
 /// What a Practice sends: the commit message; for each included file, its
@@ -22,32 +22,51 @@ use crate::secret::{SecretFinding, find_secrets};
 /// Alongside it, but not sent: every touched file's status, with the reason
 /// a left-out file is left out, the possible secrets found in what is sent,
 /// and the total size against [`Evidence::SIZE_LIMIT`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Its `Debug` output shows no message, file text or area prompt, so
+/// logging it cannot spread a secret.
+#[derive(Clone, PartialEq, Eq)]
 pub struct Evidence {
     message: String,
-    files: Vec<ReviewedFile>,
+    files: Vec<EvidenceFile>,
     areas: Vec<Area>,
     findings: Vec<Finding>,
     size: usize,
 }
 
-/// A file the change touches, as the outbound review lists it: whether it
-/// is sent and, if it is text, what it sends.
+/// A touched file's place in its change, which identifies it in the
+/// evidence and in the learner's choices.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct FileIndex(usize);
+
+/// A file the change touches, as the evidence holds it: whether it is
+/// sent, and what it sends while it is.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ReviewedFile {
+pub struct EvidenceFile {
+    index: FileIndex,
     path: String,
     renamed_from: Option<String>,
-    kind: Kind,
     status: FileStatus,
+    /// The bytes it sends while included, or a binary file's size.
+    size: Option<usize>,
+    /// What it sends, only while it is included.
+    sent: Option<SentText>,
+}
+
+/// An included file's diff and full content.
+#[derive(Clone, PartialEq, Eq)]
+struct SentText {
+    diff: String,
+    content: String,
+    side: Side,
 }
 
 /// What a touched file is, as far as sending it goes.
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum Kind {
-    /// Text on every side it has: its diff and full content can be sent.
+#[derive(Debug, Clone, Copy)]
+enum Kind<'a> {
+    /// Text on every side it has, with its full content from `side`.
     Text {
-        diff: String,
-        content: String,
+        content: &'a str,
         side: Side,
     },
     /// Binary on a side, of this many bytes there.
@@ -56,6 +75,36 @@ enum Kind {
     },
     Submodule,
     Symlink,
+}
+
+impl<'a> Kind<'a> {
+    /// What `file` is: binary, a submodule or a symbolic link if either
+    /// side is, and otherwise text.
+    fn of(file: &'a TouchedFile) -> Self {
+        let sides = || file.before().into_iter().chain(file.after());
+        if let Some(size) = sides().find_map(|side| match side {
+            FileContent::Binary { size } => Some(*size),
+            _ => None,
+        }) {
+            Self::Binary { size }
+        } else if sides().any(|side| *side == FileContent::Submodule) {
+            Self::Submodule
+        } else if sides().any(|side| *side == FileContent::Symlink) {
+            Self::Symlink
+        } else {
+            let (content, side) = file
+                .after()
+                .map(|after| (after, Side::After))
+                .or_else(|| file.before().map(|before| (before, Side::Before)))
+                .expect("a touched file has a side before or after the change");
+            Self::Text {
+                content: content
+                    .text()
+                    .expect("a side that is not binary, a submodule or a symlink is text"),
+                side,
+            }
+        }
+    }
 }
 
 /// Which side of the change a file's full content comes from.
@@ -67,7 +116,14 @@ pub enum Side {
     After,
 }
 
-/// Whether a touched file is sent, and why.
+/// Whether a touched file is sent, and why. It reads as the outbound review
+/// shows it:
+///
+/// ```
+/// use whetstone_core::FileStatus;
+///
+/// assert_eq!(FileStatus::IncludedByYou.to_string(), "included by you");
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FileStatus {
     /// Sent: no rule leaves it out.
@@ -95,8 +151,8 @@ pub enum Exclusion {
     Symlink,
     /// Left out by default: a lockfile or a common secret path.
     Default(DefaultExclusion),
-    /// Left out by the repository's config, by this `exclude` pattern.
-    Config(String),
+    /// Left out by this `exclude` pattern in the repository's config.
+    Config(ExcludePattern),
 }
 
 /// A possible secret in what is sent, where it is, and whether the learner
@@ -104,7 +160,7 @@ pub enum Exclusion {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Finding {
     place: Place,
-    secret: SecretFinding,
+    matched: SecretFinding,
     status: FindingStatus,
 }
 
@@ -113,18 +169,11 @@ pub struct Finding {
 pub enum Place {
     /// The commit message.
     CommitMessage,
-    /// The full content of the file at this index of [`Evidence::files`].
-    Content {
-        /// The file's index.
-        file: usize,
-    },
-    /// A line the change removes, in the diff of the file at this index of
-    /// [`Evidence::files`]. Lines the diff adds or keeps are in the file's
-    /// full content, and are found there.
-    Diff {
-        /// The file's index.
-        file: usize,
-    },
+    /// The full content of this file.
+    Content(FileIndex),
+    /// A line the change removes, in the diff of this file. Lines the diff
+    /// adds or keeps are in the file's full content, and are found there.
+    Diff(FileIndex),
 }
 
 /// Whether a finding still stops **Send**.
@@ -148,12 +197,12 @@ pub enum Unsendable {
 }
 
 /// The learner's choices on the outbound review of one change: the files
-/// they left out or brought back, by their index in the change, and the
-/// matches they marked as not secrets. They live only in memory.
+/// they left out or brought back, and the matches they marked as not
+/// secrets. They live only in memory.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ReviewChoices {
-    left_out: BTreeSet<usize>,
-    brought_back: BTreeSet<usize>,
+    left_out: BTreeSet<FileIndex>,
+    brought_back: BTreeSet<FileIndex>,
     not_secrets: HashSet<(Place, SecretFinding)>,
 }
 
@@ -181,48 +230,50 @@ impl Evidence {
         areas: &[Area],
         choices: &ReviewChoices,
     ) -> Self {
-        let files: Vec<ReviewedFile> = change
+        let files: Vec<EvidenceFile> = change
             .files()
             .iter()
             .zip(change.file_diffs())
             .enumerate()
-            .map(|(index, (file, diff))| ReviewedFile::new(index, file, diff, exclude, choices))
+            .map(|(index, (file, diff))| {
+                EvidenceFile::new(FileIndex(index), file, diff, exclude, choices)
+            })
             .collect();
-        let mut findings: Vec<(Place, SecretFinding)> = find_secrets(change.message())
+        let mut found: Vec<(Place, SecretFinding)> = find_secrets(change.message())
             .into_iter()
-            .map(|secret| (Place::CommitMessage, secret))
+            .map(|matched| (Place::CommitMessage, matched))
             .collect();
-        for (index, file) in files.iter().enumerate() {
-            let Some(sent) = file.sent() else {
+        for file in &files {
+            let Some(sent) = &file.sent else {
                 continue;
             };
-            findings.extend(
-                find_secrets(sent.content)
+            found.extend(
+                find_secrets(&sent.content)
                     .into_iter()
-                    .map(|secret| (Place::Content { file: index }, secret)),
+                    .map(|matched| (Place::Content(file.index), matched)),
             );
             // A deleted file's content holds every line its diff removes.
             if sent.side == Side::After {
-                let removed = removed_lines(sent.diff);
-                findings.extend(
-                    find_secrets(sent.diff)
+                let removed = removed_lines(&sent.diff);
+                found.extend(
+                    find_secrets(&sent.diff)
                         .into_iter()
-                        .filter(|secret| removed.contains(&secret.line()))
-                        .map(|secret| (Place::Diff { file: index }, secret)),
+                        .filter(|matched| removed.contains(&matched.line()))
+                        .map(|matched| (Place::Diff(file.index), matched)),
                 );
             }
         }
-        let findings = findings
+        let findings = found
             .into_iter()
-            .map(|(place, secret)| {
-                let status = if choices.not_secrets.contains(&(place, secret.clone())) {
+            .map(|(place, matched)| {
+                let status = if choices.not_secrets.contains(&(place, matched.clone())) {
                     FindingStatus::NotASecret
                 } else {
                     FindingStatus::Unresolved
                 };
                 Finding {
                     place,
-                    secret,
+                    matched,
                     status,
                 }
             })
@@ -230,8 +281,8 @@ impl Evidence {
         let size = change.message().len()
             + files
                 .iter()
-                .filter_map(ReviewedFile::sent)
-                .map(|sent| sent.path.len() + sent.diff.len() + sent.content.len())
+                .filter(|file| file.sent.is_some())
+                .filter_map(|file| file.size)
                 .sum::<usize>()
             + areas
                 .iter()
@@ -254,8 +305,14 @@ impl Evidence {
 
     /// Every file the change touches, in its order, sent or not.
     #[must_use]
-    pub fn files(&self) -> &[ReviewedFile] {
+    pub fn files(&self) -> &[EvidenceFile] {
         &self.files
+    }
+
+    /// The touched file at `index`.
+    #[must_use]
+    pub fn file(&self, index: FileIndex) -> Option<&EvidenceFile> {
+        self.files.get(index.0)
     }
 
     /// The selected areas, whose names and area prompts are sent.
@@ -271,8 +328,9 @@ impl Evidence {
         &self.findings
     }
 
-    /// How many bytes are sent: the message, each included file's path,
-    /// diff and full content, and each selected area's name and prompt.
+    /// How many bytes are sent: every byte of the message, of each
+    /// included file's path, diff and full content, and of each selected
+    /// area's name and prompt.
     #[must_use]
     pub fn size(&self) -> usize {
         self.size
@@ -290,11 +348,28 @@ impl Evidence {
             Some(Unsendable::UnresolvedFindings)
         } else if self.size > Self::SIZE_LIMIT {
             Some(Unsendable::TooLarge)
-        } else if self.files.iter().all(|file| file.sent().is_none()) {
+        } else if self.files.iter().all(|file| file.sent.is_none()) {
             Some(Unsendable::NothingToSend)
         } else {
             None
         }
+    }
+}
+
+/// Shows the message's length, the areas by ID and the files by status,
+/// but never a message, file text or area prompt.
+impl fmt::Debug for Evidence {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Evidence")
+            .field("message_bytes", &self.message.len())
+            .field("files", &self.files)
+            .field(
+                "areas",
+                &self.areas.iter().map(Area::id).collect::<Vec<&AreaId>>(),
+            )
+            .field("findings", &self.findings)
+            .field("size", &self.size)
+            .finish()
     }
 }
 
@@ -309,10 +384,8 @@ fn removed_lines(diff: &str) -> HashSet<usize> {
 }
 
 /// What an included file sends.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct SentFile<'a> {
-    /// The file's path.
-    pub path: &'a str,
     /// The file's diff.
     pub diff: &'a str,
     /// The file's full content.
@@ -321,54 +394,48 @@ pub struct SentFile<'a> {
     pub side: Side,
 }
 
-impl ReviewedFile {
+/// Shows the text's lengths, never the text.
+impl fmt::Debug for SentFile<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SentFile")
+            .field("diff_bytes", &self.diff.len())
+            .field("content_bytes", &self.content.len())
+            .field("side", &self.side)
+            .finish()
+    }
+}
+
+/// Shows the text's lengths, never the text.
+impl fmt::Debug for SentText {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SentText")
+            .field("diff_bytes", &self.diff.len())
+            .field("content_bytes", &self.content.len())
+            .field("side", &self.side)
+            .finish()
+    }
+}
+
+impl EvidenceFile {
     /// The touched `file` at `index`, with its `diff`, as the rules and
     /// `choices` leave it.
     fn new(
-        index: usize,
+        index: FileIndex,
         file: &TouchedFile,
         diff: &str,
         exclude: &ExcludePatterns,
         choices: &ReviewChoices,
     ) -> Self {
-        let sides = || file.before().into_iter().chain(file.after());
-        let kind = if let Some(size) = sides().find_map(|side| match side {
-            FileContent::Binary { size } => Some(*size),
-            _ => None,
-        }) {
-            Kind::Binary { size }
-        } else if sides().any(|side| *side == FileContent::Submodule) {
-            Kind::Submodule
-        } else if sides().any(|side| *side == FileContent::Symlink) {
-            Kind::Symlink
-        } else {
-            let (content, side) = file
-                .after()
-                .map(|after| (after, Side::After))
-                .or_else(|| file.before().map(|before| (before, Side::Before)))
-                .expect("a touched file has a side before or after the change");
-            Kind::Text {
-                diff: diff.to_owned(),
-                content: content
-                    .text()
-                    .expect("a side that is not binary, a submodule or a symlink is text")
-                    .to_owned(),
-                side,
-            }
-        };
         let path = file.path();
-        let status = match &kind {
+        let kind = Kind::of(file);
+        let status = match kind {
             Kind::Binary { .. } => FileStatus::LeftOut(Exclusion::Binary),
             Kind::Submodule => FileStatus::LeftOut(Exclusion::Submodule),
             Kind::Symlink => FileStatus::LeftOut(Exclusion::Symlink),
             Kind::Text { .. } => {
                 let rule = DefaultExclusion::of(path)
                     .map(Exclusion::Default)
-                    .or_else(|| {
-                        exclude
-                            .first_match(path)
-                            .map(|pattern| Exclusion::Config(pattern.as_str().to_owned()))
-                    });
+                    .or_else(|| exclude.first_match(path).cloned().map(Exclusion::Config));
                 match rule {
                     Some(_) if choices.brought_back.contains(&index) => FileStatus::IncludedByYou,
                     Some(reason) => FileStatus::LeftOut(reason),
@@ -377,12 +444,37 @@ impl ReviewedFile {
                 }
             }
         };
+        let size = match kind {
+            Kind::Text { content, .. } => Some(path.len() + diff.len() + content.len()),
+            Kind::Binary { size } => Some(size),
+            Kind::Submodule | Kind::Symlink => None,
+        };
+        let sent = match kind {
+            Kind::Text { content, side }
+                if matches!(status, FileStatus::Included | FileStatus::IncludedByYou) =>
+            {
+                Some(SentText {
+                    diff: diff.to_owned(),
+                    content: content.to_owned(),
+                    side,
+                })
+            }
+            _ => None,
+        };
         Self {
+            index,
             path: path.to_owned(),
             renamed_from: file.renamed_from().map(str::to_owned),
-            kind,
             status,
+            size,
+            sent,
         }
+    }
+
+    /// Its place in the change.
+    #[must_use]
+    pub fn index(&self) -> FileIndex {
+        self.index
     }
 
     /// Where the file is, relative to the repository's root: after the
@@ -405,34 +497,31 @@ impl ReviewedFile {
     }
 
     /// The bytes it sends while included, its path, diff and full content;
-    /// a binary file's size; or nothing for a submodule or a symbolic link.
+    /// a binary file's size; or nothing for a submodule or a symbolic link,
+    /// which have no content.
     #[must_use]
     pub fn size(&self) -> Option<usize> {
-        match &self.kind {
-            Kind::Text { diff, content, .. } => Some(self.path.len() + diff.len() + content.len()),
-            Kind::Binary { size } => Some(*size),
-            Kind::Submodule | Kind::Symlink => None,
-        }
+        self.size
     }
 
     /// What it sends, if it is included.
     #[must_use]
     pub fn sent(&self) -> Option<SentFile<'_>> {
-        match (&self.status, &self.kind) {
-            (
-                FileStatus::Included | FileStatus::IncludedByYou,
-                Kind::Text {
-                    diff,
-                    content,
-                    side,
-                },
-            ) => Some(SentFile {
-                path: &self.path,
-                diff,
-                content,
-                side: *side,
-            }),
-            _ => None,
+        self.sent.as_ref().map(|sent| SentFile {
+            diff: &sent.diff,
+            content: &sent.content,
+            side: sent.side,
+        })
+    }
+}
+
+impl fmt::Display for FileStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Included => f.write_str("included"),
+            Self::IncludedByYou => f.write_str("included by you"),
+            Self::LeftOutByYou => f.write_str("left out by you"),
+            Self::LeftOut(reason) => write!(f, "left out: {reason}"),
         }
     }
 }
@@ -456,7 +545,7 @@ impl fmt::Display for Exclusion {
             Self::Submodule => f.write_str("submodule"),
             Self::Symlink => f.write_str("symlink"),
             Self::Default(exclusion) => f.write_str(exclusion.kind().reason()),
-            Self::Config(pattern) => write!(f, "exclude pattern {pattern}"),
+            Self::Config(pattern) => write!(f, "exclude pattern {}", pattern.as_str()),
         }
     }
 }
@@ -468,10 +557,10 @@ impl Finding {
         self.place
     }
 
-    /// The match: its line, rule and masked excerpt.
+    /// The match: its line, the rule that matched and the masked excerpt.
     #[must_use]
-    pub fn secret(&self) -> &SecretFinding {
-        &self.secret
+    pub fn matched(&self) -> &SecretFinding {
+        &self.matched
     }
 
     /// Whether it still stops **Send**.
@@ -482,22 +571,21 @@ impl Finding {
 }
 
 impl Place {
-    /// The index in [`Evidence::files`] of the file it is in, unless it is
-    /// in the commit message.
+    /// The file it is in, unless it is in the commit message.
     #[must_use]
-    pub fn file(self) -> Option<usize> {
+    pub fn file(self) -> Option<FileIndex> {
         match self {
             Self::CommitMessage => None,
-            Self::Content { file } | Self::Diff { file } => Some(file),
+            Self::Content(file) | Self::Diff(file) => Some(file),
         }
     }
 }
 
 impl ReviewChoices {
-    /// Leaves out the file at `index` of `evidence`'s files if it is sent,
-    /// or brings it back if it is left out and can be.
-    pub fn toggle_file(&mut self, evidence: &Evidence, index: usize) {
-        match evidence.files.get(index).map(ReviewedFile::status) {
+    /// Leaves out the file at `index` of `evidence` if it is sent, or
+    /// brings it back if it is left out and can be.
+    pub fn toggle_file(&mut self, evidence: &Evidence, index: FileIndex) {
+        match evidence.file(index).map(EvidenceFile::status) {
             Some(FileStatus::Included | FileStatus::IncludedByYou) => self.leave_out(index),
             Some(FileStatus::LeftOutByYou) => {
                 self.left_out.remove(&index);
@@ -511,7 +599,7 @@ impl ReviewChoices {
 
     /// Leaves out the file at `index`: one the learner brought back returns
     /// to the rule that left it out, and any other is left out by them.
-    pub fn leave_out(&mut self, index: usize) {
+    pub fn leave_out(&mut self, index: FileIndex) {
         if !self.brought_back.remove(&index) {
             self.left_out.insert(index);
         }
@@ -519,7 +607,7 @@ impl ReviewChoices {
 
     /// Marks `finding`'s match as not a secret, or unmarks it.
     pub fn toggle_not_a_secret(&mut self, finding: &Finding) {
-        let key = (finding.place, finding.secret.clone());
+        let key = (finding.place, finding.matched.clone());
         if !self.not_secrets.remove(&key) {
             self.not_secrets.insert(key);
         }

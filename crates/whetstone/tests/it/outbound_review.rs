@@ -122,14 +122,14 @@ fn every_touched_file_is_listed_with_its_size_and_whether_it_is_sent_or_why_not(
             &[".gitmodules", "1 KB", "included"],
             &["Cargo.lock", "1 KB", "left out: lockfile"],
             &["docs/logo.png", "1 KB", "left out: binary file"],
-            &["docs/readme", "left out: symlink"],
+            &["docs/readme", "–", "left out: symlink"],
             &[
                 "fixtures/cards.json",
                 "1 KB",
                 "left out: exclude pattern fixtures/"
             ],
             &["src/retry.rs", "1 KB", "included"],
-            &["vendor/ledger", "left out: submodule"],
+            &["vendor/ledger", "–", "left out: submodule"],
         ]
     );
 }
@@ -602,18 +602,27 @@ fn review_choices_survive_going_back_to_the_picker_and_reset_for_another_commit(
 #[test]
 fn browsing_commits_and_reviewing_one_writes_nothing() {
     let repo = with_secrets();
+    for bump in 1..=55 {
+        repo.write("counter.txt", format!("{bump}\n"));
+        repo.commit(&format!("Bump the counter to {bump}"));
+    }
     // A stale index, as an uncommitted edit leaves it: nothing may refresh
     // it.
     repo.write("README.md", "# Payments, edited\n");
     let before = repo.on_disk();
     let mut session = started_in(repo.root(), 80, 24);
 
-    // Open the newest commit in the viewer, then review it: bring back
-    // `.env`, read it and an area, mark a match, and leave a file out.
-    session.press("<Enter> j j j j j <Enter> h j l l q");
-    session.press("k k k k k <S-Tab> <Enter>");
-    session.press("j <Space> <Enter> G q j j <Enter> q <S-Tab> k k <Space> k <Space> q");
-    session.press("j <Space> j <Enter> q q");
+    // Page past the first fifty commits, search back to the one with
+    // secrets and open it in the viewer.
+    session.press("<Enter> <S-Tab> k j");
+    session.press(&crate::viewer::typing("/Configure the payments"));
+    session.press("<Enter> <Enter> h j l l q");
+    // Review it: bring back `.env` and read it, read an area, mark a
+    // match, leave a file out, then go back and review it again.
+    session.press("j j <Enter>");
+    assert_eq!(session.rows()[1].trim(), "Review what will be sent");
+    session.press("j <Space> <Enter> G q j j j <Enter> q k k k k <S-Tab> k k <Space> k <Space>");
+    session.press("q <Enter> <Enter> q q q q");
     drop(session);
 
     repo.assert_untouched(&before);
@@ -702,7 +711,7 @@ fn the_review_at_120x32() {
     let mut session = started_in(repo.root(), 120, 32);
     session.press(REVIEW_NEWEST);
 
-    insta::assert_debug_snapshot!("review_120x32", session.frame());
+    insta::assert_debug_snapshot!("outbound_review_120x32", session.frame());
 }
 
 #[test]
@@ -711,7 +720,7 @@ fn the_review_at_80x24() {
     let mut session = started_in(repo.root(), 80, 24);
     session.press(REVIEW_NEWEST);
 
-    insta::assert_debug_snapshot!("review_80x24", session.frame());
+    insta::assert_debug_snapshot!("outbound_review_80x24", session.frame());
 }
 
 #[test]
@@ -721,7 +730,7 @@ fn the_reviews_secret_check_at_120x32() {
     session.press(REVIEW_NEWEST);
     session.press("<S-Tab> k k <Space>");
 
-    insta::assert_debug_snapshot!("review_secret_check_120x32", session.frame());
+    insta::assert_debug_snapshot!("outbound_review_secret_check_120x32", session.frame());
 }
 
 #[test]
@@ -731,7 +740,7 @@ fn the_reviews_secret_check_at_80x24() {
     session.press(REVIEW_NEWEST);
     session.press("<S-Tab> k k <Space>");
 
-    insta::assert_debug_snapshot!("review_secret_check_80x24", session.frame());
+    insta::assert_debug_snapshot!("outbound_review_secret_check_80x24", session.frame());
 }
 
 #[test]
@@ -742,7 +751,7 @@ fn reading_what_a_file_sends_at_120x32() {
     session.press(&times("j", 7));
     session.press("<Enter>");
 
-    insta::assert_debug_snapshot!("review_reading_a_file_120x32", session.frame());
+    insta::assert_debug_snapshot!("outbound_review_reading_a_file_120x32", session.frame());
 }
 
 #[test]
@@ -753,7 +762,7 @@ fn reading_what_a_file_sends_at_80x24() {
     session.press(&times("j", 7));
     session.press("<Enter>");
 
-    insta::assert_debug_snapshot!("review_reading_a_file_80x24", session.frame());
+    insta::assert_debug_snapshot!("outbound_review_reading_a_file_80x24", session.frame());
 }
 
 #[test]
@@ -833,5 +842,8 @@ fn the_reviews_secret_check_in_16_colours() {
     session.press(REVIEW_NEWEST);
     session.press("<S-Tab> k k <Space>");
 
-    insta::assert_debug_snapshot!("review_secret_check_16_colours_80x24", session.frame());
+    insta::assert_debug_snapshot!(
+        "outbound_review_secret_check_16_colours_80x24",
+        session.frame()
+    );
 }
