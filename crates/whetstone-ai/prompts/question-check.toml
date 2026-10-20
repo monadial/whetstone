@@ -1,6 +1,7 @@
 # The question check: Jev's questions about one candidate question, which
 # the state holds as `candidate`, beside the `evidence`. Each yes/no question
-# has its instructions and what yes and no mean.
+# has its instructions and what yes and no mean; the depth score has its
+# instructions and its levels, the shallowest first.
 #
 # Placeholders: `{letter}` is an option's letter, and `{criterion}` is a
 # criterion's name in the candidate's rubric, such as `criterion_1`.
@@ -54,3 +55,12 @@ no = "The hint is vague, or points to nothing in the evidence that bears on the 
 instructions = "The candidate's hint doesn't reveal the answer key: someone reading only the stem, the options and the hint couldn't tell which option is correct."
 yes = "The hint leaves the learner to work out which option is correct."
 no = "The hint reveals which option is correct, or rules options out."
+
+# Depth only orders questions, deepest first: it never passes or fails one.
+[depth]
+instructions = "How much understanding of the change answering the candidate's stem needs."
+levels = [
+    "Answerable by reading one line",
+    "Needs reading the change",
+    "Needs an understanding of how the change affects the code around it",
+]
