@@ -110,11 +110,7 @@ fn back_on_settings_returns_to_home() {
 fn settings_moves_focus_through_its_settings_and_explains_the_focused_one() {
     let mut session = Session::plain(80, 24);
     session.press("j <Enter>");
-    assert!(
-        session
-            .text()
-            .contains("Where Practice will send its requests")
-    );
+    assert!(session.text().contains("Where Practice sends its requests"));
 
     session.press("j");
     assert!(session.row_with("Jev model").starts_with("> Jev model"));

@@ -18,8 +18,8 @@
 //!
 //! The values above are the defaults, used for anything the file leaves out
 //! and for everything when there is no file. The API key never lives in the
-//! file: it is read from `OPENROUTER_API_KEY`, once, when Whetstone builds
-//! the Jev and generator Practice asks ([`Settings::openrouter`]).
+//! file: it is read from `OPENROUTER_API_KEY`, once, as the config loads,
+//! and Practice asks Jev and the generator with it ([`Settings::openrouter`]).
 
 use std::path::{Path, PathBuf};
 use std::{fmt, fs, io};
@@ -42,7 +42,8 @@ pub(crate) const DEFAULT_GENERATOR_MODEL: &str = "anthropic/claude-sonnet-5.5";
 pub(crate) const OPENROUTER_KEY_VARIABLE: &str = "OPENROUTER_API_KEY";
 
 /// What Practice will use, as Settings shows it: the global config, and
-/// whether `OPENROUTER_API_KEY` is set. The key's value is never kept.
+/// whether `OPENROUTER_API_KEY` is set. The key is kept only as a
+/// `SecretString`, whose value is never shown (rule 41).
 #[derive(Debug, Clone)]
 pub struct Settings {
     pub(crate) provider: Setting<Provider>,
@@ -99,11 +100,12 @@ pub(crate) enum ConfigFile {
     Missing { shown: String },
 }
 
-/// Whether the environment sets `OPENROUTER_API_KEY` to a key: text that
-/// isn't blank.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Whether the environment sets `OPENROUTER_API_KEY` to a key, text that
+/// isn't blank, and the key, read once into a `SecretString` (rule 41). Its
+/// `Debug` output redacts the key (rule 52).
+#[derive(Debug, Clone)]
 pub(crate) enum KeyStatus {
-    Set,
+    Set(SecretString),
     NotSet,
 }
 
@@ -150,7 +152,8 @@ struct Role {
 
 impl Settings {
     /// Reads `config.toml` in `config_dir`, falling back to the defaults,
-    /// and whether `environment` sets `OPENROUTER_API_KEY`.
+    /// and the key `environment` sets in `OPENROUTER_API_KEY`, if it sets
+    /// one.
     pub fn load(config_dir: &Path, environment: &Environment) -> Result<Self, ConfigError> {
         let path = config_dir.join("config.toml");
         let shown = shown_path(&path, environment);
@@ -186,27 +189,27 @@ impl Settings {
             ),
             questions: Setting::or_default(contents.questions, QuestionCount::DEFAULT),
             file,
-            openrouter_key: if openrouter_key(environment).is_some() {
-                KeyStatus::Set
-            } else {
-                KeyStatus::NotSet
-            },
+            openrouter_key: openrouter_key(environment).map_or(KeyStatus::NotSet, |key| {
+                KeyStatus::Set(SecretString::from(key.to_owned()))
+            }),
         })
     }
 
     /// Jev and the generator on `OpenRouter`, asked for the models this
-    /// config names, when `environment` sets `OPENROUTER_API_KEY`. The key is
-    /// read here, once, into a `SecretString`, which only the auth header
-    /// exposes (rule 41). Without a key there is none, and Practice can't
-    /// start.
+    /// config names with the key `OPENROUTER_API_KEY` set, which only the auth
+    /// header exposes (rule 41). Without a key there is none, and Practice
+    /// can't start. Nor can it when the HTTP client can't be built, which
+    /// only a broken TLS setup causes: that is logged.
     #[must_use]
-    pub fn openrouter(&self, environment: &Environment) -> Option<OpenRouterAi> {
-        let key = SecretString::from(openrouter_key(environment)?.to_owned());
+    pub fn openrouter(&self) -> Option<OpenRouterAi> {
+        let KeyStatus::Set(key) = &self.openrouter_key else {
+            return None;
+        };
         let models = Models {
             jev: ModelId::new(self.jev_model.value.clone()),
             generator: ModelId::new(self.generator_model.value.clone()),
         };
-        match OpenRouter::new(Some(key)) {
+        match OpenRouter::new(Some(key.clone())) {
             Ok(connection) => Some(OpenRouterAi::new(connection, models)),
             Err(failure) => {
                 tracing::warn!(%failure, "Practice can't reach OpenRouter");

@@ -1,6 +1,6 @@
 //! The home screen: the flat-stone mark, the actions a learner starts from,
 //! why Practice on their repository is unavailable when it is, and what
-//! Practice will send once AI arrives.
+//! Practice sends.
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};

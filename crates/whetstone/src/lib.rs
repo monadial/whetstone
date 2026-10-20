@@ -101,7 +101,7 @@ fn launch(environment: &Environment) -> anyhow::Result<ExitCode> {
     let theme = Theme::new(settings.color_support());
     let repository = Repository::open(environment.current_dir());
     repository::log(&repository);
-    let ai = settings.openrouter(environment);
+    let ai = settings.openrouter();
     tracing::info!(found = ai.is_some(), "the OpenRouter key");
     let app = App::new(
         theme,

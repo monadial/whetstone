@@ -86,7 +86,7 @@ impl Control {
             Self::GeneratorModel => shown(&settings.generator_model),
             Self::OpenRouterKey => (
                 match settings.openrouter_key {
-                    KeyStatus::Set => format!("set ({OPENROUTER_KEY_VARIABLE})"),
+                    KeyStatus::Set(_) => format!("set ({OPENROUTER_KEY_VARIABLE})"),
                     KeyStatus::NotSet => format!("not set ({OPENROUTER_KEY_VARIABLE})"),
                 },
                 None,
@@ -110,7 +110,7 @@ impl Control {
     /// What the control is for.
     fn about(self, settings: &Settings) -> String {
         match self {
-            Self::Provider => "Where Practice will send its requests once AI arrives. \
+            Self::Provider => "Where Practice sends its requests. \
                 OpenRouter is the only provider so far."
                 .to_owned(),
             Self::JevModel => format!(
@@ -122,11 +122,11 @@ impl Control {
                  is given. The default is {DEFAULT_GENERATOR_MODEL}."
             ),
             Self::OpenRouterKey => match settings.openrouter_key {
-                KeyStatus::Set => "Read from the environment when Whetstone starts. Its value \
+                KeyStatus::Set(_) => "Read from the environment when Whetstone starts. Its value \
                     is never shown."
                     .to_owned(),
-                KeyStatus::NotSet => "Practice will need it once AI arrives. Its value is \
-                    never shown."
+                KeyStatus::NotSet => "Practice needs it to ask Jev and the generator. Its value \
+                    is never shown."
                     .to_owned(),
             },
             Self::Colours => {

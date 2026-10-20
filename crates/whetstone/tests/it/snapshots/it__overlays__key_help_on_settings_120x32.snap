@@ -19,7 +19,7 @@ Buffer {
         "                                    │ j, Down, k, Up  Move down or up              │                                    ",
         "    Back                            │ Enter, Space    Activate the focused control │                                    ",
         "                                    │ q, Esc          Back                         │                                    ",
-        "  Where Practice will send its reque│                                              │ider so far.                        ",
+        "  Where Practice sends its requests.│                                              │                                    ",
         "  In config.toml: provider = "openro│ Everywhere                                   │                                    ",
         "                                    │ Tab, Shift+Tab  Next or previous control     │                                    ",
         "                                    │ ?               Show these keys              │                                    ",

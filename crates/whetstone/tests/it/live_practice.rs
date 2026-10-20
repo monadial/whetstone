@@ -38,6 +38,7 @@ fn live_generate_questions_on_the_showcase_shows_checked_questions_or_a_named_sh
         Setup {
             config: Some("questions = 3\n"),
             variables: &[("NO_COLOR", "1"), ("OPENROUTER_API_KEY", &key)],
+            live: true,
             ..Setup::default()
         },
         &[DOMAIN],

@@ -44,11 +44,14 @@ pub(crate) struct Setup<'a> {
     /// time limit.
     pub(crate) time_limit: Option<Duration>,
     /// Jev and the generator, scripted by the test. Without them, Practice
-    /// asks the real ones when the variables set `OPENROUTER_API_KEY`, as
-    /// the binary does, and otherwise can't ask them. A test that sets a key
-    /// without them sends no request (rule 48), except the ignored live
-    /// tests.
+    /// can ask Jev and the generator only when the variables set
+    /// `OPENROUTER_API_KEY`, as in the binary, and then asks an AI with
+    /// nothing scripted, so the test fails at its first request rather than
+    /// calling `OpenRouter` (rule 48), unless it is `live`.
     pub(crate) ai: Option<&'a Arc<ScriptedAi>>,
+    /// Whether a key in the variables reaches the real Jev and generator, as
+    /// only the ignored live tests ask.
+    pub(crate) live: bool,
 }
 
 /// A terminal with colour turned off: snapshots then list only text
@@ -103,9 +106,13 @@ impl Session {
         let settings = Settings::load(&dirs.config, &environment).expect("the config loads");
         let ai: Option<Arc<dyn Ai>> = match setup.ai {
             Some(scripted) => Some(Arc::clone(scripted) as Arc<dyn Ai>),
-            None => settings
-                .openrouter(&environment)
-                .map(|real| Arc::new(real) as Arc<dyn Ai>),
+            None => settings.openrouter().map(|real| -> Arc<dyn Ai> {
+                if setup.live {
+                    Arc::new(real)
+                } else {
+                    Arc::new(ScriptedAi::new())
+                }
+            }),
         };
         let theme = Theme::new(settings.color_support());
         let repository = Repository::open(setup.start.unwrap_or(home.path()));

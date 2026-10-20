@@ -1,13 +1,14 @@
 //! The `OpenRouter` key decides whether Practice can start on the showcase
-//! project. With `OPENROUTER_API_KEY` set, Whetstone asks the real Jev and
-//! generator, and Generate questions waits only for the learner's choices.
-//! Without a key it stays disabled, saying it needs one. No test here sends
-//! a request (rule 48).
+//! project. With `OPENROUTER_API_KEY` set, Generate questions waits only for
+//! the learner's choices. Without a key it stays disabled, saying it needs
+//! one. No test here sends a request (rule 48).
 
+use crate::preparing_questions::{DOMAIN, PAYMENT_LIFECYCLE, generate_in};
 use crate::session::{Session, Setup};
 
 /// A key that looks like `OpenRouter`'s and opens nothing. It never leaves
-/// the machine: no test here presses Generate questions with it.
+/// the machine: the harness gives a key without a scripted AI one with
+/// nothing scripted.
 const MADE_UP_KEY: &str = "sk-or-v1-made-up";
 
 /// The showcase picker, opened in a session whose environment sets
@@ -53,4 +54,21 @@ fn an_empty_or_blank_key_is_no_key() {
             "{key:?}"
         );
     }
+}
+
+#[test]
+#[should_panic(expected = "no write scripted for the area")]
+fn with_a_key_but_no_scripted_ai_a_request_fails_the_test_rather_than_reach_openrouter() {
+    let mut session = generate_in(
+        Setup {
+            variables: &[("NO_COLOR", "1"), ("OPENROUTER_API_KEY", MADE_UP_KEY)],
+            ..Setup::default()
+        },
+        &[DOMAIN],
+        PAYMENT_LIFECYCLE,
+        80,
+        24,
+    );
+
+    session.settle();
 }
