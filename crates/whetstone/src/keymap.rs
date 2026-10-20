@@ -16,6 +16,7 @@
 //! [reserved](RESERVED) Ctrl+C and Ctrl+Z.
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use whetstone_core::OptionLetter;
 
 use crate::view::Route;
 
@@ -48,6 +49,10 @@ pub(crate) enum Command {
     /// Open the focused item on a screen of its own, such as a change in
     /// the change viewer.
     Open,
+    /// Choose this option of the question.
+    Choose(OptionLetter),
+    /// Start editing the screen's text entry, such as the reasoning.
+    Edit,
     /// Close the overlay, or go back to the previous screen.
     Back,
     /// Leave Whetstone.

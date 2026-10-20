@@ -13,7 +13,9 @@
 //! that passed, all at once; plain checks drop the malformed ones; Jev
 //! checks each candidate left, all at once; the show rule keeps the
 //! clear-cut ones; and picking chooses up to `questions` of them for the
-//! questions screen. The stage row shows where it is.
+//! questions screen. The stage row shows where it is. On the questions
+//! screen, and on feedback, Inspect source reads the evidence the questions
+//! rest on, exactly as it was sent.
 //!
 //! When the gate drops every chosen area, Nothing to practice in this change
 //! gives each its verdict and offers Ask anyway, which writes about every
@@ -40,7 +42,7 @@ use whetstone_ai::{Ai, CandidateCount, Pending, Reply, RequestFailure};
 use whetstone_core::{
     Area, AreaId, AssessmentPolicy, Band, Candidate, CandidateCheck, CandidateId, Change, CommitId,
     ConnectedCodeLimit, Connections, ConnectionsState, Evidence, ExcludePatterns, Job, Probability,
-    QuestionCheckAnswers, QuestionCount, RepositoryConfig, ReviewChoices, Role, Withheld,
+    QuestionCheckAnswers, QuestionCount, RepositoryConfig, ReviewChoices, Role, Side, Withheld,
     WrittenCandidate, pick, plain_checks, show_rule,
 };
 
@@ -49,12 +51,14 @@ use crate::connected_code::{AnalysisDirs, GraphCache, ShowcaseTree};
 use crate::failures::FailedRequests;
 use crate::focus::Position;
 use crate::job::{JobId, JobOutput, Jobs, Waiting};
-use crate::keymap::{self, Binding, Command, Keymap};
+use crate::keymap::{self, Binding, Command, Input, Keymap};
 use crate::palette::Action;
-use crate::questions::{self, Questions};
+use crate::questions::Questions;
+use crate::reader::{Reader, Section};
+use crate::session_record::SessionStore;
 use crate::stage_row::{PracticeStage, Stage as RowStage, StageRow, StageState};
 use crate::theme::{ControlState, Theme};
-use crate::view::{ChangeIndex, ChangeRef, Context, Route, View};
+use crate::view::{ChangeIndex, ChangeRef, Context, Reading, Route, View};
 
 /// Preparing questions' own keys: `q` and Esc cancel.
 const KEYMAP: Keymap = &[
@@ -85,9 +89,8 @@ const ACTIONS: &[Action] = &[Action {
     command: Command::Back,
 }];
 
-/// The action in the palette once a request failed, on Nothing to practice
-/// in this change and No questions passed checks, and on the questions
-/// screen.
+/// The action in the palette once a request failed, and on Nothing to
+/// practice in this change and No questions passed checks.
 const BACK_ACTIONS: &[Action] = &[Action {
     label: "Back",
     does: "Go back to the areas and changes",
@@ -808,6 +811,63 @@ impl Practice {
         let areas: Vec<&str> = self.areas.iter().map(Area::name).collect();
         format!("{} · {}", self.change.summary(), areas.join(", "))
     }
+
+    /// The reader of everything the evidence sent, once it is prepared: the
+    /// change's message, what each touched file sends, each area prompt and
+    /// each connection.
+    fn evidence_reader(&self) -> Option<Reader> {
+        let evidence = self.evidence.as_ref()?;
+        let mut sections = vec![Section::plain("Message, as it is sent", evidence.message())];
+        for file in evidence.files() {
+            match file.sent() {
+                Some(sent) => {
+                    sections.push(Section::numbered(
+                        &format!("{}: diff", file.path()),
+                        sent.diff,
+                    ));
+                    sections.push(Section::numbered(
+                        &match sent.side {
+                            Side::After => format!("{}: full content", file.path()),
+                            Side::Before => format!(
+                                "{}: full content before the change, which deletes it",
+                                file.path()
+                            ),
+                        },
+                        sent.content,
+                    ));
+                }
+                None => sections.push(Section::plain(
+                    &format!("{}: nothing is sent", file.path()),
+                    &format!("{} is {}.", file.path(), file.status()),
+                )),
+            }
+        }
+        for area in evidence.areas() {
+            sections.push(Section::plain(
+                &format!("Area prompt: {}, as it is sent", area.name()),
+                area.prompt(),
+            ));
+        }
+        for connection in evidence.connections() {
+            if let Some(sent) = connection.sent() {
+                let id = connection.id();
+                sections.push(Section::numbered_from(
+                    &format!(
+                        "{}, {}: connected code, as it is sent",
+                        id.path(),
+                        id.extent()
+                    ),
+                    sent.text,
+                    sent.first_line,
+                ));
+            }
+        }
+        Some(Reader::new(
+            Route::Read(Reading::Evidence),
+            format!("Evidence: {}", self.change.summary()),
+            sections,
+        ))
+    }
 }
 
 impl View for Practice {
@@ -816,8 +876,8 @@ impl View for Practice {
     }
 
     fn name(&self) -> &'static str {
-        match self.stage {
-            Stage::Shown(_) => "Questions",
+        match &self.stage {
+            Stage::Shown(questions) => questions.name(),
             Stage::NothingToPractice => "Nothing to practice in this change",
             Stage::NonePassed => "No questions passed checks",
             Stage::FindingConnectedCode(_)
@@ -828,8 +888,8 @@ impl View for Practice {
     }
 
     fn keymap(&self) -> Keymap {
-        match self.stage {
-            Stage::Shown(_) => questions::KEYMAP,
+        match &self.stage {
+            Stage::Shown(questions) => questions.keymap(),
             Stage::NothingToPractice | Stage::NonePassed => BACK_KEYMAP,
             _ if self.failure().is_some() => BACK_KEYMAP,
             Stage::FindingConnectedCode(_)
@@ -839,9 +899,17 @@ impl View for Practice {
         }
     }
 
+    fn input(&self) -> Input {
+        match &self.stage {
+            Stage::Shown(questions) => questions.input(),
+            _ => Input::Commands,
+        }
+    }
+
     fn actions(&self) -> &'static [Action] {
-        match self.stage {
-            Stage::NothingToPractice | Stage::Shown(_) | Stage::NonePassed => BACK_ACTIONS,
+        match &self.stage {
+            Stage::Shown(questions) => questions.actions(),
+            Stage::NothingToPractice | Stage::NonePassed => BACK_ACTIONS,
             _ if self.failure().is_some() => BACK_ACTIONS,
             Stage::FindingConnectedCode(_)
             | Stage::CheckingAreas(_)
@@ -924,6 +992,25 @@ impl View for Practice {
         }
     }
 
+    fn keep_record(&mut self, store: &mut dyn SessionStore) {
+        if let (Stage::Shown(questions), Some(evidence)) = (&mut self.stage, &self.evidence) {
+            questions.keep_record(store, evidence);
+        }
+    }
+
+    fn holds_draft(&self) -> bool {
+        matches!(&self.stage, Stage::Shown(questions) if questions.holds_draft())
+    }
+
+    fn open(&self, route: Route, _context: &Context<'_>) -> Option<Box<dyn View>> {
+        match route {
+            Route::Read(Reading::Evidence) => self
+                .evidence_reader()
+                .map(|reader| Box::new(reader) as Box<dyn View>),
+            _ => None,
+        }
+    }
+
     fn waits_for(&self, job: JobId) -> bool {
         self.finds_connected_code_with(job) || self.waiting.waits_for(job)
     }
@@ -979,9 +1066,15 @@ impl View for Practice {
         }
     }
 
-    fn apply(&mut self, command: Command, _area: Rect) -> Option<Command> {
+    fn paste(&mut self, text: &str) {
         if let Stage::Shown(questions) = &mut self.stage {
-            return questions.apply(command);
+            questions.paste(text);
+        }
+    }
+
+    fn apply(&mut self, command: Command, area: Rect) -> Option<Command> {
+        if let Stage::Shown(questions) = &mut self.stage {
+            return questions.apply(command, area);
         }
         if command != Command::Activate {
             self.focus = self.focus.after(command, self.controls().len());

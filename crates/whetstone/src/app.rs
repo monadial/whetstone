@@ -1,13 +1,14 @@
 //! The app: all UI state, the events that change it, and how it is drawn.
 //!
 //! A key goes first to the reserved keys: Ctrl+C quits from anywhere, and
-//! Ctrl+Z suspends from anywhere until `fg`. Under the "window too small"
+//! Ctrl+Z suspends from anywhere until `fg`, without asking. Under the "window too small"
 //! notice no other key acts. Otherwise the open overlay takes every key.
 //! Without one, while a text entry on the screen has focus, the key types
 //! into it, or the screen's keymap edits or leaves it. Otherwise the
 //! screen's keymap and then the keys that work everywhere turn it into a
 //! command. The command changes the current screen, or the app itself when
-//! it opens an overlay, changes screens, quits or suspends.
+//! it opens an overlay, changes screens, quits or suspends. Before going
+//! back, home or quitting would lose a draft a screen holds, the app asks.
 //!
 //! A paste never becomes keys or commands. It goes into the screen's focused
 //! text entry as one insertion, and anywhere else it does nothing.
@@ -15,7 +16,8 @@
 //! A background job's result enters the same way, and is applied only if
 //! the app still waits for that job. So does the end of a job's time limit,
 //! after which the app no longer waits for it. Once the screen has applied a
-//! command, a result or a time limit, it starts any job its state now needs.
+//! command, a result or a time limit, it saves what its state now holds for
+//! the session record, then starts any job its state now needs.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -36,9 +38,11 @@ use crate::help::KeyHelp;
 use crate::home::Home;
 use crate::job::{Finished, Job, JobId, JobOutcome, JobOutput, Jobs, TimeLimit};
 use crate::keymap::{self, Command, Input};
+use crate::leave::Leave;
 use crate::overlay::{Outcome, Overlay};
 use crate::palette::Palette;
 use crate::repository::{Repository, Unavailable};
+use crate::session_record::{InMemoryStore, SessionStore};
 use crate::theme::Theme;
 use crate::view::{Context, Route, View};
 
@@ -83,6 +87,9 @@ pub struct App {
     /// The models `OpenRouter` refused during this run for having no
     /// zero-retention endpoint, which Settings marks until Whetstone quits.
     refused_models: Arc<RefusedModels>,
+    /// Where session records are kept: in memory until the durable store
+    /// arrives.
+    store: Box<dyn SessionStore>,
 }
 
 /// Something for the app to apply: a terminal event the UI loop read, a
@@ -255,6 +262,7 @@ impl App {
             time_limit: connected_code::TIME_LIMIT,
             ai: None,
             refused_models: Arc::default(),
+            store: Box::new(InMemoryStore::new()),
         }
     }
 
@@ -274,6 +282,13 @@ impl App {
             ai: Some(ai),
             ..self
         }
+    }
+
+    /// The same app, keeping session records in `store` instead of in a
+    /// store of its own in memory.
+    #[must_use]
+    pub fn with_store(self, store: Box<dyn SessionStore>) -> Self {
+        Self { store, ..self }
     }
 
     /// Applies one message. Key presses act, a paste goes into the focused
@@ -331,6 +346,7 @@ impl App {
             JobOutcome::Done(output) => {
                 if let Some(screen) = self.screens.waiting_for(finished.id) {
                     screen.finish_job(finished.id, output);
+                    screen.keep_record(self.store.as_mut());
                     screen.start_jobs(&mut self.jobs);
                 } else {
                     // The screen that started it has closed, so its result
@@ -352,13 +368,14 @@ impl App {
         }
         if let Some(screen) = self.screens.waiting_for(job) {
             screen.time_up(job);
+            screen.keep_record(self.store.as_mut());
             screen.start_jobs(&mut self.jobs);
         }
     }
 
     fn press(&mut self, key: &KeyEvent) -> Flow {
         if let Some(command) = keymap::command(keymap::RESERVED, key) {
-            return self.run(command);
+            return self.perform(command);
         }
         // Under the notice nothing is visible, so no key changes anything.
         if self.shows_notice() {
@@ -377,6 +394,10 @@ impl App {
                 Outcome::Run(command) => {
                     self.overlay = None;
                     self.run(command)
+                }
+                Outcome::Leave(command) => {
+                    self.overlay = None;
+                    self.perform(command)
                 }
             };
         }
@@ -416,7 +437,30 @@ impl App {
         }
     }
 
+    /// Runs `command`, unless it would lose a draft: then it asks first.
     fn run(&mut self, command: Command) -> Flow {
+        if self.loses_draft(command) {
+            self.overlay = Some(Overlay::Leave(Leave::new(command)));
+            return Flow::Continue;
+        }
+        self.perform(command)
+    }
+
+    /// Whether `command` would close a screen holding a draft: Back closes
+    /// the current screen, and going home or quitting closes every screen
+    /// above home.
+    fn loses_draft(&self, command: Command) -> bool {
+        match command {
+            Command::Back => self.screens.current().holds_draft(),
+            Command::Go(Route::Home) | Command::Quit => {
+                self.screens.above.iter().any(|screen| screen.holds_draft())
+            }
+            _ => false,
+        }
+    }
+
+    /// Runs `command` without asking.
+    fn perform(&mut self, command: Command) -> Flow {
         match command {
             Command::Quit => return Flow::Quit,
             Command::Suspend => return Flow::Suspend,
@@ -453,6 +497,7 @@ impl App {
                 let [area, _] = screen_and_footer(Rect::from((Position::ORIGIN, size)));
                 let screen = self.screens.current_mut();
                 let next = screen.apply(command, area);
+                screen.keep_record(self.store.as_mut());
                 screen.start_jobs(&mut self.jobs);
                 if let Some(next) = next {
                     return self.run(next);

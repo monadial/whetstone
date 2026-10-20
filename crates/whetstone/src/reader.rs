@@ -1,6 +1,7 @@
 //! A screen for reading text whole: what the outbound review sends for the
-//! change, a file or an area, under a title, in sections that scroll
-//! together. Code is numbered, so a line the review names can be found.
+//! change, a file or an area, or the evidence Practice's questions rest on,
+//! under a title, in sections that scroll together. Code is numbered, so a
+//! line the review or a question names can be found.
 
 use std::fmt;
 
@@ -29,7 +30,7 @@ const KEYMAP: Keymap = &[
 /// The reader's own action in the palette.
 const ACTIONS: &[Action] = &[Action {
     label: "Back",
-    does: "Return to the outbound review",
+    does: "Return to the screen it was opened from",
     command: Command::Back,
 }];
 
