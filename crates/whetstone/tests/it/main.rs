@@ -20,6 +20,7 @@ mod picker;
 mod pty;
 mod pty_colours;
 mod pty_dumb;
+mod pty_terminal;
 mod repo;
 mod repository;
 mod resize;
