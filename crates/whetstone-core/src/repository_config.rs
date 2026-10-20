@@ -125,7 +125,6 @@ impl RepositoryConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ConnectedCodeLimitKb;
 
     #[test]
     fn a_repository_config_can_set_the_connected_code_limit_alongside_exclude() {
