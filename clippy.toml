@@ -2,3 +2,13 @@ allow-unwrap-in-tests = true
 allow-expect-in-tests = true
 allow-panic-in-tests = true
 allow-print-in-tests = true
+
+disallowed-methods = [
+    # crossterm's blocking reads must not be combined with the EventStream
+    # the UI loop reads (CODING_STANDARDS.md rule 26).
+    { path = "crossterm::event::poll", reason = "the UI loop reads terminal input only from its EventStream (rule 26)" },
+    { path = "crossterm::event::read", reason = "the UI loop reads terminal input only from its EventStream (rule 26)" },
+    # It panics on the UI loop's current-thread runtime, and exists only
+    # with Tokio's `rt-multi-thread`, which is off (rule 19).
+    { path = "tokio::task::block_in_place", reason = "blocking work goes to spawn_blocking (rule 19)", allow-invalid = true },
+]
