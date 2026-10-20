@@ -69,7 +69,7 @@ fn once_connected_code_arrives_the_evidence_is_prepared_and_the_outbound_review_
 
     assert_eq!(
         session.row_with("Connected code"),
-        "Connected code: 1 range · 1 KB"
+        "Connected code: 1 range · 1 KB of 100 KB limit"
     );
     assert_eq!(
         stage_row(&session),

@@ -25,9 +25,10 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::Paragraph;
 use whetstone_core::{
-    Area, Change, CommitId, Comparison, ConnectedCodeLimit, ConnectionGroup, Connections,
-    ConnectionsState, Evidence, EvidenceConnection, EvidenceFile, ExcludePatterns, Extent,
-    FileIndex, Finding, FindingStatus, Origin, Place, ReviewChoices, Side, Unsendable,
+    Area, Change, CommitId, Comparison, ConnectedCodeLimit, ConnectedCodeLimitSource,
+    ConnectionGroup, Connections, ConnectionsState, Evidence, EvidenceConnection, EvidenceFile,
+    ExcludePatterns, Extent, FileIndex, Finding, FindingStatus, Origin, Place, RepositoryConfig,
+    ReviewChoices, Side, Unsendable,
 };
 
 use crate::columns;
@@ -214,20 +215,21 @@ impl<'a> Document<'a> {
 
 impl OutboundReview {
     /// The review of the commit `id`, whose change is `change`, sent where
-    /// `settings` say, with the selected `areas`, leaving out what `exclude`
-    /// leaves out, within `connected_code_limit`, as the learner's `choices`
-    /// adjust it. Its connected code is found with `connected_code` once it
-    /// opens.
+    /// `settings` say, with the selected `areas`, leaving out what the
+    /// repository's `config` leaves out, within the connected code limit
+    /// that `settings` and `config` make, as the learner's `choices` adjust
+    /// it. Its connected code is found with `connected_code` once it opens.
     pub(crate) fn new(
         id: CommitId,
         settings: &Settings,
         change: Change,
         areas: Vec<Area>,
-        exclude: ExcludePatterns,
-        connected_code_limit: ConnectedCodeLimit,
+        config: &RepositoryConfig,
         choices: Rc<RefCell<ReviewChoices>>,
         connected_code: Request,
     ) -> Self {
+        let exclude = config.exclude().clone();
+        let connected_code_limit = settings.connected_code_limit(config);
         let lookup = Lookup::Requested(Box::new(connected_code));
         let evidence = Evidence::build(
             &change,
@@ -666,8 +668,9 @@ impl OutboundReview {
 
     /// The Connected code section, `width` cells wide: its summary, then a
     /// row for each piece of connected code with its path, extent, size,
-    /// status and relations in columns. Relations that do not fit after the
-    /// rest go on the lines under it.
+    /// status and relations in columns, then how many more are not sent and
+    /// why. Relations that do not fit after the rest go on the lines under
+    /// it.
     fn connected_code_rows(&self, theme: &Theme, width: usize, doc: &mut Document<'static>) {
         let heading = doc.lines.len();
         doc.lines.extend(
@@ -705,6 +708,7 @@ impl OutboundReview {
             widest(0).min(width.saturating_sub(
                 marker + 3 * columns::GAP + extent_width + size_width + status_width,
             ));
+        let listed = !rows.is_empty();
         for (row_index, (index, [path, extent, size, status], relations)) in
             rows.into_iter().enumerate()
         {
@@ -740,10 +744,22 @@ impl OutboundReview {
                 doc.extend_control();
             }
         }
+        for (reason, count) in self.evidence.not_sent() {
+            doc.wrapped(
+                &format!("{count} more not sent: {reason}"),
+                width,
+                Style::new(),
+            );
+        }
+        // The last row keeps what was not sent in view, as the first keeps
+        // the summary.
+        if listed {
+            doc.extend_control();
+        }
     }
 
     /// The Connected code section's summary: still finding it, how much is
-    /// sent, none found, or why it is not available.
+    /// sent and of what limit, none found, or why it is not available.
     fn connected_code_summary(&self) -> String {
         match self.evidence.connections_state() {
             ConnectionsState::Finding => "Connected code: finding…".to_owned(),
@@ -769,8 +785,18 @@ impl OutboundReview {
                         )
                     }
                 };
-                let bytes = sent.iter().filter_map(|connection| connection.size()).sum();
-                format!("Connected code: {counted} · {}", kilobytes(bytes))
+                let limit = self.evidence.connected_code_limit();
+                let lowered = match limit.source() {
+                    ConnectedCodeLimitSource::LoweredByRepository => {
+                        " · limit lowered by this repository"
+                    }
+                    ConnectedCodeLimitSource::Default | ConnectedCodeLimitSource::Learner => "",
+                };
+                format!(
+                    "Connected code: {counted} · {} of {} limit{lowered}",
+                    kilobytes(self.evidence.connected_code_size()),
+                    limit.kb()
+                )
             }
             ConnectionsState::NoneFound => "Connected code: none found for this change.".to_owned(),
             // Nothing gives up on finding it yet: the time limit is #64's.

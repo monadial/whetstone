@@ -88,7 +88,7 @@ fn a_rust_change_lists_the_callers_and_callees_of_the_method_it_modifies_once_fo
 
     assert_eq!(
         connected_code(&session)[0],
-        "Connected code: 2 ranges · 1 KB"
+        "Connected code: 2 ranges · 1 KB of 100 KB limit"
     );
     assert_eq!(
         connected_rows(&session),
@@ -385,12 +385,12 @@ fn space_leaves_out_connected_code_and_brings_it_back_and_the_size_follows() {
     );
     assert_eq!(
         connected_code(&session)[0],
-        "Connected code: 1 range · 1 KB"
+        "Connected code: 1 range · 1 KB of 100 KB limit"
     );
     session.press("j <Space>");
     assert_eq!(
         connected_code(&session)[0],
-        "Connected code: none sent · 0 KB"
+        "Connected code: none sent · 0 KB of 100 KB limit"
     );
     assert_eq!(session.section("Size"), before);
 

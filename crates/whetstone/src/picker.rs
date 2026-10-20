@@ -782,12 +782,11 @@ impl View for Picker {
             .filter(|(_, choice)| **choice == AreaChoice::Valid { selected: true })
             .filter_map(|(area, _)| area.as_ref().ok().cloned())
             .collect();
-        let exclude = repository.config().exclude().clone();
         let connected_code = Request::new(
             repository.handle(),
             id,
             change.clone(),
-            exclude.clone(),
+            repository.config().exclude().clone(),
             context.analysis.clone(),
         );
         Some(Box::new(OutboundReview::new(
@@ -795,8 +794,7 @@ impl View for Picker {
             context.settings,
             change,
             areas,
-            exclude,
-            context.settings.connected_code_limit(repository.config()),
+            repository.config(),
             Rc::clone(choices),
             connected_code,
         )))
