@@ -38,6 +38,7 @@ pub enum Outcome<T> {
 pub struct Finished<T> {
     /// The job that ended.
     pub id: JobId,
+    /// How it ended.
     pub outcome: Outcome<T>,
 }
 
@@ -106,6 +107,7 @@ pub struct Jobs<T> {
 }
 
 impl<T> Jobs<T> {
+    /// No jobs yet.
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -191,6 +193,7 @@ pub struct Workers<T> {
 }
 
 impl<T: Send + 'static> Workers<T> {
+    /// No jobs running yet.
     #[must_use]
     pub fn new() -> Self {
         let (sender, results) = mpsc::channel(WAITING_RESULTS);
@@ -202,7 +205,7 @@ impl<T: Send + 'static> Workers<T> {
     }
 
     /// Runs `job` on a blocking thread (rule 19), and sends its report to
-    /// [`Workers::finished`]. Call it on a Tokio runtime.
+    /// [`Workers::finished`]. It must be called on a Tokio runtime.
     pub fn run(&self, job: Job<T>) {
         let sender = self.sender.clone();
         // The tracker owns the task, so its handle can go (rule 16).
