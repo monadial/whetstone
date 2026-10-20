@@ -28,15 +28,26 @@ pub(crate) const EVIDENCE: &str = include_str!("../prompts/evidence.md");
 /// the area's.
 pub(crate) const AREA: &str = include_str!("../prompts/area.md");
 
+const GATE_FILE: &str = include_str!("../prompts/gate.toml");
+
 const QUESTION_CHECK_FILE: &str = include_str!("../prompts/question-check.toml");
 
 /// Every base-prompt file, by name, in name order.
 const FILES: &[(&str, &str)] = &[
     ("area.md", AREA),
     ("evidence.md", EVIDENCE),
+    ("gate.toml", GATE_FILE),
     ("question-check.toml", QUESTION_CHECK_FILE),
     ("writing.md", WRITING),
 ];
+
+/// The relevance gate's question about one area.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct GatePrompts {
+    /// `{name}` and `{description}` are the area's.
+    pub(crate) area: YesNoPrompt,
+}
 
 /// The question check's questions about one candidate.
 #[derive(Debug, Deserialize)]
@@ -67,6 +78,8 @@ pub(crate) struct YesNoPrompt {
     yes: String,
     no: String,
 }
+
+pub(crate) static GATE: LazyLock<GatePrompts> = LazyLock::new(|| parse(GATE_FILE));
 
 pub(crate) static QUESTION_CHECK: LazyLock<QuestionCheckPrompts> =
     LazyLock::new(|| parse(QUESTION_CHECK_FILE));
