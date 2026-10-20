@@ -14,7 +14,7 @@ use crate::repo::TestRepo;
 
 /// The keys that open the outbound review of the newest commit from home,
 /// with the five default areas selected, as a terminal sends them.
-const REVIEW_NEWEST: &str = "\rjjjjj kkkkk\x1b[Z\r";
+pub(crate) const REVIEW_NEWEST: &str = "\rjjjjj kkkkk\x1b[Z\r";
 
 /// Makes the directory `name` in `dir`, last changed `age` ago.
 fn directory(dir: &Path, name: &str, age: Duration) {

@@ -3,7 +3,8 @@
 //! analysing anything, and a damaged or unwritable cache never stops
 //! connected code from being found.
 
-use std::fs;
+use std::fs::{self, File};
+use std::io::Read as _;
 use std::path::{Path, PathBuf};
 
 use tempfile::TempDir;
@@ -314,4 +315,32 @@ fn connected_code_from_the_cache_in_the_review_at_80x24() {
     let session = reviewed_again(80, 24);
 
     insta::assert_debug_snapshot!("connected_code_from_cache_80x24", session.frame());
+}
+
+#[test]
+fn a_cached_graph_is_compressed_json_without_the_commits_file_contents() {
+    let repo = double_the_charge();
+    let cache_home = TempDir::new().expect("create a cache home");
+    review_newest(&repo, cache_home.path());
+    let [graph] = graphs(cache_home.path())
+        .try_into()
+        .expect("one cached graph");
+
+    let mut json = String::new();
+    flate2::read::GzDecoder::new(File::open(&graph).expect("open the cached graph"))
+        .read_to_string(&mut json)
+        .expect("a compressed graph");
+
+    serde_json::from_str::<serde_json::Value>(&json).expect("the graph is JSON");
+    for contents in [
+        "amount: u32",
+        "-> bool",
+        "amount > 0",
+        "amount * 2",
+        "payments.charge(10)",
+        "pub struct Payments",
+        "use crate::",
+    ] {
+        assert!(!json.contains(contents), "{contents:?} is in the graph");
+    }
 }
