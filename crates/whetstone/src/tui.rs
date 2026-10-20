@@ -466,3 +466,34 @@ impl CrashTrigger {
 fn crash() -> ! {
     panic!("crashing after the first draw, as {CRASH_AFTER_FIRST_DRAW} asks")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Longer than any tick.
+    const A_MINUTE: Duration = Duration::from_secs(60);
+
+    #[tokio::test(start_paused = true)]
+    async fn the_ticker_ticks_every_tick_only_while_a_job_runs() {
+        let mut ticker = Ticker::default();
+        assert!(
+            time::timeout(A_MINUTE, ticker.tick()).await.is_err(),
+            "no tick before a job runs"
+        );
+
+        ticker.run_while(true);
+        let started = Instant::now();
+        ticker.tick().await;
+        assert_eq!(started.elapsed(), TICK, "the first tick, a tick later");
+        ticker.run_while(true);
+        ticker.tick().await;
+        assert_eq!(started.elapsed(), 2 * TICK, "the next, a tick after it");
+
+        ticker.run_while(false);
+        assert!(
+            time::timeout(A_MINUTE, ticker.tick()).await.is_err(),
+            "no tick once no job runs"
+        );
+    }
+}

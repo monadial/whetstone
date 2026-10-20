@@ -64,6 +64,8 @@ whetstone-core = { path = "../whetstone-core" }
 assert_cmd = "2.2"
 insta = "1.49"
 tempfile = "3"
+# Time-dependent async tests use a paused clock (CODING_STANDARDS.md rule 49).
+tokio = { version = "1.53", features = ["test-util"] }
 
 [target."cfg(unix)".dev-dependencies]
 rexpect = "0.7"
