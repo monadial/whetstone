@@ -824,6 +824,44 @@ mod tests {
     }
 
     #[test]
+    fn a_language_added_to_the_conventions_needs_no_code() {
+        let conventions = Conventions::parse(
+            r#"
+            [[ecosystem]]
+            name = "C#"
+            extensions = ["cs"]
+            manifests = ["Directory.Build.props"]
+
+            [[ecosystem.tests]]
+            names = ["{stem}Tests.cs"]
+            look_in = { mirror = { from = "src", to = "tests/Unit" } }
+            "#,
+        )
+        .expect("the conventions are valid");
+        let tree = [
+            "Directory.Build.props",
+            "src/Shop/Store.cs",
+            "tests/Unit/Shop/StoreTests.cs",
+        ];
+
+        assert_eq!(
+            find_by(&conventions, tree, &changed(&["src/Shop/Store.cs"])),
+            [
+                RelatedFile {
+                    path: "Directory.Build.props".to_owned(),
+                    group: RelatedGroup::Configuration,
+                    related_to: vec!["src/Shop/Store.cs".to_owned()],
+                },
+                RelatedFile {
+                    path: "tests/Unit/Shop/StoreTests.cs".to_owned(),
+                    group: RelatedGroup::Test,
+                    related_to: vec!["src/Shop/Store.cs".to_owned()],
+                },
+            ]
+        );
+    }
+
+    #[test]
     fn a_deleted_file_has_no_related_tests_or_configuration() {
         let tree = ["go.mod", "store/store_test.go", "store/cache.go"];
         let touched = [
