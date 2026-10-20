@@ -1,0 +1,54 @@
+[package]
+name = "whetstone-ai"
+description = "Whetstone's calls to Jev and the generator through OpenRouter, built on Rig."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# All agent code is built with Rig (ADR 0001), and this is the only crate that
+# may depend on it (CODING_STANDARDS.md rule 36; `deny.toml` bans it
+# elsewhere). The default features bring the OpenRouter provider, agents and
+# the reqwest transport; `typesafeai` adds `rig-typesafeai`, which calls Jev
+# on OpenRouter's `/systemone`. Every Rig release so far has broken its API,
+# so it is pinned exactly and upgraded on purpose, in a PR of its own that
+# re-runs the contract tests (rule 10).
+rig = { version = "=0.45.0", features = ["typesafeai"] }
+# The generator's output type names its JSON schema with `JsonSchema`, the
+# trait Rig's typed prompts take. Already in the tree through rig-core and
+# rig-agent, at the same version.
+schemars = "1"
+# Holds the OpenRouter key so that it can't be printed or logged by accident,
+# and wipes it on drop (rules 41 and 52). Its one dependency, zeroize, is
+# already in the tree through rustls.
+secrecy = "0.10"
+# Reads the reported model from the generator's reply document.
+serde = { version = "1", features = ["derive"] }
+# Jev's state is JSON, as are its questions and replies.
+serde_json = "1"
+thiserror = "2"
+# Puts each call's time limit on it (`time`) and races it against its
+# cancellation (`macros`).
+tokio = { version = "1.53", features = ["macros", "time"] }
+# A call ends early, as cancelled, when its job's `CancellationToken` is
+# cancelled (rule 17).
+tokio-util = "0.7"
+# Each call's span names its model and nothing it sends (rule 43).
+tracing = "0.1"
+
+[dev-dependencies]
+# Time-dependent async tests use a paused clock (CODING_STANDARDS.md rule 49).
+tokio = { version = "1.53", features = ["macros", "rt", "test-util"] }
+# The contract tests run the real calls against a local HTTP server that
+# replays recorded OpenRouter replies, one server per test (rule 48). It is
+# MIT or Apache-2.0, as `deny.toml` allows, runs on Tokio like the code under
+# test, delays a reply for the timeout tests, and keeps the requests it
+# received, so a test can assert the exact body that was sent. The recorder
+# answers through it too, forwarding each request to OpenRouter.
+wiremock = "0.6"

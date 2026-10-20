@@ -36,6 +36,10 @@ allow = [
     # A public-domain dedication with a permissive fallback. cgg's Clojure
     # grammar, tree-sitter-clojure-orchard, uses it.
     "CC0-1.0",
+    # A permissive data license. Mozilla's root certificates, which Rig's
+    # reqwest transport trusts on a host with none of its own, come under it
+    # (webpki-root-certs).
+    "CDLA-Permissive-2.0",
     "ISC",
     "MIT",
     "Unicode-3.0",
