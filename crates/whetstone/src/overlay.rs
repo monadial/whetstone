@@ -33,7 +33,7 @@ pub(crate) enum Outcome {
 
 impl Overlay {
     /// The overlay's keys. Every other key does nothing while it is open,
-    /// except the reserved Ctrl+C.
+    /// except the reserved Ctrl+C and Ctrl+Z.
     pub(crate) fn keymap(&self) -> Keymap {
         match self {
             Self::KeyHelp(_) => KeyHelp::KEYMAP,

@@ -1,12 +1,13 @@
 //! The app: all UI state, the events that change it, and how it is drawn.
 //!
-//! A key goes first to the reserved Ctrl+C, which quits from anywhere. Under
-//! the "window too small" notice no other key acts. Otherwise the open
-//! overlay takes every key. Without one, while a text entry on the screen
-//! has focus, the key types into it, or the screen's keymap edits or leaves
-//! it. Otherwise the screen's keymap and then the keys that work everywhere
-//! turn it into a command. The command changes the current screen, or the
-//! app itself when it opens an overlay, changes screens or quits.
+//! A key goes first to the reserved keys: Ctrl+C quits from anywhere, and
+//! Ctrl+Z suspends from anywhere until `fg`. Under the "window too small"
+//! notice no other key acts. Otherwise the open overlay takes every key.
+//! Without one, while a text entry on the screen has focus, the key types
+//! into it, or the screen's keymap edits or leaves it. Otherwise the
+//! screen's keymap and then the keys that work everywhere turn it into a
+//! command. The command changes the current screen, or the app itself when
+//! it opens an overlay, changes screens, quits or suspends.
 //!
 //! A paste never becomes keys or commands. It goes into the screen's focused
 //! text entry as one insertion, and anywhere else it does nothing.
@@ -57,6 +58,9 @@ pub enum Flow {
     Continue,
     /// Stop the loop and give the terminal back.
     Quit,
+    /// Give the terminal back and stop the process until it is continued,
+    /// then take the terminal back and redraw the same screen.
+    Suspend,
 }
 
 /// The smallest terminal the screens are drawn in. Below it the app shows a
@@ -165,8 +169,8 @@ impl App {
     }
 
     fn press(&mut self, key: &KeyEvent) -> Flow {
-        if keymap::command(&[keymap::INTERRUPT], key).is_some() {
-            return Flow::Quit;
+        if let Some(command) = keymap::command(keymap::RESERVED, key) {
+            return self.run(command);
         }
         // Under the notice nothing is visible, so no key changes anything.
         if self.shows_notice() {
@@ -190,8 +194,8 @@ impl App {
         }
         let screen = self.screens.current();
         let command = match screen.input() {
-            // Rule 29: while a text entry has focus, every key but Ctrl+C
-            // types, before any binding.
+            // Rule 29: while a text entry has focus, every key but the
+            // reserved ones types, before any binding.
             Input::Text => keymap::typed(key)
                 .map(Command::Type)
                 .or_else(|| keymap::command(screen.keymap(), key)),
@@ -227,6 +231,7 @@ impl App {
     fn run(&mut self, command: Command) -> Flow {
         match command {
             Command::Quit => return Flow::Quit,
+            Command::Suspend => return Flow::Suspend,
             Command::KeyHelp => {
                 self.overlay = Some(Overlay::KeyHelp(KeyHelp::new(self.screens.current())));
             }

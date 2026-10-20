@@ -30,6 +30,7 @@ mod session;
 mod settings;
 mod showcase;
 mod support;
+mod suspend;
 mod terminal_guard;
 mod theme;
 mod viewer;

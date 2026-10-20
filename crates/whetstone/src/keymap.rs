@@ -13,7 +13,7 @@
 //! [`Input`] is text: every character a key [types](typed) is text before
 //! any binding, and only the screen's own keymap (Enter, Backspace, Esc)
 //! edits or leaves the entry. The keys that work everywhere wait, except the
-//! reserved Ctrl+C.
+//! [reserved](RESERVED) Ctrl+C and Ctrl+Z.
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -52,6 +52,8 @@ pub(crate) enum Command {
     Back,
     /// Leave Whetstone.
     Quit,
+    /// Drop to the shell until the learner brings Whetstone back with `fg`.
+    Suspend,
     /// Show the keys of the current screen.
     KeyHelp,
     /// List the current screen's actions.
@@ -296,6 +298,18 @@ pub(crate) const INTERRUPT: Binding = Binding {
     hint: None,
 };
 
+/// Ctrl+Z: in raw mode it arrives as a key, and it suspends from anywhere,
+/// before any screen or overlay sees it.
+pub(crate) const SUSPEND: Binding = Binding {
+    keys: &[(Press::ctrl('z'), Command::Suspend)],
+    does: "Suspend to the shell, until fg",
+    hint: None,
+};
+
+/// The reserved keys: they act from anywhere, even under the "window too
+/// small" notice, before any overlay, text entry or screen sees the key.
+pub(crate) const RESERVED: Keymap = &[INTERRUPT, SUSPEND];
+
 /// Tab and Shift+Tab move focus between controls, wrapping around.
 pub(crate) const FOCUS: Binding = Binding {
     keys: &[
@@ -383,8 +397,8 @@ pub(crate) const MATCHES: Binding = Binding {
     hint: None,
 };
 
-/// The keys of a search box, while it has focus. Every other key but
-/// Ctrl+C types.
+/// The keys of a search box, while it has focus. Every other key but the
+/// reserved ones types.
 pub(crate) const SEARCH_BOX: Keymap = &[
     Binding {
         keys: &[(Press::key(KeyCode::Enter), Command::Activate)],
