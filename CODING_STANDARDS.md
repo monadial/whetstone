@@ -96,7 +96,7 @@ These rules apply from the Practice spec, when the AI crate and the session reco
 | --- | --- | --- |
 | 46 | `main.rs` stays thin: it passes the process's arguments and environment to `whetstone::run`. Logic lives in the library, where tests can reach it. | **Review**. |
 | 47 | TUI snapshots are fixed-size and committed: every screen at 120×32 and 80×24. CI runs with `CI=true`, so insta fails on a changed snapshot instead of writing one. | **Lint/CI**: insta in CI. |
-| 48 | Tests make no real network calls. Each HTTP test owns its mock server. | **Lint/CI**: CI has no API key. **Review**. |
+| 48 | Tests make no real network calls. Each HTTP test owns its mock server. The labelled-example tool (`whetstone-labels measure`) is a stated exception: it is a keyed tool a maintainer runs with their own key, never a test, and its own tests use mock servers. | **Lint/CI**: CI has no API key. **Review**. |
 | 49 | CI runs `cargo nextest` and `cargo test --doc` (nextest skips doc tests). `proptest-regressions` files are committed. Time-dependent async tests use a paused clock. | **Lint/CI**: the test job. **Review**: regressions and clocks. |
 
 ## Types, naming and docs
