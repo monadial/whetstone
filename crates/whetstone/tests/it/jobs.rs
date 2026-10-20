@@ -6,10 +6,11 @@ use std::future::Future;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
+use std::time::Duration;
 
 use tokio::runtime;
 use tokio_util::sync::CancellationToken;
-use whetstone::{Cancelled, Finished, JobId, JobOutcome, Jobs, Workers};
+use whetstone::{Cancelled, Finished, JobId, JobOutcome, Jobs, TimeLimit, Workers};
 
 use crate::session::Session;
 
@@ -212,4 +213,113 @@ fn with_no_job_running_settling_and_ticking_change_nothing_on_screen() {
     session.tick();
 
     assert_eq!(session.frame(), before);
+}
+
+/// The identities of `jobs`' jobs started since the last take.
+fn started<T>(jobs: &mut Jobs<T>) -> Vec<JobId> {
+    jobs.take_started()
+        .into_iter()
+        .map(|job| job.run().id)
+        .collect()
+}
+
+#[test]
+fn jobs_started_one_at_a_time_take_turns_and_only_the_newest_waits() {
+    let mut jobs = Jobs::new();
+
+    let first = jobs.start_one_at_a_time(|_| Ok("first"));
+    let first_report = jobs.take_started().remove(0).run();
+    let replaced = jobs.start_one_at_a_time(|_| Ok("replaced"));
+    assert!(started(&mut jobs).is_empty(), "waits for the first");
+    let newest = jobs.start_one_at_a_time(|_| Ok("newest"));
+    let replaced_report = jobs.take_started().remove(0).run();
+
+    assert_eq!(replaced_report.id, replaced);
+    assert_eq!(replaced_report.outcome, JobOutcome::Cancelled);
+    assert!(jobs.accept(replaced_report).is_none());
+    assert!(
+        started(&mut jobs).is_empty(),
+        "the first still has its turn"
+    );
+    assert_eq!(first_report.id, first);
+    assert!(jobs.accept(first_report).is_some());
+    assert_eq!(started(&mut jobs), [newest]);
+}
+
+/// What the app did with a job before its report came back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WhileRunning {
+    /// Waited for it.
+    Waited,
+    /// Cancelled it.
+    Cancelled,
+    /// Stopped waiting for it, as when its time limit runs out.
+    Forgot,
+}
+
+#[test]
+fn a_job_that_ran_one_at_a_time_passes_its_turn_on_however_it_ended() {
+    for while_running in [
+        WhileRunning::Waited,
+        WhileRunning::Cancelled,
+        WhileRunning::Forgot,
+    ] {
+        let mut jobs = Jobs::new();
+        let first = jobs.start_one_at_a_time(|_| Ok(1));
+        let job = jobs.take_started().remove(0);
+        match while_running {
+            WhileRunning::Waited => {}
+            WhileRunning::Cancelled => jobs.cancel(first),
+            WhileRunning::Forgot => assert!(jobs.forget(first)),
+        }
+        let next = jobs.start_one_at_a_time(|_| Ok(2));
+
+        let accepted = jobs.accept(job.run()).is_some();
+
+        assert_eq!(
+            accepted,
+            while_running == WhileRunning::Waited,
+            "{while_running:?}"
+        );
+        assert_eq!(started(&mut jobs), [next], "{while_running:?}");
+    }
+}
+
+#[test]
+fn jobs_started_as_usual_never_wait_for_one_that_has_its_turn() {
+    let mut jobs = Jobs::new();
+    let alone = jobs.start_one_at_a_time(|_| Ok(1));
+    let usual = jobs.start(|_| Ok(2));
+
+    assert_eq!(started(&mut jobs), [alone, usual]);
+}
+
+#[test]
+fn a_forgotten_job_runs_to_its_end_uncancelled_and_its_result_is_ignored() {
+    let mut jobs = Jobs::new();
+    let id = jobs.start(|token| Ok(token.is_cancelled()));
+
+    assert!(jobs.forget(id), "the app waited for it");
+    assert!(!jobs.forget(id), "and no longer does");
+    let finished = jobs.take_started().remove(0).run();
+
+    assert_eq!(finished.outcome, JobOutcome::Done(false), "never cancelled");
+    assert!(jobs.accept(finished).is_none());
+}
+
+#[test]
+fn time_limits_set_on_jobs_are_handed_over_once_for_the_ui_loop_to_time() {
+    let mut jobs = Jobs::new();
+    let id = jobs.start(|_| Ok(1));
+
+    jobs.limit(id, Duration::from_secs(20));
+
+    assert_eq!(
+        jobs.take_time_limits(),
+        [TimeLimit {
+            job: id,
+            after: Duration::from_secs(20)
+        }]
+    );
+    assert_eq!(jobs.take_time_limits(), []);
 }

@@ -40,7 +40,9 @@ pub use crate::app::{App, Flow, Message};
 pub use crate::config::{ConfigError, Settings};
 pub use crate::connected_code::GraphOrigin;
 pub use crate::environment::{Dirs, Environment, NoHome};
-pub use crate::job::{Cancelled, Finished, Job, JobId, JobOutcome, JobOutput, Jobs, Workers};
+pub use crate::job::{
+    Cancelled, Finished, Job, JobId, JobOutcome, JobOutput, Jobs, TimeLimit, Workers,
+};
 pub use crate::repository::{Repository, Unavailable};
 pub use crate::showcase::embedded_showcase;
 pub use crate::terminal::{ModeSwitch, TerminalGuard, TerminalMode};
