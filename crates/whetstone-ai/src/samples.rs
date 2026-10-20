@@ -11,14 +11,17 @@ use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 use whetstone_core::{
     Area, AssessmentPolicy, Candidate, CandidateCheck, Change, ConnectedCodeLimit, Connection,
-    ConnectionGroup, Connections, Depth, Evidence, ExcludePatterns, Extent, LineRange, ModelId,
-    OptionLetter, Probability, Question, QuestionCheckAnswers, QuestionType, Relation,
-    ReviewChoices, Tier, TouchedFile, WrittenCandidate, WrittenCitation, WrittenCriterion,
-    WrittenOption, plain_checks, show_rule,
+    ConnectionGroup, Connections, CriterionOutcome, Depth, Evidence, ExcludePatterns, Extent,
+    LineRange, ModelId, OptionLetter, Probability, Question, QuestionCheckAnswers, QuestionType,
+    Relation, ReviewChoices, Tier, TouchedFile, WrittenCandidate, WrittenCitation,
+    WrittenCriterion, WrittenOption, plain_checks, show_rule,
 };
 
 use crate::replay::{GENERATOR_MODEL, JEV_MODEL, connection, received, server};
-use crate::{AiError, GeneratorReply, GeneratorRequest, JevReply, JevRequest, Timeouts};
+use crate::{
+    AiError, GeneratorReply, GeneratorRequest, JevReply, JevRequest, Timeouts, WrittenParagraph,
+    explanation_paragraphs,
+};
 
 pub(crate) fn jev_model() -> ModelId {
     ModelId::new(JEV_MODEL.to_owned())
@@ -311,6 +314,25 @@ pub(crate) fn question() -> Question {
 pub(crate) const REASONING: &str = "The provider only charges once for each key and \
      gives back the first receipt when it sees a key again. Reusing the original key \
      means the retry can't turn into a second charge.";
+
+/// The outcomes of [`question`]'s two criteria that the sample explanation
+/// explains: the first not met, the second needing review.
+pub(crate) const OUTCOMES: [CriterionOutcome; 2] =
+    [CriterionOutcome::NotMet, CriterionOutcome::NeedsReview];
+
+/// The paragraphs of the explanation recorded for [`OUTCOMES`].
+pub(crate) fn paragraphs() -> Vec<WrittenParagraph> {
+    let reply: Value = serde_json::from_str(include_str!("../fixtures/explanation.json"))
+        .expect("the reply is JSON");
+    let output = reply["choices"][0]["message"]["content"]
+        .as_str()
+        .expect("the reply has content");
+    explanation_paragraphs(
+        &OUTCOMES,
+        serde_json::from_str(output).expect("the recorded output decodes"),
+    )
+    .expect("the recorded output explains each criterion once")
+}
 
 /// Sends `request` to Jev through a local server that replies with
 /// `reply`, and returns the decoded reply and the body that was sent.

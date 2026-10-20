@@ -1,0 +1,124 @@
+---
+source: crates/whetstone-ai/src/explanation.rs
+expression: pretty(&body)
+---
+{
+  "model": "typesafe/jev-1.14",
+  "state": {
+    "evidence": {
+      "commit_message": "Reuse the charge's key when retrying after a timeout",
+      "touched_files": [
+        {
+          "path": "src/payments/retry.rs",
+          "diff": "diff --git a/src/payments/retry.rs b/src/payments/retry.rs\n--- a/src/payments/retry.rs\n+++ b/src/payments/retry.rs\n@@ -1,9 +1,10 @@\n pub async fn charge_with_retry(client: &Client, original: &Charge) -> Result<Receipt, Error> {\n     match client.charge(original.amount, original.key.clone()).await {\n         Err(Error::Timeout) => {\n-            let key = OperationKey::new();\n+            // The provider treats a repeated key as the same charge.\n+            let key = original.key.clone();\n             client.charge(original.amount, key).await\n         }\n         result => result,\n     }\n }\n",
+          "content_after_change": "1: pub async fn charge_with_retry(client: &Client, original: &Charge) -> Result<Receipt, Error> {\n2:     match client.charge(original.amount, original.key.clone()).await {\n3:         Err(Error::Timeout) => {\n4:             // The provider treats a repeated key as the same charge.\n5:             let key = original.key.clone();\n6:             client.charge(original.amount, key).await\n7:         }\n8:         result => result,\n9:     }\n10: }"
+        },
+        {
+          "path": "CHANGELOG.md",
+          "diff": "diff --git a/CHANGELOG.md b/CHANGELOG.md\n--- a/CHANGELOG.md\n+++ b/CHANGELOG.md\n@@ -1,3 +1,5 @@\n # Changelog\n \n ## Unreleased\n+\n+- A timed-out charge is retried with its original key, so it is never charged twice.\n",
+          "content_after_change": "1: # Changelog\n2: \n3: ## Unreleased\n4: \n5: - A timed-out charge is retried with its original key, so it is never charged twice."
+        }
+      ],
+      "connected_code": [
+        {
+          "path": "src/payments/client.rs",
+          "relations": [
+            "called by `charge_with_retry`, changed in src/payments/retry.rs"
+          ],
+          "lines": "12:     /// Charges `amount`. The provider charges at most once per key: a\n13:     /// request with a key it has seen returns the first charge's receipt.\n14:     pub async fn charge(&self, amount: Money, key: OperationKey) -> Result<Receipt, Error> {\n15:         self.post(\"/charges\", &ChargeRequest { amount, idempotency_key: key }).await\n16:     }"
+        }
+      ],
+      "related_tests": [
+        {
+          "path": "tests/retry.rs",
+          "relations": [
+            "test for `src/payments/retry.rs`"
+          ],
+          "lines": "1: #[tokio::test]\n2: async fn a_timed_out_charge_is_retried_once() {\n3:     let client = FakeClient::timing_out_once();\n4:     charge_with_retry(&client, &charge()).await.unwrap();\n5:     assert_eq!(client.charges().len(), 2);\n6: }"
+        }
+      ],
+      "related_configuration": [],
+      "files_without_connected_code": [
+        "CHANGELOG.md"
+      ]
+    },
+    "question": {
+      "stem": "Why does the retry in `charge_with_retry` now reuse `original.key` instead of making a new `OperationKey`?",
+      "options": {
+        "A": "So that the provider treats the retry as the same charge, and a charge that went through before the timeout isn't made twice.",
+        "B": "So that the retry skips the provider's checks on the card and completes faster than the first attempt.",
+        "C": "So that the provider rejects the retry if the first attempt failed, and the caller sees the original timeout."
+      },
+      "answer_key": "A"
+    },
+    "explanations": {
+      "criterion_1": {
+        "statement": "Explains that a timed-out charge may still have gone through.",
+        "met": "Says the first charge might have succeeded even though the client saw a timeout.",
+        "not_met": "Treats the timeout as proof that nothing was charged, or doesn't consider it.",
+        "outcome": "not met",
+        "explanation": "Your reasoning explains what the key does but never says why a retry is risky in the first place: a timeout doesn't tell the client whether the first charge went through. The retry only happens in the `Err(Error::Timeout)` arm, so the first request may already have been processed by the provider before the client gave up. That uncertainty is the reason a fresh `OperationKey` could cause a second charge, and meeting this criterion means saying that the first charge might have succeeded despite the timeout.",
+        "citations": [
+          {
+            "path": "src/payments/retry.rs",
+            "first_line": 2,
+            "last_line": 6
+          }
+        ]
+      },
+      "criterion_2": {
+        "statement": "Connects reusing the key to the provider charging at most once per key.",
+        "met": "Says the provider recognises the repeated key and returns the first charge instead of charging again.",
+        "not_met": "Doesn't say how the reused key prevents a second charge.",
+        "outcome": "needs review",
+        "explanation": "The evaluator couldn't tell whether your reasoning fully connects the reused key to the provider's at-most-once behaviour. Meeting this criterion means saying that the provider recognises a key it has already seen and returns the first charge's receipt instead of charging again. The `charge` doc comment states this directly, and the changed lines send `original.key.clone()` on the retry so that the provider sees the same key as in the first request.",
+        "citations": [
+          {
+            "path": "src/payments/client.rs",
+            "first_line": 12,
+            "last_line": 13
+          },
+          {
+            "path": "src/payments/retry.rs",
+            "first_line": 4,
+            "last_line": 6
+          }
+        ]
+      }
+    }
+  },
+  "questions": {
+    "criterion_1_agrees": {
+      "type": "noul",
+      "instructions": "The explanation for criterion_1 agrees with its criterion's outcome. For an outcome of not met, it explains what the reasoning missed. For an outcome of needs review, it describes what meeting the criterion would look like, without claiming the learner missed it.",
+      "criteria": {
+        "false": "The explanation contradicts the criterion's outcome, such as treating the criterion as met, or claiming the learner missed a criterion that needs review.",
+        "true": "The explanation fits the criterion's outcome."
+      }
+    },
+    "criterion_1_supported": {
+      "type": "noul",
+      "instructions": "The explanation for criterion_1 is supported by the evidence: everything it says about the change and the code around it is true of the evidence.",
+      "criteria": {
+        "false": "The explanation says something the evidence doesn't support, or contradicts.",
+        "true": "The evidence supports everything the explanation says."
+      }
+    },
+    "criterion_2_agrees": {
+      "type": "noul",
+      "instructions": "The explanation for criterion_2 agrees with its criterion's outcome. For an outcome of not met, it explains what the reasoning missed. For an outcome of needs review, it describes what meeting the criterion would look like, without claiming the learner missed it.",
+      "criteria": {
+        "false": "The explanation contradicts the criterion's outcome, such as treating the criterion as met, or claiming the learner missed a criterion that needs review.",
+        "true": "The explanation fits the criterion's outcome."
+      }
+    },
+    "criterion_2_supported": {
+      "type": "noul",
+      "instructions": "The explanation for criterion_2 is supported by the evidence: everything it says about the change and the code around it is true of the evidence.",
+      "criteria": {
+        "false": "The explanation says something the evidence doesn't support, or contradicts.",
+        "true": "The evidence supports everything the explanation says."
+      }
+    }
+  }
+}
