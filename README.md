@@ -73,6 +73,9 @@ colours = "auto"
 # 0 sends none. A repository's .whetstone/config.toml can lower it, never raise it.
 connected_code_limit_kb = 100
 
+# How many questions a Practice asks for, from 3 to 5.
+questions = 4
+
 # Jev, the evaluator: it returns decisions and probabilities, never prose.
 [jev]
 model = "typesafe/jev-1.14"

@@ -7,6 +7,7 @@
 //! provider = "openrouter"
 //! colours = "auto"
 //! connected_code_limit_kb = 100
+//! questions = 4
 //!
 //! [jev]
 //! model = "typesafe/jev-1.14"
@@ -24,7 +25,8 @@ use std::{fmt, fs, io};
 
 use serde::{Deserialize, Deserializer};
 use whetstone_core::{
-    ConnectedCodeLimit, ConnectedCodeLimitError, ConnectedCodeLimitKb, RepositoryConfig,
+    ConnectedCodeLimit, ConnectedCodeLimitError, ConnectedCodeLimitKb, QuestionCount,
+    QuestionCountError, RepositoryConfig,
 };
 
 use crate::environment::Environment;
@@ -50,6 +52,8 @@ pub struct Settings {
     /// Whether `NO_COLOR` turns colour off, whatever `colours` says.
     pub(crate) no_color: NoColorStatus,
     pub(crate) connected_code_limit: Setting<ConnectedCodeLimitKb>,
+    /// How many questions a Practice asks for.
+    pub(crate) questions: Setting<QuestionCount>,
     pub(crate) file: ConfigFile,
     pub(crate) openrouter_key: KeyStatus,
 }
@@ -128,6 +132,8 @@ struct File {
     colours: Option<Colours>,
     #[serde(default, deserialize_with = "connected_code_limit_kb")]
     connected_code_limit_kb: Option<ConnectedCodeLimitKb>,
+    #[serde(default, deserialize_with = "questions")]
+    questions: Option<QuestionCount>,
     jev: Option<Role>,
     generator: Option<Role>,
 }
@@ -175,6 +181,7 @@ impl Settings {
                 contents.connected_code_limit_kb,
                 ConnectedCodeLimitKb::DEFAULT,
             ),
+            questions: Setting::or_default(contents.questions, QuestionCount::DEFAULT),
             file,
             openrouter_key: if environment
                 .get(OPENROUTER_KEY_VARIABLE)
@@ -236,6 +243,18 @@ fn connected_code_limit_kb<'de, D: Deserializer<'de>>(
         .as_integer()
         .ok_or(ConnectedCodeLimitError)
         .and_then(ConnectedCodeLimitKb::try_from)
+        .map(Some)
+        .map_err(serde::de::Error::custom)
+}
+
+/// Reads `questions`, which must be a whole number from 3 to 5.
+fn questions<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<QuestionCount>, D::Error> {
+    toml::Value::deserialize(deserializer)?
+        .as_integer()
+        .ok_or(QuestionCountError)
+        .and_then(QuestionCount::try_from)
         .map(Some)
         .map_err(serde::de::Error::custom)
 }
