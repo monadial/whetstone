@@ -187,7 +187,7 @@ pub(super) fn without_pending_input(transcript: &str) -> Transcript {
 
 /// What `$HOME/{name}` holds, written by the launch before `whetstone`
 /// started.
-fn recorded(home: &Path, name: &str) -> String {
+pub(super) fn recorded(home: &Path, name: &str) -> String {
     std::fs::read_to_string(home.join(name))
         .expect("the launch wrote the file before whetstone started")
         .trim()
@@ -197,7 +197,7 @@ fn recorded(home: &Path, name: &str) -> String {
 /// Resizes the terminal at `tty` to `cols` by `rows`, as dragging the
 /// window's edge does: the kernel tells the terminal's foreground processes
 /// with SIGWINCH.
-fn resize(tty: &str, cols: u16, rows: u16) {
+pub(super) fn resize(tty: &str, cols: u16, rows: u16) {
     let terminal = File::options()
         .read(true)
         .write(true)
@@ -213,13 +213,13 @@ fn resize(tty: &str, cols: u16, rows: u16) {
 
 /// A session that keeps everything the shell printed, including what each
 /// wait read past, so a check can cover the whole session.
-struct Recording<'a> {
+pub(super) struct Recording<'a> {
     session: &'a mut PtySession,
     printed: String,
 }
 
 impl<'a> Recording<'a> {
-    fn new(session: &'a mut PtySession) -> Self {
+    pub(super) fn new(session: &'a mut PtySession) -> Self {
         Self {
             session,
             printed: String::new(),
@@ -228,7 +228,7 @@ impl<'a> Recording<'a> {
 
     /// Waits for `needle` and returns what was printed since the last wait,
     /// up to and including it.
-    fn wait_for(&mut self, needle: &str) -> String {
+    pub(super) fn wait_for(&mut self, needle: &str) -> String {
         let before = self
             .session
             .exp_string(needle)
@@ -238,13 +238,13 @@ impl<'a> Recording<'a> {
         read
     }
 
-    fn send(&mut self, keys: &str) {
+    pub(super) fn send(&mut self, keys: &str) {
         self.session.send(keys).expect("send keys");
         self.session.flush().expect("flush keys");
     }
 
     /// Reads until the shell exits.
-    fn finish(self) -> Transcript {
+    pub(super) fn finish(self) -> Transcript {
         let rest = self.session.exp_eof().expect("shell exits");
         Transcript(self.printed + &rest)
     }

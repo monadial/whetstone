@@ -92,7 +92,7 @@ pub(super) fn quit_with(
 }
 
 impl Transcript {
-    fn section(&self, start: &str) -> &str {
+    pub(super) fn section(&self, start: &str) -> &str {
         assert!(
             self.0.contains(start),
             "transcript has {start:?}:\n{:?}",
