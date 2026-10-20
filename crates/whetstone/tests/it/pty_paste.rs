@@ -69,26 +69,28 @@ impl Exit {
     }
 }
 
-/// Asserts that `whetstone`, in `transcript`, turned every one of
-/// [`MODES`] on, and that each was off again by the time it exited.
-fn assert_modes_on_then_off(transcript: &Transcript) {
-    let (_, run) = transcript
-        .0
-        .split_once("modes end")
-        .expect("the modes are recorded before whetstone runs");
-    let (run, _) = run.split_once("exit code:").expect("whetstone exits");
-    for mode in MODES {
-        assert!(
-            run.contains(mode.on),
-            "{} is turned on at start:\n{run:?}",
-            mode.name
-        );
-        let since_on = run.rsplit_once(mode.on).map_or("", |(_, rest)| rest);
-        assert!(
-            since_on.contains(mode.off),
-            "{} is turned off before whetstone exits:\n{run:?}",
-            mode.name
-        );
+impl Transcript {
+    /// Asserts that `whetstone` turned every one of [`MODES`] on, and that
+    /// each was off again by the time it exited.
+    fn assert_modes_on_then_off(&self) {
+        let (_, run) = self
+            .0
+            .split_once("modes end")
+            .expect("the modes are recorded before whetstone runs");
+        let (run, _) = run.split_once("exit code:").expect("whetstone exits");
+        for mode in MODES {
+            assert!(
+                run.contains(mode.on),
+                "{} is turned on at start:\n{run:?}",
+                mode.name
+            );
+            let since_on = run.rsplit_once(mode.on).map_or("", |(_, rest)| rest);
+            assert!(
+                since_on.contains(mode.off),
+                "{} is turned off before whetstone exits:\n{run:?}",
+                mode.name
+            );
+        }
     }
 }
 
@@ -97,7 +99,7 @@ fn the_modes_are_on_while_whetstone_runs_and_off_after_q() {
     let transcript = Exit::Quit.run();
 
     transcript.assert_exit_code(0);
-    assert_modes_on_then_off(&transcript);
+    transcript.assert_modes_on_then_off();
 }
 
 #[test]
@@ -105,7 +107,7 @@ fn the_modes_are_on_while_whetstone_runs_and_off_after_ctrl_c() {
     let transcript = Exit::CtrlC.run();
 
     transcript.assert_exit_code(0);
-    assert_modes_on_then_off(&transcript);
+    transcript.assert_modes_on_then_off();
 }
 
 #[test]
@@ -113,7 +115,7 @@ fn the_modes_are_on_while_whetstone_runs_and_off_after_a_termination_signal() {
     let transcript = Exit::Signal.run();
 
     transcript.assert_exit_code(143);
-    assert_modes_on_then_off(&transcript);
+    transcript.assert_modes_on_then_off();
 }
 
 /// From home: open the picker on the showcase project, move past its five
