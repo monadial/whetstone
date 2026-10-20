@@ -25,7 +25,7 @@ use whetstone_core::ShowcaseProject;
 use crate::config::Settings;
 use crate::help::KeyHelp;
 use crate::home::Home;
-use crate::job::{self, Finished, Job, JobOutput, Jobs};
+use crate::job::{Finished, Job, JobOutcome, JobOutput, Jobs};
 use crate::keymap::{self, Command, Input};
 use crate::overlay::{Outcome, Overlay};
 use crate::palette::Palette;
@@ -188,7 +188,7 @@ impl App {
                 Flow::Continue
             }
             Message::Finished(finished) => {
-                self.finished(finished);
+                self.apply_job(finished);
                 Flow::Continue
             }
             Message::Terminal(_) | Message::Tick => Flow::Continue,
@@ -203,14 +203,14 @@ impl App {
 
     /// Rule 24: applies a job's result only if the app still waits for that
     /// job.
-    fn finished(&mut self, finished: Finished<JobOutput>) {
+    fn apply_job(&mut self, finished: Finished<JobOutput>) {
         let Some(finished) = self.jobs.accept(finished) else {
             return;
         };
         match finished.outcome {
-            job::Outcome::Done(output) => match output {},
+            JobOutcome::Done(output) => match output {},
             // A job the app waits for is cancelled only as the app quits.
-            job::Outcome::Cancelled => {}
+            JobOutcome::Cancelled => {}
         }
     }
 

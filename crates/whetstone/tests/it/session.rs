@@ -4,6 +4,7 @@
 //! when a test asks, so every frame is deterministic.
 
 use std::fs;
+use std::mem;
 use std::path::Path;
 
 use ratatui::Terminal;
@@ -11,7 +12,9 @@ use ratatui::backend::TestBackend;
 use ratatui::buffer::{Buffer, Cell};
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use tempfile::TempDir;
-use whetstone::{App, Dirs, Environment, Flow, Message, Repository, Settings, Theme};
+use whetstone::{
+    App, Dirs, Environment, Finished, Flow, JobOutput, Message, Repository, Settings, Theme,
+};
 use whetstone_core::ShowcaseProject;
 
 /// What the app starts from: a global config file, if any, the environment
@@ -41,6 +44,9 @@ pub(crate) struct Session {
     app: App,
     width: u16,
     height: u16,
+    /// The reports of the background jobs the app started, waiting for the
+    /// test to settle.
+    finished: Vec<Finished<JobOutput>>,
     _home: TempDir,
 }
 
@@ -74,6 +80,7 @@ impl Session {
             ),
             width,
             height,
+            finished: Vec::new(),
             _home: home,
         };
         // The UI loop tells the app the terminal's size before the first draw.
@@ -103,14 +110,14 @@ impl Session {
         let mut flow = Flow::Continue;
         for name in script.split_whitespace() {
             assert_ne!(flow, Flow::Quit, "{name} pressed after the app quit");
-            flow = self.app.handle(Message::Terminal(Event::Key(key(name))));
+            flow = self.send(Message::Terminal(Event::Key(key(name))));
         }
         flow
     }
 
     /// Applies one terminal event as it arrives, whatever it is.
     pub(crate) fn handle(&mut self, event: &Event) -> Flow {
-        self.app.handle(Message::Terminal(event.clone()))
+        self.send(Message::Terminal(event.clone()))
     }
 
     /// Resizes the terminal, as the UI loop reports it.
@@ -118,26 +125,21 @@ impl Session {
         self.width = width;
         self.height = height;
         assert_eq!(
-            self.app
-                .handle(Message::Terminal(Event::Resize(width, height))),
+            self.send(Message::Terminal(Event::Resize(width, height))),
             Flow::Continue,
             "a resize never quits"
         );
     }
 
-    /// Runs every background job the app has started, including any it
-    /// starts on a result, and delivers each result, as the UI loop does
-    /// once each job ends. Until a test settles, no job runs, so a frame
-    /// shows the app still waiting.
+    /// Delivers the report of every background job the app started, and
+    /// of any job it starts on one, as the UI loop does once each job ends.
+    /// Until a test settles, no report arrives, so a frame shows the app
+    /// still waiting.
     pub(crate) fn settle(&mut self) {
-        loop {
-            let jobs = self.app.take_jobs();
-            if jobs.is_empty() {
-                return;
-            }
-            for job in jobs {
+        while !self.finished.is_empty() {
+            for finished in mem::take(&mut self.finished) {
                 assert_eq!(
-                    self.app.handle(Message::Finished(job.run())),
+                    self.send(Message::Finished(finished)),
                     Flow::Continue,
                     "a job's result never quits"
                 );
@@ -148,10 +150,21 @@ impl Session {
     /// Ticks once, as the UI loop does while a job runs.
     pub(crate) fn tick(&mut self) {
         assert_eq!(
-            self.app.handle(Message::Tick),
+            self.send(Message::Tick),
             Flow::Continue,
             "a tick never quits"
         );
+    }
+
+    /// Hands the app `message`, then runs each job it started, as the UI
+    /// loop does at once. A job cancelled later has still run, as it would
+    /// have begun in the loop, but its report waits for the test to settle.
+    fn send(&mut self, message: Message) -> Flow {
+        let flow = self.app.handle(message);
+        for job in self.app.take_jobs() {
+            self.finished.push(job.run());
+        }
+        flow
     }
 
     /// Draws the current frame. Its debug form lists every style change
