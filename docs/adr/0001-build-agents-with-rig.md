@@ -8,5 +8,8 @@ All of Whetstone's AI work is built with the Rig framework (the `rig` crate, whi
 
 ## Consequences
 
-- Rig's OpenRouter chat provider can't call Jev, because Jev is a decisions API rather than a chat model. Reaching Jev means using Rig's experimental `rig-typesafeai` crate, configured for OpenRouter's `/api/v1/systemone` endpoint. In Rig 0.44.0 (7 October 2026) that path can't decode Jev's replies (rig#2782). The fix (rig#2800) is only on Rig's development branch, so the path must be verified on a release before anything relies on it.
+- Rig's OpenRouter chat provider can't call Jev, because Jev is a decisions API rather than a chat model. Reaching Jev means using Rig's experimental `rig-typesafeai` crate, through the `rig` crate's `typesafeai` feature, configured for OpenRouter's `/api/v1/systemone` endpoint. Rig 0.44.0 couldn't decode Jev's replies there (rig#2782). Rig 0.45.0 (19 October 2026) can (rig#2800).
+- Rig is pinned to an exact version and upgraded on purpose, because its releases so far have each broken the API. Rig 0.45 needs Rust 1.97.1.
+- In 0.45, `rig-typesafeai` can't send OpenRouter's `provider` routing flags, so a Jev request can't yet require zero-data retention. The fix belongs upstream, as a setting on Rig's `JevConfig`. Nothing sends to Jev until a Rig release has it, or, if that release lags, a pinned Rig revision that has it.
+- Jev is checked on every pull request against recorded OpenRouter replies. It's also checked live in a keyed end-to-end job that runs when Rig is upgraded, when the AI crate changes, and before a release.
 - When Rig lacks something, raise it as a decision. Don't route around it with direct calls.
