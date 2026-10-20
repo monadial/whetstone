@@ -1,19 +1,84 @@
 //! Related tests and related configuration: the files at a change's commit
 //! that conventionally test or build its touched files, found from the
-//! commit's paths alone.
-
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "wired into the outbound review by the #61 integration"
-    )
-)]
+//! commit's paths alone, then sent whole as [`connections`] read from it.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::iter;
 
-use whetstone_core::TouchedFile;
+use whetstone_core::{
+    Change, Connection, ConnectionGroup, Extent, FileContent, Relation, Tier, TouchedFile,
+};
+
+use super::{Failure, FileKind, Snapshot};
+
+/// The related tests and related configuration of `change` at the commit
+/// `snapshot` shows, as [`find`] finds them: each a whole-file connection
+/// in the high tier, in the related test or related configuration group,
+/// there as the test or the manifest for each touched file it relates to,
+/// with its file's content at the commit. A symbolic link or a submodule is
+/// never read. It fails if the commit's tree or one of the files cannot be
+/// read.
+pub(super) fn connections<S: Snapshot>(
+    snapshot: &S,
+    change: &Change,
+) -> Result<Vec<Connection>, Failure> {
+    let files = snapshot
+        .files()
+        .map_err(|error| Failure::Snapshot(Box::new(error)))?;
+    let kinds: HashMap<&str, FileKind> = files
+        .iter()
+        .map(|file| (file.path(), file.kind()))
+        .collect();
+    let related = find(kinds.keys().copied(), change.files());
+    tracing::info!(
+        tests = related
+            .iter()
+            .filter(|file| file.group() == RelatedGroup::Test)
+            .count(),
+        manifests = related
+            .iter()
+            .filter(|file| file.group() == RelatedGroup::Configuration)
+            .count(),
+        "found a change's related tests and configuration"
+    );
+    related
+        .into_iter()
+        .map(|file| {
+            let content = match kinds.get(file.path()) {
+                Some(FileKind::Symlink) => FileContent::Symlink,
+                Some(FileKind::Submodule) => FileContent::Submodule,
+                Some(FileKind::Blob | FileKind::Executable) | None => {
+                    match snapshot.read(file.path()) {
+                        Ok(Some(bytes)) => FileContent::from_bytes(bytes),
+                        Ok(None) => return Err(Failure::NotInCommit),
+                        Err(error) => return Err(Failure::Snapshot(Box::new(error))),
+                    }
+                }
+            };
+            let (group, relation): (_, fn(String) -> Relation) = match file.group() {
+                RelatedGroup::Test => (ConnectionGroup::RelatedTest, |touched_file| {
+                    Relation::TestFor { touched_file }
+                }),
+                RelatedGroup::Configuration => {
+                    (ConnectionGroup::RelatedConfiguration, |touched_file| {
+                        Relation::ManifestFor { touched_file }
+                    })
+                }
+            };
+            Ok(Connection::new(
+                file.path().to_owned(),
+                Extent::WholeFile,
+                group,
+                Tier::High,
+                file.related_to().iter().cloned().map(relation).collect(),
+                content,
+            ))
+        })
+        .collect::<Result<_, _>>()
+        .inspect_err(|failure| {
+            tracing::warn!(error = %failure, "cannot read a change's related tests and configuration");
+        })
+}
 
 /// A file at the commit that tests or builds one or more touched files.
 /// It is sent whole, in the high tier.

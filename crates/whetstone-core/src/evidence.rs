@@ -41,7 +41,7 @@ pub struct Evidence {
     connections: Vec<EvidenceConnection>,
     connections_state: ConnectionsState,
     connected_code_limit: ConnectedCodeLimit,
-    not_sent: Vec<(NotSent, usize)>,
+    not_sent: Vec<(ConnectionGroup, NotSent)>,
     findings: Vec<Finding>,
     size: usize,
 }
@@ -485,13 +485,25 @@ impl Evidence {
             .sum()
     }
 
-    /// How many found connections no rule leaves out are not sent, because
-    /// they did not fit, for each reason that has any: over the connected
-    /// code limit first, then no room under the size limit. They are not in
-    /// [`Evidence::connections`].
+    /// How many found connections in any of `groups` that no rule leaves
+    /// out are not sent, because they did not fit, for each reason that has
+    /// any: over the connected code limit first, then no room under the size
+    /// limit. They are not in [`Evidence::connections`]. Only connected code
+    /// can be over its limit.
     #[must_use]
-    pub fn not_sent(&self) -> &[(NotSent, usize)] {
-        &self.not_sent
+    pub fn not_sent(&self, groups: &[ConnectionGroup]) -> Vec<(NotSent, usize)> {
+        [NotSent::OverConnectedCodeLimit, NotSent::NoRoom]
+            .into_iter()
+            .map(|reason| {
+                let count = self
+                    .not_sent
+                    .iter()
+                    .filter(|(group, not_sent)| *not_sent == reason && groups.contains(group))
+                    .count();
+                (reason, count)
+            })
+            .filter(|&(_, count)| count > 0)
+            .collect()
     }
 
     /// The possible secrets in what is sent, the commit message's first,
@@ -784,7 +796,7 @@ impl EvidenceConnection {
         room: usize,
         limit: ConnectedCodeLimit,
         choices: &ReviewChoices,
-    ) -> (Vec<Self>, ConnectionsState, Vec<(NotSent, usize)>) {
+    ) -> (Vec<Self>, ConnectionsState, Vec<(ConnectionGroup, NotSent)>) {
         let state = match connections {
             Connections::Found(found) if !found.is_empty() => {
                 let ranked = selection::rank(found)

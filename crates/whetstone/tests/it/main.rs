@@ -28,6 +28,7 @@ mod pty_dumb;
 mod pty_paste;
 mod pty_suspend;
 mod pty_terminal;
+mod related;
 mod repo;
 mod repository;
 mod resize;
