@@ -10,9 +10,9 @@ use super::lines::added_lines;
 use super::links::linked_files;
 use super::mentions::named_files;
 use super::touched_text::{Target, TouchedText};
-use super::{Failure, FileKind, Snapshot};
+use super::{Failure, FileKind, Snapshot, read_file};
 
-/// `code`, the callers and callees of `change`'s callables, with the
+/// `callers_and_callees`, those of `change`'s callables, with the
 /// repository files that `change` links to and names in the commit
 /// `snapshot` shows, in path and line order.
 ///
@@ -30,11 +30,11 @@ use super::{Failure, FileKind, Snapshot};
 pub(super) fn with_linked_and_named<S: Snapshot>(
     snapshot: &S,
     change: &Change,
-    code: Vec<Connection>,
+    callers_and_callees: Vec<Connection>,
 ) -> Result<Vec<Connection>, Failure> {
     let files = snapshot
         .files()
-        .map_err(|error| Failure::Snapshot(Box::new(error)))?;
+        .map_err(|error| logged(Failure::Snapshot(Box::new(error))))?;
     let kinds: HashMap<&str, FileKind> = files
         .iter()
         .map(|file| (file.path(), file.kind()))
@@ -53,18 +53,19 @@ pub(super) fn with_linked_and_named<S: Snapshot>(
     });
     let linked = by_path(&links);
     let named = by_path(&mentions);
+    let sent_whole: BTreeSet<&str> = linked.keys().chain(named.keys()).copied().collect();
+    let (merging, mut connections): (Vec<Connection>, Vec<Connection>) =
+        callers_and_callees.into_iter().partition(|connection| {
+            connection.group() == ConnectionGroup::ConnectedCode
+                && sent_whole.contains(connection.id().path())
+        });
     tracing::info!(
         linked = linked.len(),
-        named = named.len(),
+        named = sent_whole.len() - linked.len(),
+        merged_ranges = merging.len(),
         "found the files a change links to and names"
     );
-    let whole: BTreeSet<&str> = linked.keys().chain(named.keys()).copied().collect();
-    let (merging, mut connections): (Vec<Connection>, Vec<Connection>) =
-        code.into_iter().partition(|connection| {
-            connection.group() == ConnectionGroup::ConnectedCode
-                && whole.contains(connection.id().path())
-        });
-    for path in whole {
+    for path in sent_whole {
         let in_file: Vec<&Connection> = merging
             .iter()
             .filter(|connection| connection.id().path() == path)
@@ -97,13 +98,16 @@ pub(super) fn with_linked_and_named<S: Snapshot>(
         } else {
             Tier::Medium
         };
+        let kind = *kinds
+            .get(path)
+            .expect("a file linked to or named is in the commit's tree");
         connections.push(Connection::new(
             path.to_owned(),
             Extent::WholeFile,
             ConnectionGroup::ConnectedCode,
             tier,
             relations,
-            whole_file(snapshot, kinds.get(path).copied(), path)?,
+            whole_file(snapshot, kind, path).map_err(logged)?,
         ));
     }
     connections.sort_by(|a, b| a.id().cmp(b.id()));
@@ -122,16 +126,132 @@ fn by_path(targets: &[Target]) -> BTreeMap<&str, &[String]> {
 /// symlink or a submodule is never read.
 fn whole_file<S: Snapshot>(
     snapshot: &S,
-    kind: Option<FileKind>,
+    kind: FileKind,
     path: &str,
 ) -> Result<FileContent, Failure> {
     match kind {
-        Some(FileKind::Symlink) => Ok(FileContent::Symlink),
-        Some(FileKind::Submodule) => Ok(FileContent::Submodule),
-        Some(FileKind::Blob | FileKind::Executable) | None => match snapshot.read(path) {
-            Ok(Some(bytes)) => Ok(FileContent::from_bytes(bytes)),
-            Ok(None) => Err(Failure::NotInCommit),
-            Err(error) => Err(Failure::Snapshot(Box::new(error))),
-        },
+        FileKind::Symlink => Ok(FileContent::Symlink),
+        FileKind::Submodule => Ok(FileContent::Submodule),
+        FileKind::Blob | FileKind::Executable => read_file(snapshot, path),
+    }
+}
+
+/// `failure`, once recorded in the log.
+fn logged(failure: Failure) -> Failure {
+    tracing::warn!(error = %failure, "cannot read the files a change links to and names");
+    failure
+}
+
+#[cfg(test)]
+mod tests {
+    use whetstone_core::{CommitId, LineRange};
+
+    use super::*;
+    use crate::repository::test_repo::TestRepo;
+
+    /// The connected code of the commit `id` of `repo`, given its
+    /// `callers_and_callees`, each piece as `path extent tier: relations`.
+    fn sent(repo: &TestRepo, id: CommitId, callers_and_callees: Vec<Connection>) -> Vec<String> {
+        let repository = repo.open();
+        let change = repository.load(id).expect("load the change");
+        repository
+            .handle()
+            .with_tree(id, |tree| {
+                with_linked_and_named(tree, &change, callers_and_callees)
+            })
+            .expect("read the commit's tree")
+            .expect("read what the change links to and names")
+            .iter()
+            .map(|connection| {
+                let tier = match connection.tier() {
+                    Tier::High => "high",
+                    Tier::Medium => "medium",
+                };
+                let relations: Vec<String> = connection
+                    .relations()
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect();
+                format!(
+                    "{} {} {tier}: {}",
+                    connection.id().path(),
+                    connection.id().extent(),
+                    relations.join(", ")
+                )
+            })
+            .collect()
+    }
+
+    /// A caller of `charge` in `src/pay.rs`, at lines `first` to `last` of
+    /// `path`, in `tier`.
+    fn caller(path: &str, first: usize, last: usize, tier: Tier) -> Connection {
+        Connection::new(
+            path.to_owned(),
+            Extent::Lines(LineRange::new(first, last).expect("a line range")),
+            ConnectionGroup::ConnectedCode,
+            tier,
+            vec![Relation::Calls {
+                callable: "charge".to_owned(),
+                touched_file: "src/pay.rs".to_owned(),
+            }],
+            FileContent::Text("fn checkout() {}\n".repeat(8)),
+        )
+    }
+
+    #[test]
+    fn a_linked_file_is_in_the_high_tier_and_a_file_only_named_in_the_medium_tier() {
+        let repo = TestRepo::new();
+        repo.write("README.md", "# Shop\n")
+            .write("docs/guide.md", "# Guide\n")
+            .write("docs/faq.md", "# FAQ\n");
+        repo.commit("Start the shop");
+        repo.write(
+            "README.md",
+            "# Shop\n\nRead [the guide](docs/guide.md), then docs/faq.md.\n",
+        );
+        let id = repo.commit("Point to the docs");
+
+        assert_eq!(
+            sent(&repo, id, Vec::new()),
+            [
+                "docs/faq.md whole file medium: named in `README.md`",
+                "docs/guide.md whole file high: linked from `README.md`",
+            ]
+        );
+    }
+
+    #[test]
+    fn callers_in_a_file_sent_whole_merge_into_it_and_lift_it_to_their_tier() {
+        let repo = TestRepo::new();
+        repo.write("README.md", "# Shop\n")
+            .write("src/cart.rs", "fn cart() {}\n")
+            .write("src/check.rs", "fn check() {}\n")
+            .write("src/shop.rs", "fn shop() {}\n");
+        repo.commit("Start the shop");
+        repo.write(
+            "README.md",
+            "# Shop\n\nCheckout is in src/cart.rs and src/shop.rs.\n",
+        );
+        let id = repo.commit("Say where checkout is");
+
+        let found = sent(
+            &repo,
+            id,
+            vec![
+                caller("src/cart.rs", 1, 2, Tier::Medium),
+                caller("src/check.rs", 1, 3, Tier::Medium),
+                caller("src/shop.rs", 3, 5, Tier::Medium),
+                caller("src/shop.rs", 7, 8, Tier::High),
+            ],
+        );
+
+        assert_eq!(
+            found,
+            [
+                "src/cart.rs whole file medium: calls `charge`, named in `README.md`",
+                "src/check.rs lines 1–3 medium: calls `charge`",
+                "src/shop.rs whole file high: calls `charge`, named in `README.md`",
+            ]
+        );
     }
 }

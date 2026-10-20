@@ -59,6 +59,9 @@ fn a_repository_of_documents_gets_connected_code_from_links_and_mentions_alone()
 #[test]
 fn links_resolve_against_the_linking_file_or_the_root_and_only_files_in_the_commit_count() {
     let repo = course();
+    // Where the external link below would lead if it were read as a path.
+    repo.write("lessons/https:/example.com/loops.md", "# Not this\n");
+    repo.commit("Add a page no external link reaches");
     repo.write(
         "lessons/loops.md",
         "# Loops\n\
@@ -301,7 +304,9 @@ fn finding_what_a_change_links_to_and_names_logs_counts_but_never_the_files() {
     });
 
     assert!(
-        log.contains("found the files a change links to and names linked=1 named=2"),
+        log.contains(
+            "found the files a change links to and names linked=1 named=1 merged_ranges=0"
+        ),
         "{log}"
     );
     for unlogged in ["lessons/intro.md", "exercises/loops.txt", "Welcome"] {

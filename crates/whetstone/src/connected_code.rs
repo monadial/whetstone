@@ -330,11 +330,7 @@ fn with_sent_text(
     connections
         .iter()
         .map(|connection| {
-            let content = match tree.read(connection.path()) {
-                Ok(Some(bytes)) => FileContent::from_bytes(bytes),
-                Ok(None) => return Err(Failure::NotInCommit),
-                Err(error) => return Err(Failure::Snapshot(Box::new(error))),
-            };
+            let content = read_file(tree, connection.path())?;
             let lines = connection.lines();
             let line = |number: u32| usize::try_from(number).expect("a line number fits in usize");
             let range = LineRange::new(line(*lines.start()), line(*lines.end()))
@@ -374,6 +370,17 @@ fn with_sent_text(
         .inspect_err(|failure| {
             tracing::warn!(error = %failure, "cannot read a commit's connected code");
         })
+}
+
+/// The contents of the regular file at `path` in `snapshot`, as the
+/// evidence takes them. It fails if the file cannot be read, or is not a
+/// regular file there.
+fn read_file<S: Snapshot>(snapshot: &S, path: &str) -> Result<FileContent, Failure> {
+    match snapshot.read(path) {
+        Ok(Some(bytes)) => Ok(FileContent::from_bytes(bytes)),
+        Ok(None) => Err(Failure::NotInCommit),
+        Err(error) => Err(Failure::Snapshot(Box::new(error))),
+    }
 }
 
 #[cfg(test)]
