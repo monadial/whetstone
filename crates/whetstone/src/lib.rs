@@ -29,6 +29,7 @@ mod repository;
 mod search;
 mod settings;
 mod showcase;
+mod stage_row;
 mod terminal;
 mod theme;
 mod tui;

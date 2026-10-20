@@ -150,6 +150,9 @@ pub struct Theme {
     /// The match a search landed on: reversed and bold, so it stands out
     /// from the other matches without colour.
     pub(crate) current_match: Style,
+    /// A stage of Practice not reached yet: dim, so it recedes without
+    /// colour too, while staying readable as what comes next.
+    pub(crate) upcoming_stage: Style,
     /// The control that owns keyboard focus.
     focus: Style,
     /// The row of a selected choice.
@@ -294,6 +297,7 @@ impl Theme {
                 .bg(palette.selected)
                 .add_modifier(Modifier::UNDERLINED),
             current_match: Style::new().add_modifier(Modifier::REVERSED | Modifier::BOLD),
+            upcoming_stage: Style::new().add_modifier(Modifier::DIM),
             focus: Style::new().fg(palette.focus).add_modifier(Modifier::BOLD),
             selected: Style::new().bg(palette.selected),
             disabled: Style::new()
