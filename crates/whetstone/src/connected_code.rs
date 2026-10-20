@@ -3,30 +3,23 @@
 //! embedded `cgg` engine ([ADR 0002]). This module is the only one that
 //! knows about `cgg`, so the engine can be upgraded or replaced behind it.
 //!
-//! [`find`] is the whole job for one change, and blocks while it runs, so
-//! callers run it off the UI thread. It reads the commit through a
-//! [`Snapshot`], writes the files the engine reads into a private
-//! [`AnalysisDir`], analyses them there, removes the directory, and
-//! returns the connections, with the whole [`Graph`] so it can be cached
-//! and asked about the change again.
+//! The outbound review asks for a commit's connected code with a
+//! [`Request`], which a background job runs. It gives the change's
+//! [`Connections`], each with the text it would send, read from the commit,
+//! or why there are none.
 //!
-//! A [`Connection`] is a line range only. Its sent text is the numbered
-//! lines of that range in the file at the commit, which the caller reads
-//! through the same snapshot, so what is shown and what is sent come from
-//! one place.
+//! [`find`] is the engine's part of that, for any [`Snapshot`] of a commit,
+//! and blocks while it runs, so callers run it off the UI thread. It writes
+//! the files the engine reads into a private [`AnalysisDir`], analyses them
+//! there, removes the directory, and returns the callers and callees as
+//! line ranges, with the whole [`Graph`] so it can be cached and asked about
+//! the change again. The app's [`AnalysisDirsGuard`] removes any directory
+//! still in use when the app quits.
 //!
 //! The log records counts, sizes, timings and reasons, never file
 //! contents, callable names or the graph.
 //!
 //! [ADR 0002]: https://github.com/monadial/whetstone/blob/main/docs/adr/0002-embed-cgg-for-connected-code.md
-
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "wired into the outbound review by the #58 integration"
-    )
-)]
 
 mod analysis;
 mod detect;
@@ -35,23 +28,17 @@ mod lines;
 
 use std::error::Error;
 use std::io;
-use std::path::Path;
 use std::time::Instant;
 
-use whetstone_core::{Change, ExcludePatterns};
+use whetstone_core::{
+    Change, CommitId, ConnectionGroup, Connections, ExcludePatterns, Extent, FileContent, LineRange,
+};
 
-use crate::repository::{CommitTree, LoadError, TreeEntryKind};
+use crate::repository::{CommitTree, LoadError, RepositoryHandle, TreeEntryKind};
+use crate::terminal::{self, Panicked};
 
-pub(crate) use analysis::{AnalysisDir, sweep};
-pub(crate) use graph::{Connection, Graph};
-#[cfg_attr(
-    not(test),
-    expect(
-        unused_imports,
-        reason = "named by the outbound review once the #58 integration wires it in"
-    )
-)]
-pub(crate) use graph::{Relation, Tier};
+pub(crate) use analysis::{AnalysisDir, AnalysisDirs, AnalysisDirsGuard, sweep};
+pub(crate) use graph::{Connection, Graph, Relation, Tier};
 
 /// A commit's whole tree as finding connected code reads it: every file's
 /// path and kind, and any regular file's contents by path. It is a view of
@@ -148,6 +135,12 @@ pub(crate) enum Failure {
     /// The engine failed.
     #[error("the engine failed to analyse the commit's files")]
     Engine(#[source] Box<dyn Error + Send + Sync>),
+    /// Reading the commit or analysing it panicked.
+    #[error("finding connected code panicked")]
+    Panicked,
+    /// The app is quitting, and has removed its analysis directories.
+    #[error("the app is quitting")]
+    Quitting,
 }
 
 /// What [`find`] found: the change's connected code, and the whole graph
@@ -155,6 +148,10 @@ pub(crate) enum Failure {
 #[derive(Debug)]
 pub(crate) struct Found {
     connections: Vec<Connection>,
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "kept for the graph cache (#63)")
+    )]
     graph: Graph,
 }
 
@@ -167,6 +164,10 @@ impl Found {
 
     /// The whole call graph of the commit, which can give the connected
     /// code of any change at that commit with [`Graph::connections`].
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "kept for the graph cache (#63)")
+    )]
     pub(crate) fn graph(&self) -> &Graph {
         &self.graph
     }
@@ -176,24 +177,28 @@ impl Found {
 /// shows: the callers and callees of the callables it adds or modifies,
 /// one hop away, as [`Graph::connections`] describes them.
 ///
-/// It writes the commit's code to a new private directory in `temp_dir`,
+/// It writes the commit's code to a new private directory among `dirs`,
 /// leaving out what `exclude` and the default exclusions leave out, as
 /// [`AnalysisDir::write`] describes, analyses it there, and removes the
-/// directory before it returns, whatever the outcome. It blocks until the
-/// engine is done, which the engine cannot be made to stop early.
+/// directory before it returns, whatever the outcome, a panic included,
+/// which it reports as [`Failure::Panicked`]. It blocks until the engine is
+/// done, which the engine cannot be made to stop early.
 pub(crate) fn find<S: Snapshot>(
     snapshot: &S,
     change: &Change,
     exclude: &ExcludePatterns,
-    temp_dir: &Path,
+    dirs: &AnalysisDirs,
 ) -> Result<Found, Failure> {
     let started = Instant::now();
-    let found = AnalysisDir::write(snapshot, exclude, temp_dir)
-        .and_then(|dir| dir.analyse())
-        .map(|graph| Found {
-            connections: graph.connections(change),
-            graph,
-        });
+    let found = terminal::catch_panic(|| {
+        AnalysisDir::write(snapshot, exclude, dirs)
+            .and_then(|dir| dir.analyse())
+            .map(|graph| Found {
+                connections: graph.connections(change),
+                graph,
+            })
+    })
+    .unwrap_or_else(|Panicked| Err(Failure::Panicked));
     match &found {
         Ok(found) => tracing::info!(
             connections = found.connections.len(),
@@ -207,6 +212,134 @@ pub(crate) fn find<S: Snapshot>(
         ),
     }
     found
+}
+
+/// What a background job needs to find one commit's connected code: its
+/// own handle on the repository, the commit and its change, the
+/// repository's exclude patterns, and where to analyse it.
+#[derive(Debug)]
+pub(crate) struct Request {
+    repository: RepositoryHandle,
+    commit: CommitId,
+    change: Change,
+    exclude: ExcludePatterns,
+    dirs: AnalysisDirs,
+}
+
+impl Request {
+    /// A request for the connected code of `change`, the commit `commit`
+    /// of `repository`, leaving out what `exclude` leaves out, analysed
+    /// among `dirs`.
+    pub(crate) fn new(
+        repository: RepositoryHandle,
+        commit: CommitId,
+        change: Change,
+        exclude: ExcludePatterns,
+        dirs: AnalysisDirs,
+    ) -> Self {
+        Self {
+            repository,
+            commit,
+            change,
+            exclude,
+            dirs,
+        }
+    }
+
+    /// The commit it is for.
+    pub(crate) fn commit(&self) -> CommitId {
+        self.commit
+    }
+
+    /// The commit's connected code: the callers and callees of the
+    /// callables its change adds or modifies, as [`find`] finds them, each
+    /// with the lines it would send, read from the commit; or none found,
+    /// or the analysis failed. It blocks until the engine is done.
+    pub(crate) fn connections(&self) -> Connections {
+        let started = Instant::now();
+        let connections = self
+            .repository
+            .with_tree(self.commit, |tree| {
+                let found = find(tree, &self.change, &self.exclude, &self.dirs).ok()?;
+                with_sent_text(tree, found.connections())
+            })
+            .ok()
+            .flatten()
+            .map_or(Connections::AnalysisFailed, |connections| {
+                if connections.is_empty() {
+                    Connections::NoneFound
+                } else {
+                    Connections::Found(connections)
+                }
+            });
+        tracing::info!(
+            commit = self.commit.full(),
+            state = match &connections {
+                Connections::Found(_) => "found",
+                Connections::NoneFound => "none found",
+                Connections::AnalysisFailed => "analysis failed",
+                Connections::Finding | Connections::TookTooLong => "unexpected",
+            },
+            ms = started.elapsed().as_millis(),
+            "found a commit's connected code"
+        );
+        connections
+    }
+}
+
+/// `connections` in the commit `tree` shows, as the evidence takes them:
+/// connected code, each with its file's text at the commit, of which it
+/// keeps only its lines. `None` if a file cannot be read.
+fn with_sent_text(
+    tree: &CommitTree<'_>,
+    connections: &[Connection],
+) -> Option<Vec<whetstone_core::Connection>> {
+    connections
+        .iter()
+        .map(|connection| {
+            let content = match tree.read(connection.path()) {
+                Ok(Some(bytes)) => FileContent::from_bytes(bytes),
+                // The engine read every file it connects from this tree.
+                Ok(None) | Err(_) => return None,
+            };
+            let lines = connection.lines();
+            let range = LineRange::new(
+                usize::try_from(*lines.start()).ok()?,
+                usize::try_from(*lines.end()).ok()?,
+            )
+            .ok()?;
+            Some(whetstone_core::Connection::new(
+                connection.path().to_owned(),
+                Extent::Lines(range),
+                ConnectionGroup::ConnectedCode,
+                match connection.tier() {
+                    Tier::High => whetstone_core::Tier::High,
+                    Tier::Medium => whetstone_core::Tier::Medium,
+                },
+                connection
+                    .relations()
+                    .iter()
+                    .map(|relation| match relation.clone() {
+                        Relation::Calls {
+                            callable,
+                            touched_file,
+                        } => whetstone_core::Relation::Calls {
+                            callable,
+                            touched_file,
+                        },
+                        Relation::CalledBy {
+                            callable,
+                            touched_file,
+                        } => whetstone_core::Relation::CalledBy {
+                            callable,
+                            touched_file,
+                        },
+                    })
+                    .collect(),
+                content,
+            ))
+        })
+        .collect()
 }
 
 #[cfg(test)]

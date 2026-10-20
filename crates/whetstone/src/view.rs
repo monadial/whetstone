@@ -9,7 +9,9 @@ use ratatui::layout::Rect;
 use whetstone_core::{Change, CommitId, Comparison, FileIndex, ShowcaseProject};
 
 use crate::config::Settings;
+use crate::connected_code::AnalysisDirs;
 use crate::home::Home;
+use crate::job::{JobId, JobOutput, Jobs};
 use crate::keymap::{Command, Input, Keymap};
 use crate::palette::Action;
 use crate::picker::Picker;
@@ -50,6 +52,21 @@ pub(crate) trait View: fmt::Debug {
         None
     }
 
+    /// Starts the background jobs the screen needs with `jobs`, keeping
+    /// their identities to wait for. The app calls it once, when the
+    /// screen opens.
+    fn start_jobs(&mut self, _jobs: &mut Jobs<JobOutput>) {}
+
+    /// Whether the screen waits for the result of the job `job`.
+    fn waits_for(&self, _job: JobId) -> bool {
+        false
+    }
+
+    /// Applies `output`, the result of the job `job`, which the screen
+    /// waits for (rule 24). The app calls it only when
+    /// [`View::waits_for`] says so.
+    fn finish_job(&mut self, _job: JobId, _output: JobOutput) {}
+
     /// Inserts pasted `text` into the focused text entry as one insertion.
     /// The app calls it only while [`View::input`] is text, so a screen
     /// with a text entry implements both.
@@ -72,6 +89,8 @@ pub(crate) struct Context<'a> {
     pub(crate) showcase: &'a ShowcaseProject,
     /// The learner's repository, or why Practice on it is unavailable.
     pub(crate) repository: Result<&'a Repository, &'a Unavailable>,
+    /// Where connected code is analysed.
+    pub(crate) analysis: &'a AnalysisDirs,
 }
 
 /// What Practice runs on.
@@ -108,6 +127,8 @@ pub(crate) enum Reading {
     File(FileIndex),
     /// The area prompt of the selected area at this index.
     Area(usize),
+    /// What the connection at this index in the evidence sends.
+    Connection(usize),
 }
 
 /// A change the viewer can show.

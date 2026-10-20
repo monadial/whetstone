@@ -7,11 +7,12 @@ use std::fs;
 use std::io;
 use std::os::unix::fs::PermissionsExt as _;
 use std::panic::{self, AssertUnwindSafe};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 use tempfile::TempDir;
-use whetstone_core::{CommitId, ExcludePatterns};
+use whetstone_core::{Change, CommitId, ExcludePatterns};
 
 use super::*;
 use crate::repository::test_repo::{TestRepo, files_under};
@@ -20,13 +21,9 @@ use crate::repository::test_repo::{TestRepo, files_under};
 /// connection described as its path, lines, tier and relations, after
 /// checking that it left nothing in the temporary directory.
 fn connected(repo: &TestRepo, id: CommitId) -> Vec<String> {
-    let repository = repo.open();
-    let change = repository.load(id).expect("load the change");
-    let tree = repository.tree(id).expect("read the commit's tree");
     let temp = TempDir::new().expect("create a temporary directory");
 
-    let found = find(&tree, &change, &ExcludePatterns::default(), temp.path())
-        .expect("find connected code");
+    let (_, found) = found_in(repo, id, temp.path());
 
     assert_eq!(
         files_under(temp.path()),
@@ -36,7 +33,27 @@ fn connected(repo: &TestRepo, id: CommitId) -> Vec<String> {
     found.connections().iter().map(describe).collect()
 }
 
-/// A connection as `path start-end tier: relation, relation`.
+/// The change of the commit `id` of `repo`, and what `find` finds for it,
+/// analysed in `temp`.
+fn found_in(repo: &TestRepo, id: CommitId, temp: &Path) -> (Change, Found) {
+    let repository = repo.open();
+    let change = repository.load(id).expect("load the change");
+    let found = repository
+        .handle()
+        .with_tree(id, |tree| {
+            find(
+                tree,
+                &change,
+                &ExcludePatterns::default(),
+                &AnalysisDirs::new(temp.to_path_buf()),
+            )
+        })
+        .expect("read the commit's tree")
+        .expect("find connected code");
+    (change, found)
+}
+
+/// A connection as `path start-end tier: relation in touched file, …`.
 fn describe(connection: &Connection) -> String {
     let tier = match connection.tier() {
         Tier::High => "high",
@@ -46,8 +63,14 @@ fn describe(connection: &Connection) -> String {
         .relations()
         .iter()
         .map(|relation| match relation {
-            Relation::Calls(name) => format!("calls {name}"),
-            Relation::CalledBy(name) => format!("called by {name}"),
+            Relation::Calls {
+                callable,
+                touched_file,
+            } => format!("calls {callable} in {touched_file}"),
+            Relation::CalledBy {
+                callable,
+                touched_file,
+            } => format!("called by {callable} in {touched_file}"),
         })
         .collect::<Vec<_>>()
         .join(", ");
@@ -134,8 +157,8 @@ fn a_rust_change_connects_to_the_callers_and_callees_of_the_method_it_modifies()
     assert_eq!(
         connected(&repo, id),
         [
-            "src/check.rs 1-3 high: called by charge",
-            "src/shop.rs 3-5 high: calls charge",
+            "src/check.rs 1-3 high: called by charge in src/pay.rs",
+            "src/shop.rs 3-5 high: calls charge in src/pay.rs",
         ]
     );
 }
@@ -175,8 +198,8 @@ fn a_python_change_connects_to_the_callers_and_callees_of_the_method_it_modifies
     assert_eq!(
         connected(&repo, id),
         [
-            "shop/cart.py 4-6 high: calls charge",
-            "shop/check.py 1-2 high: called by charge",
+            "shop/cart.py 4-6 high: calls charge in shop/pay.py",
+            "shop/check.py 1-2 high: called by charge in shop/pay.py",
         ]
     );
 }
@@ -225,8 +248,8 @@ def mul(a, b):
 
 /// What finding connected code gives for a change to `sub` alone.
 const SUB_CONNECTED: [&str; 2] = [
-    "records.py 1-2 high: called by sub",
-    "use_sub.py 4-5 high: calls sub",
+    "records.py 1-2 high: called by sub in ops.py",
+    "use_sub.py 4-5 high: calls sub in ops.py",
 ];
 
 #[test]
@@ -285,7 +308,10 @@ fn a_caller_in_a_file_the_change_touches_is_not_connected_code() {
         );
     let id = repo.commit("Subtract the other way round, and say so");
 
-    assert_eq!(connected(&repo, id), ["records.py 1-2 high: called by sub"]);
+    assert_eq!(
+        connected(&repo, id),
+        ["records.py 1-2 high: called by sub in ops.py"]
+    );
 }
 
 #[test]
@@ -328,9 +354,9 @@ fn callers_that_overlap_or_touch_in_one_file_merge_into_one_range_with_all_relat
     assert_eq!(
         in_callers,
         [
-            "callers.py 4-7 high: calls add, calls sub",
-            "callers.py 10-13 high: calls sub",
-            "callers.py 16-17 high: calls sub",
+            "callers.py 4-7 high: calls add in ops.py, calls sub in ops.py",
+            "callers.py 10-13 high: calls sub in ops.py",
+            "callers.py 16-17 high: calls sub in ops.py",
         ]
     );
 }
@@ -376,7 +402,10 @@ fn calls_of_low_confidence_are_not_connected_code() {
     repo.write("server.py", server("request.amount >= 0"));
     let id = repo.commit("Allow free charges");
 
-    assert_eq!(connected(&repo, id), ["client.py 4-5 high: calls Charge"]);
+    assert_eq!(
+        connected(&repo, id),
+        ["client.py 4-5 high: calls Charge in server.py"]
+    );
 }
 
 #[test]
@@ -384,13 +413,9 @@ fn the_whole_graph_is_kept_and_never_shows_names_when_debugged() {
     let repo = rust_payments();
     repo.write("src/pay.rs", rust_pay("validate(amount * 2)"));
     let id = repo.commit("Double the charge");
-    let repository = repo.open();
-    let change = repository.load(id).expect("load the change");
-    let tree = repository.tree(id).expect("read the commit's tree");
     let temp = TempDir::new().expect("create a temporary directory");
 
-    let found = find(&tree, &change, &ExcludePatterns::default(), temp.path())
-        .expect("find connected code");
+    let (change, found) = found_in(&repo, id, temp.path());
 
     assert_eq!(found.graph().connections(&change), found.connections());
     let debug = format!("{:?}", found.graph());
@@ -402,9 +427,6 @@ fn the_log_records_counts_and_timings_but_never_files_callables_or_contents() {
     let repo = rust_payments();
     repo.write("src/pay.rs", rust_pay("validate(amount * 2)"));
     let id = repo.commit("Double the charge");
-    let repository = repo.open();
-    let change = repository.load(id).expect("load the change");
-    let tree = repository.tree(id).expect("read the commit's tree");
     let temp = TempDir::new().expect("create a temporary directory");
     let log = Arc::new(Mutex::new(Vec::new()));
     let writer = Arc::clone(&log);
@@ -414,10 +436,7 @@ fn the_log_records_counts_and_timings_but_never_files_callables_or_contents() {
         .with_ansi(false)
         .finish();
 
-    tracing::subscriber::with_default(subscriber, || {
-        find(&tree, &change, &ExcludePatterns::default(), temp.path())
-            .expect("find connected code");
-    });
+    tracing::subscriber::with_default(subscriber, || found_in(&repo, id, temp.path()));
 
     let log = String::from_utf8(log.lock().expect("log lock").clone()).expect("UTF-8");
     assert!(log.contains("wrote a commit's files for analysis"), "{log}");
@@ -487,7 +506,12 @@ fn only_files_the_engine_reads_are_written_and_never_excluded_binary_or_secret_o
     let exclude = ExcludePatterns::parse(["fixtures/"]).expect("a valid pattern");
     let temp = TempDir::new().expect("create a temporary directory");
 
-    let dir = AnalysisDir::write(&snapshot, &exclude, temp.path()).expect("write the files");
+    let dir = AnalysisDir::write(
+        &snapshot,
+        &exclude,
+        &AnalysisDirs::new(temp.path().to_path_buf()),
+    )
+    .expect("write the files");
 
     assert_eq!(
         files_under(dir.path()),
@@ -552,8 +576,12 @@ fn a_file_is_written_exactly_when_the_engines_own_detector_recognises_it() {
         .collect();
     let temp = TempDir::new().expect("create a temporary directory");
 
-    let dir = AnalysisDir::write(&snapshot, &ExcludePatterns::default(), temp.path())
-        .expect("write the files");
+    let dir = AnalysisDir::write(
+        &snapshot,
+        &ExcludePatterns::default(),
+        &AnalysisDirs::new(temp.path().to_path_buf()),
+    )
+    .expect("write the files");
 
     assert_eq!(files_under(dir.path()), recognised);
     assert!(
@@ -567,15 +595,23 @@ fn the_analysis_directory_is_removed_after_the_analysis_and_after_a_panic() {
     let snapshot = Memory::default().with("src/main.rs", FileKind::Blob, "fn main() {}\n");
     let temp = TempDir::new().expect("create a temporary directory");
 
-    let dir = AnalysisDir::write(&snapshot, &ExcludePatterns::default(), temp.path())
-        .expect("write the files");
+    let dir = AnalysisDir::write(
+        &snapshot,
+        &ExcludePatterns::default(),
+        &AnalysisDirs::new(temp.path().to_path_buf()),
+    )
+    .expect("write the files");
     dir.analyse().expect("analyse the files");
     drop(dir);
     assert_eq!(files_under(temp.path()), Vec::<String>::new());
 
     let interrupted = panic::catch_unwind(AssertUnwindSafe(|| {
-        let dir = AnalysisDir::write(&snapshot, &ExcludePatterns::default(), temp.path())
-            .expect("write the files");
+        let dir = AnalysisDir::write(
+            &snapshot,
+            &ExcludePatterns::default(),
+            &AnalysisDirs::new(temp.path().to_path_buf()),
+        )
+        .expect("write the files");
         assert_eq!(files_under(dir.path()), ["src/main.rs"]);
         panic!("the analysis was interrupted");
     }));
@@ -592,8 +628,13 @@ fn a_temporary_directory_inside_a_directory_the_engine_never_reads_fails_before_
     let snapshot = Memory::default().with("src/main.rs", FileKind::Blob, "fn main() {}\n");
     let change = Change::new(String::new(), Vec::new(), String::new(), Vec::new());
 
-    let failure = find(&snapshot, &change, &ExcludePatterns::default(), &build)
-        .expect_err("the engine would read nothing there");
+    let failure = find(
+        &snapshot,
+        &change,
+        &ExcludePatterns::default(),
+        &AnalysisDirs::new(build),
+    )
+    .expect_err("the engine would read nothing there");
 
     assert!(
         matches!(failure, Failure::UnreadableTemporaryDirectory("build")),

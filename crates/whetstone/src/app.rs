@@ -15,6 +15,8 @@
 //! A background job's result enters the same way, and is applied only if
 //! the app still waits for that job.
 
+use std::path::PathBuf;
+
 use ratatui::Frame;
 use ratatui::crossterm::event::{Event, KeyEvent, KeyEventKind};
 use ratatui::layout::{Constraint, Layout, Margin, Position, Rect, Size};
@@ -23,9 +25,10 @@ use ratatui::widgets::{Block, Paragraph, Wrap};
 use whetstone_core::ShowcaseProject;
 
 use crate::config::Settings;
+use crate::connected_code::{AnalysisDirs, AnalysisDirsGuard};
 use crate::help::KeyHelp;
 use crate::home::Home;
-use crate::job::{Finished, Job, JobOutcome, JobOutput, Jobs};
+use crate::job::{Finished, Job, JobId, JobOutcome, JobOutput, Jobs};
 use crate::keymap::{self, Command, Input};
 use crate::overlay::{Outcome, Overlay};
 use crate::palette::Palette;
@@ -55,6 +58,11 @@ pub struct App {
     viewport: Option<Size>,
     /// The background jobs the app started.
     jobs: Jobs<JobOutput>,
+    /// Where connected code is analysed.
+    analysis: AnalysisDirs,
+    /// Removes the analysis directories still in use when the app drops,
+    /// as it quits, even while a job is still writing or analysing one.
+    _analysis_guard: AnalysisDirsGuard,
 }
 
 /// Something for the app to apply: a terminal event the UI loop read, a
@@ -121,18 +129,31 @@ impl Screens {
     /// Goes to `route`: home is always the one at the bottom, and any other
     /// screen opens above the current one, unless it is the current one. The
     /// current screen builds it if it can, and otherwise it opens over the
-    /// showcase project or the repository in `context`.
-    fn go(&mut self, route: Route, context: &Context<'_>) {
+    /// showcase project or the repository in `context`. A screen that opens
+    /// starts its background jobs with `jobs`.
+    fn go(&mut self, route: Route, context: &Context<'_>, jobs: &mut Jobs<JobOutput>) {
         if route == Route::Home {
             self.above.clear();
         } else if route != self.current().route()
-            && let Some(screen) = self
+            && let Some(mut screen) = self
                 .current()
                 .open(route, context)
                 .or_else(|| route.open(context.showcase, context.repository))
         {
+            screen.start_jobs(jobs);
             self.above.push(screen);
         }
+    }
+
+    /// The open screen that waits for the job `job`, if one does.
+    fn waiting_for(&mut self, job: JobId) -> Option<&mut dyn View> {
+        if self.home.waits_for(job) {
+            return Some(&mut self.home);
+        }
+        self.above
+            .iter_mut()
+            .find(|screen| screen.waits_for(job))
+            .map(|screen| screen.as_mut() as &mut dyn View)
     }
 
     /// Returns to the screen before the current one, if there is one.
@@ -145,15 +166,18 @@ impl App {
     /// Starts on the home screen, drawing with `theme`, showing `settings` in
     /// Settings, and practicing on `showcase` or on `repository`, the
     /// learner's repository as opened at startup, unless it says why Practice
-    /// on it is unavailable.
+    /// on it is unavailable. Connected code is analysed in `temp_dir`, the
+    /// system temporary directory.
     #[must_use]
     pub fn new(
         theme: Theme,
         settings: Settings,
         showcase: ShowcaseProject,
         repository: Result<Repository, Unavailable>,
+        temp_dir: PathBuf,
     ) -> Self {
         let home = Home::new(repository.as_ref());
+        let analysis = AnalysisDirs::new(temp_dir);
         Self {
             theme,
             settings,
@@ -167,6 +191,8 @@ impl App {
             pending: keymap::Pending::default(),
             viewport: None,
             jobs: Jobs::new(),
+            _analysis_guard: analysis.guard(),
+            analysis,
         }
     }
 
@@ -208,7 +234,15 @@ impl App {
             return;
         };
         match finished.outcome {
-            JobOutcome::Done(output) => match output {},
+            JobOutcome::Done(output) => {
+                if let Some(screen) = self.screens.waiting_for(finished.id) {
+                    screen.finish_job(finished.id, output);
+                } else {
+                    // The screen that started it has closed, so its result
+                    // is for nothing that is open.
+                    tracing::info!("a background job ended after its screen closed");
+                }
+            }
             // A job the app waits for is cancelled only as the app quits.
             JobOutcome::Cancelled => {}
         }
@@ -290,8 +324,9 @@ impl App {
                     settings: &self.settings,
                     showcase: &self.showcase,
                     repository: self.repository.as_ref(),
+                    analysis: &self.analysis,
                 };
-                self.screens.go(route, &context);
+                self.screens.go(route, &context, &mut self.jobs);
             }
             Command::Back => self.screens.back(),
             command => {
@@ -321,6 +356,7 @@ impl App {
             settings: &self.settings,
             showcase: &self.showcase,
             repository: self.repository.as_ref(),
+            analysis: &self.analysis,
         };
         screen.render(&context, frame, body);
         // While a text entry has focus, the keys that work everywhere type.

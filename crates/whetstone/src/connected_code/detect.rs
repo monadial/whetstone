@@ -1,14 +1,6 @@
 //! Which of a commit's files `cgg` reads, decided from each file's path and
 //! contents before anything is written, so only those are written for it.
 
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "wired into the outbound review by the #58 integration"
-    )
-)]
-
 use std::path::{Component, Path, PathBuf};
 
 use cgg_lang::PluginRegistry;

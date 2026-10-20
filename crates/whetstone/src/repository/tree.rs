@@ -2,14 +2,6 @@
 //! of any blob by path. Everything is read from Git's object store at that
 //! commit, never from the working tree, and nothing is written.
 
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "connected code reads commit trees once the #58 integration wires it in"
-    )
-)]
-
 use std::fmt;
 
 use gix::bstr::ByteSlice as _;
@@ -152,34 +144,35 @@ mod tests {
         let repository = repo.open();
         let before = files_under(&repo.root());
 
-        let tree = repository
-            .tree(first)
+        repository
+            .handle()
+            .with_tree(first, |tree| {
+                let listed: Vec<(&str, TreeEntryKind)> = tree
+                    .entries()
+                    .iter()
+                    .map(|entry| (entry.path(), entry.kind()))
+                    .collect();
+                assert_eq!(
+                    listed,
+                    [
+                        ("README.md", TreeEntryKind::Blob),
+                        ("latest", TreeEntryKind::Symlink),
+                        ("scripts/release", TreeEntryKind::Executable),
+                        ("src/shape.rs", TreeEntryKind::Blob),
+                        ("vendor/geometry", TreeEntryKind::Submodule),
+                    ]
+                );
+                let read = |path| tree.read(path).expect("read a file");
+                assert_eq!(read("src/shape.rs"), Some(b"pub fn area() {}\n".to_vec()));
+                assert_eq!(
+                    read("scripts/release"),
+                    Some(b"#!/bin/sh\necho released\n".to_vec())
+                );
+                for not_a_regular_file in ["latest", "vendor/geometry", "src", "src/edge.rs"] {
+                    assert_eq!(read(not_a_regular_file), None, "{not_a_regular_file}");
+                }
+            })
             .expect("read the first commit's tree");
-
-        let listed: Vec<(&str, TreeEntryKind)> = tree
-            .entries()
-            .iter()
-            .map(|entry| (entry.path(), entry.kind()))
-            .collect();
-        assert_eq!(
-            listed,
-            [
-                ("README.md", TreeEntryKind::Blob),
-                ("latest", TreeEntryKind::Symlink),
-                ("scripts/release", TreeEntryKind::Executable),
-                ("src/shape.rs", TreeEntryKind::Blob),
-                ("vendor/geometry", TreeEntryKind::Submodule),
-            ]
-        );
-        let read = |path| tree.read(path).expect("read a file");
-        assert_eq!(read("src/shape.rs"), Some(b"pub fn area() {}\n".to_vec()));
-        assert_eq!(
-            read("scripts/release"),
-            Some(b"#!/bin/sh\necho released\n".to_vec())
-        );
-        for not_a_regular_file in ["latest", "vendor/geometry", "src", "src/edge.rs"] {
-            assert_eq!(read(not_a_regular_file), None, "{not_a_regular_file}");
-        }
         assert_eq!(files_under(&repo.root()), before, "nothing written");
     }
 }

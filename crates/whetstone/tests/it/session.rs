@@ -19,7 +19,8 @@ use whetstone_core::ShowcaseProject;
 
 /// What the app starts from: a global config file, if any, the environment
 /// variables besides `HOME`, the showcase project, and the directory
-/// Whetstone starts in.
+/// Whetstone starts in. Unless the variables set `TMPDIR`, the system
+/// temporary directory is one of the session's own.
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct Setup<'a> {
     /// The contents of `config.toml` in the global config directory.
@@ -38,7 +39,8 @@ pub(crate) struct Setup<'a> {
 pub(crate) const NO_COLOR: &[(&str, &str)] = &[("NO_COLOR", "1")];
 
 /// A running app in a terminal of a given size. Its home directory is a
-/// fresh temporary directory, so the real one is never read.
+/// fresh temporary directory, so the real one is never read, and so is its
+/// system temporary directory, unless the test sets `TMPDIR`.
 #[derive(Debug)]
 pub(crate) struct Session {
     app: App,
@@ -48,16 +50,21 @@ pub(crate) struct Session {
     /// test to settle.
     finished: Vec<Finished<JobOutput>>,
     _home: TempDir,
+    _temp: TempDir,
 }
 
 impl Session {
     /// Starts the app as `setup` says in a `width` by `height` terminal.
     pub(crate) fn start(setup: Setup<'_>, width: u16, height: u16) -> Self {
         let home = TempDir::new().expect("create a temporary home directory");
+        let temp = TempDir::new().expect("create a system temporary directory");
+        let own_temp = [("TMPDIR", temp.path().to_str().expect("a UTF-8 path"))];
+        let sets_temp = setup.variables.iter().any(|(name, _)| *name == "TMPDIR");
         let environment: Environment = setup
             .variables
             .iter()
             .copied()
+            .chain(own_temp.into_iter().filter(|_| !sets_temp))
             .chain([("HOME", home.path().to_str().expect("a UTF-8 path"))])
             .collect();
         let dirs = Dirs::resolve(&environment).expect("the home directory is absolute");
@@ -77,11 +84,13 @@ impl Session {
                     .cloned()
                     .unwrap_or_else(whetstone::embedded_showcase),
                 repository,
+                environment.temp_dir(),
             ),
             width,
             height,
             finished: Vec::new(),
             _home: home,
+            _temp: temp,
         };
         // The UI loop tells the app the terminal's size before the first draw.
         session.resize(width, height);

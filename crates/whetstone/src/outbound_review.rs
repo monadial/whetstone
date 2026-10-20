@@ -2,10 +2,15 @@
 //! will send and where, before anything leaves the machine.
 //!
 //! It draws only from the change's [`Evidence`], and from the learner's
-//! settings for where it goes. The learner leaves files out, brings back
-//! files left out by default, and marks matches as not secrets; those
-//! review choices live in memory, shared with the picker, which keeps them
-//! for this change until another is chosen.
+//! settings for where it goes. The learner leaves files and connected code
+//! out, brings back what was left out by default, and marks matches as not
+//! secrets; those review choices live in memory, shared with the picker,
+//! which keeps them for this change until another is chosen.
+//!
+//! Opening it starts a background job that finds the change's connected
+//! code. The review is usable meanwhile, and the evidence is built again
+//! when the job's result arrives, if it is the result this review waits
+//! for, for this commit (rule 24).
 
 use std::cell::RefCell;
 use std::ops::Range;
@@ -18,13 +23,16 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::Paragraph;
 use whetstone_core::{
-    Area, Change, CommitId, Comparison, Connections, Evidence, EvidenceFile, ExcludePatterns,
-    FileIndex, Finding, FindingStatus, Origin, Place, ReviewChoices, Side, Unsendable,
+    Area, Change, CommitId, Comparison, ConnectionGroup, Connections, ConnectionsState, Evidence,
+    EvidenceConnection, EvidenceFile, ExcludePatterns, Extent, FileIndex, Finding, FindingStatus,
+    Origin, Place, ReviewChoices, Side, Unsendable,
 };
 
 use crate::columns;
 use crate::config::Settings;
+use crate::connected_code::Request;
 use crate::focus::Position;
+use crate::job::{JobId, JobOutput, Jobs};
 use crate::keymap::{self, Binding, Command, Keymap, Press};
 use crate::palette::Action;
 use crate::reader::{Reader, Section};
@@ -36,12 +44,12 @@ const KEYMAP: Keymap = &[
     keymap::MOVE,
     Binding {
         keys: &[(Press::char(' '), Command::Activate)],
-        does: "Leave out or bring back a file, or resolve a possible secret",
+        does: "Leave out or bring back a file or connected code, or resolve a possible secret",
         hint: Some("Space toggle"),
     },
     Binding {
         keys: &[(Press::key(KeyCode::Enter), Command::Open)],
-        does: "Read what is sent for the change, a file or an area",
+        does: "Read what is sent for the change, a file, connected code or an area",
         hint: Some("Enter read"),
     },
     keymap::BACK,
@@ -65,8 +73,6 @@ const SCOPE: &str =
     "Your answers in this session go to the same places. Nothing outside this list is sent.";
 /// What of the commit stays on the machine.
 const NOT_SENT: &str = "Author, committer, dates and the commit ID are not sent.";
-/// Connected code, which a later version sends.
-const CONNECTED_CODE: &str = "Connected code: not available yet.";
 /// What the secret check cannot promise.
 const DISCLAIMER: &str =
     "Whetstone checks for common secret formats and can't guarantee there are none.";
@@ -76,6 +82,10 @@ const TOO_LARGE: &str = "This change is too large to practise on.";
 /// In front of a line that belongs to the controls above it, as wide as the
 /// focus marker.
 const INDENT: &str = "  ";
+/// In front of a row's relations when they go on the lines under it.
+const RELATIONS_INDENT: &str = "    ";
+/// How many of a connection's relations its row names before "+n more".
+const RELATIONS_SHOWN: usize = 2;
 /// What the size column shows for a file with no content.
 const NO_SIZE: &str = "–";
 /// Bytes in a kilobyte, as the limit counts them.
@@ -88,9 +98,11 @@ enum Control {
     Change,
     /// The touched file at this index.
     File(FileIndex),
+    /// The connection at this index in the evidence.
+    Connection(usize),
     /// The selected area at this index.
     Area(usize),
-    /// Leaves out the file of the finding at this index.
+    /// Leaves out the file or connection of the finding at this index.
     LeaveOut(usize),
     /// Marks the finding at this index as not a secret.
     NotASecret(usize),
@@ -112,7 +124,14 @@ pub(crate) struct OutboundReview {
     exclude: ExcludePatterns,
     /// The learner's choices for this change, shared with the picker.
     choices: Rc<RefCell<ReviewChoices>>,
-    /// What the change, areas, patterns and choices make.
+    /// The change's connected code, or why there is none yet.
+    connections: Connections,
+    /// The request for the connected code, until the review starts its
+    /// job.
+    request: Option<Request>,
+    /// The job finding the connected code, while the review waits for it.
+    waiting: Option<JobId>,
+    /// What the change, areas, patterns, connections and choices make.
     evidence: Evidence,
     focus: Position,
     /// The line at the top of the screen.
@@ -147,12 +166,25 @@ impl<'a> Document<'a> {
     /// Adds `text` wrapped to `width` cells, each line indented and styled
     /// with `style`.
     fn wrapped(&mut self, text: &str, width: usize, style: Style) {
-        let indent = Line::raw(INDENT).width();
-        for line in columns::wrap(text, width.saturating_sub(indent)) {
+        self.indented(INDENT, text, width, style);
+    }
+
+    /// Adds `text` wrapped to `width` cells, each line after `indent` and
+    /// styled with `style`.
+    fn indented(&mut self, indent: &'static str, text: &str, width: usize, style: Style) {
+        let indent_width = Line::raw(indent).width();
+        for line in columns::wrap(text, width.saturating_sub(indent_width)) {
             self.push(Line::from(vec![
-                Span::raw(INDENT),
+                Span::raw(indent),
                 Span::styled(line, style),
             ]));
+        }
+    }
+
+    /// Keeps the lines added since the last control in view with it.
+    fn extend_control(&mut self) {
+        if let Some(control) = self.controls.last_mut() {
+            control.end = self.lines.len();
         }
     }
 }
@@ -160,7 +192,8 @@ impl<'a> Document<'a> {
 impl OutboundReview {
     /// The review of the commit `id`, whose change is `change`, sent where
     /// `settings` say, with the selected `areas`, leaving out what `exclude`
-    /// leaves out, as the learner's `choices` adjust it.
+    /// leaves out, as the learner's `choices` adjust it. Its connected code
+    /// is found with `connected_code` once it opens.
     pub(crate) fn new(
         id: CommitId,
         settings: &Settings,
@@ -168,14 +201,10 @@ impl OutboundReview {
         areas: Vec<Area>,
         exclude: ExcludePatterns,
         choices: Rc<RefCell<ReviewChoices>>,
+        connected_code: Request,
     ) -> Self {
-        let evidence = Evidence::build(
-            &change,
-            &exclude,
-            &areas,
-            &Connections::Finding,
-            &choices.borrow(),
-        );
+        let connections = Connections::Finding;
+        let evidence = Evidence::build(&change, &exclude, &areas, &connections, &choices.borrow());
         tracing::info!(
             commit = id.full(),
             files = evidence.files().len(),
@@ -198,10 +227,56 @@ impl OutboundReview {
             areas,
             exclude,
             choices,
+            connections,
+            request: Some(connected_code),
+            waiting: None,
             evidence,
             focus: Position::default(),
             top: 0,
         }
+    }
+
+    /// The connected code's place among the evidence's connections, in
+    /// order.
+    fn connected_code(&self) -> impl Iterator<Item = (usize, &EvidenceConnection)> {
+        self.evidence
+            .connections()
+            .iter()
+            .enumerate()
+            .filter(|(_, connection)| connection.group() == ConnectionGroup::ConnectedCode)
+    }
+
+    /// Applies `connections`, found for the commit `commit`: the evidence
+    /// is built again with them, so the size and the secret check cover
+    /// them, and focus stays on the control it was on.
+    fn apply_connections(&mut self, commit: CommitId, connections: Connections) {
+        if commit != self.id {
+            return;
+        }
+        self.waiting = None;
+        self.connections = connections;
+        let focused = self.focused();
+        self.rebuild();
+        if let Some(at) = self
+            .controls()
+            .iter()
+            .position(|control| *control == focused)
+        {
+            self.focus = Position::at(at);
+        }
+        tracing::info!(
+            commit = self.id.full(),
+            connections = self.evidence.connections().len(),
+            sent = self
+                .evidence
+                .connections()
+                .iter()
+                .filter(|connection| connection.sent().is_some())
+                .count(),
+            findings = self.evidence.findings().len(),
+            bytes = self.evidence.size(),
+            "applied connected code to the outbound review"
+        );
     }
 
     /// The controls, in focus order.
@@ -213,9 +288,13 @@ impl OutboundReview {
                 .iter()
                 .map(|file| Control::File(file.index())),
         );
+        controls.extend(
+            self.connected_code()
+                .map(|(index, _)| Control::Connection(index)),
+        );
         controls.extend((0..self.evidence.areas().len()).map(Control::Area));
         for (index, finding) in self.evidence.findings().iter().enumerate() {
-            if finding.place().file().is_some() {
+            if can_leave_out(finding.place()) {
                 controls.push(Control::LeaveOut(index));
             }
             controls.push(Control::NotASecret(index));
@@ -239,7 +318,7 @@ impl OutboundReview {
             &self.change,
             &self.exclude,
             &self.areas,
-            &Connections::Finding,
+            &self.connections,
             &self.choices.borrow(),
         );
         let last = self.controls().len().saturating_sub(1);
@@ -252,14 +331,17 @@ impl OutboundReview {
         let mut choices = self.choices.borrow_mut();
         match self.focused() {
             Control::File(index) => choices.toggle_file(&self.evidence, index),
+            Control::Connection(index) => {
+                if let Some(connection) = self.evidence.connections().get(index) {
+                    choices.toggle_connection(connection);
+                }
+            }
             Control::LeaveOut(index) => {
-                if let Some(file) = self
-                    .evidence
-                    .findings()
-                    .get(index)
-                    .and_then(|finding| finding.place().file())
-                {
+                let place = self.evidence.findings().get(index).map(Finding::place);
+                if let Some(file) = place.and_then(Place::file) {
                     choices.leave_out(file);
+                } else if let Some(connection) = place.and_then(Place::connection) {
+                    choices.leave_out_connection(connection);
                 }
             }
             Control::NotASecret(index) => {
@@ -303,7 +385,7 @@ impl OutboundReview {
         doc.push(Line::styled("Files", theme.muted));
         self.file_rows(theme, width, &mut doc, heading);
         doc.blank();
-        doc.push(Line::raw(CONNECTED_CODE));
+        self.connected_code_rows(theme, width, &mut doc);
         doc.blank();
         self.area_rows(theme, &mut doc);
         self.secret_check(theme, width, &mut doc);
@@ -400,9 +482,13 @@ impl OutboundReview {
             let start = doc.lines.len();
             doc.wrapped(&self.describe(finding), width, Style::new());
             // A commit message cannot be left out.
-            if finding.place().file().is_some() {
+            if can_leave_out(finding.place()) {
+                let label = match finding.place() {
+                    Place::Connection(_) => "Leave out the connected code",
+                    _ => "Leave out the file",
+                };
                 doc.control(
-                    theme.control("Leave out the file", self.state(Control::LeaveOut(index))),
+                    theme.control(label, self.state(Control::LeaveOut(index))),
                     start,
                 );
             }
@@ -470,7 +556,11 @@ impl OutboundReview {
                 };
                 // A submodule or a symbolic link has no content to size.
                 let size = file.size().map_or_else(|| NO_SIZE.to_owned(), kilobytes);
-                (path, size, file.status().to_string())
+                let status = match file.connected() {
+                    0 => file.status().to_string(),
+                    connected => format!("{} · {connected} connected", file.status()),
+                };
+                (path, size, status)
             })
             .collect();
         let size_width = rows
@@ -504,6 +594,128 @@ impl OutboundReview {
             row.push_span(" ".repeat(columns::GAP));
             row.push_span(status);
             doc.control(row, if index == 0 { heading } else { doc.lines.len() });
+        }
+    }
+
+    /// The Connected code section, `width` cells wide: its summary, then a
+    /// row for each piece of connected code with its path, extent, size,
+    /// status and relations in columns. Relations that do not fit after the
+    /// rest go on the lines under it.
+    fn connected_code_rows(&self, theme: &Theme, width: usize, doc: &mut Document<'static>) {
+        let heading = doc.lines.len();
+        doc.lines.extend(
+            columns::wrap(&self.connected_code_summary(), width)
+                .into_iter()
+                .map(Line::raw),
+        );
+        let rows: Vec<(usize, [String; 4], String)> = self
+            .connected_code()
+            .map(|(index, connection)| {
+                let id = connection.id();
+                (
+                    index,
+                    [
+                        id.path().to_owned(),
+                        id.extent().to_string(),
+                        connection
+                            .size()
+                            .map_or_else(|| NO_SIZE.to_owned(), kilobytes),
+                        connection.status().to_string(),
+                    ],
+                    relations(connection),
+                )
+            })
+            .collect();
+        let widest = |column: usize| {
+            rows.iter()
+                .map(|(_, cells, _)| Line::raw(cells[column].as_str()).width())
+                .max()
+                .unwrap_or_default()
+        };
+        let [extent_width, size_width, status_width] = [widest(1), widest(2), widest(3)];
+        let marker = Theme::control_width("", ControlKind::Action);
+        let path_width =
+            widest(0).min(width.saturating_sub(
+                marker + 3 * columns::GAP + extent_width + size_width + status_width,
+            ));
+        for (row_index, (index, [path, extent, size, status], relations)) in
+            rows.into_iter().enumerate()
+        {
+            let mut row = theme.control(
+                columns::truncate(&path, path_width.max(1)),
+                self.state(Control::Connection(index)),
+            );
+            columns::pad_to(&mut row, marker + path_width + columns::GAP);
+            row.push_span(format!("{extent:<extent_width$}"));
+            row.push_span(" ".repeat(columns::GAP));
+            row.push_span(format!("{size:>size_width$}"));
+            row.push_span(" ".repeat(columns::GAP));
+            let fits = row.width()
+                + columns::GAP
+                + status_width
+                + columns::GAP
+                + Line::raw(relations.as_str()).width()
+                <= width;
+            if fits {
+                row.push_span(format!("{status:<status_width$}"));
+                row.push_span(" ".repeat(columns::GAP));
+                row.push_span(relations.clone());
+            } else {
+                row.push_span(status);
+            }
+            doc.control(
+                row,
+                if row_index == 0 {
+                    heading
+                } else {
+                    doc.lines.len()
+                },
+            );
+            if !fits {
+                doc.indented(RELATIONS_INDENT, &relations, width, Style::new());
+                doc.extend_control();
+            }
+        }
+    }
+
+    /// The Connected code section's summary: still finding it, how much is
+    /// sent, none found, or why it is not available.
+    fn connected_code_summary(&self) -> String {
+        match self.evidence.connections_state() {
+            ConnectionsState::Finding => "Connected code: finding…".to_owned(),
+            ConnectionsState::Found => {
+                let sent: Vec<&EvidenceConnection> = self
+                    .connected_code()
+                    .map(|(_, connection)| connection)
+                    .filter(|connection| connection.sent().is_some())
+                    .collect();
+                let ranges = sent
+                    .iter()
+                    .filter(|connection| matches!(connection.id().extent(), Extent::Lines(_)))
+                    .count();
+                let counted = match (ranges, sent.len() - ranges) {
+                    (0, 0) => "none sent".to_owned(),
+                    (ranges, 0) => counted(ranges, "range"),
+                    (0, files) => counted(files, "file"),
+                    (ranges, files) => {
+                        format!(
+                            "{} and {}",
+                            counted(ranges, "range"),
+                            counted(files, "file")
+                        )
+                    }
+                };
+                let bytes = sent.iter().filter_map(|connection| connection.size()).sum();
+                format!("Connected code: {counted} · {}", kilobytes(bytes))
+            }
+            ConnectionsState::NoneFound => "Connected code: none found for this change.".to_owned(),
+            ConnectionsState::TookTooLong => {
+                "Connected code isn't available for this change: finding it took too long."
+                    .to_owned()
+            }
+            ConnectionsState::AnalysisFailed => {
+                "Connected code isn't available for this change: the analysis failed.".to_owned()
+            }
         }
     }
 
@@ -594,6 +806,36 @@ impl OutboundReview {
                     ),
                 }
             }
+            Reading::Connection(index) => {
+                let connection = self.evidence.connections().get(index)?;
+                let id = connection.id();
+                let title = format!("What is sent for {}, {}", id.path(), id.extent());
+                let why = connection
+                    .relations()
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let sent = match connection.sent() {
+                    Some(sent) => {
+                        Section::numbered_from("Content, as it is sent", sent.text, sent.first_line)
+                    }
+                    None => Section::plain(
+                        "Nothing is sent",
+                        &format!(
+                            "{}, {}, is {}.",
+                            id.path(),
+                            id.extent(),
+                            connection.status()
+                        ),
+                    ),
+                };
+                Reader::new(
+                    route,
+                    title,
+                    vec![Section::plain("Why it is sent", &why), sent],
+                )
+            }
             Reading::Area(index) => {
                 let area = self.evidence.areas().get(index)?;
                 Reader::new(
@@ -607,6 +849,35 @@ impl OutboundReview {
             }
         })
     }
+}
+
+/// Whether a finding at `place` can be resolved by leaving out what it is
+/// in: a file or a connection can be, the commit message cannot.
+fn can_leave_out(place: &Place) -> bool {
+    place.file().is_some() || place.connection().is_some()
+}
+
+/// `count` of `noun`, as "1 range" or "3 ranges".
+fn counted(count: usize, noun: &str) -> String {
+    match count {
+        1 => format!("1 {noun}"),
+        count => format!("{count} {noun}s"),
+    }
+}
+
+/// What a connection's row says it connects to: its first relations, then
+/// how many more there are.
+fn relations(connection: &EvidenceConnection) -> String {
+    let relations = connection.relations();
+    let mut shown: Vec<String> = relations
+        .iter()
+        .take(RELATIONS_SHOWN)
+        .map(ToString::to_string)
+        .collect();
+    if relations.len() > RELATIONS_SHOWN {
+        shown.push(format!("+{} more", relations.len() - RELATIONS_SHOWN));
+    }
+    shown.join(", ")
 }
 
 /// `bytes` in kilobytes, rounded up, so that anything over the limit shows
@@ -646,6 +917,33 @@ impl View for OutboundReview {
         ACTIONS
     }
 
+    fn start_jobs(&mut self, jobs: &mut Jobs<JobOutput>) {
+        if let Some(request) = self.request.take() {
+            self.waiting = Some(jobs.start(move |_token| {
+                Ok(JobOutput::ConnectedCode {
+                    commit: request.commit(),
+                    connections: request.connections(),
+                })
+            }));
+        }
+    }
+
+    fn waits_for(&self, job: JobId) -> bool {
+        self.waiting == Some(job)
+    }
+
+    fn finish_job(&mut self, job: JobId, output: JobOutput) {
+        if !self.waits_for(job) {
+            return;
+        }
+        match output {
+            JobOutput::ConnectedCode {
+                commit,
+                connections,
+            } => self.apply_connections(commit, connections),
+        }
+    }
+
     fn open(&self, route: Route, _context: &Context<'_>) -> Option<Box<dyn View>> {
         match route {
             Route::Read(reading) => self
@@ -667,6 +965,9 @@ impl View for OutboundReview {
                 }
                 Control::Area(index) if command == Command::Open => {
                     Some(Command::Go(Route::Read(Reading::Area(index))))
+                }
+                Control::Connection(index) if command == Command::Open => {
+                    Some(Command::Go(Route::Read(Reading::Connection(index))))
                 }
                 _ => {
                     self.choose();

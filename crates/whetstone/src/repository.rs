@@ -129,11 +129,6 @@ pub(crate) struct HistoryError(#[from] gix::Error);
 /// global config and no environment variables, so the start directory
 /// alone decides what opens, and nothing in the learner's home changes it.
 pub(crate) fn discover(start: &Path) -> Result<Discovery, OpenError> {
-    use gix::sec::trust::DefaultForLevel as _;
-
-    let isolated = |trust| {
-        gix::open::Options::default_for_level(trust).permissions(gix::open::Permissions::isolated())
-    };
     let opened = gix::ThreadSafeRepository::discover_opts(
         start,
         gix::discover::upwards::Options::default(),
@@ -163,6 +158,14 @@ pub(crate) fn discover(start: &Path) -> Result<Discovery, OpenError> {
     // and once for its row.
     repository.object_cache_size_if_unset(16 * 1024 * 1024);
     Ok(Discovery::WorkTree(Box::new(repository)))
+}
+
+/// How Whetstone opens a repository whose directory is trusted at `trust`:
+/// isolated from system and global config and environment variables.
+fn isolated(trust: gix::sec::Trust) -> gix::open::Options {
+    use gix::sec::trust::DefaultForLevel as _;
+
+    gix::open::Options::default_for_level(trust).permissions(gix::open::Permissions::isolated())
 }
 
 /// Whether `error` says no repository was found, rather than that one was
@@ -286,25 +289,47 @@ impl Repository {
         })
     }
 
-    /// The whole tree of the commit `id`: every file in it, listed from
-    /// Git's object store, with any regular file readable by path.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "connected code reads commit trees once the #58 integration wires it in"
-        )
-    )]
-    pub(crate) fn tree(&self, id: CommitId) -> Result<CommitTree<'_>, LoadError> {
-        tree::open(&self.git, id).inspect_err(|error| {
-            tracing::warn!(commit = id.full(), error = %error.0, "cannot read a commit's tree");
-        })
+    /// A handle on the repository of its own, which a background job can
+    /// take to another thread to read commits with.
+    pub(crate) fn handle(&self) -> RepositoryHandle {
+        RepositoryHandle {
+            git_dir: self.git.git_dir().to_path_buf(),
+            trust: self.git.git_dir_trust(),
+        }
     }
 
     /// The commits reachable from HEAD as it was at startup, newest first,
     /// in `git log` order, with the first page read.
     pub(crate) fn history(&self) -> Result<History, HistoryError> {
         History::read_from(&self.git, self.head)
+    }
+}
+
+/// The learner's repository as a background job reads it: where it is, to
+/// open it again on the job's own thread, as isolated and read-only as at
+/// startup, and read commits' trees from Git's object store, never the
+/// working tree.
+#[derive(Debug, Clone)]
+pub(crate) struct RepositoryHandle {
+    git_dir: PathBuf,
+    trust: gix::sec::Trust,
+}
+
+impl RepositoryHandle {
+    /// Opens the repository on this thread and reads the whole tree of the
+    /// commit `id` with `read`: every file in it, listed from Git's object
+    /// store, with any regular file readable by path.
+    pub(crate) fn with_tree<T>(
+        &self,
+        id: CommitId,
+        read: impl FnOnce(&CommitTree<'_>) -> T,
+    ) -> Result<T, LoadError> {
+        let opened = gix::open_opts(&self.git_dir, isolated(self.trust))
+            .map_err(LoadError)
+            .and_then(|git| tree::open(&git, id).map(|tree| read(&tree)));
+        opened.inspect_err(|error| {
+            tracing::warn!(commit = id.full(), error = %error.0, "cannot read a commit's tree");
+        })
     }
 }
 
