@@ -3,7 +3,7 @@
 //! comes back through the same channel as a blocking job's, cancellation
 //! included, to be applied only while the app still waits for that job.
 
-use std::future::{self, Future};
+use std::future;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -12,13 +12,14 @@ use tokio::sync::oneshot;
 use tokio::{runtime, time};
 use whetstone::{JobOutcome, Jobs, Waiting, Workers};
 
-/// Runs `future` on a current-thread runtime, as the UI loop runs.
-fn on_a_runtime<F: Future>(future: F) -> F::Output {
-    runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("build a runtime")
-        .block_on(future)
+use crate::jobs::on_a_runtime;
+
+/// Runs on `workers` every job started with `jobs` since the last take, as
+/// the UI loop does.
+fn run_started<T: Send + 'static>(jobs: &mut Jobs<T>, workers: &Workers<T>) {
+    for job in jobs.take_started() {
+        workers.run(job);
+    }
 }
 
 #[test]
@@ -28,9 +29,7 @@ fn an_async_job_s_result_arrives_with_the_job_s_identity() {
         let mut workers = Workers::new();
 
         let id = jobs.start_async(async { 42 });
-        for job in jobs.take_started() {
-            workers.run(job);
-        }
+        run_started(&mut jobs, &workers);
         let finished = workers.finished().await;
 
         assert_eq!(finished.id, id);
@@ -47,9 +46,7 @@ fn the_workers_are_busy_while_an_async_job_waits_so_the_ui_loop_ticks() {
         assert!(workers.is_idle(), "idle before any job");
 
         jobs.start_async(async { has_reply.await.expect("the test replies") });
-        for job in jobs.take_started() {
-            workers.run(job);
-        }
+        run_started(&mut jobs, &workers);
         assert!(!workers.is_idle(), "busy while the job waits");
         reply.send(42).expect("the job waits for its reply");
         assert_eq!(workers.finished().await.outcome, JobOutcome::Done(42));
@@ -100,9 +97,7 @@ fn an_async_job_cancelled_while_it_waits_reports_cancellation_and_its_body_stops
         let flag = DropFlag::default();
 
         let id = jobs.start_async(waits_for_ever(running, flag.clone()));
-        for job in jobs.take_started() {
-            workers.run(job);
-        }
+        run_started(&mut jobs, &workers);
         has_started.await.expect("the body runs");
         jobs.cancel(id);
         let finished = workers.finished().await;
@@ -128,9 +123,7 @@ fn an_async_job_cancelled_before_it_runs_reports_cancellation_and_never_runs_its
             }
         });
         jobs.cancel(id);
-        for job in jobs.take_started() {
-            workers.run(job);
-        }
+        run_started(&mut jobs, &workers);
         let finished = workers.finished().await;
 
         assert_eq!(finished.id, id);
@@ -188,9 +181,7 @@ fn a_result_for_an_async_job_the_app_no_longer_waits_for_is_ignored() {
         let forgotten = jobs.start_async(async { "forgotten" });
         assert!(jobs.forget(forgotten));
         let current = jobs.start_async(async { "current" });
-        for job in jobs.take_started() {
-            workers.run(job);
-        }
+        run_started(&mut jobs, &workers);
         let mut accepted = Vec::new();
         for _ in [cancelled, forgotten, current] {
             if let Some(finished) = jobs.accept(workers.finished().await) {
@@ -206,22 +197,22 @@ fn a_result_for_an_async_job_the_app_no_longer_waits_for_is_ignored() {
 fn a_screen_applies_a_result_only_from_a_job_it_waits_for_carrying_that_job_s_key() {
     let mut jobs = Jobs::<()>::new();
     let mut waiting = Waiting::new();
-    let [area_a, area_b] = [jobs.start_async(async {}), jobs.start_async(async {})];
+    let [for_area_a, for_area_b] = [jobs.start_async(async {}), jobs.start_async(async {})];
 
-    waiting.wait_for(area_a, "area a");
-    waiting.wait_for(area_b, "area b");
+    waiting.wait_for(for_area_a, "area a");
+    waiting.wait_for(for_area_b, "area b");
 
-    assert!(waiting.waits_for(area_a) && waiting.waits_for(area_b));
+    assert!(waiting.waits_for(for_area_a) && waiting.waits_for(for_area_b));
     assert!(
-        !waiting.accept(area_b, &"area a"),
+        !waiting.accept(for_area_b, &"area a"),
         "a result carrying another key"
     );
     assert!(
-        !waiting.waits_for(area_b),
+        !waiting.waits_for(for_area_b),
         "whose job has ended all the same"
     );
-    assert!(waiting.accept(area_a, &"area a"));
-    assert!(!waiting.accept(area_a, &"area a"), "applied once");
+    assert!(waiting.accept(for_area_a, &"area a"));
+    assert!(!waiting.accept(for_area_a, &"area a"), "applied once");
     assert!(waiting.is_empty());
 }
 
@@ -234,23 +225,21 @@ fn several_async_jobs_run_at_once_and_each_result_is_applied_on_its_own() {
         let mut jobs = Jobs::new();
         let mut workers = Workers::new();
         let mut waiting = Waiting::new();
-        let (replied, reply) = oneshot::channel();
+        let (reply, has_reply) = oneshot::channel();
 
         // The first can end only once the second has run, so the two run at
         // once and end out of order.
         let first = jobs.start_async(async {
-            reply.await.expect("the second job replies");
+            has_reply.await.expect("the second job replies");
             ("area a", 1)
         });
         let second = jobs.start_async(async {
-            replied.send(()).expect("the first job waits");
+            reply.send(()).expect("the first job waits");
             ("area b", 2)
         });
         waiting.wait_for(first, "area a");
         waiting.wait_for(second, "area b");
-        for job in jobs.take_started() {
-            workers.run(job);
-        }
+        run_started(&mut jobs, &workers);
         let mut applied = Vec::new();
         while !waiting.is_empty() {
             let finished = time::timeout(PATIENCE, workers.finished())
@@ -283,9 +272,7 @@ fn cancelling_what_a_screen_waits_for_stops_every_job_and_applies_none_of_their_
             waiting.wait_for(job, area);
             started.push(has_started);
         }
-        for job in jobs.take_started() {
-            workers.run(job);
-        }
+        run_started(&mut jobs, &workers);
         for has_started in started {
             has_started.await.expect("each body runs");
         }
@@ -316,9 +303,7 @@ fn quitting_drops_a_running_async_job_where_it_waits_without_waiting_for_it() {
         let workers = Workers::new();
         let (running, has_started) = oneshot::channel();
         jobs.start_async(waits_for_ever(running, flag.clone()));
-        for job in jobs.take_started() {
-            workers.run(job);
-        }
+        run_started(&mut jobs, &workers);
         has_started.await.expect("the body runs");
         // Quitting drops the app with its jobs, and the UI loop's workers,
         // so nothing receives the job's result.

@@ -15,7 +15,7 @@ use whetstone::{Cancelled, Finished, JobId, JobOutcome, Jobs, TimeLimit, Workers
 use crate::session::Session;
 
 /// Runs `future` on a current-thread runtime, as the UI loop runs.
-fn on_a_runtime<F: Future>(future: F) -> F::Output {
+pub(crate) fn on_a_runtime<F: Future>(future: F) -> F::Output {
     runtime::Builder::new_current_thread()
         .enable_all()
         .build()
