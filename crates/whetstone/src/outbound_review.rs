@@ -2,13 +2,16 @@
 //! will send and where, before anything leaves the machine.
 //!
 //! It draws only from the change's [`Evidence`], and from the learner's
-//! settings for where it goes. The learner leaves files and connected code
-//! out, brings back what was left out by default, and marks matches as not
-//! secrets; those review choices live in memory, shared with the picker,
-//! which keeps them for this change until another is chosen.
+//! settings for where it goes. The learner leaves files, connected code and
+//! related tests and configuration out, brings back what was left out by
+//! default, and marks matches as not secrets; those review choices live in
+//! memory, shared with the picker, which keeps them for this change until
+//! another is chosen.
 //!
 //! Opening it starts a background job that finds the change's connected
-//! code. The review is usable meanwhile, and the evidence is built again
+//! code, with its related tests and related configuration, which have a
+//! section of their own after it. The review is usable meanwhile, and the
+//! evidence is built again
 //! when the job's result arrives, if it is the result this review waits
 //! for, for this commit (rule 24). The row of stages at its top shows
 //! finding connected code as current until then.
@@ -48,12 +51,14 @@ const KEYMAP: Keymap = &[
     keymap::MOVE,
     Binding {
         keys: &[(Press::char(' '), Command::Activate)],
-        does: "Leave out or bring back a file or connected code, or resolve a possible secret",
+        does: "Leave out or bring back a file, connected code, a related test or configuration, \
+               or resolve a possible secret",
         hint: Some("Space toggle"),
     },
     Binding {
         keys: &[(Press::key(KeyCode::Enter), Command::Open)],
-        does: "Read what is sent for the change, a file, connected code or an area",
+        does: "Read what is sent for the change, a file, connected code, a related test or \
+               configuration, or an area",
         hint: Some("Enter read"),
     },
     keymap::BACK,
@@ -112,6 +117,28 @@ enum Control {
     NotASecret(usize),
     Send,
     Back,
+}
+
+/// A section of the review that lists connections.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Listing {
+    /// Connected code.
+    ConnectedCode,
+    /// Related tests and related configuration.
+    Related,
+}
+
+impl Listing {
+    /// The groups of the connections it lists.
+    fn groups(self) -> &'static [ConnectionGroup] {
+        match self {
+            Self::ConnectedCode => &[ConnectionGroup::ConnectedCode],
+            Self::Related => &[
+                ConnectionGroup::RelatedTest,
+                ConnectionGroup::RelatedConfiguration,
+            ],
+        }
+    }
 }
 
 /// The outbound review's state: the change and what it is built with, the
@@ -269,14 +296,21 @@ impl OutboundReview {
         }
     }
 
-    /// The connected code's place among the evidence's connections, in
-    /// order.
-    fn connected_code(&self) -> impl Iterator<Item = (usize, &EvidenceConnection)> {
+    /// The places among the evidence's connections of those `listing`
+    /// lists, in order.
+    fn listed(&self, listing: Listing) -> impl Iterator<Item = (usize, &EvidenceConnection)> {
         self.evidence
             .connections()
             .iter()
             .enumerate()
-            .filter(|(_, connection)| connection.group() == ConnectionGroup::ConnectedCode)
+            .filter(move |(_, connection)| listing.groups().contains(&connection.group()))
+    }
+
+    /// Whether any connection `listing` lists was found, listed or not
+    /// sent because it did not fit.
+    fn found_any(&self, listing: Listing) -> bool {
+        self.listed(listing).next().is_some()
+            || !self.evidence.not_sent(listing.groups()).is_empty()
     }
 
     /// Applies `connections`, found for the commit `commit`: the evidence
@@ -320,13 +354,15 @@ impl OutboundReview {
                 .iter()
                 .map(|file| Control::File(file.index())),
         );
-        controls.extend(
-            self.connected_code()
-                .map(|(index, _)| Control::Connection(index)),
-        );
+        for listing in [Listing::ConnectedCode, Listing::Related] {
+            controls.extend(
+                self.listed(listing)
+                    .map(|(index, _)| Control::Connection(index)),
+            );
+        }
         controls.extend((0..self.evidence.areas().len()).map(Control::Area));
         for (index, finding) in self.evidence.findings().iter().enumerate() {
-            if leave_out_label(finding.place()).is_some() {
+            if self.leave_out_label(finding.place()).is_some() {
                 controls.push(Control::LeaveOut(index));
             }
             controls.push(Control::NotASecret(index));
@@ -421,7 +457,11 @@ impl OutboundReview {
         doc.push(Line::styled("Files", theme.muted));
         self.file_rows(theme, width, &mut doc, heading);
         doc.blank();
-        self.connected_code_rows(theme, width, &mut doc);
+        let summary = self.connected_code_summary();
+        self.connection_rows(Listing::ConnectedCode, &summary, theme, width, &mut doc);
+        doc.blank();
+        let summary = self.related_summary();
+        self.connection_rows(Listing::Related, &summary, theme, width, &mut doc);
         doc.blank();
         self.area_rows(theme, &mut doc);
         self.secret_check(theme, width, &mut doc);
@@ -555,7 +595,7 @@ impl OutboundReview {
         for (index, finding) in self.evidence.findings().iter().enumerate() {
             let start = doc.lines.len();
             doc.wrapped(&self.describe(finding), width, Style::new());
-            if let Some(label) = leave_out_label(finding.place()) {
+            if let Some(label) = self.leave_out_label(finding.place()) {
                 doc.control(
                     theme.control(label, self.state(Control::LeaveOut(index))),
                     start,
@@ -666,20 +706,24 @@ impl OutboundReview {
         }
     }
 
-    /// The Connected code section, `width` cells wide: its summary, then a
-    /// row for each piece of connected code with its path, extent, size,
-    /// status and relations in columns, then how many more are not sent and
-    /// why. Relations that do not fit after the rest go on the lines under
-    /// it.
-    fn connected_code_rows(&self, theme: &Theme, width: usize, doc: &mut Document<'static>) {
+    /// The section of what `listing` lists, `width` cells wide: its
+    /// `summary`, then a row for each connection with its path, extent,
+    /// size, status and relations in columns, then how many more are not
+    /// sent and why. Relations that do not fit after the rest go on the
+    /// lines under it.
+    fn connection_rows(
+        &self,
+        listing: Listing,
+        summary: &str,
+        theme: &Theme,
+        width: usize,
+        doc: &mut Document<'static>,
+    ) {
         let heading = doc.lines.len();
-        doc.lines.extend(
-            columns::wrap(&self.connected_code_summary(), width)
-                .into_iter()
-                .map(Line::raw),
-        );
+        doc.lines
+            .extend(columns::wrap(summary, width).into_iter().map(Line::raw));
         let rows: Vec<(usize, [String; 4], String)> = self
-            .connected_code()
+            .listed(listing)
             .map(|(index, connection)| {
                 let id = connection.id();
                 (
@@ -744,7 +788,7 @@ impl OutboundReview {
                 doc.extend_control();
             }
         }
-        for (reason, count) in self.evidence.not_sent() {
+        for (reason, count) in self.evidence.not_sent(listing.groups()) {
             doc.wrapped(
                 &format!("{count} more not sent: {reason}"),
                 width,
@@ -763,9 +807,9 @@ impl OutboundReview {
     fn connected_code_summary(&self) -> String {
         match self.evidence.connections_state() {
             ConnectionsState::Finding => "Connected code: finding…".to_owned(),
-            ConnectionsState::Found => {
+            ConnectionsState::Found if self.found_any(Listing::ConnectedCode) => {
                 let sent: Vec<&EvidenceConnection> = self
-                    .connected_code()
+                    .listed(Listing::ConnectedCode)
                     .map(|(_, connection)| connection)
                     .filter(|connection| connection.sent().is_some())
                     .collect();
@@ -798,7 +842,9 @@ impl OutboundReview {
                     limit.kb()
                 )
             }
-            ConnectionsState::NoneFound => "Connected code: none found for this change.".to_owned(),
+            ConnectionsState::Found | ConnectionsState::NoneFound => {
+                "Connected code: none found for this change.".to_owned()
+            }
             // Nothing gives up on finding it yet: the time limit is #64's.
             ConnectionsState::TookTooLong => {
                 "Connected code isn't available for this change: finding it took longer than 20 s."
@@ -807,6 +853,76 @@ impl OutboundReview {
             ConnectionsState::AnalysisFailed => {
                 "Connected code isn't available for this change: the analysis failed.".to_owned()
             }
+        }
+    }
+
+    /// The Related tests and configuration section's summary: still
+    /// finding them, how many tests and manifests are sent and their size,
+    /// none found, or why they are not available, which is why connected
+    /// code is not.
+    fn related_summary(&self) -> String {
+        const RELATED: &str = "Related tests and configuration";
+        match self.evidence.connections_state() {
+            ConnectionsState::Finding => format!("{RELATED}: finding…"),
+            ConnectionsState::Found if self.found_any(Listing::Related) => {
+                let sent: Vec<&EvidenceConnection> = self
+                    .listed(Listing::Related)
+                    .map(|(_, connection)| connection)
+                    .filter(|connection| connection.sent().is_some())
+                    .collect();
+                let tests = sent
+                    .iter()
+                    .filter(|connection| connection.group() == ConnectionGroup::RelatedTest)
+                    .count();
+                let counted = match (tests, sent.len() - tests) {
+                    (0, 0) => "none sent".to_owned(),
+                    (tests, 0) => counted(tests, "test"),
+                    (0, manifests) => counted(manifests, "manifest"),
+                    (tests, manifests) => {
+                        format!(
+                            "{} and {}",
+                            counted(tests, "test"),
+                            counted(manifests, "manifest")
+                        )
+                    }
+                };
+                let size = sent.iter().filter_map(|connection| connection.size()).sum();
+                format!("{RELATED}: {counted} · {}", kilobytes(size))
+            }
+            ConnectionsState::Found | ConnectionsState::NoneFound => {
+                format!("{RELATED}: none found for this change.")
+            }
+            ConnectionsState::TookTooLong => format!(
+                "{RELATED} aren't available for this change: finding them took longer than 20 s."
+            ),
+            ConnectionsState::AnalysisFailed => {
+                format!("{RELATED} aren't available for this change: the analysis failed.")
+            }
+        }
+    }
+
+    /// The control that resolves a finding at `place` by leaving out what
+    /// it is in, if that can be left out: a file, connected code, a related
+    /// test or related configuration can be, the commit message cannot.
+    fn leave_out_label(&self, place: &Place) -> Option<&'static str> {
+        match place {
+            Place::CommitMessage => None,
+            Place::Content(_) | Place::Diff(_) => Some("Leave out the file"),
+            Place::Connection(id) => Some(
+                match self
+                    .evidence
+                    .connections()
+                    .iter()
+                    .find(|connection| connection.id() == id)
+                    .map(EvidenceConnection::group)
+                {
+                    Some(ConnectionGroup::RelatedTest) => "Leave out the related test",
+                    Some(ConnectionGroup::RelatedConfiguration) => {
+                        "Leave out the related configuration"
+                    }
+                    Some(ConnectionGroup::ConnectedCode) | None => "Leave out the connected code",
+                },
+            ),
         }
     }
 
@@ -939,17 +1055,6 @@ impl OutboundReview {
                 )
             }
         })
-    }
-}
-
-/// The control that resolves a finding at `place` by leaving out what it is
-/// in, if that can be left out: a file or connected code can be, the commit
-/// message cannot.
-fn leave_out_label(place: &Place) -> Option<&'static str> {
-    match place {
-        Place::CommitMessage => None,
-        Place::Content(_) | Place::Diff(_) => Some("Leave out the file"),
-        Place::Connection(_) => Some("Leave out the connected code"),
     }
 }
 

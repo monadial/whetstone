@@ -6,7 +6,8 @@
 //! The outbound review asks for a commit's connected code with a
 //! [`Request`], which a background job runs. It gives the change's
 //! [`Connections`], each with the text it would send, read from the commit,
-//! or why there are none.
+//! or why there are none. They include the change's related tests and
+//! related configuration, found from the commit's paths by convention.
 //!
 //! [`find`] is the engine's part of that, for any [`Snapshot`] of a commit,
 //! and blocks while it runs, so callers run it off the UI thread. It writes
@@ -33,7 +34,8 @@ use std::panic::{self, AssertUnwindSafe};
 use std::time::Instant;
 
 use whetstone_core::{
-    Change, CommitId, ConnectionGroup, Connections, ExcludePatterns, Extent, FileContent, LineRange,
+    Change, CommitId, ConnectionGroup, Connections, ExcludePatterns, Extent, FileContent,
+    LineRange, merge_into_whole_files,
 };
 
 use crate::repository::{CommitTree, LoadError, RepositoryHandle, TreeEntryKind};
@@ -271,15 +273,19 @@ impl Request {
     /// Finds the commit's connected code, blocking until the engine is
     /// done: the callers and callees of the callables its change adds or
     /// modifies, as [`find`] finds them, each with the lines it would send,
-    /// read from the commit; or none found, or the analysis failed, a panic
-    /// included.
+    /// and its related tests and related configuration, each whole, as
+    /// [`related::connections`] finds them, read from the commit, with any
+    /// range in a file sent whole merged into it; or none found, or the
+    /// analysis failed, a panic included.
     pub(crate) fn find(&self) -> Connections {
         let started = Instant::now();
         let found = catching(|| {
             self.repository
                 .with_tree(self.commit, |tree| {
                     let found = find(tree, &self.change, &self.exclude, &self.dirs)?;
-                    with_sent_text(tree, found.connections())
+                    let mut connections = with_sent_text(tree, found.connections())?;
+                    connections.extend(related::connections(tree, &self.change)?);
+                    Ok(merge_into_whole_files(connections))
                 })
                 .map_err(|error| Failure::Snapshot(Box::new(error)))?
         });

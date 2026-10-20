@@ -67,9 +67,8 @@ pub(crate) struct Selection<'a> {
     /// The connections the evidence lists, in rank order, with their
     /// status: each one that fit, and each one a rule leaves out.
     pub(crate) listed: Vec<(&'a Connection, FileStatus)>,
-    /// How many did not fit, for each reason that has any, in the order
-    /// the outbound review shows them.
-    pub(crate) not_sent: Vec<(NotSent, usize)>,
+    /// Each one that did not fit, in rank order: its group, and why.
+    pub(crate) not_sent: Vec<(ConnectionGroup, NotSent)>,
 }
 
 /// `connections` from the most relevant to the least: related tests and
@@ -86,7 +85,8 @@ pub(crate) fn rank(connections: &[Connection]) -> Vec<&Connection> {
 /// rule leaves out, which uses no room, and adding each one the rules send
 /// while it fits: in `room`, and if it is connected code, within `limit`
 /// beside the connected code before it. One that does not fit is skipped
-/// whole and counted, and smaller ones after it can still be added.
+/// whole and recorded with its group, and smaller ones after it can still
+/// be added.
 ///
 /// It reads only whether the rules send each one, which the learner's
 /// choices never change, so a choice never changes what is selected.
@@ -96,8 +96,7 @@ pub(crate) fn select(
     limit: ConnectedCodeLimit,
 ) -> Selection<'_> {
     let mut connected_code_room = limit.bytes();
-    let mut over_limit = 0;
-    let mut no_room = 0;
+    let mut not_sent = Vec::new();
     let mut listed = Vec::new();
     for (connection, status) in ranked {
         if status.sent_by_rules() {
@@ -106,11 +105,11 @@ pub(crate) fn select(
                 .expect("a connection the rules send is text, which has a size");
             let connected_code = connection.group() == ConnectionGroup::ConnectedCode;
             if size > room {
-                no_room += 1;
+                not_sent.push((connection.group(), NotSent::NoRoom));
                 continue;
             }
             if connected_code && size > connected_code_room {
-                over_limit += 1;
+                not_sent.push((connection.group(), NotSent::OverConnectedCodeLimit));
                 continue;
             }
             room -= size;
@@ -120,16 +119,7 @@ pub(crate) fn select(
         }
         listed.push((connection, status));
     }
-    Selection {
-        listed,
-        not_sent: [
-            (NotSent::OverConnectedCodeLimit, over_limit),
-            (NotSent::NoRoom, no_room),
-        ]
-        .into_iter()
-        .filter(|&(_, count)| count > 0)
-        .collect(),
-    }
+    Selection { listed, not_sent }
 }
 
 /// What a connection is ranked by, the smallest first, compared field by
@@ -207,6 +197,15 @@ mod tests {
 
     /// The touched file every connection here connects to.
     const PAY: &str = "src/billing/pay.rs";
+
+    /// The outbound review's Connected code section's group.
+    const CONNECTED_CODE: &[ConnectionGroup] = &[ConnectionGroup::ConnectedCode];
+    /// The outbound review's Related tests and configuration section's
+    /// groups.
+    const RELATED: &[ConnectionGroup] = &[
+        ConnectionGroup::RelatedTest,
+        ConnectionGroup::RelatedConfiguration,
+    ];
 
     /// A commit that creates [`PAY`], holding `content`.
     fn change(content: &str) -> Change {
@@ -338,7 +337,11 @@ mod tests {
                 "src/caller_3.rs",
             ]
         );
-        assert_eq!(evidence.not_sent(), [(NotSent::OverConnectedCodeLimit, 6)]);
+        assert_eq!(
+            evidence.not_sent(CONNECTED_CODE),
+            [(NotSent::OverConnectedCodeLimit, 6)]
+        );
+        assert_eq!(evidence.not_sent(RELATED), []);
         // Related tests don't count towards the connected code limit.
         assert_eq!(evidence.connected_code_size(), 1000);
     }
@@ -502,24 +505,34 @@ mod tests {
         let evidence = build_with(&change, found, limit(100), &ReviewChoices::default());
 
         assert_eq!(paths(&evidence), ["tests/pay.rs", "src/auth.rs"]);
-        assert_eq!(evidence.not_sent(), [(NotSent::NoRoom, 1)]);
+        assert_eq!(evidence.not_sent(CONNECTED_CODE), [(NotSent::NoRoom, 1)]);
         assert_eq!(evidence.size(), Evidence::SIZE_LIMIT);
         assert_eq!(evidence.unsendable(), None);
     }
 
     #[test]
-    fn a_change_over_the_size_limit_leaves_no_room_for_any_connection() {
+    fn a_change_over_the_size_limit_leaves_no_room_for_any_connection_and_counts_each_group_apart()
+    {
         let change = change(&"x".repeat(200_000));
 
         let evidence = build_with(
             &change,
-            vec![test_for_pay("tests/pay.rs", 100), caller("src/api.rs", 100)],
+            vec![
+                test_for_pay("tests/pay.rs", 100),
+                manifest("Cargo.toml", 100),
+                caller("src/api.rs", 100),
+            ],
             limit(100),
             &ReviewChoices::default(),
         );
 
         assert_eq!(evidence.connections(), []);
-        assert_eq!(evidence.not_sent(), [(NotSent::NoRoom, 2)]);
+        assert_eq!(evidence.not_sent(CONNECTED_CODE), [(NotSent::NoRoom, 1)]);
+        assert_eq!(evidence.not_sent(RELATED), [(NotSent::NoRoom, 2)]);
+        assert_eq!(
+            evidence.not_sent(&[ConnectionGroup::RelatedConfiguration]),
+            [(NotSent::NoRoom, 1)]
+        );
     }
 
     #[test]
@@ -530,7 +543,7 @@ mod tests {
         let evidence = build_with(&change, found, limit(1), &ReviewChoices::default());
 
         assert_eq!(
-            evidence.not_sent(),
+            evidence.not_sent(CONNECTED_CODE),
             [(NotSent::OverConnectedCodeLimit, 1), (NotSent::NoRoom, 1)]
         );
     }
@@ -552,7 +565,10 @@ mod tests {
         let evidence = build(callers(), limit(1));
 
         assert_eq!(paths(&evidence), ["src/a.rs", "src/c.rs"]);
-        assert_eq!(evidence.not_sent(), [(NotSent::OverConnectedCodeLimit, 1)]);
+        assert_eq!(
+            evidence.not_sent(CONNECTED_CODE),
+            [(NotSent::OverConnectedCodeLimit, 1)]
+        );
         assert_eq!(evidence.connected_code_size(), 1000);
         assert_eq!(evidence.size(), without.size() + 1000);
     }
@@ -573,7 +589,10 @@ mod tests {
                 ("src/c.rs", "included".to_owned()),
             ]
         );
-        assert_eq!(evidence.not_sent(), [(NotSent::OverConnectedCodeLimit, 1)]);
+        assert_eq!(
+            evidence.not_sent(CONNECTED_CODE),
+            [(NotSent::OverConnectedCodeLimit, 1)]
+        );
         assert_eq!(evidence.connected_code_size(), 400);
     }
 
@@ -588,7 +607,7 @@ mod tests {
         let evidence = build_with(&change, found(), limit(100), &choices);
 
         assert_eq!(evidence.connections(), []);
-        assert_eq!(evidence.not_sent(), [(NotSent::NoRoom, 1)]);
+        assert_eq!(evidence.not_sent(CONNECTED_CODE), [(NotSent::NoRoom, 1)]);
     }
 
     /// Related configuration: the manifest at `path` for [`PAY`], which
@@ -616,7 +635,11 @@ mod tests {
         let evidence = build(found, limit(0));
 
         assert_eq!(paths(&evidence), ["Cargo.toml", "tests/pay.rs"]);
-        assert_eq!(evidence.not_sent(), [(NotSent::OverConnectedCodeLimit, 1)]);
+        assert_eq!(
+            evidence.not_sent(CONNECTED_CODE),
+            [(NotSent::OverConnectedCodeLimit, 1)]
+        );
+        assert_eq!(evidence.not_sent(RELATED), []);
         assert_eq!(evidence.connected_code_size(), 0);
     }
 
@@ -634,7 +657,10 @@ mod tests {
             ConnectedCodeLimitSource::LoweredByRepository
         );
         assert_eq!(paths(&evidence), ["src/a.rs"]);
-        assert_eq!(evidence.not_sent(), [(NotSent::OverConnectedCodeLimit, 1)]);
+        assert_eq!(
+            evidence.not_sent(CONNECTED_CODE),
+            [(NotSent::OverConnectedCodeLimit, 1)]
+        );
 
         let learners = build(
             found(),
@@ -644,7 +670,7 @@ mod tests {
             learners.connected_code_limit().source(),
             ConnectedCodeLimitSource::Learner
         );
-        assert_eq!(learners.not_sent(), []);
+        assert_eq!(learners.not_sent(CONNECTED_CODE), []);
     }
 
     /// Connected code in the high tier at `path` that [`PAY`] names,
@@ -686,7 +712,7 @@ mod tests {
                 ("src/api.rs", "included".to_owned()),
             ]
         );
-        assert_eq!(evidence.not_sent(), []);
+        assert_eq!(evidence.not_sent(CONNECTED_CODE), []);
         assert_eq!(evidence.connected_code_size(), 900);
     }
 
