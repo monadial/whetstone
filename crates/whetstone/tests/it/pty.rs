@@ -37,7 +37,7 @@ const LAUNCH_WITHOUT_COLOR: &str = r#"NO_COLOR=1 "$WHETSTONE""#;
 
 /// Runs `whetstone` in the background, still attached to the terminal, and
 /// waits for it. Its process ID goes to `$HOME/pid` so the test can signal it.
-const LAUNCH_IN_BACKGROUND: &str = r#"exec 3<&0
+pub(super) const LAUNCH_IN_BACKGROUND: &str = r#"exec 3<&0
 "$WHETSTONE" <&3 3<&- &
 echo $! > "$HOME/pid"
 wait $!"#;
@@ -208,7 +208,7 @@ fn a_termination_signal_from_outside_quits_and_restores_the_terminal() {
 }
 
 /// Reads a process ID the shell writes right after starting the process.
-fn read_pid(path: &Path) -> Option<String> {
+pub(super) fn read_pid(path: &Path) -> Option<String> {
     for _ in 0..50 {
         if let Ok(pid) = std::fs::read_to_string(path)
             && !pid.trim().is_empty()
