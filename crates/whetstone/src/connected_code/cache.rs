@@ -372,7 +372,7 @@ mod tests {
     }
 
     /// Room for two test graphs, but not three.
-    fn two_graphs() -> u64 {
+    fn room_for_two_graphs() -> u64 {
         entry_size() * 5 / 2
     }
 
@@ -394,7 +394,7 @@ mod tests {
 
     /// Everything logged while `run` runs.
     fn logged(run: impl FnOnce()) -> String {
-        #[derive(Clone, Default)]
+        #[derive(Debug, Clone, Default)]
         struct Captured(Arc<Mutex<Vec<u8>>>);
 
         impl io::Write for Captured {
@@ -433,7 +433,7 @@ mod tests {
     #[test]
     fn the_least_recently_used_graph_goes_first() {
         let folder = tempfile::tempdir().expect("a temporary folder");
-        let cache = GraphCache::open(folder.path(), two_graphs());
+        let cache = GraphCache::open(folder.path(), room_for_two_graphs());
         let (first, second, third) = (
             GraphKey::tree(tree("1"), "0.11.0"),
             GraphKey::tree(tree("2"), "0.11.0"),
@@ -453,7 +453,7 @@ mod tests {
     #[test]
     fn a_hit_makes_its_graph_the_most_recently_used() {
         let folder = tempfile::tempdir().expect("a temporary folder");
-        let cache = GraphCache::open(folder.path(), two_graphs());
+        let cache = GraphCache::open(folder.path(), room_for_two_graphs());
         let (first, second, third) = (
             GraphKey::tree(tree("1"), "0.11.0"),
             GraphKey::tree(tree("2"), "0.11.0"),

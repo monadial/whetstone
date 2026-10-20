@@ -39,7 +39,7 @@ fn connected(repo: &TestRepo, id: CommitId) -> Vec<String> {
 /// What `find` finds for the commit `id` of `repo`, writing any files it
 /// analyses in `temp_dir` and caching its graph in `cache`.
 fn find_in(repo: &TestRepo, id: CommitId, temp_dir: &Path, cache: &GraphCache) -> Found {
-    let (_, found) = found_in(repo, id, temp_dir, cache);
+    let (_, found) = change_and_found(repo, id, temp_dir, cache);
     found
 }
 
@@ -55,7 +55,12 @@ fn described(found: &Found) -> Vec<String> {
 
 /// The change of the commit `id` of `repo`, and what `find` finds for it,
 /// analysed in `temp` and cached in `cache`.
-fn found_in(repo: &TestRepo, id: CommitId, temp: &Path, cache: &GraphCache) -> (Change, Found) {
+fn change_and_found(
+    repo: &TestRepo,
+    id: CommitId,
+    temp: &Path,
+    cache: &GraphCache,
+) -> (Change, Found) {
     let repository = repo.open();
     let change = repository.load(id).expect("load the change");
     let found = repository
@@ -117,6 +122,8 @@ impl Memory {
 impl Snapshot for Memory {
     type Error = Infallible;
 
+    // Every snapshot in memory names the same tree, so each test that finds
+    // connected code in one gives it a cache folder of its own.
     fn id(&self) -> SnapshotId {
         SnapshotId::Showcase(0)
     }
@@ -622,7 +629,7 @@ fn the_whole_graph_is_kept_and_never_shows_names_when_debugged() {
     let temp = TempDir::new().expect("create a temporary directory");
     let cache = TempDir::new().expect("create a cache folder");
 
-    let (change, found) = found_in(&repo, id, temp.path(), &cache_in(cache.path()));
+    let (change, found) = change_and_found(&repo, id, temp.path(), &cache_in(cache.path()));
 
     assert_eq!(found.graph().connections(&change), found.connections());
     let debug = format!("{:?}", found.graph());

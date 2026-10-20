@@ -10,11 +10,8 @@ use std::path::Path;
 use tempfile::TempDir;
 
 use crate::pty::{LAUNCH, start};
+use crate::pty_connected_code::REVIEW_NEWEST;
 use crate::repo::TestRepo;
-
-/// The keys that open the outbound review of the newest commit from home,
-/// with the five default areas selected, as a terminal sends them.
-const REVIEW_NEWEST: &str = "\rjjjjj kkkkk\x1b[Z\r";
 
 /// Runs Whetstone in `repo`, with its config, state and cache in `dirs`,
 /// opens the newest commit's review, waits for `word` in its connected
