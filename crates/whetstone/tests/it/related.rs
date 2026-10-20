@@ -609,3 +609,38 @@ fn when_the_analysis_fails_the_review_says_related_tests_and_configuration_are_n
         ["Related tests and configuration aren't available for this change: the analysis failed."]
     );
 }
+
+/// The review of [`with_a_test_that_calls_the_change`] with a
+/// `pyproject.toml`, in a `width` by `height` terminal, once found, with
+/// focus on the related test.
+fn related_in_view(width: u16, height: u16) -> Session {
+    let repo = with_a_test_that_calls_the_change();
+    repo.write("pyproject.toml", "[project]\nname = \"shop\"\n");
+    repo.commit("Name the shop");
+    repo.write(
+        "shop/store.py",
+        "def save(order):\n    return [order, order]\n",
+    );
+    repo.commit("Save it twice");
+    let mut session = started_in(repo.root(), width, height);
+    session.press(REVIEW_NEWEST);
+    session.settle();
+    // The change, the touched file, the caller, the manifest, then the
+    // test, whose relations go under its row in a narrow window.
+    session.press("j j j j");
+    session
+}
+
+#[test]
+fn related_tests_and_configuration_in_the_review_at_120x32() {
+    let session = related_in_view(120, 32);
+
+    insta::assert_debug_snapshot!("related_120x32", session.frame());
+}
+
+#[test]
+fn related_tests_and_configuration_in_the_review_at_80x24() {
+    let session = related_in_view(80, 24);
+
+    insta::assert_debug_snapshot!("related_80x24", session.frame());
+}
