@@ -43,5 +43,6 @@ mod support;
 mod suspend;
 mod terminal_guard;
 mod theme;
+mod time_limit;
 mod viewer;
 mod wide_characters;
