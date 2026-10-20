@@ -38,26 +38,26 @@ Some rules are both. Rules about code that does not exist yet (async workers, AI
 
 ## Async work
 
-The walking skeleton has no async code: its UI loop is synchronous. These rules apply from the first Tokio worker.
+The UI loop (`tui.rs`) runs on a current-thread Tokio runtime. It waits with `select!` on signals, crossterm's `EventStream`, the bounded channel of background job results and, only while a job runs, a tick, so nothing else wakes it. Background jobs (`job.rs`) run on `spawn_blocking`, owned by a `TaskTracker`, each with a child `CancellationToken`. Their results enter through `App::handle`, like key presses. Quitting never waits for a job: the runtime shuts down without waiting, and a running job's result is discarded.
 
 | # | Rule | Enforced by |
 | --- | --- | --- |
 | 16 | Every spawned task has an owner (`JoinSet`, `TaskTracker`, `AbortOnDropHandle`). Dropping a bare `JoinHandle` needs a comment. | **Review**. |
-| 17 | Each job derives a child `CancellationToken` and reports cancellation as a typed result, never as silence. | **Review**. |
+| 17 | Each job derives a child `CancellationToken` and reports cancellation as a typed result, never as silence. | **Review**. **Lint/CI**: the job tests (`tests/it/jobs.rs`). |
 | 18 | `select!` branches inside loops use only cancel-safe operations: `reserve` or `try_send` instead of `send`, and no `write_all` or lock acquisition. | **Review**. |
-| 19 | No blocking work on async tasks. Git and parsing go to `spawn_blocking`, storage to the writer thread. No `block_in_place`. | **Review**. **Lint/CI** once Tokio is a dependency: `disallowed-methods` for `tokio::task::block_in_place`. |
+| 19 | No blocking work on async tasks. Git and parsing go to `spawn_blocking`, storage to the writer thread. No `block_in_place`. | **Review**. **Lint/CI**: `disallowed-methods` for `tokio::task::block_in_place` in `clippy.toml`. Tokio builds it only with `rt-multi-thread`, which is off. |
 | 20 | Never hold a std `Mutex` guard or a `RefCell` borrow across `.await`. | **Lint/CI**: `clippy::await_holding_lock`, `await_holding_refcell_ref` (deny). |
 | 21 | Channels are bounded, with a documented capacity. An unbounded channel needs a written reason. | **Review**. |
 | 22 | *From network code:* every network stage has an explicit timeout. The HTTP client is built with `connect_timeout` and `timeout`. | **Review**. **Lint/CI**: adapter tests. |
 | 23 | *From network code:* automatic retries use `backon` with jitter and an explicit retryable predicate. They never replay a paid request the user has not authorised. | **Review**. |
-| 24 | *From workers:* a worker result is applied only when its session, question version, attempt and job identities match the outstanding job. | **Lint/CI**: reducer tests. |
+| 24 | A worker result is applied only when its session, question version, attempt and job identities match the outstanding job. | **Lint/CI**: the job tests (`tests/it/jobs.rs`); reducer tests at the app seam for each kind of job. |
 
 ## Terminal UI
 
 | # | Rule | Enforced by |
 | --- | --- | --- |
 | 25 | Drawing is pure: `render` does no I/O, network, storage or spawning, and changes no state (`App::render` takes `&self`). | **Review**. |
-| 26 | One input source. The UI loop in `tui.rs` is the only place that reads terminal events, and only key presses (`KeyEventKind::Press`) and pastes act, filtered once in `App::handle`, where input enters the app. A paste goes where rule 57 says. | **Review**. **Lint/CI** once the loop moves to `EventStream`: `disallowed-methods` for crossterm's `read` and `poll`. |
+| 26 | One input source. The UI loop in `tui.rs` is the only place that reads terminal events, and only key presses (`KeyEventKind::Press`) and pastes act, filtered once in `App::handle`, where input enters the app. A paste goes where rule 57 says. | **Review**. **Lint/CI**: `disallowed-methods` for crossterm's `read` and `poll` in `clippy.toml`. |
 | 27 | One terminal guard enables everything the TUI turns on (raw mode, alternate screen, hidden cursor and bracketed paste) and undoes it in reverse order on exit, on `Drop` and from its panic hook. Mouse capture and keyboard enhancement flags are never enabled or required. | **Lint/CI**: the pseudo-terminal tests (`tests/it/pty.rs`, `tests/it/pty_paste.rs`, and `tests/it/pty_terminal.rs`, which also checks that no mouse mode or keyboard enhancement is ever written) on Linux and macOS, x86_64 and arm64; guard tests (`tests/it/terminal_guard.rs`, `tests/panic_restore.rs`). |
 | 28 | In raw mode Ctrl+C and Ctrl+Z are reserved keys: they act from anywhere, even below the 50×12 floor, before overlays, text entry and focus dispatch, and never type. Ctrl+C quits, and SIGINT, SIGTERM and SIGHUP from outside follow the same shutdown path and restore the terminal. Ctrl+Z suspends, and SIGTSTP from outside follows the same path: the guard turns every mode off, then the app's whole process group stops, as Ctrl+Z stops a job outside raw mode. If no job-control shell could continue it, because its process group is its session's own, the app carries on at once instead, as vim does. On SIGCONT the TUI turns every mode off and on again, since the shell may have changed them, reads the window size again, and clears to redraw the same screen in full, with app state untouched. A SIGCONT with no stop before it does no harm, and a stop signal received while suspended ends the app without taking the terminal back. | **Lint/CI**: pseudo-terminal tests for `q`, Ctrl+C and SIGTERM (`tests/it/pty.rs`), for SIGINT and SIGHUP (`tests/it/pty_terminal.rs`), and for Ctrl+Z, SIGTSTP, SIGCONT, a resize while suspended and suspending without job control (`tests/it/pty_suspend.rs`); keystroke tests at the app seam (`tests/it/suspend.rs`). |
 | 29 | *From overlays and editors:* key dispatch follows focus: reserved keys, then the top overlay, then the focused control. While an editor has focus, every non-reserved key is text. | **Lint/CI**: keystroke tests at the app seam. |
@@ -136,7 +136,7 @@ The lints in the root `Cargo.toml`, and the rules they enforce. CI denies warnin
 | Clippy `string_slice` | warn | 31 |
 | Clippy `print_stdout`, `print_stderr` | warn | 34 |
 
-The root `clippy.toml` allows `unwrap`, `expect`, `panic!` and printing in tests (rule 11). `crates/whetstone-core/clippy.toml` repeats that and adds the no-I/O lists (rule 54).
+The root `clippy.toml` allows `unwrap`, `expect`, `panic!` and printing in tests (rule 11). `crates/whetstone-core/clippy.toml` repeats that and adds the no-I/O lists (rule 54). The root file also bans Tokio's `block_in_place` and crossterm's blocking `read` and `poll` (rules 19 and 26).
 
 ## CI
 
@@ -161,7 +161,8 @@ Spec #11 and the walking skeleton (#12) decided these differently from the note'
 - **Layout:** a workspace (`whetstone`, `whetstone-core`) from the start, not one package. The AI crate arrives later, so rule 36 names a crate rather than an `ai` module.
 - **License:** Apache-2.0, not `MIT OR Apache-2.0` (rule 56).
 - **Platforms:** Linux and macOS, x86_64 and arm64, no native Windows. The terminal support decision ([#4](https://github.com/monadial/whetstone/issues/4)) makes WSL expected to work: bugs there are fixed when reported, but neither CI nor the pre-release terminal checklist covers it. The pseudo-terminal tests use `rexpect`, which is Unix-only.
-- **UI loop:** synchronous, with crossterm's blocking `poll` and `read`, because spec #11 has no async work. `EventStream` and its `disallowed-methods` arrive with the first workers (rule 26).
+- **UI loop:** a current-thread Tokio runtime, not `rt-multi-thread`. The loop is its only async task, and blocking work runs on the runtime's blocking threads. Signals from outside still set flags, which decide what happens, and also wake the loop through Tokio's signal streams.
+- **Workers:** a `TaskTracker` owns the jobs, not a `JoinSet`. Quitting never waits for a job, where the note proposes a short grace period, because `spawn_blocking` work cannot be stopped once it starts (spec [#56](https://github.com/monadial/whetstone/issues/56)).
 - **Logging:** written synchronously through `tracing-subscriber`, without `tracing-appender`, so there is no `WorkerGuard` yet (rule 44).
 - **Snapshots:** two sizes, 120×32 and 80×24, not four breakpoints (rule 47).
 - **Keyboard flags:** the note's guard turns on keyboard enhancement flags. The terminal support decision ([#4](https://github.com/monadial/whetstone/issues/4)) instead never enables or requires them, so every action works with the keys a terminal sends without special settings (rule 27).
