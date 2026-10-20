@@ -650,12 +650,9 @@ impl OutboundReview {
             row.push_span(" ".repeat(columns::GAP));
             row.push_span(format!("{size:>size_width$}"));
             row.push_span(" ".repeat(columns::GAP));
-            let fits = row.width()
-                + columns::GAP
-                + status_width
-                + columns::GAP
-                + Line::raw(relations.as_str()).width()
-                <= width;
+            let fits =
+                row.width() + status_width + columns::GAP + Line::raw(relations.as_str()).width()
+                    <= width;
             if fits {
                 row.push_span(format!("{status:<status_width$}"));
                 row.push_span(" ".repeat(columns::GAP));
