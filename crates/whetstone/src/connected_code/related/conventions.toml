@@ -10,7 +10,8 @@
 # - `name`: what error messages call it.
 # - `extensions`: the file extensions, without the dot, that make a touched
 #   file one of this ecosystem's. The extension is what follows the last dot
-#   in the file name, compared exactly. Two ecosystems never share one.
+#   in the file name, compared exactly; a name whose only dot leads it, such
+#   as `.rs`, has none. Two ecosystems cannot claim the same one.
 # - `manifests`: the file names of its build manifests, if any. A touched
 #   file's related configuration is the manifest in the nearest directory
 #   that has one, walking up to the repository's root. When that directory
@@ -26,7 +27,8 @@
 #   be told. A touched test has no related tests of its own. Leave it out if
 #   the rules can never find a test for a test.
 #
-# A test name is a file name with placeholders:
+# A test name is a file name, so it has no `/`, with placeholders. `{` and
+# `}` appear only around one:
 #
 # - `{stem}` is the touched file's name without its extension. Every test
 #   name has it.
@@ -47,7 +49,7 @@
 #   directory with the last `from` in its path replaced by `to`. Only a
 #   touched file under `from` gets tests from this rule.
 #
-# `is_test` has any of:
+# `is_test` has any of these, and a touched file is a test if one says so:
 #
 # - `stem_starts_with = [...]`, `stem_ends_with = [...]`: the touched file's
 #   stem starts or ends with one of these.
@@ -56,8 +58,13 @@
 # - `under_dir_beside_manifest = [...]`: it is anywhere under a directory
 #   called one of these beside the nearest of the ecosystem's own manifests.
 #
-# A directory name is one path segment: not empty, no `/`. `mirror`'s `from`
-# and `to` may have several segments.
+# A manifest's or a directory's name is one path segment: not empty, no `/`.
+# Only `mirror`'s `from` and `to` may have several segments.
+#
+# Reading the file fails on anything else: an unknown field, kind of place or
+# placeholder, a missing field, an empty test name or one without `{stem}`,
+# an empty or dotted extension, an empty start or end of a test's stem, or
+# `beside_manifest` in an ecosystem with no manifests.
 
 [[ecosystem]]
 name = "Rust"
