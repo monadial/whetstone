@@ -25,6 +25,7 @@ mod analysis;
 mod detect;
 mod graph;
 mod lines;
+mod related;
 
 use std::error::Error;
 use std::io;
