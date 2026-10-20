@@ -1,16 +1,10 @@
-//! Helpers for the colour tests: a terminal's environment, the colours a
-//! frame uses, and the brand tokens they must come from.
+//! Helpers for the colour tests: the colours a frame uses, and the brand
+//! tokens they must come from.
 
 use std::collections::HashSet;
 
 use ratatui::buffer::Buffer;
 use ratatui::style::Color;
-use whetstone::Environment;
-
-/// An environment holding only `variables`.
-pub(crate) fn environment(variables: &[(&str, &str)]) -> Environment {
-    variables.iter().copied().collect()
-}
 
 /// Every colour a frame uses, as foreground or background.
 pub(crate) fn colors_used(frame: &Buffer) -> HashSet<Color> {

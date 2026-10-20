@@ -9,31 +9,116 @@ use ratatui::style::{Color, Modifier};
 use ratatui::widgets::Widget as _;
 use whetstone::{ColorSupport, ControlKind, ControlState, Theme};
 
-use crate::colors::{ansi256_token_colors, colors_used, dark_token_colors, environment};
+use crate::colors::{ansi256_token_colors, colors_used, dark_token_colors};
+use crate::session::{Session, Setup};
 
-fn detect(variables: &[(&str, &str)]) -> ColorSupport {
-    ColorSupport::detect(&environment(variables))
+/// The colour level home is drawn at, read from the colours its frame uses:
+/// any 24-bit colour, else any indexed colour, else any named colour, else
+/// the terminal's own colours only.
+fn level_drawn(config: Option<&str>, variables: &[(&str, &str)]) -> ColorSupport {
+    let session = Session::start(
+        Setup {
+            config,
+            variables,
+            ..Setup::default()
+        },
+        80,
+        24,
+    );
+    let used = colors_used(&session.frame());
+    if used.iter().any(|color| matches!(color, Color::Rgb(..))) {
+        ColorSupport::TrueColor
+    } else if used.iter().any(|color| matches!(color, Color::Indexed(_))) {
+        ColorSupport::Ansi256
+    } else if used.iter().any(|color| *color != Color::Reset) {
+        ColorSupport::Ansi16
+    } else {
+        ColorSupport::NoColor
+    }
+}
+
+/// A terminal that reports 24-bit colour.
+const TRUECOLOR: &[(&str, &str)] = &[("COLORTERM", "truecolor")];
+/// The same terminal with colour turned off.
+const TRUECOLOR_TURNED_OFF: &[(&str, &str)] = &[("COLORTERM", "truecolor"), ("NO_COLOR", "1")];
+
+#[test]
+fn no_color_turns_colour_off_whatever_the_colours_setting_says() {
+    for config in [
+        None,
+        Some("colours = \"auto\"\n"),
+        Some("colours = \"24-bit\"\n"),
+        Some("colours = \"256\"\n"),
+        Some("colours = \"16\"\n"),
+        Some("colours = \"none\"\n"),
+    ] {
+        assert_eq!(
+            level_drawn(config, TRUECOLOR_TURNED_OFF),
+            ColorSupport::NoColor,
+            "with {config:?}"
+        );
+    }
+    // Any non-empty value counts, even "0" (no-color.org).
+    assert_eq!(
+        level_drawn(Some("colours = \"24-bit\"\n"), &[("NO_COLOR", "0")]),
+        ColorSupport::NoColor
+    );
 }
 
 #[test]
-fn colour_level_follows_no_color_then_colorterm_then_term() {
-    for (variables, expected) in [
+fn a_colours_setting_other_than_auto_is_used_whatever_the_terminal_reports() {
+    for (config, variables, expected) in [
+        // Over SSH COLORTERM is usually not passed on.
         (
-            &[("NO_COLOR", "1"), ("COLORTERM", "truecolor")][..],
-            ColorSupport::NoColor,
+            "colours = \"24-bit\"\n",
+            &[("TERM", "xterm-256color")][..],
+            ColorSupport::TrueColor,
         ),
+        ("colours = \"24-bit\"\n", &[], ColorSupport::TrueColor),
+        ("colours = \"256\"\n", TRUECOLOR, ColorSupport::Ansi256),
         (
-            &[("NO_COLOR", "0"), ("TERM", "xterm-256color")],
+            "colours = \"256\"\n",
+            &[("TERM", "xterm")],
+            ColorSupport::Ansi256,
+        ),
+        ("colours = \"16\"\n", TRUECOLOR, ColorSupport::Ansi16),
+        (
+            "colours = \"16\"\n",
+            &[("TERM", "xterm-256color")],
+            ColorSupport::Ansi16,
+        ),
+        ("colours = \"none\"\n", TRUECOLOR, ColorSupport::NoColor),
+        (
+            "colours = \"none\"\n",
+            &[("TERM", "xterm")],
             ColorSupport::NoColor,
         ),
         // An empty NO_COLOR does not count (no-color.org).
         (
+            "colours = \"256\"\n",
             &[("NO_COLOR", ""), ("COLORTERM", "truecolor")],
+            ColorSupport::Ansi256,
+        ),
+    ] {
+        assert_eq!(
+            level_drawn(Some(config), variables),
+            expected,
+            "{config:?} with {variables:?}"
+        );
+    }
+}
+
+#[test]
+fn with_colours_auto_or_unset_the_level_follows_colorterm_then_term() {
+    for (variables, expected) in [
+        (TRUECOLOR, ColorSupport::TrueColor),
+        (
+            &[("COLORTERM", "24bit"), ("TERM", "xterm")][..],
             ColorSupport::TrueColor,
         ),
-        (&[("COLORTERM", "truecolor")], ColorSupport::TrueColor),
+        // An empty NO_COLOR does not count (no-color.org).
         (
-            &[("COLORTERM", "24bit"), ("TERM", "xterm")],
+            &[("NO_COLOR", ""), ("COLORTERM", "truecolor")],
             ColorSupport::TrueColor,
         ),
         (
@@ -44,7 +129,13 @@ fn colour_level_follows_no_color_then_colorterm_then_term() {
         (&[("TERM", "xterm")], ColorSupport::Ansi16),
         (&[], ColorSupport::Ansi16),
     ] {
-        assert_eq!(detect(variables), expected, "with {variables:?}");
+        for config in [None, Some(""), Some("colours = \"auto\"\n")] {
+            assert_eq!(
+                level_drawn(config, variables),
+                expected,
+                "{config:?} with {variables:?}"
+            );
+        }
     }
 }
 

@@ -8,10 +8,12 @@
 
 use std::borrow::Cow;
 use std::ffi::OsStr;
+use std::fmt;
 
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
+use crate::config::Colours;
 use crate::environment::Environment;
 
 /// How much colour the terminal can show.
@@ -23,30 +25,51 @@ pub enum ColorSupport {
     Ansi256,
     /// The terminal's own 16 colours, whatever they look like.
     Ansi16,
-    /// No colour at all, as `NO_COLOR` asks.
+    /// No colour at all, as `NO_COLOR` or the `colours` setting asks.
     NoColor,
 }
 
 impl ColorSupport {
-    /// Reads the colour level from `environment`. A non-empty `NO_COLOR`
-    /// turns colour off. Otherwise `COLORTERM` set to `truecolor` or `24bit`
-    /// allows 24-bit colour, a `TERM` naming `256color` allows 256 colours,
-    /// and anything else gets the terminal's own 16.
+    /// The colour level to draw with. A non-empty `NO_COLOR` turns colour
+    /// off. Otherwise `colours` is used as set, unless it is auto, which
+    /// [detects](Self::detect) the level from `environment`.
     #[must_use]
-    pub fn detect(environment: &Environment) -> Self {
-        let var = |name| environment.get(name).and_then(OsStr::to_str);
+    pub(crate) fn choose(colours: Colours, environment: &Environment) -> Self {
         if environment
             .get("NO_COLOR")
             .is_some_and(|value| !value.is_empty())
         {
             Self::NoColor
-        } else if var("COLORTERM").is_some_and(|value| matches!(value, "truecolor" | "24bit")) {
+        } else {
+            colours.level().unwrap_or_else(|| Self::detect(environment))
+        }
+    }
+
+    /// What the terminal says it can show: `COLORTERM` set to `truecolor` or
+    /// `24bit` allows 24-bit colour, a `TERM` naming `256color` allows 256
+    /// colours, and anything else gets the terminal's own 16.
+    #[must_use]
+    pub(crate) fn detect(environment: &Environment) -> Self {
+        let var = |name| environment.get(name).and_then(OsStr::to_str);
+        if var("COLORTERM").is_some_and(|value| matches!(value, "truecolor" | "24bit")) {
             Self::TrueColor
         } else if var("TERM").is_some_and(|term| term.contains("256color")) {
             Self::Ansi256
         } else {
             Self::Ansi16
         }
+    }
+}
+
+/// The level as the `colours` setting names it.
+impl fmt::Display for ColorSupport {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::TrueColor => "24-bit",
+            Self::Ansi256 => "256",
+            Self::Ansi16 => "16",
+            Self::NoColor => "none",
+        })
     }
 }
 

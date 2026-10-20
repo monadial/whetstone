@@ -10,7 +10,7 @@ use ratatui::backend::TestBackend;
 use ratatui::buffer::{Buffer, Cell};
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use tempfile::TempDir;
-use whetstone::{App, ColorSupport, Dirs, Environment, Flow, Repository, Settings, Theme};
+use whetstone::{App, Dirs, Environment, Flow, Repository, Settings, Theme};
 use whetstone_core::ShowcaseProject;
 
 /// What the app starts from: a global config file, if any, the environment
@@ -59,10 +59,11 @@ impl Session {
             fs::write(dirs.config.join("config.toml"), config).expect("write the config file");
         }
         let settings = Settings::load(&dirs.config, &environment).expect("the config loads");
+        let theme = Theme::new(settings.color_support());
         let repository = Repository::open(setup.start.unwrap_or(home.path()));
         let mut session = Self {
             app: App::new(
-                Theme::new(ColorSupport::detect(&environment)),
+                theme,
                 settings,
                 setup
                     .showcase

@@ -85,6 +85,47 @@ fn an_unknown_provider_is_an_error() {
 }
 
 #[test]
+fn an_unknown_colours_value_is_an_error_naming_the_file_and_the_value() {
+    let dir = TempDir::new().expect("create a temporary config directory");
+
+    let error = load(dir.path(), "colours = \"truecolour\"\n").expect_err("not a colour level");
+
+    let path = dir.path().join("config.toml");
+    assert!(
+        error.starts_with(&format!(
+            "the config file {} is not valid: ",
+            path.display()
+        )),
+        "{error}"
+    );
+    assert!(error.contains("line 1"), "says where: {error}");
+    assert!(
+        error.contains(
+            "unknown variant `truecolour`, expected one of `auto`, `24-bit`, `256`, `16`, `none`"
+        ),
+        "names the value and the ones allowed: {error}"
+    );
+}
+
+#[test]
+fn a_colours_value_that_is_not_a_string_is_an_error() {
+    let dir = TempDir::new().expect("create a temporary config directory");
+
+    let error = load(dir.path(), "colours = 256\n").expect_err("a number, not a string");
+
+    let path = dir.path().join("config.toml");
+    assert!(
+        error.starts_with(&format!(
+            "the config file {} is not valid: ",
+            path.display()
+        )),
+        "{error}"
+    );
+    assert!(error.contains("line 1, column 11"), "says where: {error}");
+    assert!(error.contains("wanted string"), "{error}");
+}
+
+#[test]
 fn a_config_path_that_cannot_be_read_is_an_error_naming_it() {
     let dir = TempDir::new().expect("create a temporary config directory");
     fs::create_dir(dir.path().join("config.toml")).expect("a directory in the file's place");
