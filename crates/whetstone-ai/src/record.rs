@@ -21,10 +21,10 @@ use tokio_util::sync::CancellationToken;
 use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
 use crate::replay::{API, SampleQuestion, sample_generator_request, sample_jev_request};
-use crate::samples::{area, candidate, evidence, generator_model, jev_model};
+use crate::samples::{area, candidate, evidence, generator_model, jev_model, observability};
 use crate::{
     AiError, CandidatesOutput, GeneratorRequest, OpenRouter, SecretString, Timeouts,
-    candidates_request, question_check_request,
+    candidates_request, gate_request, question_check_request,
 };
 
 const UPSTREAM: &str = "https://openrouter.ai";
@@ -208,6 +208,20 @@ async fn record_question_check() {
     assert!(reply.is_ok());
 }
 
+#[tokio::test]
+#[ignore = "calls OpenRouter with the maintainer's key"]
+async fn record_gate() {
+    let (_server, connection) = recording("gate", "/systemone", &live_key()).await;
+    let request = gate_request(&jev_model(), &evidence(), &[area(), observability()]);
+
+    let reply = connection
+        .evaluate(&request, &CancellationToken::new())
+        .await;
+
+    println!("{reply:#?}");
+    assert!(reply.is_ok());
+}
+
 /// The recorded fixtures are JSON, so a failed recording can't save
 /// something else unnoticed.
 #[test]
@@ -220,6 +234,7 @@ fn recorded_fixtures_are_json() {
         "key-refused",
         "candidates",
         "question-check",
+        "gate",
     ] {
         let text = std::fs::read_to_string(fixture(name)).expect("the fixture exists");
         serde_json::from_str::<Value>(&text).expect("the fixture is JSON");

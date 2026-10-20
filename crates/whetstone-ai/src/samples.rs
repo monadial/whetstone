@@ -41,6 +41,19 @@ pub(crate) fn area() -> Area {
     )
 }
 
+/// A second area, which the sample change hardly touches.
+pub(crate) fn observability() -> Area {
+    area_file(
+        "observability.md",
+        "+++\n\
+         name = \"Observability\"\n\
+         description = \"What the running system tells you about itself\"\n\
+         +++\n\
+         \n\
+         Look at the logs, metrics and traces the change adds or changes.\n",
+    )
+}
+
 /// The area defined by the area file `name` holding `contents`.
 pub(crate) fn area_file(name: &str, contents: &str) -> Area {
     Area::offered([(name, Ok(contents.as_bytes()))])
