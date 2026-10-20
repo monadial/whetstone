@@ -1,5 +1,6 @@
 //! Changes: the commits a Practice is built from.
 
+use std::borrow::Cow;
 use std::fmt;
 
 use crate::area::AreaId;
@@ -8,12 +9,25 @@ use crate::area::AreaId;
 /// its diff and the files it touches, before and after. A showcase change
 /// names its areas; a commit from a repository has none, but carries its
 /// commit ID and what it was compared with.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Change {
     message: String,
     origin: Origin,
     diff: String,
     files: Vec<TouchedFile>,
+}
+
+/// Shows the message's and the diff's lengths, never their text, which may
+/// hold a secret.
+impl fmt::Debug for Change {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Change")
+            .field("message_bytes", &self.message.len())
+            .field("origin", &self.origin)
+            .field("diff_bytes", &self.diff.len())
+            .field("files", &self.files)
+            .finish()
+    }
 }
 
 /// Where a change comes from.
@@ -165,7 +179,7 @@ enum Versions {
 
 /// What one side of a touched file holds. Only text has content to show
 /// and send; the other kinds are entries without it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum FileContent {
     /// UTF-8 text.
     Text(String),
@@ -179,6 +193,18 @@ pub enum FileContent {
     Submodule,
     /// A symbolic link.
     Symlink,
+}
+
+/// Shows text's length, never the text.
+impl fmt::Debug for FileContent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Text(text) => f.debug_struct("Text").field("bytes", &text.len()).finish(),
+            Self::Binary { size } => f.debug_struct("Binary").field("size", size).finish(),
+            Self::Submodule => f.write_str("Submodule"),
+            Self::Symlink => f.write_str("Symlink"),
+        }
+    }
 }
 
 impl FileContent {
@@ -271,10 +297,41 @@ impl Change {
         &self.message
     }
 
-    /// The message's first line, which says what the change does.
+    /// The message's subject, which says what the change does: its first
+    /// paragraph, its lines joined by spaces, as `git log --format=%s`
+    /// shows it.
+    ///
+    /// ```
+    /// use whetstone_core::Change;
+    ///
+    /// let change = Change::new(
+    ///     "Retry failed payments\nonce\n\nA declined card is tried again.".to_owned(),
+    ///     Vec::new(),
+    ///     String::new(),
+    ///     Vec::new(),
+    /// );
+    ///
+    /// assert_eq!(change.summary(), "Retry failed payments once");
+    /// ```
     #[must_use]
-    pub fn summary(&self) -> &str {
-        self.message.lines().next().unwrap_or_default()
+    pub fn summary(&self) -> Cow<'_, str> {
+        let mut paragraph = self
+            .message
+            .lines()
+            .map(str::trim)
+            .skip_while(|line| line.is_empty())
+            .take_while(|line| !line.is_empty());
+        let first = paragraph.next().unwrap_or_default();
+        match paragraph.next() {
+            None => Cow::Borrowed(first),
+            Some(second) => Cow::Owned(
+                [first, second]
+                    .into_iter()
+                    .chain(paragraph)
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            ),
+        }
     }
 
     /// Where the change comes from.
@@ -439,5 +496,30 @@ impl TouchedFile {
             | Versions::Renamed { after, .. } => Some(after),
             Versions::Deleted { .. } => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_change_debugs_its_lengths_never_its_message_diff_or_file_text() {
+        let change = Change::new(
+            "Configure the token".to_owned(),
+            Vec::new(),
+            "+TOKEN=hunter2\n".to_owned(),
+            vec![TouchedFile::created(
+                ".env".to_owned(),
+                FileContent::Text("TOKEN=hunter2\n".to_owned()),
+            )],
+        );
+
+        let debug = format!("{change:?}");
+
+        assert!(!debug.contains("Configure"), "{debug}");
+        assert!(!debug.contains("hunter2"), "{debug}");
+        assert!(debug.contains("message_bytes: 19"), "{debug}");
+        assert!(debug.contains(".env"), "{debug}");
     }
 }

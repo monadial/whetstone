@@ -529,8 +529,8 @@ impl Viewer {
                 if details.spans.is_empty() {
                     return Text::from(row);
                 }
-                if row.width() + DETAIL_GAP + details.width() <= usize::from(width) {
-                    row.push_span(" ".repeat(DETAIL_GAP));
+                if row.width() + columns::GAP + details.width() <= usize::from(width) {
+                    row.push_span(" ".repeat(columns::GAP));
                     row.spans.extend(details.spans);
                     return Text::from(row);
                 }
@@ -560,7 +560,11 @@ impl Viewer {
             .map(|file| {
                 let details = file_details(file, Style::new()).width();
                 Theme::control_width(file.path(), ControlKind::Choice { selected: true })
-                    + if details > 0 { DETAIL_GAP + details } else { 0 }
+                    + if details > 0 {
+                        columns::GAP + details
+                    } else {
+                        0
+                    }
             })
             .max()
             .unwrap_or_default()
@@ -593,17 +597,13 @@ impl Viewer {
     }
 }
 
-/// The cells between a touched file's path and its details, and between
-/// those.
-const DETAIL_GAP: usize = 2;
-
 /// What the Files pane shows of a touched file, as one line of text for a
 /// search to look through: its path, then its details.
 fn file_text(file: &TouchedFile) -> String {
     let mut text = file.path().to_owned();
     let details = file_details(file, Style::new());
     if !details.spans.is_empty() {
-        text.push_str(&" ".repeat(DETAIL_GAP));
+        text.push_str(&" ".repeat(columns::GAP));
         text.extend(details.spans.iter().map(|span| span.content.as_ref()));
     }
     text
@@ -624,7 +624,7 @@ fn file_details(file: &TouchedFile, muted: Style) -> Line<'_> {
         .map(|content| Kind::of(content).word);
     if let Some(kind) = kind {
         if !details.spans.is_empty() {
-            details.push_span(" ".repeat(DETAIL_GAP));
+            details.push_span(" ".repeat(columns::GAP));
         }
         details.push_span(Span::styled(kind, muted));
     }
@@ -759,7 +759,7 @@ impl View for Viewer {
         // with. A commit's summary follows its short ID.
         let (summary, aside) = match self.change.origin() {
             Origin::Showcase { .. } => (
-                self.change.summary().to_owned(),
+                self.change.summary().into_owned(),
                 context.showcase.area_names(&self.change).join(", "),
             ),
             Origin::Commit { id, comparison } => (
@@ -770,7 +770,7 @@ impl View for Viewer {
         let mut title = Line::from(Span::styled(summary, theme.title));
         let aside_column = usize::from(parts.title.width)
             .saturating_sub(Line::raw(&aside).width())
-            .max(title.width() + 2);
+            .max(title.width() + columns::GAP);
         columns::pad_to(&mut title, aside_column);
         title.push_span(Span::styled(aside, theme.muted));
         frame.render_widget(Paragraph::new(title), parts.title);
@@ -825,18 +825,22 @@ const UNREADABLE_ACTIONS: &[Action] = &[Action {
 /// one whose files are missing from a partial clone: which commit, and why.
 #[derive(Debug)]
 pub(crate) struct Unreadable {
+    /// Where it was opened: the viewer or the outbound review of the
+    /// commit.
+    route: Route,
     id: CommitId,
     /// Why it cannot be read, as gix says.
     problem: String,
 }
 
 impl Unreadable {
-    /// The screen for the commit `id`, which cannot be read because of
-    /// `error`.
-    pub(crate) fn new(id: CommitId, error: &LoadError) -> Self {
+    /// The screen at `route` for the commit `id`, which cannot be read
+    /// because of `error`.
+    pub(crate) fn new(route: Route, id: CommitId, error: &LoadError) -> Self {
         use std::error::Error as _;
 
         Self {
+            route,
             id,
             problem: error
                 .source()
@@ -847,7 +851,7 @@ impl Unreadable {
 
 impl View for Unreadable {
     fn route(&self) -> Route {
-        Route::Viewer(ChangeRef::Commit(self.id))
+        self.route
     }
 
     fn name(&self) -> &'static str {

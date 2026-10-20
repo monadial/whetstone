@@ -51,10 +51,17 @@ const SHOW_CURSOR: &str = "\x1b[?25h";
 struct Transcript(String);
 
 /// Starts the script in a pseudo-terminal. `env` is the whole environment
-/// besides `PATH` and `TERM`, so the real home directory is never used.
+/// besides `PATH` and `TERM`, so the real home directory is never used, and
+/// the script starts in its `HOME`, outside any repository, so the one the
+/// tests run in is never opened.
 fn start(launch: &str, env: &[(&str, &Path)]) -> PtySession {
+    let home = env
+        .iter()
+        .find_map(|(name, dir)| (*name == "HOME").then_some(*dir))
+        .expect("every session has a temporary HOME");
     let mut command = Command::new("sh");
     command
+        .current_dir(home)
         .args(["-c", &script(launch)])
         .env_clear()
         .env("PATH", std::env::var_os("PATH").expect("PATH is set"))

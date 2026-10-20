@@ -195,14 +195,20 @@ impl DefaultExclusion {
     }
 }
 
-impl DefaultExclusionKind {
-    /// Why a file of this kind is left out, as the outbound review shows it.
-    #[must_use]
-    pub fn reason(self) -> &'static str {
-        match self {
+/// Why a file of this kind is left out, as the outbound review shows it:
+///
+/// ```
+/// use whetstone_core::DefaultExclusionKind;
+///
+/// assert_eq!(DefaultExclusionKind::Lockfile.to_string(), "lockfile");
+/// assert_eq!(DefaultExclusionKind::SecretPath.to_string(), "common secret path");
+/// ```
+impl fmt::Display for DefaultExclusionKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
             Self::Lockfile => "lockfile",
             Self::SecretPath => "common secret path",
-        }
+        })
     }
 }
 
@@ -744,10 +750,14 @@ mod tests {
 
     #[test]
     fn each_default_exclusion_gives_the_reason_the_review_shows() {
-        let reason = |path| DefaultExclusion::of(path).map(|exclusion| exclusion.kind().reason());
+        let reason =
+            |path| DefaultExclusion::of(path).map(|exclusion| exclusion.kind().to_string());
 
-        assert_eq!(reason("Cargo.lock"), Some("lockfile"));
-        assert_eq!(reason(".env.example"), Some("common secret path"));
+        assert_eq!(reason("Cargo.lock").as_deref(), Some("lockfile"));
+        assert_eq!(
+            reason(".env.example").as_deref(),
+            Some("common secret path")
+        );
     }
 
     fn problem(text: &str) -> ExcludePatternProblem {

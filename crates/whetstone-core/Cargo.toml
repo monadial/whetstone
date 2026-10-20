@@ -12,9 +12,10 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
-# Secret rules and exclude patterns compile to regular expressions. Every
-# pattern is ASCII, so the Unicode tables are left out to keep the binary
-# small; `perf` keeps scanning a 400 KB change fast.
+# Secret rules and exclude patterns compile to regular expressions. None
+# needs a Unicode class or case table (an exclude pattern's literal text may
+# be any UTF-8), so the tables are left out to keep the binary small; `perf`
+# keeps scanning a 400 KB change fast.
 regex = { version = "1.13", default-features = false, features = ["std", "perf"] }
 # Each module that can fail has its own error type (CODING_STANDARDS.md rule 13).
 thiserror = "2"

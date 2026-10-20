@@ -29,7 +29,7 @@ use crate::keymap::{self, Binding, Command, Keymap, Press};
 use crate::palette::Action;
 use crate::reader::{Reader, Section};
 use crate::theme::{ColorSupport, ControlKind, ControlState, Theme};
-use crate::view::{Context, Reading, Route, View, comparison_label};
+use crate::view::{ARRIVES_WITH_JEV, Context, Reading, Route, View, comparison_label};
 
 /// The review's own keys.
 const KEYMAP: Keymap = &[
@@ -72,14 +72,10 @@ const DISCLAIMER: &str =
     "Whetstone checks for common secret formats and can't guarantee there are none.";
 /// Said over the limit.
 const TOO_LARGE: &str = "This change is too large to practise on.";
-/// Why Send cannot be used even when everything else is ready.
-const ARRIVES_WITH_JEV: &str = "arrives with Jev";
 
 /// In front of a line that belongs to the controls above it, as wide as the
 /// focus marker.
 const INDENT: &str = "  ";
-/// The cells between columns, at least.
-const COLUMN_GAP: usize = 2;
 /// What the size column shows for a file with no content.
 const NO_SIZE: &str = "–";
 /// Bytes in a kilobyte, as the limit counts them.
@@ -294,8 +290,8 @@ impl OutboundReview {
     fn document(&self, theme: &Theme, width: u16) -> Document<'static> {
         let width = usize::from(width);
         let mut doc = Document::default();
-        self.destination(theme, width, &mut doc);
-        self.change(theme, width, &mut doc);
+        self.destination_rows(theme, width, &mut doc);
+        self.change_rows(theme, width, &mut doc);
         let heading = doc.lines.len();
         doc.push(Line::styled("Files", theme.muted));
         self.file_rows(theme, width, &mut doc, heading);
@@ -310,7 +306,7 @@ impl OutboundReview {
 
     /// The title, then where the evidence goes, how it is routed, and what
     /// one approval covers.
-    fn destination(&self, theme: &Theme, width: usize, doc: &mut Document<'static>) {
+    fn destination_rows(&self, theme: &Theme, width: usize, doc: &mut Document<'static>) {
         doc.push(Line::styled(TITLE, theme.title));
         doc.blank();
         for text in [self.destination.as_str(), ROUTING] {
@@ -324,28 +320,42 @@ impl OutboundReview {
         doc.blank();
     }
 
-    /// The change: its short ID and summary, its message's other lines as
-    /// they are sent, and what of the commit is not sent.
-    fn change(&self, theme: &Theme, width: usize, doc: &mut Document<'static>) {
+    /// The change: its short ID and summary, the summary wrapped under
+    /// itself so that it shows whole, its message's other lines as they are
+    /// sent, and what of the commit is not sent.
+    fn change_rows(&self, theme: &Theme, width: usize, doc: &mut Document<'static>) {
         doc.push(Line::styled("Change", theme.muted));
         let mut lines = self.evidence.message().lines();
         let summary = lines.next().unwrap_or_default();
         let label = comparison_label(self.comparison());
+        let short = self.id.short();
+        // Where the summary starts, past the focus marker and the short ID.
+        let lead =
+            Theme::control_width("", ControlKind::Action) + Line::raw(short).width() + columns::GAP;
+        let mut summary_lines = columns::wrap(
+            summary,
+            width
+                .saturating_sub(lead)
+                .saturating_sub(label.map_or(0, |label| columns::GAP + Line::raw(label).width())),
+        )
+        .into_iter();
         let mut row = theme.control(
-            columns::truncate(
-                &format!("{}  {summary}", self.id.short()),
-                width
-                    .saturating_sub(Theme::control_width("", ControlKind::Action))
-                    .saturating_sub(label.map_or(0, |label| COLUMN_GAP + Line::raw(label).width())),
+            format!(
+                "{short}{}{}",
+                " ".repeat(columns::GAP),
+                summary_lines.next().unwrap_or_default()
             ),
             self.state(Control::Change),
         );
         if let Some(label) = label {
-            row.push_span(" ".repeat(COLUMN_GAP));
+            row.push_span(" ".repeat(columns::GAP));
             row.push_span(Span::styled(label, theme.muted));
         }
         // Focus on the change shows the review from the top.
         doc.control(row, 0);
+        for line in summary_lines {
+            doc.push(Line::raw(format!("{}{line}", " ".repeat(lead))));
+        }
         for line in lines {
             if line.trim().is_empty() {
                 doc.blank();
@@ -472,7 +482,7 @@ impl OutboundReview {
             .map(|(path, _, _)| Line::raw(path.as_str()).width())
             .max()
             .unwrap_or_default()
-            .min(width.saturating_sub(marker + 2 * COLUMN_GAP + size_width + status_width));
+            .min(width.saturating_sub(marker + 2 * columns::GAP + size_width + status_width));
         for (index, (file, (path, size, status))) in files.iter().zip(rows).enumerate() {
             let focused = self.focused() == Control::File(file.index());
             let mut row = theme.control(
@@ -482,9 +492,9 @@ impl OutboundReview {
                     ..ControlState::default()
                 },
             );
-            columns::pad_to(&mut row, marker + path_width + COLUMN_GAP);
+            columns::pad_to(&mut row, marker + path_width + columns::GAP);
             row.push_span(format!("{size:>size_width$}"));
-            row.push_span(" ".repeat(COLUMN_GAP));
+            row.push_span(" ".repeat(columns::GAP));
             row.push_span(status);
             doc.control(row, if index == 0 { heading } else { doc.lines.len() });
         }

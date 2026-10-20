@@ -374,7 +374,7 @@ struct AreaFile {
 
 /// The area files in `dir`: every entry whose name ends in `.md`, with its
 /// contents, or why they could not be read, as for a symlink to nothing or
-/// a directory. None if there is no such directory.
+/// a directory. Empty if there is no such directory.
 fn read_area_files(dir: &Path) -> io::Result<Vec<AreaFile>> {
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,

@@ -41,7 +41,7 @@ pub(crate) enum HistoryEnd {
 }
 
 /// A commit as the picker lists it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) struct Commit {
     id: CommitId,
     /// The commit message's subject, as `git log --oneline` shows it.
@@ -49,6 +49,17 @@ pub(crate) struct Commit {
     /// The whole commit message, for searching.
     message: String,
     availability: Availability,
+}
+
+/// Shows the message's length, never its text, which may hold a secret.
+impl fmt::Debug for Commit {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Commit")
+            .field("id", &self.id)
+            .field("message_bytes", &self.message.len())
+            .field("availability", &self.availability)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Whether a commit can be opened, and what it is compared with if it can.

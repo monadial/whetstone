@@ -398,6 +398,28 @@ fn review_what_will_be_sent_also_waits_for_an_area() {
 }
 
 #[test]
+fn with_no_valid_area_file_the_picker_says_so_rather_than_ask_for_an_area() {
+    let repo = payments();
+    repo.write(
+        ".whetstone/areas/Privacy.md",
+        area_file("Privacy", "What is kept"),
+    )
+    .write(".whetstone/areas/notes.md", "Look at the notes.\n");
+    let mut session = started_in(repo.root(), 80, 24);
+
+    session.press("<Enter> j j <Space>");
+
+    assert_eq!(
+        session.row_with(AREAS),
+        "Areas the questions focus on: no area file is valid"
+    );
+    assert_eq!(
+        session.row_with(REVIEW),
+        "Review what will be sent (no area file is valid)"
+    );
+}
+
+#[test]
 fn home_inside_a_repository_at_120x32() {
     let repo = payments();
     let session = started_in(repo.root(), 120, 32);
@@ -592,6 +614,11 @@ fn with_history() -> TestRepo {
 #[test]
 fn the_picker_lists_the_commits_reachable_from_head_newest_first_with_short_ids_and_summaries() {
     let repo = with_history();
+    // A commit on a branch that HEAD does not reach.
+    repo.git(&["switch", "--quiet", "--create", "drafts"]);
+    repo.write("DRAFT.md", "Not merged.\n");
+    repo.commit("Draft an unmerged idea");
+    repo.git(&["switch", "--quiet", "-"]);
     let mut session = started_in(repo.root(), 120, 32);
 
     session.press("<Enter>");

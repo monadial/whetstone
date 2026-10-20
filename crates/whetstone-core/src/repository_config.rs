@@ -12,6 +12,7 @@
 //! repository's config can only add exclusions.
 
 use crate::exclusion::{ExcludePatternError, ExcludePatterns};
+use crate::toml_error;
 
 /// A repository's Whetstone config.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -63,15 +64,8 @@ impl RepositoryConfig {
     pub fn parse(contents: &[u8]) -> Result<Self, RepositoryConfigError> {
         let text = str::from_utf8(contents).map_err(|_| RepositoryConfigError::NotUtf8)?;
         let table: toml::Table = text.parse().map_err(|error: toml::de::Error| {
-            let start = error.span().map_or(0, |span| span.start);
-            RepositoryConfigError::Toml {
-                line: 1 + text
-                    .bytes()
-                    .take(start)
-                    .filter(|&byte| byte == b'\n')
-                    .count(),
-                message: error.message().trim().to_owned(),
-            }
+            let (line, message) = toml_error::line_and_message(text, &error);
+            RepositoryConfigError::Toml { line, message }
         })?;
         if let Some(key) = table.keys().find(|key| key.as_str() != "exclude") {
             return Err(RepositoryConfigError::UnknownKey(key.clone()));

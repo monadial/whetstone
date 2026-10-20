@@ -52,6 +52,20 @@ multiple-versions = "warn"
 wildcards = "deny"
 allow-wildcard-paths = true
 
+# The Git library only reads the learner's repository and never talks to a
+# remote (#29): none of its network client features may be turned on.
+[[bans.features]]
+crate = "gix"
+deny = ["async-network-client", "blocking-network-client"]
+
+[[bans.features]]
+crate = "gix-protocol"
+deny = ["async-client", "blocking-client", "fetch", "handshake"]
+
+[[bans.features]]
+crate = "gix-transport"
+deny = ["async-client", "blocking-client", "http-client"]
+
 [sources]
 # Only crates.io. A git dependency (for example a pinned Rig revision) needs an
 # `allow-git` entry here, reviewed in its own PR.

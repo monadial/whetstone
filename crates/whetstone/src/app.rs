@@ -30,7 +30,7 @@ use crate::view::{Context, Route, View};
 pub struct App {
     theme: Theme,
     settings: Settings,
-    /// The project Practice runs on.
+    /// The showcase project.
     showcase: ShowcaseProject,
     /// The learner's repository as opened at startup, or why Practice on it
     /// is unavailable.

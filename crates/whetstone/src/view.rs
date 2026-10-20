@@ -132,6 +132,10 @@ impl ChangeIndex {
     }
 }
 
+/// Why Practice cannot go on to the AI step yet: neither "Generate
+/// questions" nor the outbound review's Send can be used.
+pub(crate) const ARRIVES_WITH_JEV: &str = "arrives with Jev";
+
 /// What a commit's row in the picker and its title in the viewer say about
 /// what it was compared with, unless it was simply its parent.
 pub(crate) fn comparison_label(comparison: Comparison) -> Option<&'static str> {
@@ -171,7 +175,7 @@ impl Route {
                     repository.expect("only the repository's picker opens one of its commits");
                 match repository.load(id) {
                     Ok(change) => Box::new(Viewer::new(at, change)),
-                    Err(error) => Box::new(Unreadable::new(id, &error)),
+                    Err(error) => Box::new(Unreadable::new(self, id, &error)),
                 }
             }
             Self::OutboundReview(_) | Self::Read(_) => return None,

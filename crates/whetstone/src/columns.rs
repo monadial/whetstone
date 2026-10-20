@@ -3,15 +3,18 @@
 use ratatui::text::Line;
 use unicode_segmentation::UnicodeSegmentation as _;
 
-/// The width in cells of the widest of `texts`, plus a two-cell gap: where
-/// the next column starts.
+/// The cells between two columns, at least.
+pub(crate) const GAP: usize = 2;
+
+/// The width in cells of the widest of `texts`, plus the gap: where the
+/// next column starts.
 pub(crate) fn next_column<'a>(texts: impl IntoIterator<Item = &'a str>) -> usize {
     texts
         .into_iter()
         .map(|text| Line::raw(text).width())
         .max()
         .unwrap_or_default()
-        + 2
+        + GAP
 }
 
 /// Pads `line` with spaces until it is `width` cells wide, so whatever is

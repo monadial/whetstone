@@ -2,6 +2,8 @@
 //! change, a file or an area, under a title, in sections that scroll
 //! together. Code is numbered, so a line the review names can be found.
 
+use std::fmt;
+
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span, Text};
@@ -32,11 +34,22 @@ const ACTIONS: &[Action] = &[Action {
 }];
 
 /// One part of what the reader shows: a heading, and the text under it.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(crate) struct Section {
     heading: String,
     text: String,
     numbering: Numbering,
+}
+
+/// Shows the text's length, never the text, which may hold a secret.
+impl fmt::Debug for Section {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Section")
+            .field("heading", &self.heading)
+            .field("text_bytes", &self.text.len())
+            .field("numbering", &self.numbering)
+            .finish()
+    }
 }
 
 /// Whether a section's lines are numbered.

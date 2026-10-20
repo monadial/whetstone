@@ -31,10 +31,10 @@ fn rewrites() -> gix::diff::Rewrites {
     }
 }
 
-/// One side of a touched file: where it is, what kind of entry, its object
-/// and what it holds.
+/// The tree entry on one side of a touched file: where it is, what kind of
+/// entry, its object and what it holds.
 #[derive(Debug)]
-struct Side {
+struct Entry {
     path: String,
     kind: EntryKind,
     id: gix::ObjectId,
@@ -146,7 +146,7 @@ fn side(
     location: &gix::bstr::BString,
     mode: gix::object::tree::EntryMode,
     id: gix::ObjectId,
-) -> Result<Option<Side>, LoadError> {
+) -> Result<Option<Entry>, LoadError> {
     let kind = mode.kind();
     let content = match kind {
         EntryKind::Tree => return Ok(None),
@@ -158,7 +158,7 @@ fn side(
             FileContent::from_bytes(git.find_blob(id)?.take_data())
         }
     };
-    Ok(Some(Side {
+    Ok(Some(Entry {
         path: location.to_str_lossy().into_owned(),
         kind,
         id,
@@ -170,8 +170,8 @@ fn side(
 /// object IDs shortened to `short_len` digits. `None` if neither side is a
 /// file.
 fn touched_file(
-    before: Option<Side>,
-    after: Option<Side>,
+    before: Option<Entry>,
+    after: Option<Entry>,
     short_len: usize,
 ) -> Option<(TouchedFile, String)> {
     let diff = file_diff(before.as_ref(), after.as_ref(), short_len);
@@ -218,7 +218,7 @@ fn mode(kind: EntryKind) -> &'static str {
 /// and submodules and symlinks show no content. Unlike Git, a hunk header
 /// names no function, a rename gives no similarity index, and paths are
 /// never quoted.
-fn file_diff(before: Option<&Side>, after: Option<&Side>, short_len: usize) -> String {
+fn file_diff(before: Option<&Entry>, after: Option<&Entry>, short_len: usize) -> String {
     let (Some(old), Some(new)) = (before.or(after), after.or(before)) else {
         return String::new();
     };
@@ -238,7 +238,7 @@ fn file_diff(before: Option<&Side>, after: Option<&Side>, short_len: usize) -> S
     if old.path != new.path {
         write!(out, "rename from {}\nrename to {}\n", old.path, new.path).expect(INFALLIBLE);
     }
-    let object = |side: Option<&Side>| {
+    let object = |side: Option<&Entry>| {
         side.map_or_else(
             || "0".repeat(short_len),
             |side| side.id.to_hex_with_len(short_len).to_string(),
@@ -252,13 +252,13 @@ fn file_diff(before: Option<&Side>, after: Option<&Side>, short_len: usize) -> S
         write!(out, " {}", mode(new.kind)).expect(INFALLIBLE);
     }
     out.push('\n');
-    let label = |prefix: &str, side: Option<&Side>| {
+    let label = |prefix: &str, side: Option<&Entry>| {
         side.map_or_else(
             || "/dev/null".to_owned(),
             |side| format!("{prefix}/{}", side.path),
         )
     };
-    let binary = |side: Option<&Side>| {
+    let binary = |side: Option<&Entry>| {
         side.is_some_and(|side| matches!(side.content, FileContent::Binary { .. }))
     };
     match (text_of(before), text_of(after)) {
@@ -288,7 +288,7 @@ fn file_diff(before: Option<&Side>, after: Option<&Side>, short_len: usize) -> S
 
 /// The text of `side`, empty if there is no such side, or `None` if it is
 /// not text.
-fn text_of(side: Option<&Side>) -> Option<&str> {
+fn text_of(side: Option<&Entry>) -> Option<&str> {
     side.map_or(Some(""), |side| side.content.text())
 }
 

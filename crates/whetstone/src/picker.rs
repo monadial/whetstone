@@ -22,7 +22,9 @@ use crate::palette::Action;
 use crate::repository::{Availability, Commit, History, HistoryEnd, HistoryError, Repository};
 use crate::search::{self, Query};
 use crate::theme::{ControlKind, ControlState, Theme};
-use crate::view::{ChangeIndex, ChangeRef, Context, Project, Route, View, comparison_label};
+use crate::view::{
+    ARRIVES_WITH_JEV, ChangeIndex, ChangeRef, Context, Project, Route, View, comparison_label,
+};
 use crate::viewer::Unreadable;
 
 /// Space on the picker: it makes a choice.
@@ -223,6 +225,14 @@ impl Picker {
         self.areas.contains(&AreaChoice::Valid { selected: true })
     }
 
+    /// Whether any area can be selected: a repository whose area files are
+    /// all invalid offers none.
+    fn offers_an_area(&self) -> bool {
+        self.areas
+            .iter()
+            .any(|area| matches!(area, AreaChoice::Valid { .. }))
+    }
+
     /// The areas the picker offers, each valid or an invalid area file.
     fn offered<'a>(&self, context: &Context<'a>) -> Vec<Result<&'a Area, &'a InvalidAreaFile>> {
         match self.source {
@@ -266,11 +276,11 @@ impl Picker {
         let width = usize::from(width);
         // Past the widest name, but leaving descriptions half of the row.
         let column =
-            (rows.iter().map(Line::width).max().unwrap_or_default() + COLUMN_GAP).min(width / 2);
+            (rows.iter().map(Line::width).max().unwrap_or_default() + columns::GAP).min(width / 2);
         rows.into_iter()
             .zip(offered)
             .map(|(mut line, area)| {
-                let start = column.max(line.width() + COLUMN_GAP);
+                let start = column.max(line.width() + columns::GAP);
                 match area {
                     Ok(area) => {
                         columns::pad_to(&mut line, start);
@@ -496,10 +506,11 @@ impl Picker {
     /// The control after the lists, and why it is disabled, if it is.
     fn proceed(&self) -> (&'static str, Option<&'static str>) {
         match self.source {
-            Source::Showcase { .. } => ("Generate questions", Some(GENERATE_QUESTIONS_UNAVAILABLE)),
+            Source::Showcase { .. } => ("Generate questions", Some(ARRIVES_WITH_JEV)),
             Source::Repository { .. } => (
                 "Review what will be sent",
                 match (self.chosen.is_some(), self.has_area()) {
+                    _ if !self.offers_an_area() => Some(NO_VALID_AREA),
                     (true, true) => None,
                     (true, false) => Some("choose an area"),
                     (false, true) => Some("choose a change"),
@@ -525,7 +536,7 @@ fn commit_row<'a>(theme: &Theme, commit: &Commit, state: ControlState<'a>, width
             None,
         ),
     };
-    let label_width = label.map_or(0, |label| COLUMN_GAP + Line::raw(label).width());
+    let label_width = label.map_or(0, |label| columns::GAP + Line::raw(label).width());
     // Past the focus and choice markers, and why it is disabled.
     let room = usize::from(width)
         .saturating_sub(Theme::control_width("", state.kind))
@@ -538,7 +549,7 @@ fn commit_row<'a>(theme: &Theme, commit: &Commit, state: ControlState<'a>, width
     let text = format!("{}  {}", commit.id().short(), commit.summary());
     let mut line = theme.control(columns::truncate(&text, room), state);
     if let Some(label) = label {
-        line.push_span(" ".repeat(COLUMN_GAP));
+        line.push_span(" ".repeat(columns::GAP));
         line.push_span(Span::styled(label, theme.muted));
     }
     line
@@ -594,7 +605,7 @@ fn showcase_rows<'a>(
     let areas_width = |areas: &str| Line::raw(areas).width();
     let end = rows
         .iter()
-        .map(|(line, areas)| line.width() + COLUMN_GAP + areas_width(areas))
+        .map(|(line, areas)| line.width() + columns::GAP + areas_width(areas))
         .max()
         .unwrap_or_default()
         .min(usize::from(width));
@@ -602,7 +613,7 @@ fn showcase_rows<'a>(
         .map(|(mut line, areas)| {
             let column = end
                 .saturating_sub(areas_width(&areas))
-                .max(line.width() + COLUMN_GAP);
+                .max(line.width() + columns::GAP);
             columns::pad_to(&mut line, column);
             line.push_span(Span::styled(areas, context.theme.muted));
             line
@@ -619,16 +630,12 @@ const AREA_HEADING: &str = "Areas the questions focus on";
 /// The heading above the changes.
 const CHANGE_HEADING: &str = "Change to practice on";
 
+/// Why Practice cannot start where every area file is invalid.
+const NO_VALID_AREA: &str = "no area file is valid";
+
 /// Why a commit whose parent is missing, as at a shallow clone's boundary,
 /// cannot be chosen.
 const PARENT_MISSING: &str = "parent not in this clone";
-
-/// Why "Generate questions" cannot be used yet.
-const GENERATE_QUESTIONS_UNAVAILABLE: &str = "arrives with Jev";
-
-/// The cells between an area's name and its description, and between a
-/// change's summary and its areas, at least.
-const COLUMN_GAP: usize = 2;
 
 /// Where the picker's parts go, top to bottom.
 #[derive(Debug)]
@@ -759,7 +766,7 @@ impl View for Picker {
         let choices = self.kept_choices(id)?;
         let change = match repository.load(id) {
             Ok(change) => change,
-            Err(error) => return Some(Box::new(Unreadable::new(id, &error))),
+            Err(error) => return Some(Box::new(Unreadable::new(route, id, &error))),
         };
         let areas = repository
             .areas()
@@ -853,8 +860,10 @@ impl View for Picker {
         // Practice needs one area or more.
         let area_heading = if self.has_area() {
             AREA_HEADING.to_owned()
-        } else {
+        } else if self.offers_an_area() {
             format!("{AREA_HEADING}: choose at least one")
+        } else {
+            format!("{AREA_HEADING}: {NO_VALID_AREA}")
         };
         frame.render_widget(
             Paragraph::new(Line::styled(area_heading, theme.muted)),
