@@ -630,7 +630,7 @@ fn enter_on_a_file_reads_exactly_what_is_sent_for_it_its_diff_and_full_content()
     );
 
     session.press("q");
-    assert_eq!(session.rows()[1].trim(), "Review what will be sent");
+    assert_eq!(session.rows()[4].trim(), "Review what will be sent");
     assert_eq!(files(&session)[0], ["src/retry.rs", "1 KB", "included"]);
     assert!(session.row_with("src/retry.rs").starts_with("> "));
 }
@@ -776,7 +776,7 @@ fn the_destination_names_the_models_the_learners_settings_choose() {
     session.press(REVIEW_NEWEST);
 
     assert_eq!(
-        session.rows()[3].trim(),
+        session.rows()[6].trim(),
         "Sends to OpenRouter · Jev: typesafe/jev-1.13 · Generator: openai/gpt-6"
     );
 }
@@ -797,7 +797,7 @@ fn review_choices_survive_going_back_to_the_picker_and_reset_for_another_commit(
 
     // Choose the first commit, then the newest again, and review it.
     session.press("q k <Space> k <Space> j j <Enter>");
-    assert_eq!(session.rows()[1].trim(), "Review what will be sent");
+    assert_eq!(session.rows()[4].trim(), "Review what will be sent");
     assert_eq!(statuses(&session)[0], "left out: possible secret path");
     assert_eq!(statuses(&session)[6], "included");
 }
@@ -863,7 +863,7 @@ fn browsing_commits_and_reviewing_one_writes_nothing() {
     // Review it: bring back `.env` and read it, read an area, mark a
     // match, leave a file out, then go back and review it again.
     session.press("j j <Enter>");
-    assert_eq!(session.rows()[1].trim(), "Review what will be sent");
+    assert_eq!(session.rows()[5].trim(), "Review what will be sent");
     session.press("j <Space> <Enter> G q j j j <Enter> q k k k k <S-Tab> k k <Space> k <Space>");
     session.press("q <Enter> <Enter> q q q q");
     drop(session);
@@ -1013,7 +1013,7 @@ fn at_80x24_the_review_scrolls_to_keep_the_focused_control_and_its_heading_in_vi
     let repo = for_snapshots();
     let mut session = started_in(repo.root(), 80, 24);
     session.press(REVIEW_NEWEST);
-    assert_eq!(session.rows()[1].trim(), "Review what will be sent");
+    assert_eq!(session.rows()[5].trim(), "Review what will be sent");
 
     session.press("<S-Tab>");
     let rows: Vec<String> = session
@@ -1038,7 +1038,7 @@ fn at_80x24_the_review_scrolls_to_keep_the_focused_control_and_its_heading_in_vi
     assert!(session.rows()[2].trim().starts_with("> .env.example"));
 
     session.press("k");
-    assert_eq!(session.rows()[1].trim(), "Review what will be sent");
+    assert_eq!(session.rows()[5].trim(), "Review what will be sent");
 }
 
 #[test]

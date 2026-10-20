@@ -722,7 +722,7 @@ fn review_what_will_be_sent_opens_the_outbound_review_and_q_returns_to_the_picke
     let picker = session.text();
 
     assert_eq!(session.press("<Enter>"), Flow::Continue);
-    assert_eq!(session.rows()[1].trim(), REVIEW);
+    assert_eq!(session.rows()[4].trim(), REVIEW);
 
     session.press("q");
     assert_eq!(session.text(), picker);

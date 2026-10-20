@@ -535,7 +535,7 @@ fn choices_on_connected_code_survive_going_back_to_the_same_commit_and_reset_for
 
     // Choose the first commit, then the newest again, and review it.
     session.press("q k <Space> k <Space> j j <Enter>");
-    assert_eq!(session.rows()[1].trim(), "Review what will be sent");
+    assert_eq!(session.rows()[4].trim(), "Review what will be sent");
     session.settle();
     assert_eq!(connected_rows(&session), SUB_CONNECTED);
 }

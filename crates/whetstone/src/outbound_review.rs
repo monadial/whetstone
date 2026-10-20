@@ -10,7 +10,8 @@
 //! Opening it starts a background job that finds the change's connected
 //! code. The review is usable meanwhile, and the evidence is built again
 //! when the job's result arrives, if it is the result this review waits
-//! for, for this commit (rule 24).
+//! for, for this commit (rule 24). The row of stages at its top shows
+//! finding connected code as current until then.
 
 use std::cell::RefCell;
 use std::mem;
@@ -37,6 +38,7 @@ use crate::job::{JobId, JobOutput, Jobs};
 use crate::keymap::{self, Binding, Command, Keymap, Press};
 use crate::palette::Action;
 use crate::reader::{Reader, Section};
+use crate::stage_row::{PracticeStage, Stage, StageRow, StageState};
 use crate::theme::{ColorSupport, ControlKind, ControlState, Theme};
 use crate::view::{ARRIVES_WITH_JEV, Context, Reading, Route, View, comparison_label};
 
@@ -397,10 +399,13 @@ impl OutboundReview {
     }
 
     /// The review laid out `width` cells wide, drawn with `theme`, its
-    /// sections in order.
-    fn document(&self, theme: &Theme, width: u16) -> Document<'static> {
-        let width = usize::from(width);
+    /// sections in order under the stage row, whose spinner is at its frame
+    /// for `ticks`.
+    fn document(&self, theme: &Theme, ticks: usize, width: u16) -> Document<'static> {
         let mut doc = Document::default();
+        doc.lines.extend(self.stage_row(theme, ticks).lines(width));
+        doc.blank();
+        let width = usize::from(width);
         self.destination_rows(theme, width, &mut doc);
         self.change_rows(theme, width, &mut doc);
         let heading = doc.lines.len();
@@ -413,6 +418,44 @@ impl OutboundReview {
         self.secret_check(theme, width, &mut doc);
         self.size_and_send(theme, width, &mut doc);
         doc
+    }
+
+    /// Practice's stages as the review stands, drawn with `theme`: the
+    /// change is read, and connected code is found, or isn't available,
+    /// before the evidence is prepared and the outbound review is where
+    /// Practice is. The spinner moves with `ticks` only while connected code
+    /// is found, and stands still on the outbound review.
+    fn stage_row(&self, theme: &Theme, ticks: usize) -> StageRow<'static> {
+        let finding = match self.evidence.connections_state() {
+            ConnectionsState::Finding => StageState::Current,
+            ConnectionsState::Found | ConnectionsState::NoneFound => StageState::Done,
+            ConnectionsState::TookTooLong | ConnectionsState::AnalysisFailed => StageState::Skipped,
+        };
+        let stages = PracticeStage::ALL.map(|stage| Stage {
+            label: stage.label(),
+            state: match stage {
+                PracticeStage::FindingConnectedCode => finding,
+                PracticeStage::PreparingEvidence | PracticeStage::OutboundReview
+                    if finding == StageState::Current =>
+                {
+                    StageState::Upcoming
+                }
+                PracticeStage::ReadingTheChange | PracticeStage::PreparingEvidence => {
+                    StageState::Done
+                }
+                PracticeStage::OutboundReview => StageState::Current,
+                // Jev and the generator arrive with the AI Practice spec.
+                PracticeStage::CheckingAreas
+                | PracticeStage::WritingQuestions
+                | PracticeStage::ReviewingQuestions => StageState::Upcoming,
+            },
+        });
+        let tick = if finding == StageState::Current {
+            ticks
+        } else {
+            0
+        };
+        StageRow::new(stages, tick, theme)
     }
 
     /// The title, then where the evidence goes, how it is routed, and what
@@ -1000,14 +1043,14 @@ impl View for OutboundReview {
                 None
             }
         };
-        // Styles do not change the layout.
-        let doc = self.document(&Theme::new(ColorSupport::NoColor), area.width);
+        // Styles and the spinner's frame do not change the layout.
+        let doc = self.document(&Theme::new(ColorSupport::NoColor), 0, area.width);
         self.top = self.scrolled(&doc, area);
         next
     }
 
     fn render(&self, context: &Context<'_>, frame: &mut Frame<'_>, area: Rect) {
-        let doc = self.document(context.theme, area.width);
+        let doc = self.document(context.theme, context.ticks, area.width);
         let top = self.scrolled(&doc, area);
         let lines: Vec<Line<'_>> = doc
             .lines

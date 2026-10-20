@@ -58,6 +58,9 @@ pub struct App {
     viewport: Option<Size>,
     /// The background jobs the app started.
     jobs: Jobs<JobOutput>,
+    /// How many times the UI loop has ticked, which moves a spinner while a
+    /// job runs.
+    ticks: usize,
     /// Where connected code is analysed.
     analysis: AnalysisDirs,
     /// Removes the analysis directories still in use when the app drops,
@@ -191,6 +194,7 @@ impl App {
             pending: keymap::Pending::default(),
             viewport: None,
             jobs: Jobs::new(),
+            ticks: 0,
             _analysis_guard: analysis.guard(),
             analysis,
         }
@@ -217,7 +221,11 @@ impl App {
                 self.apply_job(finished);
                 Flow::Continue
             }
-            Message::Terminal(_) | Message::Tick => Flow::Continue,
+            Message::Tick => {
+                self.ticks = self.ticks.wrapping_add(1);
+                Flow::Continue
+            }
+            Message::Terminal(_) => Flow::Continue,
         }
     }
 
@@ -325,6 +333,7 @@ impl App {
                     showcase: &self.showcase,
                     repository: self.repository.as_ref(),
                     analysis: &self.analysis,
+                    ticks: self.ticks,
                 };
                 self.screens.go(route, &context, &mut self.jobs);
             }
@@ -357,6 +366,7 @@ impl App {
             showcase: &self.showcase,
             repository: self.repository.as_ref(),
             analysis: &self.analysis,
+            ticks: self.ticks,
         };
         screen.render(&context, frame, body);
         // While a text entry has focus, the keys that work everywhere type.
