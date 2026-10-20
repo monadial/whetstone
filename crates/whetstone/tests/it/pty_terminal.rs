@@ -27,7 +27,7 @@ sh -c 'echo $$ > "$HOME/pid"; exec "$WHETSTONE"'"#;
 
 /// Runs a debug build of `whetstone` with its crash trigger set, so it
 /// panics right after its first draw.
-const LAUNCH_AND_CRASH: &str = r#"WHETSTONE_CRASH_AFTER_FIRST_DRAW=1 "$WHETSTONE""#;
+pub(super) const LAUNCH_AND_CRASH: &str = r#"WHETSTONE_CRASH_AFTER_FIRST_DRAW=1 "$WHETSTONE""#;
 
 #[test]
 fn below_50x12_the_notice_shows_and_growing_back_brings_the_screen_back() {
@@ -181,7 +181,7 @@ fn a_real_panic_restores_the_terminal_before_the_panic_message_prints() {
 /// while running, which clears the flag at once, but the crash trigger fires
 /// before the first poll, so the flag waits for the shell's next read. It is
 /// the kernel's, not a setting Whetstone changes or restores.
-fn without_pending_input(transcript: &str) -> Transcript {
+pub(super) fn without_pending_input(transcript: &str) -> Transcript {
     Transcript(transcript.replace(" pendin ", " -pendin "))
 }
 
