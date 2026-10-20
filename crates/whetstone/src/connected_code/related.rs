@@ -1,6 +1,13 @@
 //! Related tests and related configuration: the files at a change's commit
 //! that conventionally test or build its touched files, found from the
 //! commit's paths alone, then sent whole as [`connections`] read from it.
+//!
+//! The conventions are data, not code: `conventions.toml`, embedded, says
+//! which files are which language ecosystem's, which manifests build them
+//! and where their tests are. This module applies them, so adding a
+//! language means editing only that file.
+
+mod conventions;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::iter;
@@ -10,6 +17,8 @@ use whetstone_core::{
 };
 
 use super::{Failure, FileKind, Snapshot};
+
+use conventions::{Conventions, Ecosystem, Location};
 
 /// The related tests and related configuration of `change` at the commit
 /// `snapshot` shows, as [`find`] finds them: each a whole-file connection
@@ -133,18 +142,17 @@ impl RelatedGroup {
 
 /// Finds the related tests and related configuration for a change's
 /// `touched` files, from every file path in the `tree` at the change's
-/// commit. Paths are relative to the repository's root and `/`-separated.
+/// commit, by the conventions Whetstone embeds, which `conventions.toml`
+/// sets out by language ecosystem. Paths are relative to the repository's
+/// root and `/`-separated.
 ///
-/// - **Related tests:** a touched file's tests by the naming convention of
-///   the ecosystem its extension picks: Rust, Go, Python, JavaScript and
-///   TypeScript, Java and Kotlin, Ruby, or Elixir. A touched file that is
-///   itself a test, by the same conventions, has none.
+/// - **Related tests:** a touched file's tests by the test rules of the
+///   ecosystem its extension picks. A touched file that is itself a test,
+///   by the same ecosystem's conventions, has none.
 /// - **Related configuration:** a touched file's nearest build manifest,
 ///   walking up to the repository's root. Of several manifests in one
-///   directory, one that builds the touched file's ecosystem comes first,
-///   then the first of `Cargo.toml`, `package.json`, `go.mod`,
-///   `pyproject.toml`, `setup.cfg`, `pom.xml`, `build.gradle`,
-///   `build.gradle.kts`, `Gemfile`, `mix.exs` and `composer.json`.
+///   directory, one of the touched file's own ecosystem comes first, then
+///   the first in the conventions' order.
 /// - A file related to several touched files is one entry that relates to
 ///   all of them. The entries are in path order.
 /// - A touched file is never related: it is in the evidence already. A
@@ -155,18 +163,27 @@ pub(crate) fn find<'a>(
     tree: impl IntoIterator<Item = &'a str>,
     touched: &[TouchedFile],
 ) -> Vec<RelatedFile> {
+    find_by(Conventions::embedded(), tree, touched)
+}
+
+/// [`find`], by `conventions`.
+fn find_by<'a>(
+    conventions: &Conventions,
+    tree: impl IntoIterator<Item = &'a str>,
+    touched: &[TouchedFile],
+) -> Vec<RelatedFile> {
     let tree = Tree::new(tree);
     let mut found: BTreeMap<(String, RelatedGroup), BTreeSet<&str>> = BTreeMap::new();
     for file in touched.iter().filter(|file| file.after().is_some()) {
         let path = file.path();
-        let source = Source::parse(path);
+        let source = Source::parse(path, conventions);
         for test in tree.tests_for(&source) {
             found
                 .entry((test, RelatedGroup::Test))
                 .or_default()
                 .insert(path);
         }
-        if let Some(manifest) = tree.nearest_manifest(&source) {
+        if let Some(manifest) = tree.nearest_manifest(conventions, &source) {
             found
                 .entry((manifest, RelatedGroup::Configuration))
                 .or_default()
@@ -193,17 +210,18 @@ struct Source<'a> {
     /// Its file name without the last extension.
     stem: &'a str,
     /// The ecosystem its extension picks, if any.
-    ecosystem: Option<Ecosystem>,
+    ecosystem: Option<&'a Ecosystem>,
 }
 
 impl<'a> Source<'a> {
-    /// The touched file at `path`, taken apart.
-    fn parse(path: &'a str) -> Self {
+    /// The touched file at `path`, taken apart, with the ecosystem its
+    /// extension picks in `conventions`.
+    fn parse(path: &'a str, conventions: &'a Conventions) -> Self {
         let (dir, name) = split(path);
         let (stem, ecosystem) = match name.rsplit_once('.') {
             // A leading dot starts a hidden file's name, not an extension.
             Some((stem, extension)) if !stem.is_empty() => {
-                (stem, Ecosystem::by_extension(extension))
+                (stem, conventions.by_extension(extension))
             }
             _ => (name, None),
         };
@@ -214,64 +232,6 @@ impl<'a> Source<'a> {
         }
     }
 }
-
-/// A language's ecosystem, which decides a source file's test conventions
-/// and which manifest it prefers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Ecosystem {
-    /// Rust.
-    Rust,
-    /// Go.
-    Go,
-    /// Python.
-    Python,
-    /// JavaScript and TypeScript.
-    Script,
-    /// Java and Kotlin.
-    Jvm,
-    /// Ruby.
-    Ruby,
-    /// Elixir.
-    Elixir,
-    /// PHP, which has a manifest but no test convention here.
-    Php,
-}
-
-impl Ecosystem {
-    /// The ecosystem of a source file with `extension`, if it is one's.
-    fn by_extension(extension: &str) -> Option<Self> {
-        match extension {
-            "rs" => Some(Self::Rust),
-            "go" => Some(Self::Go),
-            "py" => Some(Self::Python),
-            "java" | "kt" => Some(Self::Jvm),
-            "rb" => Some(Self::Ruby),
-            "ex" => Some(Self::Elixir),
-            "php" => Some(Self::Php),
-            _ if SCRIPT_EXTENSIONS.contains(&extension) => Some(Self::Script),
-            _ => None,
-        }
-    }
-}
-
-/// The build manifests, by file name, with the ecosystem each builds, in
-/// order of preference when one directory has several.
-const MANIFESTS: [(&str, Ecosystem); 11] = [
-    ("Cargo.toml", Ecosystem::Rust),
-    ("package.json", Ecosystem::Script),
-    ("go.mod", Ecosystem::Go),
-    ("pyproject.toml", Ecosystem::Python),
-    ("setup.cfg", Ecosystem::Python),
-    ("pom.xml", Ecosystem::Jvm),
-    ("build.gradle", Ecosystem::Jvm),
-    ("build.gradle.kts", Ecosystem::Jvm),
-    ("Gemfile", Ecosystem::Ruby),
-    ("mix.exs", Ecosystem::Elixir),
-    ("composer.json", Ecosystem::Php),
-];
-
-/// The extensions of JavaScript and TypeScript files.
-const SCRIPT_EXTENSIONS: [&str; 8] = ["js", "jsx", "mjs", "cjs", "ts", "tsx", "mts", "cts"];
 
 /// The file paths in the tree at the change's commit.
 #[derive(Debug)]
@@ -299,155 +259,115 @@ impl<'a> Tree<'a> {
         self.paths.contains(path.as_str()).then_some(path)
     }
 
-    /// The manifest in the nearest directory to `source` that has one,
-    /// walking up to the repository's root. Of several in that directory,
-    /// one that builds the source's ecosystem comes first, then the first
-    /// in [`MANIFESTS`].
-    fn nearest_manifest(&self, source: &Source<'_>) -> Option<String> {
+    /// The manifest in the nearest directory to `source` that has one of
+    /// the manifests in `conventions`, walking up to the repository's root.
+    /// Of several in that directory, one of the source's own ecosystem comes
+    /// first, then the first in the conventions' order.
+    fn nearest_manifest(&self, conventions: &Conventions, source: &Source<'_>) -> Option<String> {
         ancestors(source.dir).find_map(|dir| {
-            MANIFESTS
-                .iter()
-                .filter_map(|&(name, builds)| Some((self.file(dir, name)?, builds)))
+            conventions
+                .manifests()
+                .filter_map(|name| Some((self.file(dir, name)?, name)))
                 // The first of the smallest keys wins: the ecosystem's own,
                 // else the first listed.
-                .min_by_key(|&(_, builds)| Some(builds) != source.ecosystem)
+                .min_by_key(|&(_, name)| {
+                    !source
+                        .ecosystem
+                        .is_some_and(|ecosystem| ecosystem.builds_with(name))
+                })
                 .map(|(manifest, _)| manifest)
         })
     }
 
-    /// The related tests for `source`, by its ecosystem's conventions. A
-    /// source that is itself a test, by the same conventions, has none.
+    /// The related tests for `source`, by its ecosystem's test rules. A
+    /// source that is itself a test, by the same ecosystem, has none.
     fn tests_for(&self, source: &Source<'_>) -> Vec<String> {
-        let Source {
-            dir,
-            stem,
-            ecosystem,
-        } = *source;
-        match ecosystem {
-            Some(Ecosystem::Rust) => self.rust_tests(dir, stem),
-            Some(Ecosystem::Go) => self.go_tests(dir, stem),
-            Some(Ecosystem::Python) => self.python_tests(dir, stem),
-            Some(Ecosystem::Script) => self.script_tests(dir, stem),
-            Some(Ecosystem::Jvm) => self.jvm_tests(dir, stem),
-            Some(Ecosystem::Ruby) => self.ruby_tests(dir, stem),
-            Some(Ecosystem::Elixir) => self.elixir_tests(dir, stem),
-            Some(Ecosystem::Php) | None => Vec::new(),
-        }
-    }
-
-    /// `tests/s.rs` beside the nearest `Cargo.toml`. Everything in that
-    /// `tests/` directory is a test itself.
-    fn rust_tests(&self, dir: &str, stem: &str) -> Vec<String> {
-        let Some(package) =
-            ancestors(dir).find(|package| self.file(package, "Cargo.toml").is_some())
-        else {
+        let Some(ecosystem) = source.ecosystem else {
             return Vec::new();
         };
-        let tests_dir = join(package, "tests");
-        if ancestors(dir).any(|ancestor| ancestor == tests_dir) {
+        if self.is_test(ecosystem, source.dir, source.stem) {
             return Vec::new();
         }
-        self.file(&tests_dir, &format!("{stem}.rs"))
-            .into_iter()
-            .collect()
-    }
-
-    /// `s_test.go` in the same directory.
-    fn go_tests(&self, dir: &str, stem: &str) -> Vec<String> {
-        if stem.ends_with("_test") {
-            return Vec::new();
-        }
-        self.file(dir, &format!("{stem}_test.go"))
-            .into_iter()
-            .collect()
-    }
-
-    /// `test_s.py` or `s_test.py`, in the same directory or anywhere under a
-    /// `tests/` or `test/` directory of an ancestor.
-    fn python_tests(&self, dir: &str, stem: &str) -> Vec<String> {
-        if stem.starts_with("test_") || stem.ends_with("_test") {
-            return Vec::new();
-        }
-        [format!("test_{stem}.py"), format!("{stem}_test.py")]
+        ecosystem
+            .tests
             .iter()
-            .flat_map(|name| {
-                let mut tests = self.under_test_dirs(dir, name, &["tests", "test"]);
-                tests.extend(self.file(dir, name));
-                tests
+            .flat_map(|rule| {
+                rule.names
+                    .iter()
+                    .flat_map(|name| name.expand(source.stem, &ecosystem.extensions))
+                    .flat_map(|name| self.files_in(&rule.look_in, ecosystem, source.dir, &name))
             })
             .collect()
     }
 
-    /// `s.test.*` or `s.spec.*` in the same directory, or `__tests__/s.*`,
-    /// which is also `s.test.*` or `s.spec.*` there, with any script
-    /// extension. Everything under a `__tests__` directory is a test itself.
-    fn script_tests(&self, dir: &str, stem: &str) -> Vec<String> {
-        if matches!(stem.rsplit_once('.'), Some((_, "test" | "spec")))
-            || ancestors(dir).any(|ancestor| split(ancestor).1 == "__tests__")
-        {
-            return Vec::new();
-        }
-        let tests_dir = join(dir, "__tests__");
-        SCRIPT_EXTENSIONS
-            .iter()
-            .flat_map(|extension| {
-                [
-                    self.file(dir, &format!("{stem}.test.{extension}")),
-                    self.file(dir, &format!("{stem}.spec.{extension}")),
-                    self.file(&tests_dir, &format!("{stem}.{extension}")),
-                    self.file(&tests_dir, &format!("{stem}.test.{extension}")),
-                    self.file(&tests_dir, &format!("{stem}.spec.{extension}")),
-                ]
+    /// Whether a file of `ecosystem` in `dir` with `stem` is a test itself.
+    fn is_test(&self, ecosystem: &Ecosystem, dir: &str, stem: &str) -> bool {
+        let is_test = &ecosystem.is_test;
+        let beside_manifest = || {
+            self.package(ecosystem, dir).is_some_and(|package| {
+                is_test.under_dir_beside_manifest.iter().any(|tests| {
+                    let tests_dir = join(package, tests);
+                    ancestors(dir).any(|ancestor| ancestor == tests_dir)
+                })
             })
-            .flatten()
+        };
+        is_test
+            .stem_starts_with
+            .iter()
+            .any(|start| stem.starts_with(start.as_str()))
+            || is_test
+                .stem_ends_with
+                .iter()
+                .any(|end| stem.ends_with(end.as_str()))
+            || ancestors(dir).any(|ancestor| {
+                is_test
+                    .under_dir
+                    .iter()
+                    .any(|name| name == split(ancestor).1)
+            })
+            || beside_manifest()
+    }
+
+    /// The files called `name` in `location`, for a file of `ecosystem` in
+    /// `dir`.
+    fn files_in(
+        &self,
+        location: &Location,
+        ecosystem: &Ecosystem,
+        dir: &str,
+        name: &str,
+    ) -> Vec<String> {
+        let in_dir = match location {
+            Location::SameDir => Some(dir.to_owned()),
+            Location::Subdir(subdir) => Some(join(dir, subdir)),
+            Location::BesideManifest(beside) => self
+                .package(ecosystem, dir)
+                .map(|package| join(package, beside)),
+            Location::UnderAncestorDir(test_dirs) => {
+                return self.under_test_dirs(dir, name, test_dirs);
+            }
+            Location::Mirror { from, to } => mirror(dir, from, to),
+        };
+        in_dir
+            .and_then(|in_dir| self.file(&in_dir, name))
+            .into_iter()
             .collect()
     }
 
-    /// `STest`, `STests`, `TestS` or `SIT`, in Java or Kotlin, at the path
-    /// under `src/test/` that matches the source's path under `src/main/`.
-    /// Only a source under `src/main/` has tests, so a test, under
-    /// `src/test/`, has none.
-    fn jvm_tests(&self, dir: &str, stem: &str) -> Vec<String> {
-        let mut parts: Vec<&str> = dir.split('/').collect();
-        let Some(source_set) = parts.windows(2).rposition(|pair| pair == ["src", "main"]) else {
-            return Vec::new();
-        };
-        parts[source_set + 1] = "test";
-        let tests_dir = parts.join("/");
-        [
-            format!("{stem}Test"),
-            format!("{stem}Tests"),
-            format!("Test{stem}"),
-            format!("{stem}IT"),
-        ]
-        .iter()
-        .flat_map(|name| {
-            ["java", "kt"].map(|extension| self.file(&tests_dir, &format!("{name}.{extension}")))
+    /// The nearest directory to `dir`, walking up to the repository's root,
+    /// that has one of `ecosystem`'s manifests.
+    fn package<'d>(&self, ecosystem: &Ecosystem, dir: &'d str) -> Option<&'d str> {
+        ancestors(dir).find(|package| {
+            ecosystem
+                .manifests
+                .iter()
+                .any(|manifest| self.file(package, manifest).is_some())
         })
-        .flatten()
-        .collect()
-    }
-
-    /// `s_spec.rb` anywhere under a `spec/` directory of an ancestor, or
-    /// `s_test.rb` anywhere under a `test/` one.
-    fn ruby_tests(&self, dir: &str, stem: &str) -> Vec<String> {
-        if stem.ends_with("_spec") || stem.ends_with("_test") {
-            return Vec::new();
-        }
-        let mut tests = self.under_test_dirs(dir, &format!("{stem}_spec.rb"), &["spec"]);
-        tests.extend(self.under_test_dirs(dir, &format!("{stem}_test.rb"), &["test"]));
-        tests
-    }
-
-    /// `s_test.exs` anywhere under a `test/` directory of an ancestor. A
-    /// test is a script, `.exs`, so it is never a source.
-    fn elixir_tests(&self, dir: &str, stem: &str) -> Vec<String> {
-        self.under_test_dirs(dir, &format!("{stem}_test.exs"), &["test"])
     }
 
     /// The files called `name` anywhere under a directory called one of
     /// `test_dirs` that is in `dir` or in a directory above it.
-    fn under_test_dirs(&self, dir: &str, name: &str, test_dirs: &[&str]) -> Vec<String> {
+    fn under_test_dirs(&self, dir: &str, name: &str, test_dirs: &[String]) -> Vec<String> {
         self.by_name
             .get(name)
             .into_iter()
@@ -455,13 +375,33 @@ impl<'a> Tree<'a> {
             .filter(|path| {
                 ancestors(split(path).0).any(|found_in| {
                     let (parent, dir_name) = split(found_in);
-                    test_dirs.contains(&dir_name)
+                    test_dirs.iter().any(|test_dir| test_dir == dir_name)
                         && ancestors(dir).any(|ancestor| ancestor == parent)
                 })
             })
             .map(|path| (*path).to_owned())
             .collect()
     }
+}
+
+/// `dir` with the last `from` in its path replaced by `to`, if it has one.
+/// Both are `/`-separated and matched by whole segments.
+fn mirror(dir: &str, from: &str, to: &str) -> Option<String> {
+    let parts: Vec<&str> = dir.split('/').collect();
+    let from: Vec<&str> = from.split('/').collect();
+    let at = parts
+        .windows(from.len())
+        .rposition(|window| window == from.as_slice())?;
+    let (before, after) = parts.split_at(at);
+    Some(
+        before
+            .iter()
+            .copied()
+            .chain(to.split('/'))
+            .chain(after.iter().skip(from.len()).copied())
+            .collect::<Vec<_>>()
+            .join("/"),
+    )
 }
 
 /// `dir`, then each directory above it, up to the repository's root, `""`.

@@ -1,0 +1,153 @@
+# The conventions that find a change's related tests and related
+# configuration, by language ecosystem. Whetstone embeds this file and reads
+# it once, the first time a change needs it; a test checks it is valid, so a
+# mistake here fails CI rather than a learner's review.
+#
+# To add a language, add an `[[ecosystem]]` table below. No code changes.
+#
+# Each ecosystem has:
+#
+# - `name`: what error messages call it.
+# - `extensions`: the file extensions, without the dot, that make a touched
+#   file one of this ecosystem's. The extension is what follows the last dot
+#   in the file name, compared exactly. Two ecosystems never share one.
+# - `manifests`: the file names of its build manifests, if any. A touched
+#   file's related configuration is the manifest in the nearest directory
+#   that has one, walking up to the repository's root. When that directory
+#   has several, one of the touched file's own ecosystem comes first, then
+#   the first in this file's order: ecosystem by ecosystem, top to bottom,
+#   and each ecosystem's `manifests` left to right. A file of no ecosystem
+#   gets the first in that order. Two ecosystems never list the same one.
+# - `tests`: its test rules, if any. A rule looks for files named one of its
+#   `names` in one place, `look_in`. A touched file's related tests are what
+#   every rule finds.
+# - `is_test`: how to tell that a touched file is a test itself, if it can
+#   be told. A touched test has no related tests of its own. Leave it out if
+#   the rules can never find a test for a test.
+#
+# A test name is a file name with placeholders:
+#
+# - `{stem}` is the touched file's name without its extension. Every test
+#   name has it.
+# - `{ext}` is each of the ecosystem's `extensions` in turn, so one name with
+#   it is one name per extension.
+#
+# `look_in` is one of:
+#
+# - `"same_dir"`: the touched file's directory.
+# - `{ subdir = "d" }`: the directory `d` inside the touched file's
+#   directory.
+# - `{ beside_manifest = "d" }`: the directory `d` beside the nearest of the
+#   ecosystem's own manifests, walking up from the touched file.
+# - `{ under_ancestor_dir = ["d", ...] }`: anywhere, at any depth, under a
+#   directory called one of these that is in the touched file's directory or
+#   a directory above it.
+# - `{ mirror = { from = "a/b", to = "a/c" } }`: the touched file's
+#   directory with the last `from` in its path replaced by `to`. Only a
+#   touched file under `from` gets tests from this rule.
+#
+# `is_test` has any of:
+#
+# - `stem_starts_with = [...]`, `stem_ends_with = [...]`: the touched file's
+#   stem starts or ends with one of these.
+# - `under_dir = [...]`: it is anywhere under a directory called one of
+#   these.
+# - `under_dir_beside_manifest = [...]`: it is anywhere under a directory
+#   called one of these beside the nearest of the ecosystem's own manifests.
+#
+# A directory name is one path segment: not empty, no `/`. `mirror`'s `from`
+# and `to` may have several segments.
+
+[[ecosystem]]
+name = "Rust"
+extensions = ["rs"]
+manifests = ["Cargo.toml"]
+# Cargo builds everything in a package's `tests/` directory as test code.
+is_test.under_dir_beside_manifest = ["tests"]
+
+[[ecosystem.tests]]
+names = ["{stem}.rs"]
+look_in = { beside_manifest = "tests" }
+
+[[ecosystem]]
+name = "JavaScript and TypeScript"
+extensions = ["js", "jsx", "mjs", "cjs", "ts", "tsx", "mts", "cts"]
+manifests = ["package.json"]
+# Jest treats everything under a `__tests__` directory as a test.
+is_test.stem_ends_with = [".test", ".spec"]
+is_test.under_dir = ["__tests__"]
+
+[[ecosystem.tests]]
+names = ["{stem}.test.{ext}", "{stem}.spec.{ext}"]
+look_in = "same_dir"
+
+[[ecosystem.tests]]
+names = ["{stem}.{ext}", "{stem}.test.{ext}", "{stem}.spec.{ext}"]
+look_in = { subdir = "__tests__" }
+
+[[ecosystem]]
+name = "Go"
+extensions = ["go"]
+manifests = ["go.mod"]
+is_test.stem_ends_with = ["_test"]
+
+[[ecosystem.tests]]
+names = ["{stem}_test.go"]
+look_in = "same_dir"
+
+[[ecosystem]]
+name = "Python"
+extensions = ["py"]
+manifests = ["pyproject.toml", "setup.cfg"]
+is_test.stem_starts_with = ["test_"]
+is_test.stem_ends_with = ["_test"]
+
+[[ecosystem.tests]]
+names = ["test_{stem}.py", "{stem}_test.py"]
+look_in = "same_dir"
+
+[[ecosystem.tests]]
+names = ["test_{stem}.py", "{stem}_test.py"]
+look_in = { under_ancestor_dir = ["tests", "test"] }
+
+[[ecosystem]]
+name = "Java and Kotlin"
+extensions = ["java", "kt"]
+manifests = ["pom.xml", "build.gradle", "build.gradle.kts"]
+# Only a source under `src/main/` has tests, so a test, under `src/test/`,
+# never does: no `is_test` needed.
+
+[[ecosystem.tests]]
+names = ["{stem}Test.{ext}", "{stem}Tests.{ext}", "Test{stem}.{ext}", "{stem}IT.{ext}"]
+look_in = { mirror = { from = "src/main", to = "src/test" } }
+
+[[ecosystem]]
+name = "Ruby"
+extensions = ["rb"]
+manifests = ["Gemfile"]
+is_test.stem_ends_with = ["_spec", "_test"]
+
+[[ecosystem.tests]]
+names = ["{stem}_spec.rb"]
+look_in = { under_ancestor_dir = ["spec"] }
+
+[[ecosystem.tests]]
+names = ["{stem}_test.rb"]
+look_in = { under_ancestor_dir = ["test"] }
+
+[[ecosystem]]
+name = "Elixir"
+# A test is an `.exs` script, which is not one of these, so it is never a
+# touched source: no `is_test` needed.
+extensions = ["ex"]
+manifests = ["mix.exs"]
+
+[[ecosystem.tests]]
+names = ["{stem}_test.exs"]
+look_in = { under_ancestor_dir = ["test"] }
+
+[[ecosystem]]
+name = "PHP"
+# No test convention: PHP files only prefer `composer.json`.
+extensions = ["php"]
+manifests = ["composer.json"]
