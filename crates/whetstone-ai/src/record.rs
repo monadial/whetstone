@@ -21,10 +21,12 @@ use tokio_util::sync::CancellationToken;
 use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
 use crate::replay::{API, SampleQuestion, sample_generator_request, sample_jev_request};
-use crate::samples::{area, candidate, evidence, generator_model, jev_model, observability};
+use crate::samples::{
+    REASONING, area, candidate, evidence, generator_model, jev_model, observability, question,
+};
 use crate::{
-    AiError, CandidatesOutput, GeneratorRequest, OpenRouter, SecretString, Timeouts,
-    candidates_request, gate_request, question_check_request,
+    AiError, CandidatesOutput, GeneratorRequest, OpenRouter, QuestionWithoutKey, SecretString,
+    Timeouts, candidates_request, gate_request, question_check_request, reasoning_request,
 };
 
 const UPSTREAM: &str = "https://openrouter.ai";
@@ -222,6 +224,26 @@ async fn record_gate() {
     assert!(reply.is_ok());
 }
 
+#[tokio::test]
+#[ignore = "calls OpenRouter with the maintainer's key"]
+async fn record_reasoning() {
+    let (_server, connection) = recording("reasoning", "/systemone", &live_key()).await;
+    let question = question();
+    let request = reasoning_request(
+        &jev_model(),
+        &evidence(),
+        QuestionWithoutKey::from(&question),
+        REASONING,
+    );
+
+    let reply = connection
+        .evaluate(&request, &CancellationToken::new())
+        .await;
+
+    println!("{reply:#?}");
+    assert!(reply.is_ok());
+}
+
 /// The recorded fixtures are JSON, so a failed recording can't save
 /// something else unnoticed.
 #[test]
@@ -235,6 +257,7 @@ fn recorded_fixtures_are_json() {
         "candidates",
         "question-check",
         "gate",
+        "reasoning",
     ] {
         let text = std::fs::read_to_string(fixture(name)).expect("the fixture exists");
         serde_json::from_str::<Value>(&text).expect("the fixture is JSON");

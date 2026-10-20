@@ -17,7 +17,8 @@
 //! whetstone-core's domain and these requests: [`gate_request`] and
 //! [`gate_answers`] ask the relevance gate, [`candidates_request`] and
 //! [`CandidatesOutput`] write candidates, and [`question_check_request`] and
-//! [`question_check_answers`] check one. Their instructions are Whetstone's
+//! [`question_check_answers`] check one, and [`reasoning_request`] and
+//! [`reasoning_answers`] assess a response's reasoning. Their instructions are Whetstone's
 //! base prompts, bundled into this crate, whose version is
 //! [`base_prompts_version`]. Evidence goes out only as the learner approved
 //! it, and area prompts only to the generator.
@@ -35,6 +36,7 @@ mod generator;
 mod jev;
 mod prompts;
 mod question_check;
+mod reasoning;
 #[cfg(test)]
 mod record;
 #[cfg(test)]
@@ -53,6 +55,7 @@ pub use crate::generator::{GeneratorReply, GeneratorRequest};
 pub use crate::jev::{JevAnswer, JevQuestion, JevReply, JevRequest, YesNoMeanings};
 pub use crate::prompts::base_prompts_version;
 pub use crate::question_check::{question_check_answers, question_check_request};
+pub use crate::reasoning::{QuestionWithoutKey, reasoning_answers, reasoning_request};
 pub use crate::usage::Usage;
 /// The key's type, re-exported so that callers need no `secrecy` dependency.
 pub use secrecy::SecretString;
