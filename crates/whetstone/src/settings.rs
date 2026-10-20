@@ -8,6 +8,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{List, Paragraph, Wrap};
+use whetstone_core::ConnectedCodeLimitKb;
 
 use crate::columns;
 use crate::config::{
@@ -38,24 +39,27 @@ enum Control {
     GeneratorModel,
     OpenRouterKey,
     Colours,
+    ConnectedCodeLimit,
     Back,
 }
 
 impl Control {
-    const ALL: [Self; 6] = [
+    const ALL: [Self; 7] = [
         Self::Provider,
         Self::JevModel,
         Self::GeneratorModel,
         Self::OpenRouterKey,
         Self::Colours,
+        Self::ConnectedCodeLimit,
         Self::Back,
     ];
-    const ROWS: [Self; 5] = [
+    const ROWS: [Self; 6] = [
         Self::Provider,
         Self::JevModel,
         Self::GeneratorModel,
         Self::OpenRouterKey,
         Self::Colours,
+        Self::ConnectedCodeLimit,
     ];
 
     fn label(self) -> &'static str {
@@ -65,6 +69,7 @@ impl Control {
             Self::GeneratorModel => "Generator model",
             Self::OpenRouterKey => "OpenRouter key",
             Self::Colours => "Colours",
+            Self::ConnectedCodeLimit => "Connected code limit",
             Self::Back => "Back",
         }
     }
@@ -92,6 +97,7 @@ impl Control {
                 };
                 (value, default_note)
             }
+            Self::ConnectedCodeLimit => shown(&settings.connected_code_limit),
             Self::Back => (String::new(), None),
         }
     }
@@ -133,6 +139,13 @@ impl Control {
                      it reports, as over SSH, or less when colours look wrong. {no_color}"
                 )
             }
+            Self::ConnectedCodeLimit => format!(
+                "How much connected code Practice adds to the evidence: what the change calls, \
+                 what calls it, and the files it links to or names. From 0 to 400 KB, and 0 \
+                 sends none; related tests and configuration still apply. A repository's \
+                 .whetstone/config.toml can lower it, never raise it. The default is {}.",
+                ConnectedCodeLimitKb::DEFAULT
+            ),
             Self::Back => "Back to home.".to_owned(),
         }
     }
@@ -155,6 +168,10 @@ impl Control {
             Self::Colours => Some(format!(
                 "In config.toml: colours = \"{}\"",
                 settings.colours.value
+            )),
+            Self::ConnectedCodeLimit => Some(format!(
+                "In config.toml: connected_code_limit_kb = {}",
+                settings.connected_code_limit.value.get()
             )),
             Self::Back => None,
         }

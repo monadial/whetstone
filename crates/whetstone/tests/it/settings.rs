@@ -1,6 +1,6 @@
 //! Settings: read-only, it shows the provider, the Jev model, the generator
-//! model and the colours from the global config, and whether
-//! `OPENROUTER_API_KEY` is set, never its value.
+//! model, the colours and the connected code limit from the global config,
+//! and whether `OPENROUTER_API_KEY` is set, never its value.
 
 use whetstone::Flow;
 
@@ -33,23 +33,27 @@ fn without_a_config_file_settings_shows_the_defaults_and_says_so() {
     );
     assert_eq!(
         session.row_with("Provider"),
-        "> Provider         OpenRouter (default)"
+        "> Provider              OpenRouter (default)"
     );
     assert_eq!(
         session.row_with("Jev model"),
-        "Jev model        typesafe/jev-1.14 (default)"
+        "Jev model             typesafe/jev-1.14 (default)"
     );
     assert_eq!(
         session.row_with("Generator model"),
-        "Generator model  anthropic/claude-sonnet-5.5 (default)"
+        "Generator model       anthropic/claude-sonnet-5.5 (default)"
     );
     assert_eq!(
         session.row_with("OpenRouter key"),
-        "OpenRouter key   not set (OPENROUTER_API_KEY)"
+        "OpenRouter key        not set (OPENROUTER_API_KEY)"
     );
     assert_eq!(
         session.row_with("Colours"),
-        "Colours          auto (16 detected) (default)"
+        "Colours               auto (16 detected) (default)"
+    );
+    assert_eq!(
+        session.row_with("Connected code limit"),
+        "Connected code limit  100 KB (default)"
     );
 }
 
@@ -85,6 +89,7 @@ fn settings_without_config_or_key_at_80x24() {
 const FULL_CONFIG: &str = r#"
 provider = "openrouter"
 colours = "24-bit"
+connected_code_limit_kb = 250
 
 [jev]
 model = "typesafe/jev-1.13"
@@ -117,17 +122,21 @@ fn with_a_config_file_settings_shows_its_values_and_where_they_come_from() {
     );
     assert_eq!(
         session.row_with("Provider"),
-        "> Provider         OpenRouter"
+        "> Provider              OpenRouter"
     );
     assert_eq!(
         session.row_with("Jev model"),
-        "Jev model        typesafe/jev-1.13"
+        "Jev model             typesafe/jev-1.13"
     );
     assert_eq!(
         session.row_with("Generator model"),
-        "Generator model  anthropic/claude-opus-5.5"
+        "Generator model       anthropic/claude-opus-5.5"
     );
-    assert_eq!(session.row_with("Colours"), "Colours          24-bit");
+    assert_eq!(session.row_with("Colours"), "Colours               24-bit");
+    assert_eq!(
+        session.row_with("Connected code limit"),
+        "Connected code limit  250 KB"
+    );
 }
 
 #[test]
@@ -144,19 +153,23 @@ fn settings_names_the_default_for_whatever_the_config_file_leaves_out() {
 
     assert_eq!(
         session.row_with("Provider"),
-        "> Provider         OpenRouter (default)"
+        "> Provider              OpenRouter (default)"
     );
     assert_eq!(
         session.row_with("Jev model"),
-        "Jev model        typesafe/jev-1.14 (default)"
+        "Jev model             typesafe/jev-1.14 (default)"
     );
     assert_eq!(
         session.row_with("Generator model"),
-        "Generator model  anthropic/claude-haiku-5.5"
+        "Generator model       anthropic/claude-haiku-5.5"
     );
     assert_eq!(
         session.row_with("Colours"),
-        "Colours          auto (16 detected) (default)"
+        "Colours               auto (16 detected) (default)"
+    );
+    assert_eq!(
+        session.row_with("Connected code limit"),
+        "Connected code limit  100 KB (default)"
     );
 }
 
@@ -173,10 +186,10 @@ fn with_the_key_set_settings_says_so_and_never_shows_its_value() {
 
     assert_eq!(
         session.row_with("OpenRouter key"),
-        "OpenRouter key   set (OPENROUTER_API_KEY)"
+        "OpenRouter key        set (OPENROUTER_API_KEY)"
     );
     // Not on any control, nor in key help or the palette over Settings.
-    for keys in ["j", "j", "j", "j", "?", "<Esc> :"] {
+    for keys in ["j", "j", "j", "j", "j", "?", "<Esc> :"] {
         session.press(keys);
         assert!(!session.text().contains(SECRET), "{}", session.text());
         assert!(!session.text().contains("sk-or"), "{}", session.text());
@@ -196,7 +209,7 @@ fn an_empty_key_variable_counts_as_not_set() {
 
     assert_eq!(
         session.row_with("OpenRouter key"),
-        "OpenRouter key   not set (OPENROUTER_API_KEY)"
+        "OpenRouter key        not set (OPENROUTER_API_KEY)"
     );
 }
 
@@ -257,7 +270,7 @@ fn the_colours_row_shows_a_level_the_config_file_sets() {
         // What the terminal reports makes no difference.
         assert_eq!(
             colours_row(Some(&config), &[("COLORTERM", "truecolor")]),
-            format!("Colours          {shown}"),
+            format!("Colours               {shown}"),
             "{config:?}"
         );
     }
@@ -274,12 +287,12 @@ fn with_colours_auto_the_row_shows_the_level_detected() {
     ] {
         assert_eq!(
             colours_row(None, variables),
-            format!("Colours          auto ({detected} detected) (default)"),
+            format!("Colours               auto ({detected} detected) (default)"),
             "with {variables:?}"
         );
         assert_eq!(
             colours_row(Some("colours = \"auto\"\n"), variables),
-            format!("Colours          auto ({detected} detected)"),
+            format!("Colours               auto ({detected} detected)"),
             "set in the config file, with {variables:?}"
         );
     }
@@ -390,4 +403,93 @@ fn settings_with_colours_focused_at_80x24() {
     let session = colours_focused(Some("colours = \"none\"\n"), &[], 80, 24);
 
     insta::assert_debug_snapshot!("settings_with_colours_focused_80x24", session.frame());
+}
+
+#[test]
+fn settings_shows_the_connected_code_limit_and_whether_it_is_the_default() {
+    for (config, shown) in [
+        (None, "100 KB (default)"),
+        (Some("colours = \"auto\"\n"), "100 KB (default)"),
+        (Some("connected_code_limit_kb = 250\n"), "250 KB"),
+        (Some("connected_code_limit_kb = 100\n"), "100 KB"),
+        (Some("connected_code_limit_kb = 0\n"), "0 KB"),
+        (Some("connected_code_limit_kb = 400\n"), "400 KB"),
+    ] {
+        let session = settings(
+            Setup {
+                config,
+                variables: NO_COLOR,
+                ..Setup::default()
+            },
+            80,
+            24,
+        );
+
+        assert_eq!(
+            session.row_with("Connected code limit"),
+            format!("Connected code limit  {shown}"),
+            "{config:?}"
+        );
+    }
+}
+
+/// Settings in a `width` by `height` terminal, from a config file holding
+/// `config` if any, with the Connected code limit row focused.
+fn connected_code_limit_focused(config: Option<&str>, width: u16, height: u16) -> Session {
+    let mut session = settings(
+        Setup {
+            config,
+            variables: NO_COLOR,
+            ..Setup::default()
+        },
+        width,
+        height,
+    );
+    session.press("j j j j j");
+    assert!(
+        session
+            .row_with("Connected code limit")
+            .starts_with("> Connected code limit"),
+        "{}",
+        session.text()
+    );
+    session
+}
+
+#[test]
+fn the_focused_connected_code_limit_row_says_what_it_does_and_how_to_change_it() {
+    let session = connected_code_limit_focused(Some("connected_code_limit_kb = 250\n"), 80, 24);
+
+    let text = words(&session);
+    assert!(text.contains("connected code"), "{text}");
+    assert!(text.contains("0 to 400 KB"), "the range: {text}");
+    assert!(text.contains("0 sends none"), "what 0 does: {text}");
+    assert!(
+        text.contains("can lower it, never raise it"),
+        "what a repository can do: {text}"
+    );
+    assert!(
+        text.contains("In config.toml: connected_code_limit_kb = 250"),
+        "{text}"
+    );
+}
+
+#[test]
+fn settings_with_the_connected_code_limit_focused_at_120x32() {
+    let session = connected_code_limit_focused(Some("connected_code_limit_kb = 250\n"), 120, 32);
+
+    insta::assert_debug_snapshot!(
+        "settings_with_the_connected_code_limit_focused_120x32",
+        session.frame()
+    );
+}
+
+#[test]
+fn settings_with_the_connected_code_limit_focused_at_80x24() {
+    let session = connected_code_limit_focused(Some("connected_code_limit_kb = 250\n"), 80, 24);
+
+    insta::assert_debug_snapshot!(
+        "settings_with_the_connected_code_limit_focused_80x24",
+        session.frame()
+    );
 }

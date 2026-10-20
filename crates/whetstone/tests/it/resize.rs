@@ -169,7 +169,8 @@ const VIEWS: [(&str, &str, &[&str]); 12] = [
         &[
             "No config found at ~/.config/whetstone/config.toml",
             "> Provider",
-            "OpenRouter key   not set (OPENROUTER_API_KEY)",
+            "OpenRouter key        not set (OPENROUTER_API_KEY)",
+            "Connected code limit  100 KB (default)",
             "Back",
             "In config.toml: provider = \"openrouter\"",
             "? keys  : actions  q back",
