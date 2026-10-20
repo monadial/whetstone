@@ -38,7 +38,7 @@ Some rules are both. Rules about code that does not exist yet (network code, AI,
 
 ## Async work
 
-The UI loop (`tui.rs`) runs on a current-thread Tokio runtime. It waits with `select!` on signals, crossterm's `EventStream`, the bounded channel of background job results and, only while a job runs, a tick, so nothing else wakes it. Background jobs (`job.rs`) run on `spawn_blocking`, owned by a `TaskTracker`, each with a child `CancellationToken`. Their results enter through `App::handle`, like key presses. Quitting never waits for a job: the runtime shuts down without waiting, and a running job's result is discarded.
+The UI loop (`tui.rs`) runs on a current-thread Tokio runtime. It waits with `select!` on signals, crossterm's `EventStream`, the bounded channel of background job results and, only while a job runs, a tick, so nothing else wakes it. Background jobs (`job.rs`) run on `spawn_blocking`, or as tasks on the runtime when they are async, such as network requests, owned by a `TaskTracker`, each with a child `CancellationToken`. Their results enter through `App::handle`, like key presses. Quitting never waits for a job: the runtime shuts down without waiting, and a running job's result is discarded.
 
 | # | Rule | Enforced by |
 | --- | --- | --- |
