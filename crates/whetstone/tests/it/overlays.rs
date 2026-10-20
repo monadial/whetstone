@@ -24,6 +24,7 @@ fn key_help_lists_the_keys_of_home() {
         ("?", "Show these keys"),
         (":", "List the actions"),
         ("Ctrl+C", "Quit from anywhere"),
+        ("Ctrl+Z", "Suspend until fg"),
     ] {
         assert!(
             session
