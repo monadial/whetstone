@@ -40,7 +40,7 @@ pub(crate) fn connected_rows(session: &Session) -> Vec<Vec<String>> {
 
 /// A Rust crate called `shop` in which `Payments::charge` validates with
 /// `check::validate` and is called by `checkout`.
-fn rust_payments() -> TestRepo {
+pub(crate) fn rust_payments() -> TestRepo {
     let repo = TestRepo::new("shop");
     repo.write("src/lib.rs", "mod check;\nmod pay;\nmod shop;\n")
         .write(
@@ -61,7 +61,7 @@ fn rust_payments() -> TestRepo {
 }
 
 /// `src/pay.rs`, whose `Payments::charge` returns `body`.
-fn rust_pay(body: &str) -> String {
+pub(crate) fn rust_pay(body: &str) -> String {
     format!(
         "use crate::check::validate;\n\
          \n\

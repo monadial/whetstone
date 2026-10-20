@@ -1,0 +1,48 @@
+---
+source: crates/whetstone/tests/it/graph_cache.rs
+expression: session.frame()
+---
+Buffer {
+    area: Rect { x: 0, y: 0, width: 120, height: 32 },
+    content: [
+        "                                                                                                                        ",
+        "  Review what will be sent                                                                                              ",
+        "                                                                                                                        ",
+        "  Sends to OpenRouter · Jev: typesafe/jev-1.14 · Generator: anthropic/claude-sonnet-5.5                                 ",
+        "  OpenRouter routes only to endpoints it lists as not keeping prompts.                                                  ",
+        "  https://openrouter.ai/docs/guides/privacy/data-collection                                                             ",
+        "                                                                                                                        ",
+        "  Your answers in this session go to the same places. Nothing outside this list is sent.                                ",
+        "                                                                                                                        ",
+        "  Change                                                                                                                ",
+        "  > 79ab297  Double the charge                                                                                          ",
+        "    Author, committer, dates and the commit ID are not sent.                                                            ",
+        "                                                                                                                        ",
+        "  Files                                                                                                                 ",
+        "    src/pay.rs  1 KB  included · 2 connected                                                                            ",
+        "                                                                                                                        ",
+        "  Connected code: 2 ranges · 1 KB · from cache                                                                          ",
+        "    src/check.rs  lines 1–3  1 KB  included  called by `charge`                                                         ",
+        "    src/shop.rs   lines 3–5  1 KB  included  calls `charge`                                                             ",
+        "                                                                                                                        ",
+        "  Areas                                                                                                                 ",
+        "    Domain          Whetstone default                                                                                   ",
+        "    Infrastructure  Whetstone default                                                                                   ",
+        "    Observability   Whetstone default                                                                                   ",
+        "    Scalability     Whetstone default                                                                                   ",
+        "    System design   Whetstone default                                                                                   ",
+        "                                                                                                                        ",
+        "  Secret check                                                                                                          ",
+        "    No possible secrets found.                                                                                          ",
+        "    Whetstone checks for common secret formats and can't guarantee there are none.                                      ",
+        "  ? keys  : actions  Space toggle  Enter read  q back                                                                   ",
+        "                                                                                                                        ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 26, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 10, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 30, y: 10, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+    ]
+}
