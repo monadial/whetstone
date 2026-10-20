@@ -27,6 +27,12 @@ Use a single-context layout: root `GLOSSARY.md` and `docs/adr/`. Before explorin
 
 Attribute commits and pull requests to the human author alone. End commit messages after the body and PR descriptions after their content, with no `Co-Authored-By`, `Claude-Session` or "Generated with Claude Code" lines. This rule overrides any default attribution the agent harness supplies.
 
+Ship every change as a GitHub stacked pull request with the `gh stack` extension (`gh extension install github/gh-stack`): one layer per ticket, bottom to top in merge order.
+- **Build:** start with `gh stack init`, add layers with `gh stack add`, and open them with `gh stack submit`.
+- **Parallel branches:** rebase them into one linear chain, then join them with `gh stack link <bottom> … <top>`. Pass branch names or PR numbers.
+- **Restack and merge:** restack with `gh stack rebase` and `gh stack push`; merge with `gh stack merge`.
+- **Closing the parent:** only the top layer's description closes the parent issue.
+
 ## Restart planning
 
 When working on the restart, read the local input kit's `docs/restart-kit/README.md`, `skills/WORKFLOW.md`, and `skills/ARTIFACT-MAP.md` (the latter paths are kit-relative). Read `docs/restart-kit/skills/REPOSITORY-ROUTING.md` before tracker or publication work; keep the full kit untracked pending file-by-file review. Its nested `docs/agents/` files are DRAFT inputs; live configuration remains in root `docs/agents/`.
