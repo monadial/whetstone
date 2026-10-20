@@ -20,8 +20,12 @@ use whetstone_core::{
 
 mod history;
 mod load;
+#[cfg(test)]
+pub(crate) mod test_repo;
+mod tree;
 
 pub(crate) use history::{Availability, Commit, History, HistoryEnd};
+pub(crate) use tree::{CommitTree, TreeEntryKind};
 
 /// The repository's Whetstone config, relative to the Git root.
 pub(crate) const CONFIG: &str = ".whetstone/config.toml";
@@ -279,6 +283,21 @@ impl Repository {
     pub(crate) fn load(&self, id: CommitId) -> Result<Change, LoadError> {
         load::load(&self.git, id).inspect_err(|error| {
             tracing::warn!(commit = id.full(), error = %error.0, "cannot read a commit");
+        })
+    }
+
+    /// The whole tree of the commit `id`: every file in it, listed from
+    /// Git's object store, with any regular file readable by path.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "connected code reads commit trees once the #58 integration wires it in"
+        )
+    )]
+    pub(crate) fn tree(&self, id: CommitId) -> Result<CommitTree<'_>, LoadError> {
+        tree::open(&self.git, id).inspect_err(|error| {
+            tracing::warn!(commit = id.full(), error = %error.0, "cannot read a commit's tree");
         })
     }
 
