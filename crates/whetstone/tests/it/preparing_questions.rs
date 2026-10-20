@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use whetstone_ai::{Asked, ScriptedAi};
+use whetstone_ai::{Asked, RequestFailure, ScriptedAi};
 use whetstone_core::{
     CandidateCheck, OptionLetter, Probability, QuestionCheckAnswers, QuestionType,
     WrittenCandidate, WrittenCitation, WrittenCriterion, WrittenOption,
@@ -249,4 +249,83 @@ fn one_generator_call_per_chosen_area_goes_out_at_once_then_one_check_per_candid
     session.settle_once();
     let text = session.text();
     assert!(text.contains("Question 1 of 4 · Domain"), "{text}");
+}
+
+/// A scripted AI that writes `count` candidates about the domain area, each
+/// answered clearly right at A, for the change at `change`.
+pub(crate) fn writing_about_the_domain(count: usize, change: usize) -> Arc<ScriptedAi> {
+    let ai = Arc::new(ScriptedAi::new());
+    let stems = stems("Domain", count);
+    ai.on_write(
+        &area_id(DOMAIN),
+        Ok(stems
+            .iter()
+            .map(|stem| candidate(stem, "A", change))
+            .collect()),
+    );
+    for stem in &stems {
+        ai.on_check(stem, Ok(a_is_clearly_right()));
+    }
+    ai
+}
+
+#[test]
+fn preparing_questions_while_connected_code_is_found_at_120x32() {
+    let ai = writing_about_the_domain(6, PAYMENT_LIFECYCLE);
+    let session = generate(&ai, &[DOMAIN], PAYMENT_LIFECYCLE, 120, 32);
+
+    insta::assert_debug_snapshot!("preparing_questions_120x32", session.frame());
+}
+
+#[test]
+fn preparing_questions_while_connected_code_is_found_at_80x24() {
+    let ai = writing_about_the_domain(6, PAYMENT_LIFECYCLE);
+    let session = generate(&ai, &[DOMAIN], PAYMENT_LIFECYCLE, 80, 24);
+
+    insta::assert_debug_snapshot!("preparing_questions_80x24", session.frame());
+}
+
+#[test]
+fn preparing_questions_while_the_generator_writes_at_120x32() {
+    let ai = writing_about_the_domain(6, PAYMENT_LIFECYCLE);
+    let mut session = generate(&ai, &[DOMAIN], PAYMENT_LIFECYCLE, 120, 32);
+    session.settle_once();
+
+    insta::assert_debug_snapshot!("preparing_questions_writing_120x32", session.frame());
+}
+
+#[test]
+fn preparing_questions_while_jev_checks_at_80x24() {
+    let ai = writing_about_the_domain(6, PAYMENT_LIFECYCLE);
+    let mut session = generate(&ai, &[DOMAIN], PAYMENT_LIFECYCLE, 80, 24);
+    session.settle_once();
+    session.settle_once();
+
+    insta::assert_debug_snapshot!("preparing_questions_checking_80x24", session.frame());
+}
+
+/// A session whose generator fails to write about the domain area, rate
+/// limited.
+fn writing_rate_limited(width: u16, height: u16) -> Session {
+    let ai = Arc::new(ScriptedAi::new());
+    ai.on_write(&area_id(DOMAIN), Err(RequestFailure::RateLimited));
+    let mut session = generate(&ai, &[DOMAIN], PAYMENT_LIFECYCLE, width, height);
+    session.settle();
+    session
+}
+
+#[test]
+fn a_failed_request_at_120x32() {
+    insta::assert_debug_snapshot!(
+        "preparing_questions_failed_120x32",
+        writing_rate_limited(120, 32).frame()
+    );
+}
+
+#[test]
+fn a_failed_request_at_80x24() {
+    insta::assert_debug_snapshot!(
+        "preparing_questions_failed_80x24",
+        writing_rate_limited(80, 24).frame()
+    );
 }

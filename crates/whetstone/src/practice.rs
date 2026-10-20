@@ -48,6 +48,17 @@ const KEYMAP: Keymap = &[
     keymap::ACTIVATE,
     Binding {
         does: "Cancel, and go back to the areas and changes",
+        hint: Some("q cancel"),
+        ..keymap::BACK
+    },
+];
+
+/// The keys once no question passed: `q` and Esc go back.
+const NONE_PASSED_KEYMAP: Keymap = &[
+    keymap::MOVE,
+    keymap::ACTIVATE,
+    Binding {
+        does: "Go back to the areas and changes",
         ..keymap::BACK
     },
 ];
@@ -59,8 +70,9 @@ const ACTIONS: &[Action] = &[Action {
     command: Command::Back,
 }];
 
-/// The questions screen's own action in the palette.
-const QUESTION_ACTIONS: &[Action] = &[Action {
+/// The questions screen's own action in the palette, and No questions
+/// passed checks'.
+const BACK_ACTIONS: &[Action] = &[Action {
     label: "Back",
     does: "Go back to the areas and changes",
     command: Command::Back,
@@ -533,15 +545,16 @@ impl View for Practice {
 
     fn keymap(&self) -> Keymap {
         match self.stage {
+            Stage::Writing(_) | Stage::Checking(_) => KEYMAP,
             Stage::Shown(_) => questions::KEYMAP,
-            _ => KEYMAP,
+            Stage::NonePassed => NONE_PASSED_KEYMAP,
         }
     }
 
     fn actions(&self) -> &'static [Action] {
         match self.stage {
-            Stage::Shown(_) => QUESTION_ACTIONS,
-            _ => ACTIONS,
+            Stage::Writing(_) | Stage::Checking(_) => ACTIONS,
+            Stage::Shown(_) | Stage::NonePassed => BACK_ACTIONS,
         }
     }
 

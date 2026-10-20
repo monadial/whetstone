@@ -1,0 +1,40 @@
+---
+source: crates/whetstone/tests/it/questions_screen.rs
+expression: session.frame()
+---
+Buffer {
+    area: Rect { x: 0, y: 0, width: 80, height: 24 },
+    content: [
+        "                                                                                ",
+        "  ✓ Reading the change → ✓ Finding connected code → ✓ Preparing evidence →      ",
+        "  – Checking areas · Jev → ✓ Writing questions · generator →                    ",
+        "  ✓ Checking questions · Jev                                                    ",
+        "                                                                                ",
+        "  No questions passed checks                                                    ",
+        "  Model the payment lifecycle · Domain                                          ",
+        "                                                                                ",
+        "  None of the questions written passed their checks, so there is nothing to     ",
+        "  show. Retry writes and checks new ones.                                       ",
+        "                                                                                ",
+        "  > Retry                                                                       ",
+        "    Pick another change                                                         ",
+        "                                                                                ",
+        "                                                                                ",
+        "                                                                                ",
+        "                                                                                ",
+        "                                                                                ",
+        "                                                                                ",
+        "                                                                                ",
+        "                                                                                ",
+        "                                                                                ",
+        "  ? keys  : actions  q back                                                     ",
+        "                                                                                ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 5, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 28, y: 5, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 11, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 9, y: 11, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+    ]
+}
