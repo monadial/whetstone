@@ -20,7 +20,8 @@ use super::touched_text::{self, Target, TouchedText};
 /// read as the Markdown specification defines them, with reference links
 /// resolved through their definitions; images and wikilinks are not links.
 /// A link counts when any line it spans, or for a reference link any line
-/// its definition spans, is one the change adds or modifies. Its destination resolves against the linking file, or against the
+/// its definition spans, is one the change adds or modifies. Its
+/// destination resolves against the linking file, or against the
 /// repository's root when it starts with `/`, without its query or
 /// fragment. Only a file in the commit's tree that the change does not
 /// touch is a target: an external URL, a missing file, a directory and a
