@@ -410,6 +410,38 @@ fn calls_of_low_confidence_are_not_connected_code() {
 }
 
 #[test]
+fn callables_the_engine_makes_up_are_never_connected_code() {
+    let repo = TestRepo::new();
+    let billing = |test: &str| {
+        format!(
+            "function charge(amount) {{\n  return {test};\n}}\n\nmodule.exports = {{ charge }};\n"
+        )
+    };
+    // The engine makes up a synthetic callable for the route's inline
+    // handler, and for the framework that calls it.
+    repo.write("billing.js", billing("amount > 0")).write(
+        "routes.js",
+        "const express = require('express');\n\
+         const { charge } = require('./billing');\n\
+         \n\
+         const app = express();\n\
+         \n\
+         app.post('/charge', (req, res) => {\n\
+         \x20 res.json(charge(req.body.amount));\n\
+         });\n\
+         \n\
+         function direct(amount) {\n\
+         \x20 return charge(amount);\n\
+         }\n",
+    );
+    repo.commit("Charge over HTTP");
+    repo.write("billing.js", billing("amount >= 0"));
+    let id = repo.commit("Allow free charges");
+
+    assert_eq!(connected(&repo, id), ["routes.js 10-12 high: calls charge"]);
+}
+
+#[test]
 fn the_whole_graph_is_kept_and_never_shows_names_when_debugged() {
     let repo = rust_payments();
     repo.write("src/pay.rs", rust_pay("validate(amount * 2)"));
