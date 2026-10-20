@@ -43,14 +43,14 @@ The UI loop (`tui.rs`) runs on a current-thread Tokio runtime. It waits with `se
 | # | Rule | Enforced by |
 | --- | --- | --- |
 | 16 | Every spawned task has an owner (`JoinSet`, `TaskTracker`, `AbortOnDropHandle`). Dropping a bare `JoinHandle` needs a comment. | **Review**. |
-| 17 | Each job derives a child `CancellationToken` and reports cancellation as a typed result, never as silence. | **Review**. **Lint/CI**: the job tests (`tests/it/jobs.rs`). |
+| 17 | Each job derives a child `CancellationToken` and reports cancellation as a typed result, never as silence. | **Review**. **Lint/CI**: the job tests (`tests/it/jobs.rs`, `tests/it/async_jobs.rs`). |
 | 18 | `select!` branches inside loops use only cancel-safe operations: `reserve` or `try_send` instead of `send`, and no `write_all` or lock acquisition. | **Review**. |
 | 19 | No blocking work on async tasks. Git and parsing go to `spawn_blocking`, storage to the writer thread. No `block_in_place`. | **Review**. **Lint/CI**: `disallowed-methods` for `tokio::task::block_in_place` in `clippy.toml`. Tokio builds it only with `rt-multi-thread`, which is off. |
 | 20 | Never hold a std `Mutex` guard or a `RefCell` borrow across `.await`. | **Lint/CI**: `clippy::await_holding_lock`, `await_holding_refcell_ref` (deny). |
 | 21 | Channels are bounded, with a documented capacity. An unbounded channel needs a written reason. | **Review**. |
 | 22 | *From network code:* every network stage has an explicit timeout. The HTTP client is built with `connect_timeout` and `timeout`. | **Review**. **Lint/CI**: adapter tests. |
 | 23 | *From network code:* automatic retries use `backon` with jitter and an explicit retryable predicate. They never replay a paid request the user has not authorised. | **Review**. |
-| 24 | A worker result is applied only when its job identity matches the outstanding job, and so do its session, question version and attempt identities once those exist: the key a screen waits for the job with (`Waiting`). | **Lint/CI**: the job tests (`tests/it/jobs.rs`); reducer tests at the app seam for each kind of job. |
+| 24 | A worker result is applied only when its job identity matches the outstanding job, and so do its session, question version and attempt identities once those exist: the key a screen waits for the job with (`Waiting`). | **Lint/CI**: the job tests (`tests/it/jobs.rs`, `tests/it/async_jobs.rs`); reducer tests at the app seam for each kind of job. |
 
 ## Terminal UI
 
