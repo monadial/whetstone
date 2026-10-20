@@ -13,6 +13,7 @@ mod commit_viewer;
 mod commits;
 mod config;
 mod connected_code;
+mod connected_code_limits;
 mod dirs;
 mod jobs;
 mod navigation;

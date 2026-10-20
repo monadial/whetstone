@@ -8,11 +8,11 @@ use crate::session::{Session, Setup, columns};
 
 /// From home: open the repository's picker, choose the newest commit, and
 /// open its outbound review, with the five default areas selected.
-const REVIEW_NEWEST: &str = "<Enter> j j j j j <Space> k k k k k <S-Tab> <Enter>";
+pub(crate) const REVIEW_NEWEST: &str = "<Enter> j j j j j <Space> k k k k k <S-Tab> <Enter>";
 
 /// The Connected code section: its summary, then its rows, trimmed, up to
 /// the next blank row.
-fn connected_code(session: &Session) -> Vec<String> {
+pub(crate) fn connected_code(session: &Session) -> Vec<String> {
     let rows = session.rows();
     let start = rows
         .iter()
@@ -27,7 +27,7 @@ fn connected_code(session: &Session) -> Vec<String> {
 
 /// The Connected code section's rows after its summary, split into their
 /// columns, without the focus marker.
-fn connected_rows(session: &Session) -> Vec<Vec<String>> {
+pub(crate) fn connected_rows(session: &Session) -> Vec<Vec<String>> {
     columns(&connected_code(session)[1..])
         .into_iter()
         .map(|row| {

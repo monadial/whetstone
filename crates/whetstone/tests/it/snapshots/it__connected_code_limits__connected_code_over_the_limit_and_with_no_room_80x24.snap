@@ -1,0 +1,38 @@
+---
+source: crates/whetstone/tests/it/connected_code_limits.rs
+expression: session.frame()
+---
+Buffer {
+    area: Rect { x: 0, y: 0, width: 80, height: 24 },
+    content: [
+        "                                                                                ",
+        "  Sends to OpenRouter · Jev: typesafe/jev-1.14 · Generator:                     ",
+        "  anthropic/claude-sonnet-5.5                                                   ",
+        "  OpenRouter routes only to endpoints it lists as not keeping prompts.          ",
+        "  https://openrouter.ai/docs/guides/privacy/data-collection                     ",
+        "                                                                                ",
+        "  Your answers in this session go to the same places. Nothing outside this      ",
+        "  list is sent.                                                                 ",
+        "                                                                                ",
+        "  Change                                                                        ",
+        "    69062ef  Subtract the other way round                                       ",
+        "    Author, committer, dates and the commit ID are not sent.                    ",
+        "                                                                                ",
+        "  Files                                                                         ",
+        "    notes.txt  397 KB  included                                                 ",
+        "    ops.py       1 KB  included · 1 connected                                   ",
+        "                                                                                ",
+        "  Connected code: 1 range · 1 KB of 1 KB limit · limit lowered by this          ",
+        "  repository                                                                    ",
+        "  > use_a.py  lines 4–6  1 KB  included  calls `sub`                            ",
+        "    1 more not sent: over the connected code limit                              ",
+        "    1 more not sent: no room under the size limit                               ",
+        "  ? keys  : actions  Space toggle  Enter read  q back                           ",
+        "                                                                                ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 19, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 12, y: 19, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+    ]
+}
