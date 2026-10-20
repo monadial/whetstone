@@ -156,16 +156,16 @@ enum Standing {
 impl<'a> Rank<'a> {
     /// What `connection` is ranked by.
     fn of(connection: &'a Connection) -> Self {
-        let closeness = || Reverse(closeness(connection));
+        let closest_first = || Reverse(closeness(connection));
         let standing = match (connection.group(), connection.tier()) {
             (ConnectionGroup::RelatedTest | ConnectionGroup::RelatedConfiguration, _) => {
                 Standing::Related
             }
             (ConnectionGroup::ConnectedCode, Tier::High) => Standing::HighTier {
-                closeness: closeness(),
+                closeness: closest_first(),
             },
             (ConnectionGroup::ConnectedCode, Tier::Medium) => Standing::MediumTier {
-                closeness: closeness(),
+                closeness: closest_first(),
             },
         };
         let id = connection.id();
