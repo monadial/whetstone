@@ -1,0 +1,106 @@
+---
+source: crates/whetstone/src/connected_code/showcase.rs
+expression: "table.join(\"\\n\")"
+---
+# The connected code of every curated showcase change, as Whetstone finds it
+# through the connected-code module, the same way as a learner's commit.
+# Each line is one connection: change | path | extent | group | relations.
+# A change with none has one "none found" line.
+#
+# Review this table whenever cgg is upgraded (ADR 0002): an upgrade can change
+# what is found. The engine version below follows the cgg pin, so an upgrade
+# fails this check until the table has been reviewed. A failing run writes the
+# table it found beside this one, ending in `.snap.new`, to compare and accept.
+# Found with cgg 0.11.0.
+#
+# 01 Model the payment lifecycle
+# 02 Persist payments in an append-only file store
+# 03 Call the payment provider with timeouts and retries
+# 04 Serve payments over HTTP
+# 05 Preserve payment retry identity
+# 06 Put storage and the provider behind ports
+# 07 Trace requests and export payment metrics
+# 08 Cache payments per tenant
+# 09 Rename ChargeOutcome to ProviderOutcome
+# 10 Run rustfmt over the HTTP layer
+
+01 none found
+02 none found
+03 | src/payment.rs | lines 139–141 | connected code | called by `new` in src/provider.rs
+03 | src/payment.rs | lines 143–145 | connected code | called by `new` in src/provider.rs
+03 | src/payment.rs | lines 195–197 | connected code | called by `new` in src/provider.rs
+03 | src/payment.rs | lines 207–209 | connected code | called by `request` in src/provider.rs
+03 | src/payment.rs | lines 211–213 | connected code | called by `new` in src/provider.rs
+03 | src/payment.rs | lines 243–250 | connected code | called by `request` in src/provider.rs
+04 | src/provider.rs | lines 27–34 | connected code | called by `pay` in src/service.rs
+04 | src/provider.rs | lines 79–97 | connected code | called by `pay` in src/service.rs
+04 | src/provider.rs | lines 108–113 | connected code | called by `main` in src/main.rs; called by `start` in tests/api.rs
+04 | src/provider.rs | lines 219–233 | connected code | calls `charge` in tests/api.rs
+04 | src/provider.rs | lines 236–248 | connected code | calls `charge` in tests/api.rs
+05 | Cargo.toml | whole file | related configuration | manifest for `src/provider.rs`; manifest for `src/service.rs`; manifest for `tests/api.rs`
+05 | src/http.rs | lines 54–68 | connected code | calls `pay` in src/service.rs
+05 | src/payment.rs | lines 145–147 | connected code | called by `new` in src/provider.rs
+05 | src/payment.rs | lines 149–151 | connected code | called by `new` in src/provider.rs
+05 | src/payment.rs | lines 190–199 | connected code | called by `pay` in src/service.rs
+05 | src/payment.rs | lines 201–203 | connected code | called by `new` in src/provider.rs
+05 | src/payment.rs | lines 213–215 | connected code | called by `new` in src/provider.rs
+05 | src/payment.rs | lines 217–219 | connected code | called by `new` in src/provider.rs; called by `pay` in src/service.rs
+05 | src/payment.rs | lines 225–230 | connected code | called by `pay` in src/service.rs
+05 | src/payment.rs | lines 233–243 | connected code | called by `pay` in src/service.rs
+05 | src/payment.rs | lines 249–256 | connected code | called by `request` in src/provider.rs
+05 | src/store.rs | lines 75–92 | connected code | called by `pay` in src/service.rs
+05 | src/store.rs | lines 102–116 | connected code | called by `pay` in src/service.rs
+06 | Cargo.toml | whole file | related configuration | manifest for `src/http.rs`; manifest for `src/lib.rs`; manifest for `src/ports.rs`; manifest for `src/provider.rs`; manifest for `src/service.rs`; manifest for `src/store.rs`
+06 | src/payment.rs | lines 30–37 | connected code | called by `create` in src/http.rs; called by `fetch` in src/http.rs
+06 | src/payment.rs | lines 52–58 | connected code | called by `create` in src/http.rs
+06 | src/payment.rs | lines 72–74 | connected code | called by `fetch` in src/http.rs
+06 | src/payment.rs | lines 114–120 | connected code | called by `create` in src/http.rs
+06 | src/payment.rs | lines 135–143 | connected code | called by `create` in src/http.rs
+06 | src/payment.rs | lines 145–147 | connected code | called by `new` in src/ports.rs
+06 | src/payment.rs | lines 149–151 | connected code | called by `new` in src/ports.rs
+06 | src/payment.rs | lines 201–203 | connected code | called by `new` in src/ports.rs; called by `save` in src/store.rs
+06 | src/payment.rs | lines 205–207 | connected code | called by `save` in src/store.rs
+06 | src/payment.rs | lines 209–211 | connected code | called by `save` in src/store.rs
+06 | src/payment.rs | lines 213–215 | connected code | called by `new` in src/ports.rs
+06 | src/payment.rs | lines 217–219 | connected code | called by `new` in src/ports.rs
+06 | tests/api.rs | lines 57–65 | connected code | called by `create` in src/http.rs
+07 | src/payment.rs | lines 190–199 | connected code | called by `pay` in src/service.rs
+07 | src/payment.rs | lines 201–203 | connected code | called by `pay` in src/service.rs
+07 | src/payment.rs | lines 217–219 | connected code | called by `pay` in src/service.rs
+07 | src/payment.rs | lines 221–223 | connected code | called by `pay` in src/service.rs
+07 | src/payment.rs | lines 225–230 | connected code | called by `pay` in src/service.rs
+07 | src/payment.rs | lines 233–243 | connected code | called by `pay` in src/service.rs
+07 | src/ports.rs | line 17 | connected code | called by `pay` in src/service.rs
+07 | src/ports.rs | lines 21–25 | connected code | called by `pay` in src/service.rs
+07 | src/ports.rs | line 45 | connected code | called by `pay` in src/service.rs
+07 | src/ports.rs | lines 61–68 | connected code | called by `pay` in src/service.rs
+07 | src/store.rs | lines 32–61 | connected code | called by `main` in src/main.rs
+07 | src/store.rs | lines 71–88 | connected code | called by `pay` in src/service.rs
+07 | src/store.rs | lines 98–112 | connected code | called by `pay` in src/service.rs
+08 | Cargo.toml | whole file | related configuration | manifest for `README.md`; manifest for `src/cache.rs`; manifest for `src/config.rs`; manifest for `src/lib.rs`; manifest for `src/main.rs`; manifest for `src/service.rs`; manifest for `tests/api.rs`
+08 | src/http.rs | lines 59–73 | connected code | calls `pay` in src/service.rs
+08 | src/payment.rs | lines 190–199 | connected code | called by `pay` in src/service.rs
+08 | src/payment.rs | lines 201–203 | connected code | called by `a_busy_tenant_cannot_evict_another_tenants_payments` in src/cache.rs; called by `a_read_never_replaces_a_newer_cached_copy` in src/cache.rs; called by `insert` in src/cache.rs; called by `pay` in src/service.rs
+08 | src/payment.rs | lines 205–207 | connected code | called by `a_busy_tenant_cannot_evict_another_tenants_payments` in src/cache.rs; called by `a_read_never_replaces_a_newer_cached_copy` in src/cache.rs; called by `insert` in src/cache.rs
+08 | src/payment.rs | lines 217–219 | connected code | called by `pay` in src/service.rs
+08 | src/payment.rs | lines 221–223 | connected code | called by `pay` in src/service.rs
+08 | src/payment.rs | lines 225–230 | connected code | called by `pay` in src/service.rs
+08 | src/payment.rs | lines 233–243 | connected code | called by `a_read_never_replaces_a_newer_cached_copy` in src/cache.rs; called by `pay` in src/service.rs
+08 | src/payment.rs | lines 249–256 | connected code | called by `a_busy_tenant_cannot_evict_another_tenants_payments` in src/cache.rs; called by `a_read_never_replaces_a_newer_cached_copy` in src/cache.rs
+08 | src/ports.rs | line 17 | connected code | called by `save` in src/service.rs
+08 | src/ports.rs | lines 21–25 | connected code | called by `pay` in src/service.rs
+08 | src/ports.rs | line 45 | connected code | called by `pay` in src/service.rs
+08 | src/ports.rs | lines 61–68 | connected code | called by `pay` in src/service.rs
+08 | src/provider.rs | lines 62–84 | connected code | called by `pay` in src/service.rs
+08 | src/provider.rs | lines 95–100 | connected code | called by `main` in src/main.rs; called by `start` in tests/api.rs
+08 | src/store.rs | lines 32–61 | connected code | called by `main` in src/main.rs; called by `start` in tests/api.rs
+08 | src/store.rs | lines 71–88 | connected code | called by `save` in src/service.rs
+08 | src/store.rs | lines 98–112 | connected code | called by `pay` in src/service.rs
+08 | src/telemetry.rs | lines 16–18 | connected code | called by `pay` in src/service.rs
+08 | src/telemetry.rs | lines 21–28 | connected code | called by `pay` in src/service.rs
+09 | Cargo.toml | whole file | related configuration | manifest for `src/cache.rs`; manifest for `src/payment.rs`; manifest for `src/ports.rs`; manifest for `src/provider.rs`; manifest for `src/store.rs`
+09 | src/service.rs | lines 47–77 | connected code | calls `charge` in src/ports.rs; calls `charge` in src/provider.rs; calls `record` in src/payment.rs
+09 | tests/api.rs | lines 24–33 | connected code | called by `a_rejected_charge_is_declined_without_a_retry` in src/provider.rs; called by `a_timed_out_attempt_is_retried_with_the_same_operation_key` in src/provider.rs
+10 | Cargo.toml | whole file | related configuration | manifest for `src/http.rs`
+10 | src/service.rs | lines 38–40 | connected code | called by `metrics` in src/http.rs
+10 | src/telemetry.rs | lines 30–44 | connected code | called by `metrics` in src/http.rs
