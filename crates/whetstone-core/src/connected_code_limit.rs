@@ -21,6 +21,12 @@ impl ConnectedCodeLimitKb {
     /// The highest limit.
     const MAX: u16 = 400;
 
+    /// The limit as a number of kilobytes.
+    #[must_use]
+    pub fn get(self) -> u16 {
+        self.0
+    }
+
     /// The limit in bytes. A kilobyte is 1,000 bytes, as in
     /// [`Evidence::SIZE_LIMIT`](crate::Evidence::SIZE_LIMIT).
     #[must_use]

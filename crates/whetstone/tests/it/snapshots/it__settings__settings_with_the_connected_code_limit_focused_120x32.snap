@@ -1,0 +1,48 @@
+---
+source: crates/whetstone/tests/it/settings.rs
+expression: session.frame()
+---
+Buffer {
+    area: Rect { x: 0, y: 0, width: 120, height: 32 },
+    content: [
+        "                                                                                                                        ",
+        "  Settings                                                                                                              ",
+        "  Read from ~/.config/whetstone/config.toml. Settings is read-only: edit that file to change them.                      ",
+        "                                                                                                                        ",
+        "    Provider              OpenRouter (default)                                                                          ",
+        "    Jev model             typesafe/jev-1.14 (default)                                                                   ",
+        "    Generator model       anthropic/claude-sonnet-5.5 (default)                                                         ",
+        "    OpenRouter key        not set (OPENROUTER_API_KEY)                                                                  ",
+        "    Colours               auto (16 detected) (default)                                                                  ",
+        "  > Connected code limit  250 KB                                                                                        ",
+        "                                                                                                                        ",
+        "    Back                                                                                                                ",
+        "                                                                                                                        ",
+        "  How much connected code Practice adds to the evidence: what the change calls, what calls it, and the files it links   ",
+        "  to or names. From 0 to 400 KB, and 0 sends none; related tests and configuration still apply. A repository's          ",
+        "  .whetstone/config.toml can lower it, never raise it. The default is 100 KB.                                           ",
+        "  In config.toml: connected_code_limit_kb = 250                                                                         ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "  ? keys  : actions  q back                                                                                             ",
+        "                                                                                                                        ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 10, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 9, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 24, y: 9, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+    ]
+}

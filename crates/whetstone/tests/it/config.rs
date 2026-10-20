@@ -8,6 +8,7 @@ use std::path::Path;
 
 use tempfile::TempDir;
 use whetstone::{Environment, Settings};
+use whetstone_core::{ConnectedCodeLimitSource, RepositoryConfig};
 
 use crate::session::{NO_COLOR, Session, Setup};
 
@@ -45,7 +46,7 @@ fn xdg_config_home_chooses_where_the_config_file_is() {
     assert!(session.text().contains(&shown), "{}", session.text());
     assert_eq!(
         session.row_with("Jev model"),
-        "Jev model        typesafe/jev-1.13"
+        "Jev model             typesafe/jev-1.13"
     );
 }
 
@@ -125,6 +126,75 @@ fn a_colours_value_that_is_not_a_string_is_an_error() {
 }
 
 #[test]
+fn a_connected_code_limit_that_is_not_a_whole_number_from_0_to_400_is_an_error_naming_the_file_and_the_key()
+ {
+    for value in ["401", "-1", "1.5", "\"100\""] {
+        let dir = TempDir::new().expect("create a temporary config directory");
+        let config = format!("colours = \"auto\"\nconnected_code_limit_kb = {value}\n");
+
+        let error = load(dir.path(), &config).expect_err("out of range or not an integer");
+
+        let path = dir.path().join("config.toml");
+        assert!(
+            error.starts_with(&format!(
+                "the config file {} is not valid: ",
+                path.display()
+            )),
+            "{value}: {error}"
+        );
+        assert!(error.contains("line 2"), "says where, for {value}: {error}");
+        assert!(
+            error.contains("`connected_code_limit_kb` must be a whole number from 0 to 400"),
+            "names the key and what it allows, for {value}: {error}"
+        );
+    }
+}
+
+#[test]
+fn the_connected_code_limit_that_applies_is_the_learners_unless_the_repository_sets_less() {
+    for (learner, repository, kb, source) in [
+        (None, "", 100, ConnectedCodeLimitSource::Default),
+        (Some(""), "", 100, ConnectedCodeLimitSource::Default),
+        (
+            Some("connected_code_limit_kb = 250\n"),
+            "",
+            250,
+            ConnectedCodeLimitSource::Learner,
+        ),
+        (
+            Some("connected_code_limit_kb = 250\n"),
+            "connected_code_limit_kb = 40\n",
+            40,
+            ConnectedCodeLimitSource::LoweredByRepository,
+        ),
+        (
+            None,
+            "connected_code_limit_kb = 0\n",
+            0,
+            ConnectedCodeLimitSource::LoweredByRepository,
+        ),
+        (
+            Some("connected_code_limit_kb = 40\n"),
+            "connected_code_limit_kb = 250\n",
+            40,
+            ConnectedCodeLimitSource::Learner,
+        ),
+    ] {
+        let dir = TempDir::new().expect("create a temporary config directory");
+        let settings = match learner {
+            Some(contents) => load(dir.path(), contents).expect("a valid config"),
+            None => Settings::load(dir.path(), &Environment::default()).expect("no config"),
+        };
+        let repository = RepositoryConfig::parse(repository.as_bytes()).expect("valid");
+
+        let limit = settings.connected_code_limit(&repository);
+
+        assert_eq!(limit.bytes(), kb * 1000, "{learner:?}, {repository:?}");
+        assert_eq!(limit.source(), source, "{learner:?}, {repository:?}");
+    }
+}
+
+#[test]
 fn a_config_path_that_cannot_be_read_is_an_error_naming_it() {
     let dir = TempDir::new().expect("create a temporary config directory");
     fs::create_dir(dir.path().join("config.toml")).expect("a directory in the file's place");
@@ -156,9 +226,14 @@ const README: &str = include_str!("../../../../README.md");
 fn values(setup: Setup<'_>) -> Vec<String> {
     let mut session = Session::start(setup, 80, 24);
     session.press("j <Enter>");
-    ["Provider", "Jev model", "Generator model"]
-        .map(|setting| session.row_with(setting).replace(" (default)", ""))
-        .to_vec()
+    [
+        "Provider",
+        "Jev model",
+        "Generator model",
+        "Connected code limit",
+    ]
+    .map(|setting| session.row_with(setting).replace(" (default)", ""))
+    .to_vec()
 }
 
 #[test]

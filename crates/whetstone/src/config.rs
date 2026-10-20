@@ -6,6 +6,7 @@
 //! ```toml
 //! provider = "openrouter"
 //! colours = "auto"
+//! connected_code_limit_kb = 100
 //!
 //! [jev]
 //! model = "typesafe/jev-1.14"
@@ -21,7 +22,10 @@
 use std::path::{Path, PathBuf};
 use std::{fmt, fs, io};
 
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
+use whetstone_core::{
+    ConnectedCodeLimit, ConnectedCodeLimitError, ConnectedCodeLimitKb, RepositoryConfig,
+};
 
 use crate::environment::Environment;
 use crate::theme::{ColorSupport, Colours, NoColorStatus};
@@ -45,6 +49,7 @@ pub struct Settings {
     pub(crate) detected_color_support: ColorSupport,
     /// Whether `NO_COLOR` turns colour off, whatever `colours` says.
     pub(crate) no_color: NoColorStatus,
+    pub(crate) connected_code_limit: Setting<ConnectedCodeLimitKb>,
     pub(crate) file: ConfigFile,
     pub(crate) openrouter_key: KeyStatus,
 }
@@ -121,6 +126,8 @@ pub enum ConfigError {
 struct File {
     provider: Option<Provider>,
     colours: Option<Colours>,
+    #[serde(default, deserialize_with = "connected_code_limit_kb")]
+    connected_code_limit_kb: Option<ConnectedCodeLimitKb>,
     jev: Option<Role>,
     generator: Option<Role>,
 }
@@ -164,6 +171,10 @@ impl Settings {
             colours: Setting::or_default(contents.colours, Colours::Auto),
             detected_color_support: ColorSupport::detect(environment),
             no_color: NoColorStatus::read(environment),
+            connected_code_limit: Setting::or_default(
+                contents.connected_code_limit_kb,
+                ConnectedCodeLimitKb::DEFAULT,
+            ),
             file,
             openrouter_key: if environment
                 .get(OPENROUTER_KEY_VARIABLE)
@@ -186,6 +197,18 @@ impl Settings {
             self.detected_color_support,
         )
     }
+
+    /// The connected code limit that applies to a Practice on a repository
+    /// whose config is `repository`: this config's, or the default when it
+    /// sets none, lowered by the repository's when that is smaller.
+    #[must_use]
+    pub fn connected_code_limit(&self, repository: &RepositoryConfig) -> ConnectedCodeLimit {
+        let learner = match self.connected_code_limit.origin {
+            Origin::File => Some(self.connected_code_limit.value),
+            Origin::Default => None,
+        };
+        ConnectedCodeLimit::effective(learner, repository.connected_code_limit_kb())
+    }
 }
 
 impl<T> Setting<T> {
@@ -202,6 +225,19 @@ impl<T> Setting<T> {
             },
         }
     }
+}
+
+/// Reads `connected_code_limit_kb`, which must be a whole number from 0 to
+/// 400.
+fn connected_code_limit_kb<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<ConnectedCodeLimitKb>, D::Error> {
+    toml::Value::deserialize(deserializer)?
+        .as_integer()
+        .ok_or(ConnectedCodeLimitError)
+        .and_then(ConnectedCodeLimitKb::try_from)
+        .map(Some)
+        .map_err(serde::de::Error::custom)
 }
 
 /// `path` as Settings shows it: under the home directory it starts `~/`.
