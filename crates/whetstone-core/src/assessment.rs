@@ -45,6 +45,17 @@ pub enum ChoiceOutcome {
     NotSupported,
 }
 
+/// The outcome of the learner's reasoning against one criterion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CriterionOutcome {
+    /// Jev clearly says the reasoning covers the criterion.
+    Met,
+    /// Jev clearly says it doesn't.
+    NotMet,
+    /// Jev couldn't tell whether the reasoning covers it.
+    NeedsReview,
+}
+
 /// The learner's response to a question: their selected choice and their
 /// written reasoning. Once submitted, it is final.
 ///
@@ -90,6 +101,19 @@ impl AssessmentPolicy {
             Band::ClearYes => OptionRating::Supported,
             Band::ClearNo => OptionRating::NotSupported,
             Band::Unclear => OptionRating::NeedsReview,
+        };
+        self.assessed(outcome, answer)
+    }
+
+    /// A criterion's outcome from Jev's `answer` to whether the learner's
+    /// reasoning meets it: met when clear yes, not met when clear no, and
+    /// needs review when unclear.
+    #[must_use]
+    pub fn criterion_outcome(&self, answer: Probability) -> Assessed<CriterionOutcome> {
+        let outcome = match self.band(Job::ReasoningCriterion, answer) {
+            Band::ClearYes => CriterionOutcome::Met,
+            Band::ClearNo => CriterionOutcome::NotMet,
+            Band::Unclear => CriterionOutcome::NeedsReview,
         };
         self.assessed(outcome, answer)
     }
@@ -254,6 +278,26 @@ mod tests {
             assert_eq!(rating.outcome(), outcome, "{answer}");
             assert_eq!(rating.answer(), probability(answer));
             assert_eq!(rating.policy(), policy.version());
+        }
+    }
+
+    #[test]
+    fn a_criterion_is_met_not_met_or_needs_review() {
+        let policy = AssessmentPolicy::current();
+        for (answer, outcome) in [
+            (1.0, CriterionOutcome::Met),
+            (0.80, CriterionOutcome::Met),
+            (0.79, CriterionOutcome::NeedsReview),
+            (0.5, CriterionOutcome::NeedsReview),
+            (0.21, CriterionOutcome::NeedsReview),
+            (0.20, CriterionOutcome::NotMet),
+            (0.0, CriterionOutcome::NotMet),
+        ] {
+            let assessed = policy.criterion_outcome(probability(answer));
+
+            assert_eq!(assessed.outcome(), outcome, "{answer}");
+            assert_eq!(assessed.answer(), probability(answer));
+            assert_eq!(assessed.policy(), policy.version());
         }
     }
 
