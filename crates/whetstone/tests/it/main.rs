@@ -22,6 +22,7 @@ mod pty;
 mod pty_colours;
 mod pty_dumb;
 mod pty_paste;
+mod pty_suspend;
 mod pty_terminal;
 mod repo;
 mod repository;
