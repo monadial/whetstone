@@ -169,7 +169,7 @@ impl App {
             return Flow::Quit;
         }
         // Under the notice nothing is visible, so no key changes anything.
-        if self.viewport.is_some_and(|size| !fits(size)) {
+        if self.shows_notice() {
             return Flow::Continue;
         }
         if let Some(overlay) = &mut self.overlay {
@@ -205,11 +205,17 @@ impl App {
         }
     }
 
+    /// Whether the window is too small for the screens, so the notice
+    /// shows instead.
+    fn shows_notice(&self) -> bool {
+        self.viewport.is_some_and(|size| !fits(size))
+    }
+
     /// Rule 57: a paste is text for the focused text entry, never keys, so
     /// it skips the keymap. Under the notice, under an overlay, which has no
     /// text entry, or on a screen without a focused one, it does nothing.
     fn paste(&mut self, text: &str) {
-        if self.viewport.is_some_and(|size| !fits(size)) || self.overlay.is_some() {
+        if self.shows_notice() || self.overlay.is_some() {
             return;
         }
         let screen = self.screens.current_mut();

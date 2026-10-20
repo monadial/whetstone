@@ -146,6 +146,20 @@ fn a_paste_on_the_picker_is_ignored() {
 }
 
 #[test]
+fn a_paste_on_the_repository_picker_is_ignored_unless_it_is_searching() {
+    let repo = TestRepo::new("payments");
+    repo.write("README.md", "# Payments\n");
+    repo.commit("Start the payments service");
+    let mut session = started_in(repo.root(), 80, 24);
+    session.press("<Enter>");
+
+    assert_paste_is_ignored(&mut session);
+
+    session.press("/ <Esc>");
+    assert_paste_is_ignored(&mut session);
+}
+
+#[test]
 fn a_paste_on_the_viewer_is_ignored_unless_it_is_searching() {
     let mut session = Session::plain(80, 24);
     session.press(OPEN_RETRY_IDENTITY);
