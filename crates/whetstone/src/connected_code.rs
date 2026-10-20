@@ -35,6 +35,7 @@ mod linked_and_named;
 mod links;
 mod mentions;
 mod related;
+mod showcase;
 mod touched_text;
 
 use std::error::Error;
@@ -333,49 +334,22 @@ impl Request {
         self.commit
     }
 
-    /// Finds the commit's connected code, blocking until it is found: the
-    /// callers and callees of the callables its change adds or modifies, as
-    /// [`find`] finds them in a cached graph or the engine's, each with the
-    /// lines it would send, the files its change links to and names, each
-    /// whole, as
-    /// [`with_linked_and_named`](linked_and_named::with_linked_and_named)
-    /// finds them, and its related tests and related configuration, each
-    /// whole, as [`related::connections`] finds them, with any range in a
-    /// file sent whole merged into it; or none found, or the analysis
-    /// failed, a panic included. Everything but the graph is read from the
-    /// commit, so links, names, related tests and related configuration are
-    /// found whether or not the graph came from the cache. It also says how
-    /// the graph was found, which is [`GraphOrigin::Analysed`] if none was.
+    /// Finds the commit's connected code, blocking until it is found, as
+    /// [`connections_at`] finds it in the commit's tree; or the analysis
+    /// failed, because the tree could not be read or reading it panicked.
     pub(crate) fn find(&self) -> (Connections, GraphOrigin) {
         let started = Instant::now();
-        let mut origin = GraphOrigin::Analysed;
-        let found = catching(|| {
+        let (connections, origin) = catching(|| {
             self.repository
                 .with_tree(self.commit, |tree| {
-                    let found = find(tree, &self.change, &self.exclude, &self.dirs, &self.cache)?;
-                    origin = found.origin();
-                    let code = with_sent_text(tree, found.connections())?;
-                    let mut connections =
-                        linked_and_named::with_linked_and_named(tree, &self.change, code)?;
-                    connections.extend(related::connections(tree, &self.change)?);
-                    Ok(merge_into_whole_files(connections))
+                    connections_at(tree, &self.change, &self.exclude, &self.dirs, &self.cache)
                 })
-                .map_err(|error| Failure::Snapshot(Box::new(error)))?
-        });
-        let connections = match found {
-            Ok(connections) if connections.is_empty() => Connections::NoneFound,
-            Ok(connections) => Connections::Found(connections),
-            Err(_) => Connections::AnalysisFailed,
-        };
+                .map_err(|error| Failure::Snapshot(Box::new(error)))
+        })
+        .unwrap_or((Connections::AnalysisFailed, GraphOrigin::Analysed));
         tracing::info!(
             commit = self.commit.full(),
-            state = match &connections {
-                Connections::Found(_) => "found",
-                Connections::NoneFound => "none found",
-                Connections::Finding | Connections::TookTooLong | Connections::AnalysisFailed => {
-                    "analysis failed"
-                }
-            },
+            state = state(&connections),
             origin = ?origin,
             ms = started.elapsed().as_millis(),
             "found a commit's connected code"
@@ -384,17 +358,69 @@ impl Request {
     }
 }
 
-/// `connections` in the commit `tree` shows, as the evidence takes them:
-/// connected code, each with its file's text at the commit, of which it
-/// keeps only its lines. It fails if a file cannot be read.
-fn with_sent_text(
-    tree: &CommitTree<'_>,
+/// The connected code of `change` at the commit `snapshot` shows, as the
+/// evidence takes it, blocking until it is found: the callers and callees
+/// of the callables the change adds or modifies, as [`find`] finds them in
+/// a cached graph or the engine's, each with the lines it would send, the
+/// files the change links to and names, each whole, as
+/// [`with_linked_and_named`](linked_and_named::with_linked_and_named) finds
+/// them, and its related tests and related configuration, each whole, as
+/// [`related::connections`] finds them, with any range in a file sent whole
+/// merged into it; or none found, or the analysis failed, a panic included.
+/// Everything but the graph is read from the snapshot, so links, names,
+/// related tests and related configuration are found whether or not the
+/// graph came from the cache. It also says how the graph was found, which
+/// is [`GraphOrigin::Analysed`] if none was.
+///
+/// A learner's commit and a showcase change both find their connected code
+/// this way, so the showcase project's is what a learner's repository
+/// would give.
+fn connections_at<S: Snapshot>(
+    snapshot: &S,
+    change: &Change,
+    exclude: &ExcludePatterns,
+    dirs: &AnalysisDirs,
+    cache: &GraphCache,
+) -> (Connections, GraphOrigin) {
+    let mut origin = GraphOrigin::Analysed;
+    let found = catching(|| {
+        let found = find(snapshot, change, exclude, dirs, cache)?;
+        origin = found.origin();
+        let code = with_sent_text(snapshot, found.connections())?;
+        let mut connections = linked_and_named::with_linked_and_named(snapshot, change, code)?;
+        connections.extend(related::connections(snapshot, change)?);
+        Ok(merge_into_whole_files(connections))
+    });
+    let connections = match found {
+        Ok(connections) if connections.is_empty() => Connections::NoneFound,
+        Ok(connections) => Connections::Found(connections),
+        Err(_) => Connections::AnalysisFailed,
+    };
+    (connections, origin)
+}
+
+/// What the log records of `connections`: whether any were found.
+fn state(connections: &Connections) -> &'static str {
+    match connections {
+        Connections::Found(_) => "found",
+        Connections::NoneFound => "none found",
+        Connections::Finding | Connections::TookTooLong | Connections::AnalysisFailed => {
+            "analysis failed"
+        }
+    }
+}
+
+/// `connections` in the commit `snapshot` shows, as the evidence takes
+/// them: connected code, each with its file's text at the commit, of which
+/// it keeps only its lines. It fails if a file cannot be read.
+fn with_sent_text<S: Snapshot>(
+    snapshot: &S,
     connections: &[Connection],
 ) -> Result<Vec<whetstone_core::Connection>, Failure> {
     connections
         .iter()
         .map(|connection| {
-            let content = read_file(tree, connection.path())?;
+            let content = read_file(snapshot, connection.path())?;
             let lines = connection.lines();
             let line = |number: u32| usize::try_from(number).expect("a line number fits in usize");
             let range = LineRange::new(line(*lines.start()), line(*lines.end()))

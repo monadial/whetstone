@@ -198,7 +198,10 @@ pub(crate) enum SnapshotId {
     /// showcase project this Whetstone version ships.
     #[cfg_attr(
         not(test),
-        expect(dead_code, reason = "the showcase project's snapshot arrives with #65")
+        expect(
+            dead_code,
+            reason = "the AI Practice spec's Preparing questions finds the showcase project's connected code"
+        )
     )]
     Showcase(usize),
 }
