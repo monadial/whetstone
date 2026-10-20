@@ -125,6 +125,15 @@ expression: pretty(&body)
         "true": "The criterion follows from the evidence and the answer key, and written reasoning can show whether it is met."
       }
     },
+    "depth": {
+      "type": "score",
+      "instructions": "How much understanding of the change answering the candidate's stem needs.",
+      "criteria": [
+        "Answerable by reading one line",
+        "Needs reading the change",
+        "Needs an understanding of how the change affects the code around it"
+      ]
+    },
     "hint_hides_answer_key": {
       "type": "noul",
       "instructions": "The candidate's hint doesn't reveal the answer key: someone reading only the stem, the options and the hint couldn't tell which option is correct.",

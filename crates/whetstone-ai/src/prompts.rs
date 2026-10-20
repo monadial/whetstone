@@ -55,6 +55,8 @@ pub(crate) struct QuestionCheckPrompts {
     pub(crate) why_it_matters: YesNoPrompt,
     pub(crate) hint_points_to_evidence: YesNoPrompt,
     pub(crate) hint_hides_answer_key: YesNoPrompt,
+    /// The depth score, over its three levels.
+    pub(crate) depth: ScorePrompt,
 }
 
 /// A yes/no question to Jev: its instructions, and what yes and no mean.
@@ -104,6 +106,22 @@ static VERSION: LazyLock<String> = LazyLock::new(|| {
 #[must_use]
 pub fn base_prompts_version() -> &'static str {
     &VERSION
+}
+
+/// A score question to Jev: its instructions, and its three levels, the
+/// lowest first.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ScorePrompt {
+    instructions: String,
+    levels: [String; 3],
+}
+
+impl ScorePrompt {
+    /// The question.
+    pub(crate) fn question(&self) -> JevQuestion {
+        JevQuestion::score(&self.instructions, &self.levels)
+    }
 }
 
 impl YesNoPrompt {
