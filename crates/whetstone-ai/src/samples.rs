@@ -10,10 +10,11 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 use whetstone_core::{
-    Area, Candidate, Change, ConnectedCodeLimit, Connection, ConnectionGroup, Connections,
-    Evidence, ExcludePatterns, Extent, LineRange, ModelId, QuestionType, Relation, ReviewChoices,
-    Tier, TouchedFile, WrittenCandidate, WrittenCitation, WrittenCriterion, WrittenOption,
-    plain_checks,
+    Area, AssessmentPolicy, Candidate, CandidateCheck, Change, ConnectedCodeLimit, Connection,
+    ConnectionGroup, Connections, Depth, Evidence, ExcludePatterns, Extent, LineRange, ModelId,
+    OptionLetter, Probability, Question, QuestionCheckAnswers, QuestionType, Relation,
+    ReviewChoices, Tier, TouchedFile, WrittenCandidate, WrittenCitation, WrittenCriterion,
+    WrittenOption, plain_checks, show_rule,
 };
 
 use crate::replay::{GENERATOR_MODEL, JEV_MODEL, connection, received, server};
@@ -282,6 +283,34 @@ pub(crate) fn candidate() -> Candidate {
     );
     passed.remove(0)
 }
+
+/// [`candidate`] after a question check it passes: every check clear yes,
+/// but options B and C clear no.
+pub(crate) fn question() -> Question {
+    let candidate = candidate();
+    let answer = |value| Probability::new(value).expect("the value is a probability");
+    let answers = QuestionCheckAnswers::new(
+        candidate.checks().into_iter().map(|check| {
+            let wrong = [
+                CandidateCheck::Option(OptionLetter::B),
+                CandidateCheck::Option(OptionLetter::C),
+            ];
+            (
+                check,
+                answer(if wrong.contains(&check) { 0.05 } else { 0.95 }),
+            )
+        }),
+        Depth::new([answer(0.1), answer(0.3), answer(0.6)], 1.5).expect("the depth is one"),
+    );
+    show_rule(candidate, answers, AssessmentPolicy::current()).expect("the sample passes")
+}
+
+/// A learner's reasoning for [`question`]: it connects the reused key to the
+/// provider charging once per key, but never says the timed-out charge may
+/// have gone through.
+pub(crate) const REASONING: &str = "The provider only charges once for each key and \
+     gives back the first receipt when it sees a key again. Reusing the original key \
+     means the retry can't turn into a second charge.";
 
 /// Sends `request` to Jev through a local server that replies with
 /// `reply`, and returns the decoded reply and the body that was sent.
