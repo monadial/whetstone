@@ -81,6 +81,11 @@ pub enum RequestFailure {
     /// or out of range. It is never coerced (rule 37).
     #[error("the reply could not be read")]
     InvalidReply,
+    /// The request was refused as invalid before any reply: `OpenRouter`
+    /// doesn't know the model, say, or its moderation blocked the input. It
+    /// is also what a request that could not be built at all is.
+    #[error("the request was invalid")]
+    InvalidRequest,
     /// The request was cancelled before its reply came.
     #[error("cancelled")]
     Cancelled,

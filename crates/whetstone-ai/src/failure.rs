@@ -3,6 +3,8 @@
 use rig::error::{ErrorKind, ErrorReport, ProviderError};
 use serde_json::Value;
 
+use crate::port::RequestFailure;
+
 /// Why a call failed. Nothing is retried automatically (rule 23): retrying is
 /// the learner's choice.
 ///
@@ -113,6 +115,26 @@ impl AiError {
             // Rig refused to build the request, or one of its own parts
             // failed, which no request of ours should cause.
             _ => Self::InvalidRequest { status: None },
+        }
+    }
+}
+
+/// The port's name for each failure, so that only Whetstone's own failure
+/// crosses it. What only the logs need, a status or the refused model, stays
+/// behind.
+impl From<AiError> for RequestFailure {
+    fn from(error: AiError) -> Self {
+        match error {
+            AiError::NoKey => Self::NoKey,
+            AiError::KeyRefused => Self::KeyRefused,
+            AiError::OutOfCredits => Self::OutOfCredits,
+            AiError::RateLimited => Self::RateLimited,
+            AiError::ProviderUnavailable { .. } => Self::ProviderUnavailable,
+            AiError::NoZeroRetentionEndpoint { .. } => Self::NoZeroRetentionEndpoint,
+            AiError::TimedOut => Self::TimedOut,
+            AiError::InvalidReply => Self::InvalidReply,
+            AiError::InvalidRequest { .. } => Self::InvalidRequest,
+            AiError::Cancelled => Self::Cancelled,
         }
     }
 }
