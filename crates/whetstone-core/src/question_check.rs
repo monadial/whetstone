@@ -2,10 +2,14 @@
 //! the show rule that turns its answers into a question, or withholds the
 //! candidate.
 //!
-//! [`Candidate::checks`] lists the yes/no questions the check asks. Jev's
-//! answers come back as [`QuestionCheckAnswers`], as returned, and
-//! [`show_rule`] decides under the [`AssessmentPolicy`]. Only a question
-//! that passes is ever shown.
+//! [`Candidate::checks`] lists the yes/no questions the check asks: whether
+//! the candidate is answerable from the evidence, about its area, needs this
+//! change and doesn't give the answer away; whether each criterion is fair;
+//! each option's rating; whether each rationale and the "why it matters"
+//! line hold up; and whether the hint points to the evidence without
+//! revealing the answer key. Jev's answers come back as
+//! [`QuestionCheckAnswers`], as returned, and [`show_rule`] decides under the
+//! [`AssessmentPolicy`]. Only a question that passes is ever shown.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -13,14 +17,37 @@ use std::fmt;
 use crate::area::AreaId;
 use crate::assessment_policy::{AssessmentPolicy, Band, Job, PolicyVersion};
 use crate::jev::Probability;
-use crate::question::{Candidate, CandidateId, Citation, Criterion, OptionLetter, QuestionType};
+use crate::question::{
+    Candidate, CandidateId, Citation, Criterion, Hint, OptionLetter, QuestionType,
+};
 
-/// One yes/no question of a candidate's question check.
+/// One yes/no question of a candidate's question check. They order as the
+/// check asks them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CandidateCheck {
+    /// Check 1: it is answerable from the evidence that was sent.
+    Answerable,
+    /// Check 2: it is about its area.
+    AboutArea,
+    /// Check 3: it needs this change rather than general knowledge.
+    NeedsChange,
+    /// Check 4: its stem and options don't give the answer away.
+    NoGiveaway,
+    /// Check 5, for the criterion at this place in the rubric, counting from
+    /// 0: it follows from the evidence and the answer key, and can be judged
+    /// from written reasoning.
+    Criterion(usize),
     /// Option rating: given the evidence, this option correctly answers the
     /// question.
     Option(OptionLetter),
+    /// This option's rationale is supported by the evidence.
+    Rationale(OptionLetter),
+    /// The "why it matters" line is supported by the evidence.
+    WhyItMatters,
+    /// The hint points to the evidence.
+    HintPointsToEvidence,
+    /// The hint doesn't reveal the answer key.
+    HintHidesAnswerKey,
 }
 
 /// Jev's answers to a candidate's question check, each the probability of
@@ -30,8 +57,9 @@ pub struct QuestionCheckAnswers {
     yes_no: BTreeMap<CandidateCheck, Probability>,
 }
 
-/// A candidate that passed its question check, with Jev's answers and the
-/// version of the policy that passed it. Only questions are ever shown.
+/// A candidate that passed its question check, with Jev's answers, the
+/// version of the policy that passed it, and its hint if the hint passed its
+/// checks too. Only questions are ever shown.
 ///
 /// Its `Debug` output shows no question text.
 #[derive(Clone, PartialEq)]
@@ -39,6 +67,7 @@ pub struct Question {
     candidate: Candidate,
     answers: QuestionCheckAnswers,
     policy: PolicyVersion,
+    hint: Option<Hint>,
 }
 
 /// A candidate the show rule withheld, and the checks that were not as the
@@ -50,16 +79,30 @@ pub struct Withheld {
 }
 
 impl Candidate {
-    /// The yes/no questions its question check asks Jev, in order: one
-    /// option rating per option.
+    /// The yes/no questions its question check asks Jev, in order: checks
+    /// 1 to 4; one per criterion; one option rating per option; one per
+    /// rationale, then "why it matters"; and the hint's two.
     #[must_use]
     pub fn checks(&self) -> Vec<CandidateCheck> {
-        match self.question_type() {
-            QuestionType::SingleChoice => OptionLetter::ALL
-                .into_iter()
-                .map(CandidateCheck::Option)
-                .collect(),
-        }
+        let letters = match self.question_type() {
+            QuestionType::SingleChoice => OptionLetter::ALL,
+        };
+        [
+            CandidateCheck::Answerable,
+            CandidateCheck::AboutArea,
+            CandidateCheck::NeedsChange,
+            CandidateCheck::NoGiveaway,
+        ]
+        .into_iter()
+        .chain((0..self.rubric().len()).map(CandidateCheck::Criterion))
+        .chain(letters.into_iter().map(CandidateCheck::Option))
+        .chain(letters.into_iter().map(CandidateCheck::Rationale))
+        .chain([
+            CandidateCheck::WhyItMatters,
+            CandidateCheck::HintPointsToEvidence,
+            CandidateCheck::HintHidesAnswerKey,
+        ])
+        .collect()
     }
 }
 
@@ -68,8 +111,22 @@ impl CandidateCheck {
     #[must_use]
     pub fn job(self) -> Job {
         match self {
+            Self::Answerable
+            | Self::AboutArea
+            | Self::NeedsChange
+            | Self::NoGiveaway
+            | Self::Criterion(_) => Job::QuestionCheck,
             Self::Option(_) => Job::OptionRating,
+            Self::Rationale(_)
+            | Self::WhyItMatters
+            | Self::HintPointsToEvidence
+            | Self::HintHidesAnswerKey => Job::RationaleAndHintChecks,
         }
+    }
+
+    /// Whether it checks the hint, which the show rule leaves aside.
+    fn is_hint(self) -> bool {
+        matches!(self, Self::HintPointsToEvidence | Self::HintHidesAnswerKey)
     }
 }
 
@@ -99,8 +156,13 @@ impl QuestionCheckAnswers {
 /// to its question check are what its question type needs, under `policy`.
 /// Anything unclear fails it, and so does a check left unanswered.
 ///
-/// For a single-choice question: exactly one option rating is clear yes and
-/// it is the answer key, and the other two are clear no.
+/// For a single-choice question: checks 1 to 4 and every criterion's check
+/// are clear yes; every rationale check and the "why it matters" check are
+/// clear yes; exactly one option rating is clear yes and it is the answer
+/// key; and the other two are clear no.
+///
+/// The hint's checks never withhold a question. A hint that isn't clear yes
+/// on both is dropped, and the question has no hint.
 ///
 /// The withheld candidate names every check that failed, in
 /// [`Candidate::checks`] order.
@@ -114,16 +176,25 @@ pub fn show_rule(
             .get(check)
             .map(|answer| policy.band(check.job(), answer))
     };
-    let failed: Vec<CandidateCheck> = candidate
-        .checks()
-        .into_iter()
+    let checks = candidate.checks();
+    let failed: Vec<CandidateCheck> = checks
+        .iter()
+        .copied()
+        .filter(|check| !check.is_hint())
         .filter(|&check| band(check) != Some(needed(&candidate, check)))
         .collect();
+    let hint = checks
+        .iter()
+        .copied()
+        .filter(|check| check.is_hint())
+        .all(|check| band(check) == Some(Band::ClearYes))
+        .then(|| candidate.hint().clone());
     if failed.is_empty() {
         Ok(Question {
             candidate,
             answers,
             policy: policy.version(),
+            hint,
         })
     } else {
         Err(Withheld {
@@ -136,8 +207,8 @@ pub fn show_rule(
 /// The band the show rule needs for `candidate`'s `check`.
 fn needed(candidate: &Candidate, check: CandidateCheck) -> Band {
     match check {
-        CandidateCheck::Option(letter) if letter == candidate.answer_key() => Band::ClearYes,
-        CandidateCheck::Option(_) => Band::ClearNo,
+        CandidateCheck::Option(letter) if letter != candidate.answer_key() => Band::ClearNo,
+        _ => Band::ClearYes,
     }
 }
 
@@ -172,7 +243,8 @@ impl Question {
         self.candidate.option(letter)
     }
 
-    /// Why the option `letter` is right or wrong, as the generator wrote it.
+    /// Why the option `letter` is right or wrong. Jev checked it against the
+    /// evidence before the question was shown.
     #[must_use]
     pub fn rationale(&self, letter: OptionLetter) -> &str {
         self.candidate.rationale(letter)
@@ -185,16 +257,27 @@ impl Question {
         self.candidate.answer_key()
     }
 
-    /// What the question is getting at.
+    /// What the question is getting at. Jev checked it against the evidence
+    /// before the question was shown.
     #[must_use]
     pub fn why_it_matters(&self) -> &str {
         self.candidate.why_it_matters()
     }
 
     /// The criteria written reasoning is assessed against: 1 to 3 of them.
+    /// Jev checked that each follows from the evidence and the answer key,
+    /// and can be judged from written reasoning.
     #[must_use]
     pub fn rubric(&self) -> &[Criterion] {
         self.candidate.rubric()
+    }
+
+    /// Its hint, if the hint points to the evidence without revealing the
+    /// answer key. Without one, the question shows "No hint for this
+    /// question".
+    #[must_use]
+    pub fn hint(&self) -> Option<&Hint> {
+        self.hint.as_ref()
     }
 
     /// The lines of the evidence it rests on.
@@ -223,6 +306,7 @@ impl fmt::Debug for Question {
             .field("candidate", &self.candidate)
             .field("answers", &self.answers)
             .field("policy", &self.policy)
+            .field("hint", &self.hint)
             .finish()
     }
 }
@@ -273,8 +357,24 @@ pub(crate) mod tests {
             .expect("a well-formed candidate passes")
     }
 
+    /// Answers to every check of `candidate` that pass it: 0.9 for each,
+    /// except 0.1 for the options that aren't its answer key.
+    pub(crate) fn passing(candidate: &Candidate) -> Vec<(CandidateCheck, Probability)> {
+        candidate
+            .checks()
+            .into_iter()
+            .map(|check| {
+                let answer = match check {
+                    CandidateCheck::Option(letter) if letter != candidate.answer_key() => 0.1,
+                    _ => 0.9,
+                };
+                (check, probability(answer))
+            })
+            .collect()
+    }
+
     /// Answers rating options A, B and C at `a`, `b` and `c`.
-    pub(crate) fn options(a: f64, b: f64, c: f64) -> Vec<(CandidateCheck, Probability)> {
+    fn options(a: f64, b: f64, c: f64) -> Vec<(CandidateCheck, Probability)> {
         OptionLetter::ALL
             .into_iter()
             .map(CandidateCheck::Option)
@@ -282,13 +382,18 @@ pub(crate) mod tests {
             .collect()
     }
 
+    /// The show rule's verdict on a candidate whose answer key is
+    /// `answer_key`, answered to pass except for `answers`.
     fn show(
         answer_key: OptionLetter,
         answers: Vec<(CandidateCheck, Probability)>,
     ) -> Result<Question, Withheld> {
+        let candidate = candidate("domain", 0, answer_key);
+        let mut all = passing(&candidate);
+        all.extend(answers);
         show_rule(
-            candidate("domain", 0, answer_key),
-            QuestionCheckAnswers::new(answers),
+            candidate,
+            QuestionCheckAnswers::new(all),
             AssessmentPolicy::current(),
         )
     }
@@ -298,24 +403,62 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_single_choice_question_check_rates_each_option() {
+    fn the_question_check_asks_every_check_in_order() {
+        use CandidateCheck::*;
+
         assert_eq!(
             candidate("domain", 0, OptionLetter::A).checks(),
             [
-                CandidateCheck::Option(OptionLetter::A),
-                CandidateCheck::Option(OptionLetter::B),
-                CandidateCheck::Option(OptionLetter::C),
+                Answerable,
+                AboutArea,
+                NeedsChange,
+                NoGiveaway,
+                Criterion(0),
+                Criterion(1),
+                Option(OptionLetter::A),
+                Option(OptionLetter::B),
+                Option(OptionLetter::C),
+                Rationale(OptionLetter::A),
+                Rationale(OptionLetter::B),
+                Rationale(OptionLetter::C),
+                WhyItMatters,
+                HintPointsToEvidence,
+                HintHidesAnswerKey,
             ]
-        );
-        assert_eq!(
-            CandidateCheck::Option(OptionLetter::B).job(),
-            Job::OptionRating
         );
     }
 
     #[test]
-    fn the_answer_key_clearly_supported_and_the_others_clearly_not_is_shown() {
-        let question = show(OptionLetter::B, options(0.2, 0.8, 0.0)).expect("shown");
+    fn each_check_is_banded_by_its_jobs_cut_offs() {
+        use CandidateCheck::*;
+
+        for (check, job) in [
+            (Answerable, Job::QuestionCheck),
+            (AboutArea, Job::QuestionCheck),
+            (NeedsChange, Job::QuestionCheck),
+            (NoGiveaway, Job::QuestionCheck),
+            (Criterion(2), Job::QuestionCheck),
+            (Option(OptionLetter::B), Job::OptionRating),
+            (Rationale(OptionLetter::C), Job::RationaleAndHintChecks),
+            (WhyItMatters, Job::RationaleAndHintChecks),
+            (HintPointsToEvidence, Job::RationaleAndHintChecks),
+            (HintHidesAnswerKey, Job::RationaleAndHintChecks),
+        ] {
+            assert_eq!(check.job(), job, "{check:?}");
+        }
+    }
+
+    #[test]
+    fn a_candidate_that_passes_every_check_is_shown_with_its_hint() {
+        let candidate = candidate("domain", 0, OptionLetter::B);
+        let answers = passing(&candidate);
+
+        let question = show_rule(
+            candidate,
+            QuestionCheckAnswers::new(answers.clone()),
+            AssessmentPolicy::current(),
+        )
+        .expect("shown");
 
         assert_eq!(question.id().written(), 0);
         assert_eq!(question.area(), &area("domain"));
@@ -327,17 +470,25 @@ pub(crate) mod tests {
         assert_eq!(question.why_it_matters(), "A retry must not charge twice.");
         assert_eq!(question.rubric().len(), 2);
         assert_eq!(question.citations().len(), 1);
+        assert_eq!(
+            question.hint().map(Hint::text),
+            Some("Look at how the key is made.")
+        );
         assert_eq!(question.policy(), AssessmentPolicy::current().version());
         assert_eq!(
             question
                 .answers()
                 .get(CandidateCheck::Option(OptionLetter::B)),
-            Some(probability(0.8))
+            Some(probability(0.9))
         );
-        assert_eq!(
-            question.answers().iter().collect::<Vec<_>>(),
-            options(0.2, 0.8, 0.0)
-        );
+        assert_eq!(question.answers().iter().collect::<Vec<_>>(), answers);
+    }
+
+    #[test]
+    fn the_answer_key_clearly_supported_and_the_others_clearly_not_is_shown() {
+        for answers in [options(0.2, 0.8, 0.0), options(0.0, 1.0, 0.2)] {
+            assert!(show(OptionLetter::B, answers).is_ok());
+        }
     }
 
     #[test]
@@ -382,21 +533,102 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn an_option_left_unanswered_is_withheld() {
-        let mut answers = options(0.9, 0.1, 0.1);
-        answers.pop();
+    fn each_check_not_clear_yes_withholds_the_candidate() {
+        use CandidateCheck::*;
+
+        for check in [
+            Answerable,
+            AboutArea,
+            NeedsChange,
+            NoGiveaway,
+            Criterion(0),
+            Criterion(1),
+            Rationale(OptionLetter::A),
+            Rationale(OptionLetter::B),
+            Rationale(OptionLetter::C),
+            WhyItMatters,
+        ] {
+            for answer in [0.79, 0.5, 0.2, 0.0] {
+                assert_eq!(
+                    failed(show(OptionLetter::A, vec![(check, probability(answer))])),
+                    [check],
+                    "{check:?} at {answer}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_failed_rationale_withholds_the_candidate() {
+        let rationale = CandidateCheck::Rationale(OptionLetter::B);
 
         assert_eq!(
-            failed(show(OptionLetter::A, answers)),
-            [CandidateCheck::Option(OptionLetter::C)]
+            failed(show(OptionLetter::A, vec![(rationale, probability(0.6))])),
+            [rationale]
         );
+    }
+
+    #[test]
+    fn every_failed_check_is_named_in_order() {
+        use CandidateCheck::*;
+
+        assert_eq!(
+            failed(show(
+                OptionLetter::A,
+                vec![
+                    (WhyItMatters, probability(0.1)),
+                    (Answerable, probability(0.5)),
+                    (Option(OptionLetter::C), probability(0.9)),
+                ]
+            )),
+            [Answerable, Option(OptionLetter::C), WhyItMatters]
+        );
+    }
+
+    #[test]
+    fn a_check_left_unanswered_withholds_the_candidate() {
+        let candidate = candidate("domain", 0, OptionLetter::A);
+        for missing in candidate.checks() {
+            let answers = passing(&candidate)
+                .into_iter()
+                .filter(|&(check, _)| check != missing);
+
+            let shown = show_rule(
+                candidate.clone(),
+                QuestionCheckAnswers::new(answers),
+                AssessmentPolicy::current(),
+            );
+
+            match missing {
+                CandidateCheck::HintPointsToEvidence | CandidateCheck::HintHidesAnswerKey => {
+                    assert_eq!(shown.expect("shown").hint(), None);
+                }
+                _ => assert_eq!(failed(shown), [missing]),
+            }
+        }
+    }
+
+    #[test]
+    fn a_hint_not_clear_yes_on_both_checks_is_dropped_and_its_question_kept() {
+        for (points, hides) in [(0.5, 0.9), (0.9, 0.79), (0.1, 0.9), (0.9, 0.0), (0.2, 0.2)] {
+            let question = show(
+                OptionLetter::A,
+                vec![
+                    (CandidateCheck::HintPointsToEvidence, probability(points)),
+                    (CandidateCheck::HintHidesAnswerKey, probability(hides)),
+                ],
+            )
+            .expect("a failed hint keeps its question");
+
+            assert_eq!(question.hint(), None, "{points}, {hides}");
+        }
     }
 
     #[test]
     fn a_withheld_candidate_names_itself() {
         let withheld = show_rule(
             candidate("observability", 2, OptionLetter::A),
-            QuestionCheckAnswers::new(options(0.5, 0.5, 0.5)),
+            QuestionCheckAnswers::default(),
             AssessmentPolicy::current(),
         )
         .expect_err("withheld");
@@ -407,13 +639,13 @@ pub(crate) mod tests {
 
     #[test]
     fn debug_output_never_shows_a_questions_text() {
-        let question = show(OptionLetter::A, options(0.9, 0.1, 0.1)).expect("shown");
+        let question = show(OptionLetter::A, Vec::new()).expect("shown");
         let debug = format!("{question:?}");
 
         for text in [
             "retry reuse",
             "Option A",
-            "Rationale",
+            "Rationale A",
             "charge twice",
             "Look at",
         ] {
