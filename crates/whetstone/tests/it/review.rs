@@ -191,3 +191,647 @@ fn binary_files_symlinks_and_submodules_cannot_be_brought_back() {
 
     assert_eq!(files(&session), before);
 }
+
+/// A fake AWS access key ID, built from pieces so that no secret scanner
+/// finds a whole one in the source.
+const AWS_KEY: &str = concat!("AKIA", "FAKEFAKEFAKEFAKE");
+/// A fake GitHub token, built the same way.
+const GITHUB_TOKEN: &str = concat!("ghp_", "FAKEfakeFAKEfakeFAKEfakeFAKEfakeFAKE");
+
+/// A repository called `payments` whose newest commit adds an AWS key to
+/// `src/settings.py` and a GitHub token to `.env`, names the token in its
+/// message, and edits the readme.
+fn with_secrets() -> TestRepo {
+    let repo = TestRepo::new("payments");
+    repo.write("README.md", "# Payments\n")
+        .write("src/settings.py", "REGION = \"eu-west-1\"\n");
+    repo.commit("Start the payments service");
+    repo.write("README.md", "# Payments\n\nTake payments.\n")
+        .write(
+            "src/settings.py",
+            format!("REGION = \"eu-west-1\"\nKEY = \"{AWS_KEY}\"\n"),
+        )
+        .write(".env", format!("GITHUB_TOKEN={GITHUB_TOKEN}\n"));
+    repo.commit(&format!(
+        "Configure the payments client\n\nIt uses the token {GITHUB_TOKEN} for now."
+    ));
+    repo
+}
+
+/// The row of the Send control, trimmed, without its focus marker.
+fn send(session: &Session) -> String {
+    let rows = session.rows();
+    let row = rows
+        .iter()
+        .map(|row| row.trim().trim_start_matches("> "))
+        .find(|row| row.starts_with("Send") && !row.starts_with("Sends"));
+    assert!(row.is_some(), "no Send row:\n{}", session.text());
+    row.unwrap_or_default().to_owned()
+}
+
+#[test]
+fn the_commit_message_and_every_included_file_are_checked_for_secrets() {
+    let repo = with_secrets();
+    let mut session = started_in(repo.root(), 120, 60);
+
+    session.press(REVIEW_NEWEST);
+
+    assert_eq!(
+        session.section("Secret check"),
+        [
+            "Possible secret in the commit message, line 3: GitHub token, ghp_********",
+            "( ) Not a secret",
+            "Possible secret in src/settings.py, line 2: AWS access key ID, AKIA********",
+            "Leave out the file",
+            "( ) Not a secret",
+            "Whetstone checks for common secret formats and can't guarantee there are none.",
+        ]
+    );
+    assert_eq!(send(&session), "Send (resolve the possible secrets)");
+}
+
+#[test]
+fn leaving_out_the_file_or_marking_the_match_as_not_a_secret_resolves_a_finding() {
+    let repo = with_secrets();
+    let mut session = started_in(repo.root(), 120, 60);
+    session.press(REVIEW_NEWEST);
+
+    // From the change round to Back, then up to the file's first action.
+    session.press("<S-Tab> k k k");
+    assert_eq!(
+        session.row_with("Leave out the file"),
+        "> Leave out the file"
+    );
+    session.press("<Space>");
+
+    assert_eq!(statuses(&session)[2], "left out by you");
+    assert_eq!(
+        session.section("Secret check"),
+        [
+            "Possible secret in the commit message, line 3: GitHub token, ghp_********",
+            "( ) Not a secret",
+            "Whetstone checks for common secret formats and can't guarantee there are none.",
+        ]
+    );
+    assert_eq!(send(&session), "Send (resolve the possible secrets)");
+
+    session.press("k <Space>");
+    assert_eq!(session.section("Secret check")[1], "> (x) Not a secret");
+    assert_eq!(send(&session), "Send (arrives with Jev)");
+
+    session.press("<Space>");
+    assert_eq!(session.section("Secret check")[1], "> ( ) Not a secret");
+    assert_eq!(send(&session), "Send (resolve the possible secrets)");
+}
+
+#[test]
+fn a_finding_in_the_commit_message_can_only_be_marked_as_not_a_secret() {
+    let repo = TestRepo::new("payments");
+    repo.write("README.md", "# Payments\n");
+    repo.commit(&format!("Start the payments service with {AWS_KEY}"));
+    let mut session = started_in(repo.root(), 120, 60);
+    session.press("<Enter> j j j j j <Space> k k k k k <S-Tab> <Enter>");
+
+    assert_eq!(
+        session.section("Secret check"),
+        [
+            "Possible secret in the commit message, line 1: AWS access key ID, AKIA********",
+            "( ) Not a secret",
+            "Whetstone checks for common secret formats and can't guarantee there are none.",
+        ]
+    );
+}
+
+#[test]
+fn a_file_brought_back_is_checked_for_secrets_as_it_returns() {
+    let repo = with_secrets();
+    let mut session = started_in(repo.root(), 120, 60);
+    session.press(REVIEW_NEWEST);
+    assert_eq!(
+        files(&session)[0],
+        [".env", "1 KB", "left out: common secret path"]
+    );
+
+    session.press("j <Space>");
+
+    assert_eq!(statuses(&session)[0], "included by you");
+    assert_eq!(
+        session.section("Secret check")[2..5],
+        [
+            "Possible secret in .env, line 1: GitHub token, ghp_********",
+            "Leave out the file",
+            "( ) Not a secret",
+        ]
+    );
+}
+
+#[test]
+fn a_secret_the_change_removes_is_found_in_the_diff_it_sends() {
+    let repo = with_secrets();
+    repo.write("src/settings.py", "REGION = \"eu-west-1\"\n");
+    repo.commit("Read the key from the environment");
+    let mut session = started_in(repo.root(), 120, 60);
+
+    session.press(REVIEW_NEWEST);
+
+    assert_eq!(
+        session.section("Secret check")[0],
+        "Possible secret in src/settings.py, diff line 7: AWS access key ID, AKIA********"
+    );
+}
+
+/// `count` presses of `key`, separated by spaces.
+fn times(key: &str, count: usize) -> String {
+    vec![key; count].join(" ")
+}
+
+/// A repository called `payments` whose newest commit adds a text file of
+/// more than 400 KB and an AWS key to `src/settings.py`.
+fn with_a_large_file_and_a_secret() -> TestRepo {
+    let repo = TestRepo::new("payments");
+    repo.write("README.md", "# Payments\n");
+    repo.commit("Start the payments service");
+    repo.write("data/cards.txt", "card\n".repeat(90_000))
+        .write("src/settings.py", format!("KEY = \"{AWS_KEY}\"\n"));
+    repo.commit("Load the test cards");
+    repo
+}
+
+#[test]
+fn over_the_limit_the_review_says_the_change_is_too_large_until_files_are_left_out() {
+    let repo = with_a_large_file_and_a_secret();
+    let mut session = started_in(repo.root(), 120, 60);
+    session.press(REVIEW_NEWEST);
+    let size = session.section("Size");
+    assert_eq!(size[1], "This change is too large to practise on.");
+    let kilobytes: usize = size[0]
+        .strip_suffix(" KB of 400 KB")
+        .and_then(|kilobytes| kilobytes.parse().ok())
+        .unwrap_or_default();
+    assert!(kilobytes > 900, "{size:?}");
+
+    session.press("j <Space>");
+
+    let size = session.section("Size");
+    assert_eq!(size.len(), 1, "{size:?}");
+    assert!(size[0].ends_with(" KB of 400 KB"), "{size:?}");
+    assert_eq!(files(&session)[0][2], "left out by you");
+}
+
+#[test]
+fn send_says_why_it_is_disabled_secrets_first_then_size_then_nothing_to_send_then_jev() {
+    let repo = with_a_large_file_and_a_secret();
+    let mut session = started_in(repo.root(), 120, 60);
+    session.press(REVIEW_NEWEST);
+    assert_eq!(send(&session), "Send (resolve the possible secrets)");
+
+    // Back, Send, then the finding's Not a secret.
+    session.press("<S-Tab> k k <Space>");
+    assert_eq!(send(&session), "Send (over the size limit)");
+
+    // Up past the finding's actions and the five areas to the large file.
+    session.press(&times("k", 8));
+    session.press("<Space> j <Space>");
+    assert_eq!(statuses(&session), ["left out by you"; 2]);
+    assert_eq!(send(&session), "Send (nothing left to send)");
+
+    session.press("<Space>");
+    assert_eq!(send(&session), "Send (arrives with Jev)");
+}
+
+/// The rows of the reader's text, trimmed, under its title.
+fn reader(session: &Session) -> Vec<String> {
+    session
+        .rows()
+        .iter()
+        .skip(3)
+        .map(|row| row.trim().to_owned())
+        .collect()
+}
+
+#[test]
+fn enter_on_a_file_reads_exactly_what_is_sent_for_it_its_diff_and_full_content() {
+    let repo = with_a_retry();
+    let mut session = started_in(repo.root(), 120, 40);
+    session.press(REVIEW_NEWEST);
+
+    session.press("j <Enter>");
+
+    assert_eq!(session.rows()[1].trim(), "What is sent for src/retry.rs");
+    let index = repo.git(&["log", "-1", "--format=", "--raw", "--abbrev=7"]);
+    let blob = index.split_whitespace().nth(3).unwrap_or_default();
+    assert_eq!(
+        reader(&session)[..13],
+        [
+            "Diff".to_owned(),
+            "1 diff --git a/src/retry.rs b/src/retry.rs".to_owned(),
+            "2 new file mode 100644".to_owned(),
+            format!("3 index 0000000..{blob}"),
+            "4 --- /dev/null".to_owned(),
+            "5 +++ b/src/retry.rs".to_owned(),
+            "6 @@ -0,0 +1 @@".to_owned(),
+            "7 +pub fn retry() {}".to_owned(),
+            String::new(),
+            "Full content".to_owned(),
+            "1 pub fn retry() {}".to_owned(),
+            String::new(),
+            String::new(),
+        ]
+    );
+
+    session.press("q");
+    assert_eq!(session.rows()[1].trim(), "Review what will be sent");
+    assert_eq!(files(&session)[0], ["src/retry.rs", "1 KB", "included"]);
+    assert!(session.row_with("src/retry.rs").starts_with("> "));
+}
+
+#[test]
+fn a_deleted_file_sends_its_content_before_the_change_and_a_left_out_file_sends_nothing() {
+    let repo = with_a_retry();
+    std::fs::remove_file(repo.path("src/retry.rs")).expect("remove the file");
+    repo.write("Cargo.lock", "version = 4\n");
+    repo.commit("Stop retrying");
+    let mut session = started_in(repo.root(), 120, 40);
+    session.press(REVIEW_NEWEST);
+
+    session.press("j j <Enter>");
+    assert_eq!(session.rows()[1].trim(), "What is sent for src/retry.rs");
+    let rows = reader(&session);
+    assert_eq!(
+        rows[9..11],
+        [
+            "Full content before the change, which deletes it",
+            "1 pub fn retry() {}",
+        ],
+        "{rows:#?}"
+    );
+
+    session.press("q k <Enter>");
+    assert_eq!(session.rows()[1].trim(), "What is sent for Cargo.lock");
+    assert_eq!(
+        reader(&session)[..2],
+        ["Nothing is sent", "Cargo.lock is left out: lockfile."]
+    );
+}
+
+#[test]
+fn enter_on_an_area_reads_its_prompt_and_where_it_comes_from() {
+    let repo = with_a_retry();
+    let mut session = started_in(repo.root(), 120, 40);
+    session.press(REVIEW_NEWEST);
+
+    session.press("j j <Enter>");
+
+    assert_eq!(session.rows()[1].trim(), "Area prompt: Domain");
+    assert_eq!(
+        reader(&session)[..5],
+        [
+            "Prompt source",
+            "Whetstone default",
+            "",
+            "Area prompt, as it is sent",
+            "Focus on the subject the change is about: the concepts it names, the rules",
+        ]
+    );
+}
+
+#[test]
+fn enter_on_the_change_reads_its_full_id_and_its_message_as_it_is_sent() {
+    let repo = with_a_retry();
+    let id = repo.head();
+    let mut session = started_in(repo.root(), 120, 40);
+    session.press(REVIEW_NEWEST);
+
+    session.press("<Enter>");
+
+    assert_eq!(
+        session.rows()[1].trim(),
+        format!("Change {}", short_id(&repo))
+    );
+    assert_eq!(
+        reader(&session)[..7],
+        [
+            "Commit ID, which is not sent".to_owned(),
+            id,
+            String::new(),
+            "Message, as it is sent".to_owned(),
+            "Retry failed payments".to_owned(),
+            String::new(),
+            "A card declined for a network error is tried again.".to_owned(),
+        ]
+    );
+}
+
+#[test]
+fn areas_from_the_repository_say_their_prompt_comes_from_this_repository() {
+    let repo = with_a_retry();
+    repo.write(
+        ".whetstone/areas/security.md",
+        "+++\nname = \"Security\"\ndescription = \"Who can do what\"\n+++\nLook at who is trusted.\n",
+    );
+    let mut session = started_in(repo.root(), 120, 60);
+
+    session.press("<Enter> j <Space> k <S-Tab> <Enter>");
+
+    assert_eq!(session.section("Areas"), ["Security  this repository"]);
+}
+
+#[test]
+fn only_the_selected_areas_are_sent() {
+    let repo = with_a_retry();
+    let mut session = started_in(repo.root(), 120, 60);
+
+    // Deselect Infrastructure and Scalability.
+    session.press("<Enter> j <Space> j j <Space> j j <Space> k k k k k <S-Tab> <Enter>");
+
+    assert_eq!(
+        columns(&session.section("Areas")),
+        [
+            ["Domain", "Whetstone default"],
+            ["Observability", "Whetstone default"],
+            ["System design", "Whetstone default"],
+        ]
+    );
+}
+
+#[test]
+fn the_destination_names_the_models_the_learners_settings_choose() {
+    let repo = with_a_retry();
+    let mut session = Session::start(
+        crate::session::Setup {
+            config: Some(
+                "[jev]\nmodel = \"typesafe/jev-1.13\"\n\n[generator]\nmodel = \"openai/gpt-6\"\n",
+            ),
+            variables: crate::session::NO_COLOR,
+            start: Some(repo.root()),
+            ..crate::session::Setup::default()
+        },
+        120,
+        40,
+    );
+
+    session.press(REVIEW_NEWEST);
+
+    assert_eq!(
+        session.rows()[3].trim(),
+        "Sends to OpenRouter · Jev: typesafe/jev-1.13 · Generator: openai/gpt-6"
+    );
+}
+
+#[test]
+fn review_choices_survive_going_back_to_the_picker_and_reset_for_another_commit() {
+    let repo = with_every_kind_of_file();
+    let mut session = started_in(repo.root(), 120, 60);
+    session.press(REVIEW_NEWEST);
+    // Bring back the first file, and leave out the last text file.
+    session.press("j <Space> j j j j j j <Space>");
+    let chosen = statuses(&session);
+    assert_eq!(chosen[0], "included by you");
+    assert_eq!(chosen[6], "left out by you");
+
+    session.press("q <Enter>");
+    assert_eq!(statuses(&session), chosen);
+
+    // Choose the first commit, then the newest again, and review it.
+    session.press("q k <Space> k <Space> j j <Enter>");
+    assert_eq!(session.rows()[1].trim(), "Review what will be sent");
+    assert_eq!(statuses(&session)[0], "left out: common secret path");
+    assert_eq!(statuses(&session)[6], "included");
+}
+
+#[test]
+fn browsing_commits_and_reviewing_one_writes_nothing() {
+    let repo = with_secrets();
+    // A stale index, as an uncommitted edit leaves it: nothing may refresh
+    // it.
+    repo.write("README.md", "# Payments, edited\n");
+    let before = repo.on_disk();
+    let mut session = started_in(repo.root(), 80, 24);
+
+    // Open the newest commit in the viewer, then review it: bring back
+    // `.env`, read it and an area, mark a match, and leave a file out.
+    session.press("<Enter> j j j j j <Enter> h j l l q");
+    session.press("k k k k k <S-Tab> <Enter>");
+    session.press("j <Space> <Enter> G q j j <Enter> q <S-Tab> k k <Space> k <Space> q");
+    session.press("j <Space> j <Enter> q q");
+    drop(session);
+
+    repo.assert_untouched(&before);
+}
+
+/// Everything recorded in the log while `run` runs, at every level.
+fn logged(run: impl FnOnce()) -> String {
+    use std::io;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Debug, Clone, Default)]
+    struct Captured(Arc<Mutex<Vec<u8>>>);
+
+    impl io::Write for Captured {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.0.lock().expect("log lock").extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let captured = Captured::default();
+    let writer = captured.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(move || writer.clone())
+        .with_max_level(tracing::Level::TRACE)
+        .finish();
+    tracing::subscriber::with_default(subscriber, run);
+    let bytes = captured.0.lock().expect("log lock").clone();
+    String::from_utf8(bytes).expect("the log is UTF-8")
+}
+
+#[test]
+fn a_session_with_secrets_leaves_no_trace_of_them_file_contents_or_prompts_in_the_log() {
+    let repo = with_secrets();
+
+    let log = logged(|| {
+        let mut session = started_in(repo.root(), 80, 24);
+        session.press(REVIEW_NEWEST);
+        session.press("j <Space> <Enter> q j j <Enter> q <S-Tab> k k <Space>");
+    });
+
+    assert!(log.contains("opened the outbound review"), "{log}");
+    assert!(
+        log.contains(&repo.head()),
+        "commit IDs may be logged: {log}"
+    );
+    for unlogged in [
+        AWS_KEY,
+        GITHUB_TOKEN,
+        "eu-west-1",
+        "Take payments.",
+        "Focus on the subject the change is about",
+    ] {
+        assert!(!log.contains(unlogged), "{unlogged:?} in the log:\n{log}");
+    }
+}
+
+/// `with_every_kind_of_file`, whose newest commit also adds an AWS key to
+/// `src/settings.py`. Snapshots never hold a whole fake secret, so that no
+/// secret scanner finds one in them: the review shows only its masked
+/// excerpt, and no snapshot reads the file.
+fn for_snapshots() -> TestRepo {
+    let repo = TestRepo::new("payments");
+    repo.write("README.md", "# Payments\n");
+    repo.commit("Start the payments service");
+    repo.write("src/retry.rs", "pub fn retry() {}\n")
+        .write("src/settings.py", format!("KEY = \"{AWS_KEY}\"\n"))
+        .write("Cargo.lock", "version = 4\n")
+        .write(".env.example", "API_URL=http://localhost\n")
+        .write("fixtures/cards.json", "[]\n")
+        .write("docs/logo.png", b"PNG\0\x01\x02binary")
+        .symlink("docs/readme", "../README.md")
+        .add_submodule("vendor/ledger");
+    repo.commit("Retry failed payments\n\nA card declined for a network error is tried again.");
+    repo.write(".whetstone/config.toml", "exclude = [\"fixtures/\"]\n");
+    repo
+}
+
+#[test]
+fn the_review_at_120x32() {
+    let repo = for_snapshots();
+    let mut session = started_in(repo.root(), 120, 32);
+    session.press(REVIEW_NEWEST);
+
+    insta::assert_debug_snapshot!("review_120x32", session.frame());
+}
+
+#[test]
+fn the_review_at_80x24() {
+    let repo = for_snapshots();
+    let mut session = started_in(repo.root(), 80, 24);
+    session.press(REVIEW_NEWEST);
+
+    insta::assert_debug_snapshot!("review_80x24", session.frame());
+}
+
+#[test]
+fn the_reviews_secret_check_at_120x32() {
+    let repo = for_snapshots();
+    let mut session = started_in(repo.root(), 120, 32);
+    session.press(REVIEW_NEWEST);
+    session.press("<S-Tab> k k <Space>");
+
+    insta::assert_debug_snapshot!("review_secret_check_120x32", session.frame());
+}
+
+#[test]
+fn the_reviews_secret_check_at_80x24() {
+    let repo = for_snapshots();
+    let mut session = started_in(repo.root(), 80, 24);
+    session.press(REVIEW_NEWEST);
+    session.press("<S-Tab> k k <Space>");
+
+    insta::assert_debug_snapshot!("review_secret_check_80x24", session.frame());
+}
+
+#[test]
+fn reading_what_a_file_sends_at_120x32() {
+    let repo = for_snapshots();
+    let mut session = started_in(repo.root(), 120, 32);
+    session.press(REVIEW_NEWEST);
+    session.press(&times("j", 7));
+    session.press("<Enter>");
+
+    insta::assert_debug_snapshot!("review_reading_a_file_120x32", session.frame());
+}
+
+#[test]
+fn reading_what_a_file_sends_at_80x24() {
+    let repo = for_snapshots();
+    let mut session = started_in(repo.root(), 80, 24);
+    session.press(REVIEW_NEWEST);
+    session.press(&times("j", 7));
+    session.press("<Enter>");
+
+    insta::assert_debug_snapshot!("review_reading_a_file_80x24", session.frame());
+}
+
+#[test]
+fn at_80x24_the_review_scrolls_to_keep_the_focused_control_and_its_heading_in_view() {
+    let repo = for_snapshots();
+    let mut session = started_in(repo.root(), 80, 24);
+    session.press(REVIEW_NEWEST);
+    assert_eq!(session.rows()[1].trim(), "Review what will be sent");
+
+    session.press("<S-Tab>");
+    let rows: Vec<String> = session
+        .rows()
+        .iter()
+        .map(|row| row.trim().to_owned())
+        .collect();
+    assert_eq!(
+        rows[20..23],
+        [
+            "Send (resolve the possible secrets)",
+            "> Back",
+            "? keys  : actions  Space toggle  Enter read  q back"
+        ]
+    );
+    assert!(rows.contains(&"Size".to_owned()), "{rows:#?}");
+
+    // Up past Send, the secret check's actions, the five areas and the
+    // nine files but the first.
+    session.press(&times("k", 17));
+    assert_eq!(session.rows()[1].trim(), "Files", "{}", session.text());
+    assert!(session.rows()[2].trim().starts_with("> .env.example"));
+
+    session.press("k");
+    assert_eq!(session.rows()[1].trim(), "Review what will be sent");
+}
+
+#[test]
+fn statuses_and_findings_read_the_same_without_colour_and_in_16_colours() {
+    let repo = for_snapshots();
+    let mut plain = started_in(repo.root(), 120, 60);
+    let mut colours = Session::start(
+        crate::session::Setup {
+            variables: &[("TERM", "xterm")],
+            start: Some(repo.root()),
+            ..crate::session::Setup::default()
+        },
+        120,
+        60,
+    );
+    for session in [&mut plain, &mut colours] {
+        session.press(REVIEW_NEWEST);
+        session.press("j <Space> k <S-Tab> k k <Space>");
+    }
+
+    assert_eq!(colours.rows(), plain.rows());
+    assert_eq!(statuses(&plain)[0], "included by you");
+    assert!(
+        plain
+            .section("Secret check")
+            .contains(&"> (x) Not a secret".to_owned()),
+        "{}",
+        plain.text()
+    );
+}
+
+#[test]
+fn the_reviews_secret_check_in_16_colours() {
+    let repo = for_snapshots();
+    let mut session = Session::start(
+        crate::session::Setup {
+            variables: &[("TERM", "xterm")],
+            start: Some(repo.root()),
+            ..crate::session::Setup::default()
+        },
+        80,
+        24,
+    );
+    session.press(REVIEW_NEWEST);
+    session.press("<S-Tab> k k <Space>");
+
+    insta::assert_debug_snapshot!("review_secret_check_16_colours_80x24", session.frame());
+}
