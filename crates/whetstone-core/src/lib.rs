@@ -7,11 +7,17 @@
 //! lints catch most breaches; review covers the rest.
 
 mod area;
+mod assessment_policy;
 mod change;
 mod connected_code_limit;
 mod connection;
 mod evidence;
 mod exclusion;
+mod jev;
+mod picking;
+mod provenance;
+mod question;
+mod question_check;
 mod repository_config;
 mod secret;
 mod selection;
@@ -19,6 +25,7 @@ mod showcase;
 mod toml_error;
 
 pub use crate::area::{Area, AreaFileError, AreaId, AreaSource, InvalidAreaFile, InvalidAreaId};
+pub use crate::assessment_policy::{AssessmentPolicy, Band, Job, PolicyVersion, Validation};
 pub use crate::change::{
     Change, CommitId, Comparison, FileContent, InvalidCommitId, Origin, TouchedFile,
 };
@@ -36,6 +43,16 @@ pub use crate::evidence::{
 pub use crate::exclusion::{
     DefaultExclusion, DefaultExclusionKind, ExcludePattern, ExcludePatternError,
     ExcludePatternProblem, ExcludePatterns,
+};
+pub use crate::jev::{InvalidProbability, Probability};
+pub use crate::picking::{Picked, QuestionCount, QuestionCountError, pick};
+pub use crate::provenance::{Cost, InvalidCost, ModelId, Provenance, Role, Usage};
+pub use crate::question::{
+    Candidate, CandidateId, Citation, Criterion, DropReason, Hint, OptionLetter, Part, PlainChecks,
+    QuestionType, WrittenCandidate, WrittenCitation, WrittenCriterion, WrittenOption, plain_checks,
+};
+pub use crate::question_check::{
+    CandidateCheck, Question, QuestionCheckAnswers, Withheld, show_rule,
 };
 pub use crate::repository_config::{RepositoryConfig, RepositoryConfigError};
 pub use crate::secret::{
