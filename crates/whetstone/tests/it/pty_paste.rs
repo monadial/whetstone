@@ -78,7 +78,7 @@ impl Exit {
 
     /// Whether this build can end this way: release builds compile the
     /// crash trigger out.
-    fn possible(self) -> bool {
+    fn in_this_build(self) -> bool {
         match self {
             Self::Quit | Self::CtrlC | Self::Signal => true,
             Self::Panic => cfg!(debug_assertions),
@@ -192,7 +192,7 @@ pub(super) fn assert_modes_on_then_off_in(printed: &str) {
 
 #[test]
 fn the_modes_are_on_while_whetstone_runs_and_off_after_every_exit() {
-    for exit in Exit::ALL.into_iter().filter(|exit| exit.possible()) {
+    for exit in Exit::ALL.into_iter().filter(|exit| exit.in_this_build()) {
         let transcript = exit.run();
 
         transcript.assert_exit_code(exit.code());
@@ -222,10 +222,10 @@ fn the_modes_are_on_while_whetstone_runs_and_off_before_a_real_panic_message_pri
 /// From home: open the picker on the showcase project, move past its five
 /// areas onto "Preserve payment retry identity", open it in the viewer,
 /// and open the search box.
-const SEARCH_RETRY_IDENTITY: &str = "\rjjjjjjjjj\r/";
+pub(super) const SEARCH_RETRY_IDENTITY: &str = "\rjjjjjjjjj\r/";
 
 /// What a terminal sends for a paste of `text` with bracketed paste on.
-fn bracketed(text: &str) -> String {
+pub(super) fn bracketed(text: &str) -> String {
     format!("\x1b[200~{text}\x1b[201~")
 }
 

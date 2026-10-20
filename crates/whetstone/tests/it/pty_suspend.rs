@@ -4,9 +4,9 @@
 //!
 //! `whetstone` runs under job control, as in a learner's shell: once it
 //! stops, the shell records the terminal's modes (`stty -a`) and brings it
-//! back with `fg`. That shell is dash, which is `sh` on Linux and ships with
-//! macOS, because macOS's `sh`, bash 3.2, does not go on with a script while
-//! its foreground job is stopped.
+//! back with `fg`. That shell is dash, which ships with macOS and is `sh` on
+//! Debian and Ubuntu, CI's Linux, because macOS's `sh`, bash 3.2, does not
+//! go on with a script while its foreground job is stopped.
 #![cfg(unix)]
 
 use std::process::Command;
@@ -14,21 +14,35 @@ use std::process::Command;
 use rexpect::session::PtySession;
 use tempfile::TempDir;
 
-use crate::pty::{Transcript, quit_with, start};
-use crate::pty_paste::{Exit, MODES, assert_modes_on_then_off_in};
+use crate::pty::{LAUNCH, Transcript, quit_with, start};
+use crate::pty_paste::{
+    Exit, MODES, SEARCH_RETRY_IDENTITY, assert_modes_on_then_off_in, bracketed,
+};
 use crate::pty_terminal::{Recording, recorded, resize};
 
-/// Runs `whetstone` under job control, after writing the terminal's device
-/// to `$HOME/tty` and its process ID to `$HOME/pid`, so the test can resize
-/// the one and signal the other. Once `whetstone` stops, the shell records
-/// the terminal's modes, runs `while_suspended`, and brings it back with
-/// `fg`, whose exit code is `whetstone`'s.
+/// Runs `whetstone` after writing its process ID to `$HOME/pid`, so the
+/// test can signal it.
+const RECORDING_PID: &str = r#"sh -c 'echo $$ > "$HOME/pid"; exec "$WHETSTONE"'"#;
+
+/// Runs `whetstone` from a wrapper that waits for it, as `cargo run` does.
+const THROUGH_A_WRAPPER: &str = r#"sh -c '"$WHETSTONE"; exit $?'"#;
+
+/// Runs `whetstone` as a job, with [`RECORDING_PID`]: see
+/// [`launch_job_suspend_and_fg`].
 fn launch_suspend_and_fg(while_suspended: &str) -> String {
+    launch_job_suspend_and_fg(RECORDING_PID, while_suspended)
+}
+
+/// Runs `job` under job control, after writing the terminal's device to
+/// `$HOME/tty`, so the test can resize it. Once the job stops, the shell
+/// records the terminal's modes, runs `while_suspended`, and brings the job
+/// back with `fg`, whose exit code is the job's.
+fn launch_job_suspend_and_fg(job: &str, while_suspended: &str) -> String {
     format!(
         r#"tty > "$HOME/tty"
 cat > "$HOME/job" <<'JOB'
 set -m
-sh -c 'echo $$ > "$HOME/pid"; exec "$WHETSTONE"'
+{job}
 echo "modes while suspended:"; stty -a; echo "modes end"
 {while_suspended}
 fg > /dev/null
@@ -37,26 +51,11 @@ dash "$HOME/job""#
     )
 }
 
-/// Runs `whetstone` in the foreground, after writing its process ID to
-/// `$HOME/pid`, so the test can signal it.
-const LAUNCH_RECORDING_PID: &str = r#"sh -c 'echo $$ > "$HOME/pid"; exec "$WHETSTONE"'"#;
-
 /// Enters the alternate screen, the first of [`MODES`] the TUI turns on.
 const ENTER_ALTERNATE_SCREEN: &str = MODES[0].on;
 
 /// Clears the whole screen, so the next frame is drawn in full.
 const CLEAR: &str = "\x1b[2J";
-
-/// From home: open the picker on the showcase project, move past its five
-/// areas onto "Preserve payment retry identity", open it in the viewer,
-/// and open the search box.
-const SEARCH_RETRY_IDENTITY: &str = "\rjjjjjjjjj\r/";
-
-/// What a terminal sends for a paste of `text` with bracketed paste on. A
-/// paste goes in as one insertion, so it is drawn as one word.
-fn bracketed(text: &str) -> String {
-    format!("\x1b[200~{text}\x1b[201~")
-}
 
 impl Transcript {
     /// What `whetstone` wrote from its start until it stopped.
@@ -146,6 +145,7 @@ fn ctrl_z_gives_the_terminal_back_and_fg_brings_back_the_same_screen() {
 
     recording.wait_for("Quit");
     recording.send(SEARCH_RETRY_IDENTITY);
+    // A paste goes in as one insertion, so it is drawn as one word.
     recording.send(&bracketed("omega"));
     recording.wait_for("omega");
     recording.send("\x1a");
@@ -202,8 +202,13 @@ fn a_resize_while_suspended_is_honoured_after_fg() {
     // Drawn at the size the window has now.
     recording.wait_for("40x10");
     // Under the notice keys do nothing: Enter on home would open Practice.
+    // They are read before a resize the test waits on, which stays under
+    // the notice, and so before the window grows back.
     recording.send("j\r");
-    resize(&recorded(home.path(), "tty"), 80, 24);
+    let tty = recorded(home.path(), "tty");
+    resize(&tty, 45, 11);
+    recording.wait_for("45x11");
+    resize(&tty, 80, 24);
     recording.wait_for("Quit");
     recording.send("q");
     let transcript = recording.finish();
@@ -217,7 +222,7 @@ fn a_resize_while_suspended_is_honoured_after_fg() {
 #[test]
 fn a_sigcont_with_no_stop_before_it_redraws_and_changes_nothing() {
     let home = TempDir::new().expect("create a temporary home");
-    let mut session = start(LAUNCH_RECORDING_PID, &[("HOME", home.path())]);
+    let mut session = start(RECORDING_PID, &[("HOME", home.path())]);
     let mut recording = Recording::new(&mut session);
 
     recording.wait_for("Quit");
@@ -280,4 +285,69 @@ fn after_a_suspend_and_fg_every_exit_turns_every_mode_off_again() {
         transcript.assert_taken_back_after_fg();
         transcript.assert_terminal_restored();
     }
+}
+
+#[test]
+fn ctrl_z_under_a_wrapper_that_waits_stops_the_whole_job() {
+    let home = TempDir::new().expect("create a temporary home");
+    let mut session = start(
+        &launch_job_suspend_and_fg(THROUGH_A_WRAPPER, ""),
+        &[("HOME", home.path())],
+    );
+
+    let suspended = suspend_from_home(&mut session);
+    // Home, drawn again after fg.
+    let rest = quit_with(&mut session, |session| Exit::Quit.end(session, home.path()));
+    let transcript = Transcript(suspended + &rest.0);
+
+    transcript.assert_exit_code(0);
+    transcript.assert_given_back_while_suspended();
+    transcript.assert_taken_back_after_fg();
+    transcript.assert_terminal_restored();
+}
+
+#[test]
+fn without_a_shell_to_continue_it_ctrl_z_carries_on() {
+    let home = TempDir::new().expect("create a temporary home");
+    // Started in the process group of the shell that leads the session,
+    // which has no job control.
+    let mut session = start(LAUNCH, &[("HOME", home.path())]);
+    let mut recording = Recording::new(&mut session);
+
+    recording.wait_for("Quit");
+    recording.send("\x1a");
+    // Drawn again in full, still running.
+    recording.wait_for(CLEAR);
+    recording.wait_for("Quit");
+    recording.send("q");
+    let transcript = recording.finish();
+
+    transcript.assert_exit_code(0);
+    transcript.assert_terminal_restored();
+}
+
+#[test]
+fn after_a_stop_it_cannot_catch_fg_turns_every_mode_on_again() {
+    let home = TempDir::new().expect("create a temporary home");
+    // As an interactive shell does, put the terminal back in canonical mode
+    // and turn bracketed paste off while whetstone is stopped.
+    let mut session = start(
+        &launch_suspend_and_fg(r"stty sane; printf '\033[?2004l'"),
+        &[("HOME", home.path())],
+    );
+    let mut recording = Recording::new(&mut session);
+
+    recording.wait_for("Quit");
+    send_signal(&home, "STOP");
+    recording.wait_for("modes while suspended:");
+    recording.wait_for("modes end");
+    recording.wait_for("Quit");
+    // In raw mode Ctrl+C is a key, which quits with 0; in canonical mode it
+    // would be SIGINT, which ends whetstone with 130.
+    recording.send("\x03");
+    let transcript = recording.finish();
+
+    transcript.assert_exit_code(0);
+    transcript.assert_taken_back_after_fg();
+    transcript.assert_terminal_restored();
 }
