@@ -13,6 +13,19 @@ workspace = true
 
 [dependencies]
 anyhow = "1"
+# Finds connected code (ADR 0002): what a change's functions call and what
+# calls them, in 46 languages, resolved by scope, imports and receiver type,
+# with a confidence on every edge. It is pre-1.0 and its options gain fields
+# with new releases, so it is pinned exactly and upgraded on purpose, with the
+# showcase project's expected connected code checked on every upgrade. Only
+# the `connected_code` module uses it. Its grammars compile C, and every
+# tree-sitter use in Whetstone must share its tree-sitter version.
+cgg = "=0.11.0"
+# cgg's own language detector and its walker's deny list, so that only the
+# files cgg reads are written out for it. Already in the tree through cgg, and
+# pinned with it: upgrade all three together.
+cgg-lang = "=0.11.0"
+cgg-walk = "=0.11.0"
 clap = { version = "4.6", features = ["derive"] }
 # Only turns on `event-stream` in the crossterm that ratatui re-exports, so
 # the UI loop can read terminal input as an async stream. The code uses it
@@ -38,6 +51,10 @@ ratatui = { version = "0.30", features = ["unstable-rendered-line-info"] }
 rustix = { version = "1.1", features = ["process"] }
 serde = { version = "1", features = ["derive"] }
 signal-hook = "0.3"
+# The private directory a commit's files are written to for cgg: created
+# mode 0700 with an unpredictable name, and removed on drop, even while a
+# panic unwinds. Already a dev-dependency.
+tempfile = "3"
 thiserror = "2"
 # The UI loop's runtime: one thread (`rt`) waiting with `select!` (`macros`)
 # on input, signals (`signal`), the bounded channel of job results (`sync`)

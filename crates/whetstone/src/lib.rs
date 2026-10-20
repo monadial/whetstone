@@ -8,6 +8,7 @@ mod areas;
 mod cli;
 mod columns;
 mod config;
+mod connected_code;
 mod entry;
 mod environment;
 mod focus;
@@ -45,6 +46,7 @@ pub use crate::theme::{ColorSupport, ControlKind, ControlState, Theme};
 
 use std::ffi::OsString;
 use std::process::ExitCode;
+use std::time::SystemTime;
 
 use clap::Parser as _;
 
@@ -86,6 +88,7 @@ fn launch(environment: &Environment) -> anyhow::Result<ExitCode> {
         config = %dirs.config.display(),
         "whetstone started"
     );
+    connected_code::sweep(&environment.temp_dir(), SystemTime::now());
     let settings = Settings::load(&dirs.config, environment)?;
     let theme = Theme::new(settings.color_support());
     let repository = Repository::open(environment.current_dir());
