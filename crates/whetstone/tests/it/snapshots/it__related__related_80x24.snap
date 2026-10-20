@@ -1,0 +1,38 @@
+---
+source: crates/whetstone/tests/it/related.rs
+expression: session.frame()
+---
+Buffer {
+    area: Rect { x: 0, y: 0, width: 80, height: 24 },
+    content: [
+        "                                                                                ",
+        "  OpenRouter routes only to endpoints it lists as not keeping prompts.          ",
+        "  https://openrouter.ai/docs/guides/privacy/data-collection                     ",
+        "                                                                                ",
+        "  Your answers in this session go to the same places. Nothing outside this      ",
+        "  list is sent.                                                                 ",
+        "                                                                                ",
+        "  Change                                                                        ",
+        "    230d6ce  Save it twice                                                      ",
+        "    Author, committer, dates and the commit ID are not sent.                    ",
+        "                                                                                ",
+        "  Files                                                                         ",
+        "    shop/store.py  1 KB  included · 1 connected                                 ",
+        "                                                                                ",
+        "  Connected code: 1 range · 1 KB of 100 KB limit                                ",
+        "    shop/cart.py  lines 4–5  1 KB  included  calls `save`                       ",
+        "                                                                                ",
+        "  Related tests and configuration: 1 test and 1 manifest · 1 KB                 ",
+        "    pyproject.toml      whole file  1 KB  included                              ",
+        "      manifest for `shop/store.py`                                              ",
+        "  > shop/test_store.py  whole file  1 KB  included                              ",
+        "      test for `shop/store.py`, calls `save`                                    ",
+        "  ? keys  : actions  Space toggle  Enter read  q back                           ",
+        "                                                                                ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 20, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 22, y: 20, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+    ]
+}
