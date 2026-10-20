@@ -16,7 +16,7 @@ use whetstone_core::{
     Change, Connection, ConnectionGroup, Extent, FileContent, Relation, Tier, TouchedFile,
 };
 
-use super::{Failure, FileKind, Snapshot};
+use super::{Failure, FileKind, Snapshot, read_file};
 
 use conventions::{Conventions, Ecosystem, Location};
 
@@ -57,11 +57,7 @@ pub(super) fn connections<S: Snapshot>(
                 Some(FileKind::Symlink) => FileContent::Symlink,
                 Some(FileKind::Submodule) => FileContent::Submodule,
                 Some(FileKind::Blob | FileKind::Executable) | None => {
-                    match snapshot.read(file.path()) {
-                        Ok(Some(bytes)) => FileContent::from_bytes(bytes),
-                        Ok(None) => return Err(Failure::NotInCommit),
-                        Err(error) => return Err(Failure::Snapshot(Box::new(error))),
-                    }
+                    read_file(snapshot, file.path())?
                 }
             };
             let group = file.group();
