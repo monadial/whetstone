@@ -14,16 +14,22 @@
 //! interface.
 //!
 //! Above that layer, each AI call has a builder and a decoder, between
-//! whetstone-core's domain and these requests: [`gate_request`] and
-//! [`gate_answers`] ask the relevance gate, [`candidates_request`] and
-//! [`CandidatesOutput`] write candidates, and [`question_check_request`] and
-//! [`question_check_answers`] check one, [`reasoning_request`] and
-//! [`reasoning_answers`] assess a response's reasoning, and
-//! [`explanation_request`] and [`explanation_check_request`] explain what
-//! it missed and check the explanation. Their instructions are Whetstone's
-//! base prompts, bundled into this crate, whose version is
-//! [`base_prompts_version`]. Evidence goes out only as the learner approved
-//! it, and area prompts only to the generator.
+//! whetstone-core's domain and these requests:
+//!
+//! - [`gate_request`] and [`gate_answers`] ask the relevance gate;
+//! - [`candidates_request`] and [`CandidatesOutput`] write candidates;
+//! - [`question_check_request`] and [`question_check_answers`] check one;
+//! - [`reasoning_request`] and [`reasoning_answers`] assess a response's
+//!   reasoning;
+//! - [`explanation_request`], [`explanation_paragraphs`],
+//!   [`explanation_check_request`] and [`explanation_check_answers`] explain
+//!   what it missed, and check the explanation.
+//!
+//! [`jev_exchanges`] keeps, for provenance, every question a Jev call sent
+//! with its answer. The instructions are Whetstone's base prompts, bundled
+//! into this crate, whose version is [`base_prompts_version`], or
+//! [`base_prompts_hash`] for provenance. Evidence goes out only as the
+//! learner approved it, and area prompts only to the generator.
 //!
 //! Nothing here logs a key, a prompt, evidence, questions or output (rules 43
 //! and 44): spans carry the model alone, and Rig's content telemetry stays off.
@@ -32,6 +38,7 @@ mod answers;
 mod candidates;
 mod connection;
 mod evidence;
+mod exchanges;
 mod explanation;
 mod failure;
 mod gate;
@@ -53,6 +60,7 @@ pub use crate::candidates::{CandidatesOutput, candidates_request};
 pub use crate::connection::{
     CONNECT_TIMEOUT, GENERATOR_TIMEOUT, JEV_TIMEOUT, OPENROUTER_BASE_URL, OpenRouter, Timeouts,
 };
+pub use crate::exchanges::jev_exchanges;
 pub use crate::explanation::{
     ExplanationOutput, ParagraphCheck, WrittenParagraph, explanation_check_answers,
     explanation_check_request, explanation_paragraphs, explanation_request,
@@ -61,7 +69,7 @@ pub use crate::failure::AiError;
 pub use crate::gate::{gate_answers, gate_request};
 pub use crate::generator::{GeneratorReply, GeneratorRequest};
 pub use crate::jev::{JevAnswer, JevQuestion, JevReply, JevRequest, YesNoMeanings};
-pub use crate::prompts::base_prompts_version;
+pub use crate::prompts::{base_prompts_hash, base_prompts_version};
 pub use crate::question_check::{question_check_answers, question_check_request};
 pub use crate::reasoning::{QuestionWithoutKey, reasoning_answers, reasoning_request};
 pub use crate::usage::Usage;
