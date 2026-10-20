@@ -16,7 +16,7 @@ Buffer {
         "    Quit                                                                                                                ",
         "                                                                                                                        ",
         "  Practice on payments is unavailable because .whetstone/config.toml is invalid: the key `areas` is not allowed, only   ",
-        "  `exclude`.                                                                                                            ",
+        "  `exclude` and `connected_code_limit_kb`.                                                                              ",
         "                                                                                                                        ",
         "  Once AI arrives, Practice will send showcase excerpts and your answers to OpenRouter, paid with your credits.         ",
         "                                                                                                                        ",

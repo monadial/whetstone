@@ -1,16 +1,20 @@
 //! A repository's Whetstone config: `.whetstone/config.toml` at its Git
-//! root. The file is optional, and its only key is `exclude`, the paths
-//! Practice leaves out, as gitignore-style patterns matched against
-//! repository-relative paths:
+//! root. The file is optional, and so are its two keys:
 //!
 //! ```toml
 //! exclude = ["fixtures/", "*.snap"]
+//! connected_code_limit_kb = 40
 //! ```
 //!
-//! A `!` negation pattern is invalid, and so is every other key, including
-//! the old `areas` array and any model, endpoint or key setting, so a cloned
-//! repository's config can only add exclusions.
+//! `exclude` lists the paths Practice leaves out, as gitignore-style
+//! patterns matched against repository-relative paths. A `!` negation
+//! pattern is invalid. `connected_code_limit_kb` is a whole number from 0 to
+//! 400, and only lowers the learner's connected code limit, never raises it.
+//! Every other key is invalid, including the old `areas` array and any
+//! model, endpoint or key setting, so a cloned repository's config can only
+//! add exclusions and lower the limit.
 
+use crate::connected_code_limit::{ConnectedCodeLimitError, ConnectedCodeLimitKb};
 use crate::exclusion::{ExcludePatternError, ExcludePatterns};
 use crate::toml_error;
 
@@ -18,6 +22,7 @@ use crate::toml_error;
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RepositoryConfig {
     exclude: ExcludePatterns,
+    connected_code_limit_kb: Option<ConnectedCodeLimitKb>,
 }
 
 /// Why a repository's config is invalid.
@@ -34,8 +39,8 @@ pub enum RepositoryConfigError {
         /// What the problem is.
         message: String,
     },
-    /// The file has a key other than `exclude`.
-    #[error("the key `{0}` is not allowed, only `exclude`")]
+    /// The file has a key other than `exclude` and `connected_code_limit_kb`.
+    #[error("the key `{0}` is not allowed, only `exclude` and `connected_code_limit_kb`")]
     UnknownKey(String),
     /// `exclude` is not a list of strings.
     #[error("`exclude` must be a list of patterns")]
@@ -43,6 +48,9 @@ pub enum RepositoryConfigError {
     /// A pattern in `exclude` is invalid, such as a `!` negation.
     #[error(transparent)]
     Pattern(#[from] ExcludePatternError),
+    /// `connected_code_limit_kb` is not a whole number from 0 to 400.
+    #[error(transparent)]
+    ConnectedCodeLimit(#[from] ConnectedCodeLimitError),
 }
 
 impl RepositoryConfig {
@@ -67,7 +75,10 @@ impl RepositoryConfig {
             let (line, message) = toml_error::line_and_message(text, &error);
             RepositoryConfigError::Toml { line, message }
         })?;
-        if let Some(key) = table.keys().find(|key| key.as_str() != "exclude") {
+        if let Some(key) = table
+            .keys()
+            .find(|key| !["exclude", "connected_code_limit_kb"].contains(&key.as_str()))
+        {
             return Err(RepositoryConfigError::UnknownKey(key.clone()));
         }
         let exclude = match table.get("exclude") {
@@ -80,7 +91,19 @@ impl RepositoryConfig {
                 ExcludePatterns::parse(patterns)?
             }
         };
-        Ok(Self { exclude })
+        let connected_code_limit_kb = table
+            .get("connected_code_limit_kb")
+            .map(|value| {
+                value
+                    .as_integer()
+                    .ok_or(ConnectedCodeLimitError)
+                    .and_then(ConnectedCodeLimitKb::try_from)
+            })
+            .transpose()?;
+        Ok(Self {
+            exclude,
+            connected_code_limit_kb,
+        })
     }
 
     /// The patterns of the paths Practice leaves out, in the order the file
@@ -88,5 +111,41 @@ impl RepositoryConfig {
     #[must_use]
     pub fn exclude(&self) -> &ExcludePatterns {
         &self.exclude
+    }
+
+    /// The connected code limit the file sets, if any. It can only lower the
+    /// learner's limit, never raise it (see
+    /// [`ConnectedCodeLimit::effective`](crate::ConnectedCodeLimit::effective)).
+    #[must_use]
+    pub fn connected_code_limit_kb(&self) -> Option<ConnectedCodeLimitKb> {
+        self.connected_code_limit_kb
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ConnectedCodeLimitKb;
+
+    #[test]
+    fn a_repository_config_can_set_the_connected_code_limit_alongside_exclude() {
+        for (contents, limit) in [
+            ("", None),
+            ("exclude = [\"fixtures/\"]\n", None),
+            ("connected_code_limit_kb = 0\n", Some(0)),
+            (
+                "exclude = [\"fixtures/\"]\nconnected_code_limit_kb = 40\n",
+                Some(40),
+            ),
+            ("connected_code_limit_kb = 400\n", Some(400)),
+        ] {
+            let config = RepositoryConfig::parse(contents.as_bytes()).expect("valid");
+
+            assert_eq!(
+                config.connected_code_limit_kb(),
+                limit.map(|kb| ConnectedCodeLimitKb::try_from(kb).expect("in range")),
+                "{contents:?}"
+            );
+        }
     }
 }
