@@ -74,6 +74,30 @@ fn enter_on_a_commit_opens_it_on_the_diff_of_its_first_file_as_git_diff_shows_it
 }
 
 #[test]
+fn a_subject_over_two_lines_reads_as_git_log_has_it_in_the_picker_and_the_viewer() {
+    let repo = TestRepo::new("payments");
+    repo.write("README.md", "# Payments\n");
+    repo.commit("Start the payments service");
+    repo.write("README.md", "# Payments\n\nTake payments.\n");
+    repo.commit("Describe the service\nin the readme\n\nSay what it takes.");
+    let subject = repo
+        .git(&["log", "-1", "--format=%h  %s"])
+        .trim()
+        .to_owned();
+    let mut session = started_in(repo.root(), 120, 32);
+
+    session.press("<Enter>");
+    assert!(
+        session.row_with("Describe the service").ends_with(&subject),
+        "{}",
+        session.text()
+    );
+    session.press("j j j j j <Enter>");
+
+    assert_eq!(session.rows()[1].trim(), subject);
+}
+
+#[test]
 fn q_and_esc_return_to_the_picker_with_the_opened_commit_chosen_and_focused() {
     for back in ["q", "<Esc>"] {
         let repo = with_an_edit();

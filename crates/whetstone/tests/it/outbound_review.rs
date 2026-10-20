@@ -66,6 +66,32 @@ fn the_review_names_the_destination_and_the_change_and_what_of_it_is_not_sent() 
     );
 }
 
+#[test]
+fn a_summary_too_long_for_the_row_wraps_so_the_whole_message_shows() {
+    const SUMMARY: &str = "Retry payments that a card network declined for a temporary reason, \
+                           at most three times";
+    let repo = TestRepo::new("payments");
+    repo.write("README.md", "# Payments\n");
+    repo.commit("Start the payments service");
+    repo.write("src/retry.rs", "pub fn retry() {}\n");
+    repo.commit(SUMMARY);
+    let mut session = started_in(repo.root(), 80, 40);
+
+    session.press(REVIEW_NEWEST);
+
+    let change = session.section("Change");
+    let (not_sent, summary) = change.split_last().expect("the change has rows");
+    assert_eq!(
+        not_sent,
+        "Author, committer, dates and the commit ID are not sent."
+    );
+    assert!(summary.len() > 1, "the summary wraps:\n{}", session.text());
+    assert_eq!(
+        summary.join(" "),
+        format!("> {}  {SUMMARY}", short_id(&repo))
+    );
+}
+
 /// A repository called `payments` whose newest commit touches a file of
 /// every kind the rules treat apart: plain text, a lockfile, a common
 /// secret path, a file its config leaves out, a binary file, a symbolic
@@ -190,6 +216,73 @@ fn binary_files_symlinks_and_submodules_cannot_be_brought_back() {
     session.press("j j j j <Space> j <Space> j j j <Space>");
 
     assert_eq!(files(&session), before);
+}
+
+#[test]
+fn a_binary_file_the_change_edits_shows_its_size_after_the_change() {
+    let repo = TestRepo::new("payments");
+    repo.write("docs/logo.png", b"PNG\0small");
+    repo.commit("Add the logo");
+    repo.write("docs/logo.png", [b"PNG\0".as_slice(), &[7; 4996]].concat());
+    repo.commit("Draw the logo larger");
+    let mut session = started_in(repo.root(), 120, 60);
+
+    session.press(REVIEW_NEWEST);
+
+    assert_eq!(
+        files(&session),
+        [["docs/logo.png", "5 KB", "left out: binary file"]]
+    );
+}
+
+#[test]
+fn a_file_renamed_away_from_a_path_left_out_is_left_out_for_its_old_path() {
+    let repo = TestRepo::new("payments");
+    repo.write(".env", "API_URL=http://localhost\nRETRIES=3\nTIMEOUT=30\n")
+        .write("fixtures/cards.json", "[\"4242\", \"4000\", \"5555\"]\n");
+    repo.commit("Start the payments service");
+    repo.git(&["mv", ".env", "settings.txt"]);
+    repo.git(&["mv", "fixtures/cards.json", "cards.json"]);
+    repo.commit("Move the settings and the cards");
+    repo.write(".whetstone/config.toml", "exclude = [\"fixtures/\"]\n");
+    let mut session = started_in(repo.root(), 120, 60);
+
+    session.press(REVIEW_NEWEST);
+
+    assert_eq!(
+        files(&session),
+        [
+            [
+                "cards.json",
+                "← fixtures/cards.json",
+                "1 KB",
+                "left out: exclude pattern fixtures/"
+            ],
+            [
+                "settings.txt",
+                "← .env",
+                "1 KB",
+                "left out: common secret path"
+            ],
+        ]
+    );
+}
+
+#[test]
+fn a_config_pattern_never_replaces_the_default_reason_a_file_is_left_out() {
+    let repo = TestRepo::new("payments");
+    repo.write("README.md", "# Payments\n");
+    repo.commit("Start the payments service");
+    repo.write(".env.example", "API_URL=http://localhost\n");
+    repo.commit("Document the settings");
+    repo.write(".whetstone/config.toml", "exclude = [\".env*\"]\n");
+    let mut session = started_in(repo.root(), 120, 60);
+    session.press(REVIEW_NEWEST);
+    assert_eq!(statuses(&session), ["left out: common secret path"]);
+
+    session.press("j <Space>");
+
+    assert_eq!(statuses(&session), ["included by you"]);
 }
 
 /// A fake AWS access key ID, built from pieces so that no secret scanner
@@ -532,8 +625,21 @@ fn areas_from_the_repository_say_their_prompt_comes_from_this_repository() {
     let mut session = started_in(repo.root(), 120, 60);
 
     session.press("<Enter> j <Space> k <S-Tab> <Enter>");
-
     assert_eq!(session.section("Areas"), ["Security  this repository"]);
+
+    session.press("j j <Enter>");
+
+    assert_eq!(session.rows()[1].trim(), "Area prompt: Security");
+    assert_eq!(
+        reader(&session)[..5],
+        [
+            "Prompt source",
+            "this repository",
+            "",
+            "Area prompt, as it is sent",
+            "Look at who is trusted.",
+        ]
+    );
 }
 
 #[test]
@@ -597,6 +703,26 @@ fn review_choices_survive_going_back_to_the_picker_and_reset_for_another_commit(
     assert_eq!(session.rows()[1].trim(), "Review what will be sent");
     assert_eq!(statuses(&session)[0], "left out: common secret path");
     assert_eq!(statuses(&session)[6], "included");
+}
+
+#[test]
+fn the_next_run_reviews_the_same_commit_afresh() {
+    let repo = with_secrets();
+    let before = repo.on_disk();
+    let mut first = started_in(repo.root(), 120, 60);
+    first.press(REVIEW_NEWEST);
+    let fresh = first.text();
+    // Bring back `.env`, and mark the commit message's token as not a
+    // secret.
+    first.press("j <Space> j j j j j j j j j <Space>");
+    assert_ne!(first.text(), fresh);
+    drop(first);
+
+    let mut second = started_in(repo.root(), 120, 60);
+    second.press(REVIEW_NEWEST);
+
+    assert_eq!(second.text(), fresh);
+    repo.assert_untouched(&before);
 }
 
 #[test]

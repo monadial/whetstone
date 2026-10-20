@@ -11,12 +11,17 @@ use whetstone_core::{Area, AreaId, FileContent, TouchedFile};
 fn the_embedded_showcase_has_all_ten_curated_changes_with_the_area_ids_their_trailers_name() {
     let showcase = whetstone::embedded_showcase();
 
-    let changes: Vec<(&str, Vec<&str>)> = showcase
+    let summaries: Vec<String> = showcase
         .changes()
         .iter()
-        .map(|change| {
+        .map(|change| change.summary().into_owned())
+        .collect();
+    let changes: Vec<(&str, Vec<&str>)> = summaries
+        .iter()
+        .zip(showcase.changes())
+        .map(|(summary, change)| {
             (
-                change.summary(),
+                summary.as_str(),
                 change.areas().iter().map(AreaId::as_str).collect(),
             )
         })

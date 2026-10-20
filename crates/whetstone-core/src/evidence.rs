@@ -62,14 +62,15 @@ struct SentText {
 }
 
 /// What a touched file is, as far as sending it goes.
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 enum Kind<'a> {
     /// Text on every side it has, with its full content from `side`.
     Text {
         content: &'a str,
         side: Side,
     },
-    /// Binary on a side, of this many bytes there.
+    /// Binary on a side, of this many bytes there: after the change if it
+    /// is binary then.
     Binary {
         size: usize,
     },
@@ -77,11 +78,27 @@ enum Kind<'a> {
     Symlink,
 }
 
+/// Shows the content's length, never its text.
+impl fmt::Debug for Kind<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Text { content, side } => f
+                .debug_struct("Text")
+                .field("content_bytes", &content.len())
+                .field("side", side)
+                .finish(),
+            Self::Binary { size } => f.debug_struct("Binary").field("size", size).finish(),
+            Self::Submodule => f.write_str("Submodule"),
+            Self::Symlink => f.write_str("Symlink"),
+        }
+    }
+}
+
 impl<'a> Kind<'a> {
     /// What `file` is: binary, a submodule or a symbolic link if either
     /// side is, and otherwise text.
     fn of(file: &'a TouchedFile) -> Self {
-        let sides = || file.before().into_iter().chain(file.after());
+        let sides = || file.after().into_iter().chain(file.before());
         if let Some(size) = sides().find_map(|side| match side {
             FileContent::Binary { size } => Some(*size),
             _ => None,
@@ -219,7 +236,8 @@ impl Evidence {
     /// gives the reason: binary files, submodules and symbolic links,
     /// always; lockfiles and common secret paths, by default; the
     /// repository's `exclude` patterns; and the learner. The learner can
-    /// bring back a file the second or third leaves out.
+    /// bring back a file the second or third leaves out. A renamed file is
+    /// matched by its old path as well as its new one.
     ///
     /// The commit message and every file sent are checked for secrets, so
     /// a file brought back is checked as it returns.
@@ -433,9 +451,18 @@ impl EvidenceFile {
             Kind::Submodule => FileStatus::LeftOut(Exclusion::Submodule),
             Kind::Symlink => FileStatus::LeftOut(Exclusion::Symlink),
             Kind::Text { .. } => {
-                let rule = DefaultExclusion::of(path)
+                // A file moved away from a path left out is left out too:
+                // its content is what was there.
+                let paths = || std::iter::once(path).chain(file.renamed_from());
+                let rule = paths()
+                    .find_map(DefaultExclusion::of)
                     .map(Exclusion::Default)
-                    .or_else(|| exclude.first_match(path).cloned().map(Exclusion::Config));
+                    .or_else(|| {
+                        paths()
+                            .find_map(|path| exclude.first_match(path))
+                            .cloned()
+                            .map(Exclusion::Config)
+                    });
                 match rule {
                     Some(_) if choices.brought_back.contains(&index) => FileStatus::IncludedByYou,
                     Some(reason) => FileStatus::LeftOut(reason),
@@ -544,7 +571,7 @@ impl fmt::Display for Exclusion {
             Self::Binary => f.write_str("binary file"),
             Self::Submodule => f.write_str("submodule"),
             Self::Symlink => f.write_str("symlink"),
-            Self::Default(exclusion) => f.write_str(exclusion.kind().reason()),
+            Self::Default(exclusion) => exclusion.kind().fmt(f),
             Self::Config(pattern) => write!(f, "exclude pattern {}", pattern.as_str()),
         }
     }

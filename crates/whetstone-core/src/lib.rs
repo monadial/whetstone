@@ -13,6 +13,7 @@ mod exclusion;
 mod repository_config;
 mod secret;
 mod showcase;
+mod toml_error;
 
 pub use crate::area::{Area, AreaFileError, AreaId, AreaSource, InvalidAreaFile, InvalidAreaId};
 pub use crate::change::{

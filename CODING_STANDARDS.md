@@ -104,7 +104,7 @@ These rules apply from the Practice spec, when the AI crate and the session reco
 | # | Rule | Enforced by |
 | --- | --- | --- |
 | 50 | Exclusive states are enums and identities are newtypes. No `bool` or `Option` flag stands in for an outcome: there is no `is_correct`. | **Review**. |
-| 51 | Names follow the API guidelines' C-CASE, C-CONV and C-GETTER. Domain identifiers use [`GLOSSARY.md`](GLOSSARY.md) terms: Practice, Showcase project, Change, Area, Response, Attempt, Assessment, Jev, Generator. | **Lint/CI**: Clippy's style lints (partly). **Review**. |
+| 51 | Names follow the API guidelines' C-CASE, C-CONV and C-GETTER. Domain identifiers use [`GLOSSARY.md`](GLOSSARY.md) terms: Practice, Showcase project, Change, Evidence, Area, Area prompt, Outbound review, Response, Attempt, Assessment, Jev, Generator. | **Lint/CI**: Clippy's style lints (partly). **Review**. |
 | 52 | Types derive or implement `Debug`. Types holding secrets redact it. | **Review** (`missing_debug_implementations` is not enabled). |
 | 53 | Docs build without warnings, and each module starts with a short `//!` header. | **Lint/CI**: `RUSTDOCFLAGS="-D warnings" cargo doc`. **Review**: module headers. |
 

@@ -19,15 +19,30 @@
 use std::fmt;
 use std::str::FromStr;
 
+use crate::toml_error;
+
 /// A lens on a change that questions focus on, such as domain or system
 /// design, as its area file defines it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Area {
     id: AreaId,
     name: String,
     description: String,
     prompt: String,
     source: AreaSource,
+}
+
+/// Shows the area prompt's length, never its text.
+impl fmt::Debug for Area {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Area")
+            .field("id", &self.id)
+            .field("name", &self.name)
+            .field("description", &self.description)
+            .field("prompt_bytes", &self.prompt.len())
+            .field("source", &self.source)
+            .finish()
+    }
 }
 
 /// An area's identity: its file name without `.md`, such as
@@ -171,15 +186,11 @@ impl Area {
         let text = str::from_utf8(contents).map_err(|_| AreaFileError::NotUtf8)?;
         let (front_matter, body) = split_front_matter(text)?;
         let table: toml::Table = front_matter.parse().map_err(|error: toml::de::Error| {
+            let (line, message) = toml_error::line_and_message(front_matter, &error);
             // The front matter starts on the file's second line.
-            let start = error.span().map_or(0, |span| span.start);
             AreaFileError::Toml {
-                line: 2 + front_matter
-                    .bytes()
-                    .take(start)
-                    .filter(|&byte| byte == b'\n')
-                    .count(),
-                message: error.message().trim().to_owned(),
+                line: line + 1,
+                message,
             }
         })?;
         if let Some(key) = table
@@ -420,6 +431,20 @@ mod tests {
     /// `Area::parse` on `file_name` with `contents`, from a repository.
     fn parse(file_name: &str, contents: &str) -> Result<Area, AreaFileError> {
         Area::parse(file_name, contents.as_bytes(), AreaSource::Repository)
+    }
+
+    #[test]
+    fn an_area_debugs_its_prompts_length_never_its_text() {
+        let area = parse(
+            "domain.md",
+            "+++\nname = \"Domain\"\ndescription = \"The rules\"\n+++\n\nLook at the rules.\n",
+        )
+        .expect("the file is valid");
+
+        let debug = format!("{area:?}");
+
+        assert!(!debug.contains("Look at"), "{debug}");
+        assert!(debug.contains("prompt_bytes: 18"), "{debug}");
     }
 
     #[test]
