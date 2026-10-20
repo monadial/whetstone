@@ -3,7 +3,7 @@
 //! build manifest, found with the connected code once the review opens,
 //! and listed, read and left out like it.
 
-use crate::connected_code::{REVIEW_NEWEST, connected_code, connected_rows};
+use crate::connected_code::{AWS_KEY, REVIEW_NEWEST, connected_code, connected_rows, reader, send};
 use crate::repo::TestRepo;
 use crate::repository::started_in;
 use crate::session::{Session, Setup, columns};
@@ -293,6 +293,20 @@ fn an_elixir_change_lists_its_test_under_test() {
 }
 
 #[test]
+fn of_two_manifests_in_one_directory_a_file_gets_its_own_ecosystems_else_the_first_listed() {
+    assert_eq!(
+        related_to_changing(
+            &["web/index.ts", "web/README.md"],
+            &["web/Cargo.toml", "web/package.json"],
+        ),
+        [
+            ["web/Cargo.toml", "manifest for `web/README.md`"],
+            ["web/package.json", "manifest for `web/index.ts`"],
+        ]
+    );
+}
+
+#[test]
 fn a_touched_test_has_no_related_tests_of_its_own_but_still_its_manifest() {
     assert_eq!(
         related_to_changing(&["store/store_test.go"], &["go.mod", "store/store.go"],),
@@ -338,7 +352,8 @@ fn a_deleted_file_has_no_related_tests_or_configuration() {
 fn with_a_test_of_each_status() -> TestRepo {
     let repo = TestRepo::new("shop");
     for name in ["cart", "credentials", "pay", "store"] {
-        repo.write(&format!("shop/{name}.py"), placeholder(".py", 1));
+        let path = format!("shop/{name}.py");
+        repo.write(&path, placeholder(&path, 1));
     }
     repo.write(
         "shop/credentials_test.py",
@@ -349,7 +364,8 @@ fn with_a_test_of_each_status() -> TestRepo {
     .symlink("shop/test_pay.py", "test_cart.py");
     repo.commit("Start the shop");
     for name in ["cart", "credentials", "pay", "store"] {
-        repo.write(&format!("shop/{name}.py"), placeholder(".py", 2));
+        let path = format!("shop/{name}.py");
+        repo.write(&path, placeholder(&path, 2));
     }
     repo.commit("Change the shop");
     repo.write(
@@ -415,27 +431,15 @@ fn related_tests_are_left_out_and_brought_back_by_the_same_rules_and_choices_as_
     );
 }
 
-/// A fake AWS access key ID, split so that no secret scanner finds it in
-/// the source.
-const AWS_KEY: &str = concat!("AKIA", "FAKEFAKEFAKEFAKE");
-
-/// The Send control's row, trimmed, without the focus marker.
-fn send(session: &Session) -> String {
-    session
-        .row_with("Send (")
-        .trim_start_matches("> ")
-        .to_owned()
-}
-
 #[test]
 fn a_secret_in_a_related_test_blocks_send_until_the_test_is_left_out() {
     let repo = TestRepo::new("shop");
-    repo.write("store.go", placeholder(".go", 1)).write(
+    repo.write("store.go", placeholder("store.go", 1)).write(
         "store_test.go",
         format!("package store\n\nconst key = \"{AWS_KEY}\"\n"),
     );
     repo.commit("Start the shop");
-    repo.write("store.go", placeholder(".go", 2));
+    repo.write("store.go", placeholder("store.go", 2));
     repo.commit("Change the store");
     let mut session = reviewed(&repo);
 
@@ -509,15 +513,28 @@ fn a_related_test_that_calls_the_change_is_sent_whole_once_as_a_test_that_calls_
     );
 }
 
-/// The reader's rows under its title, trimmed.
-fn reader(session: &Session) -> Vec<String> {
-    session
-        .rows()
-        .iter()
-        .skip(3)
-        .map(|row| row.trim().to_owned())
-        .take_while(|row| !row.starts_with("? keys"))
-        .collect()
+#[test]
+fn choices_on_related_tests_survive_going_back_to_the_same_commit_and_reset_for_another() {
+    let repo = with_a_test_that_calls_the_change();
+    let mut session = reviewed(&repo);
+    // The change, the touched file, the caller, then the test.
+    session.press("j j j <Space>");
+    let chosen = [["shop/test_store.py", "left out by you"]];
+    assert_eq!(statuses(&session), chosen);
+
+    // Back to the picker, and review the same commit again.
+    session.press("q <Enter>");
+    assert_eq!(
+        related(&session),
+        ["Related tests and configuration: finding…"]
+    );
+    session.settle();
+    assert_eq!(statuses(&session), chosen);
+
+    // Choose the first commit, then the newest again, and review it.
+    session.press("q k <Space> k <Space> j j <Enter>");
+    session.settle();
+    assert_eq!(statuses(&session), [["shop/test_store.py", "included"]]);
 }
 
 #[test]
@@ -590,9 +607,9 @@ fn a_related_test_with_no_room_under_the_size_limit_is_counted_in_its_own_sectio
 fn when_the_analysis_fails_the_review_says_related_tests_and_configuration_are_not_available() {
     let repo = TestRepo::new("shop");
     repo.write("go.mod", placeholder("go.mod", 1))
-        .write("store.go", placeholder(".go", 1));
+        .write("store.go", placeholder("store.go", 1));
     repo.commit("Start the shop");
-    repo.write("store.go", placeholder(".go", 2));
+    repo.write("store.go", placeholder("store.go", 2));
     repo.commit("Change the store");
     // The engine never reads inside a `build` directory, so nothing written
     // there can be analysed.
