@@ -74,3 +74,9 @@ showcase/check-history.sh
 `--zero-commit` and `--no-signature` keep the patch files stable across
 replays and git versions. The patches carry fixed author dates, so set
 `GIT_AUTHOR_DATE` when you add a change.
+
+Whetstone's tests keep a table of the connected code it finds for each
+change, in
+`crates/whetstone/src/connected_code/snapshots/whetstone__connected_code__showcase__tests__showcase_connected_code.snap`.
+Changing the history usually changes that table, so `cargo nextest run`
+fails until the new table has been reviewed and accepted with the history.

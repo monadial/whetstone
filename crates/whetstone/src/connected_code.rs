@@ -10,7 +10,9 @@
 //! [`Connections`], each with the text it would send, read from the commit,
 //! or why there are none, and whether they were analysed now or came from
 //! the cache. They include the change's related tests and related
-//! configuration, found from the commit's paths by convention.
+//! configuration, found from the commit's paths by convention. A showcase
+//! change's are found the same way, from its [`ShowcaseTree`], which
+//! replays the showcase project's embedded changes up to it.
 //!
 //! [`find`] is the engine's part of that, for any [`Snapshot`] of a commit,
 //! and blocks while it runs, so callers run it off the UI thread. It keeps
@@ -25,6 +27,7 @@
 //! contents, callable names or the graph.
 //!
 //! [ADR 0002]: https://github.com/monadial/whetstone/blob/main/docs/adr/0002-embed-cgg-for-connected-code.md
+//! [`ShowcaseTree`]: showcase::ShowcaseTree
 
 mod analysis;
 mod cache;
