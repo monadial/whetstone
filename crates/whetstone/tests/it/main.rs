@@ -16,6 +16,7 @@ mod connected_code;
 mod connected_code_limits;
 mod dirs;
 mod jobs;
+mod links_and_mentions;
 mod navigation;
 mod outbound_review;
 mod overlays;

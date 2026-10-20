@@ -1,14 +1,6 @@
 //! Markdown links: the repository files that touched Markdown links to on
 //! the lines the change adds or modifies.
 
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "wired into the outbound review by the #62 integration"
-    )
-)]
-
 use std::collections::BTreeSet;
 use std::path::Path;
 

@@ -26,6 +26,7 @@ mod analysis;
 mod detect;
 mod graph;
 mod lines;
+mod linked_and_named;
 mod links;
 mod mentions;
 mod related;
@@ -286,7 +287,9 @@ impl Request {
             self.repository
                 .with_tree(self.commit, |tree| {
                     let found = find(tree, &self.change, &self.exclude, &self.dirs)?;
-                    let mut connections = with_sent_text(tree, found.connections())?;
+                    let code = with_sent_text(tree, found.connections())?;
+                    let mut connections =
+                        linked_and_named::with_linked_and_named(tree, &self.change, code)?;
                     connections.extend(related::connections(tree, &self.change)?);
                     Ok(merge_into_whole_files(connections))
                 })

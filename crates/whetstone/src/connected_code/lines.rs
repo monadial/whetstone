@@ -1,8 +1,9 @@
 //! Where a change touches each file it leaves at its commit, read from the
 //! change's unified diff: the lines it adds or modifies, and where it only
-//! removes lines.
+//! removes lines. Changed callables count both; links and mentions count
+//! only the lines it adds or modifies.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use whetstone_core::Change;
 
@@ -40,6 +41,19 @@ pub(super) fn touched(change: &Change) -> HashMap<&str, Touched<'_>> {
             let text = file.after()?.text().unwrap_or_default();
             Some((file.path(), Touched::read(diff, text)))
         })
+        .collect()
+}
+
+/// The 1-based line numbers, at the commit, of the lines a file's unified
+/// `diff` adds or modifies. A line the change modifies is one it removes and
+/// adds again. Unlike a changed callable, a hunk that only removes lines
+/// touches no line here, so a link or a path on the line next to a removal
+/// does not count.
+pub(super) fn added_lines(diff: &str) -> BTreeSet<usize> {
+    Touched::read(diff, "")
+        .lines
+        .into_iter()
+        .map(|line| usize::try_from(line).expect("a line number fits in usize"))
         .collect()
 }
 
@@ -154,4 +168,56 @@ fn new_start(header: &str) -> Option<u32> {
     let (start, len) = new_side.split_once(',').unwrap_or((new_side, "1"));
     let start: u32 = start.parse().ok()?;
     Some(if len == "0" { start + 1 } else { start })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn added_lines_are_numbered_as_the_file_is_at_the_commit() {
+        let diff = "diff --git a/notes.md b/notes.md\n\
+                    index 1111111..2222222 100644\n\
+                    --- a/notes.md\n\
+                    +++ b/notes.md\n\
+                    @@ -1,4 +1,5 @@\n\
+                    \x20one\n\
+                    -two\n\
+                    +deux\n\
+                    +zwei\n\
+                    \x20three\n\
+                    \x20four\n\
+                    @@ -10,3 +11,3 @@ ## Later\n\
+                    \x20ten\n\
+                    -eleven\n\
+                    +onze\n\
+                    \x20twelve\n";
+
+        assert_eq!(added_lines(diff), BTreeSet::from([2, 3, 12]));
+    }
+
+    #[test]
+    fn a_created_file_adds_every_line_and_a_removal_adds_none() {
+        let created = "diff --git a/a.md b/a.md\n\
+                       new file mode 100644\n\
+                       --- /dev/null\n\
+                       +++ b/a.md\n\
+                       @@ -0,0 +1,3 @@\n\
+                       +one\n\
+                       +two\n\
+                       +three\n\
+                       \\ No newline at end of file\n";
+        let removal = "diff --git a/b.md b/b.md\n\
+                       --- a/b.md\n\
+                       +++ b/b.md\n\
+                       @@ -2,2 +1,0 @@\n\
+                       -two\n\
+                       -three\n";
+        let binary = "diff --git a/c.png b/c.png\n\
+                      Binary files a/c.png and b/c.png differ\n";
+
+        assert_eq!(added_lines(created), BTreeSet::from([1, 2, 3]));
+        assert_eq!(added_lines(removal), BTreeSet::new());
+        assert_eq!(added_lines(binary), BTreeSet::new());
+    }
 }

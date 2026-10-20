@@ -2,14 +2,6 @@
 //! file's text at the commit and the lines the change adds or modifies, and
 //! the repository files they find.
 
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "wired into the outbound review by the #62 integration"
-    )
-)]
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
@@ -39,7 +31,8 @@ impl fmt::Debug for TouchedText<'_> {
 
 impl<'a> TouchedText<'a> {
     /// The touched `file`, whose 1-based lines `changed` at the commit the
-    /// change adds or modifies, as [`added_lines`] finds them in its diff.
+    /// change adds or modifies, as [`added_lines`](super::lines::added_lines)
+    /// finds them in its diff.
     pub(crate) fn new(file: &'a TouchedFile, changed: BTreeSet<usize>) -> Self {
         Self {
             path: file.path(),
@@ -101,90 +94,9 @@ pub(crate) fn targets<'a>(found: impl IntoIterator<Item = (String, &'a str)>) ->
         .collect()
 }
 
-/// The 1-based line numbers, at the commit, of the lines a file's unified
-/// `diff` adds. A line the change modifies is one it removes and adds again,
-/// so these are the lines the change adds or modifies. A hunk that only
-/// removes lines adds none.
-pub(crate) fn added_lines(diff: &str) -> BTreeSet<usize> {
-    let mut added = BTreeSet::new();
-    // The number, at the commit, of the next line in the current hunk; none
-    // before the first hunk, among the headers.
-    let mut next = None;
-    for line in diff.lines() {
-        if line.starts_with("@@") {
-            next = hunk_start(line);
-            continue;
-        }
-        let Some(number) = next else { continue };
-        match line.as_bytes().first() {
-            Some(b'+') => {
-                added.insert(number);
-                next = Some(number + 1);
-            }
-            Some(b' ') => next = Some(number + 1),
-            _ => {}
-        }
-    }
-    added
-}
-
-/// The number at the commit of the first line of the hunk headed `header`,
-/// such as `@@ -10,3 +11,4 @@`.
-fn hunk_start(header: &str) -> Option<usize> {
-    let after = header.split(' ').find_map(|part| part.strip_prefix('+'))?;
-    after.split(',').next()?.parse().ok()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn added_lines_are_numbered_as_the_file_is_at_the_commit() {
-        let diff = "diff --git a/notes.md b/notes.md\n\
-                    index 1111111..2222222 100644\n\
-                    --- a/notes.md\n\
-                    +++ b/notes.md\n\
-                    @@ -1,4 +1,5 @@\n\
-                    \x20one\n\
-                    -two\n\
-                    +deux\n\
-                    +zwei\n\
-                    \x20three\n\
-                    \x20four\n\
-                    @@ -10,3 +11,3 @@ ## Later\n\
-                    \x20ten\n\
-                    -eleven\n\
-                    +onze\n\
-                    \x20twelve\n";
-
-        assert_eq!(added_lines(diff), BTreeSet::from([2, 3, 12]));
-    }
-
-    #[test]
-    fn a_created_file_adds_every_line_and_a_removal_adds_none() {
-        let created = "diff --git a/a.md b/a.md\n\
-                       new file mode 100644\n\
-                       --- /dev/null\n\
-                       +++ b/a.md\n\
-                       @@ -0,0 +1,3 @@\n\
-                       +one\n\
-                       +two\n\
-                       +three\n\
-                       \\ No newline at end of file\n";
-        let removal = "diff --git a/b.md b/b.md\n\
-                       --- a/b.md\n\
-                       +++ b/b.md\n\
-                       @@ -2,2 +1,0 @@\n\
-                       -two\n\
-                       -three\n";
-        let binary = "diff --git a/c.png b/c.png\n\
-                      Binary files a/c.png and b/c.png differ\n";
-
-        assert_eq!(added_lines(created), BTreeSet::from([1, 2, 3]));
-        assert_eq!(added_lines(removal), BTreeSet::new());
-        assert_eq!(added_lines(binary), BTreeSet::new());
-    }
 
     #[test]
     fn a_touched_text_debugs_its_length_never_its_text() {
