@@ -18,8 +18,12 @@ use crate::jev::{JevQuestion, JevReply, JevRequest};
 use crate::prompts::QUESTION_CHECK;
 
 /// The Jev request that checks `candidate` with `model`: one yes/no question
-/// per check in [`Candidate::checks`], each named after its check, such as
-/// `option_a`, with its instructions from the base prompts.
+/// per check in [`Candidate::checks`], each named after its check, with its
+/// instructions from the base prompts. They are `answerable`, `about_area`,
+/// `needs_change` and `no_giveaway`; `criterion_1` and on, one per criterion;
+/// `option_a` to `option_c`, the option ratings; `rationale_a` to
+/// `rationale_c` and `why_it_matters`; and `hint_points_to_evidence` and
+/// `hint_hides_answer_key`.
 ///
 /// Its state is the evidence as sent, as `evidence`, and the whole candidate
 /// as `candidate`: its area's name and description, never its area prompt,
@@ -64,19 +68,43 @@ pub fn question_check_answers(
     Ok(QuestionCheckAnswers::new(checks))
 }
 
-/// The name a check's question goes under, such as `option_a`.
+/// The name a check's question goes under, such as `criterion_1` or
+/// `option_a`.
 fn name(check: CandidateCheck) -> String {
     match check {
+        CandidateCheck::Answerable => "answerable".to_owned(),
+        CandidateCheck::AboutArea => "about_area".to_owned(),
+        CandidateCheck::NeedsChange => "needs_change".to_owned(),
+        CandidateCheck::NoGiveaway => "no_giveaway".to_owned(),
+        CandidateCheck::Criterion(index) => criterion_name(index),
         CandidateCheck::Option(letter) => format!("option_{}", lowercase(letter)),
+        CandidateCheck::Rationale(letter) => format!("rationale_{}", lowercase(letter)),
+        CandidateCheck::WhyItMatters => "why_it_matters".to_owned(),
+        CandidateCheck::HintPointsToEvidence => "hint_points_to_evidence".to_owned(),
+        CandidateCheck::HintHidesAnswerKey => "hint_hides_answer_key".to_owned(),
     }
 }
 
 /// A check's question, from the base prompts.
 fn question(check: CandidateCheck) -> JevQuestion {
+    let prompts = &*QUESTION_CHECK;
     match check {
-        CandidateCheck::Option(letter) => QUESTION_CHECK
-            .option
+        CandidateCheck::Answerable => prompts.answerable.question(&[]),
+        CandidateCheck::AboutArea => prompts.about_area.question(&[]),
+        CandidateCheck::NeedsChange => prompts.needs_change.question(&[]),
+        CandidateCheck::NoGiveaway => prompts.no_giveaway.question(&[]),
+        CandidateCheck::Criterion(index) => prompts
+            .criterion
+            .question(&[("criterion", &criterion_name(index))]),
+        CandidateCheck::Option(letter) => {
+            prompts.option.question(&[("letter", &letter.to_string())])
+        }
+        CandidateCheck::Rationale(letter) => prompts
+            .rationale
             .question(&[("letter", &letter.to_string())]),
+        CandidateCheck::WhyItMatters => prompts.why_it_matters.question(&[]),
+        CandidateCheck::HintPointsToEvidence => prompts.hint_points_to_evidence.question(&[]),
+        CandidateCheck::HintHidesAnswerKey => prompts.hint_hides_answer_key.question(&[]),
     }
 }
 
@@ -197,8 +225,8 @@ mod tests {
             .expect("the recorded reply decodes")
     }
 
-    fn probability(value: f64) -> Option<Probability> {
-        Probability::new(value).ok()
+    fn probability(value: f64) -> Probability {
+        Probability::new(value).expect("the value is a probability")
     }
 
     #[tokio::test]
@@ -207,12 +235,25 @@ mod tests {
             .expect("the recorded reply answers every check");
 
         assert_eq!(
+            answers.iter().collect::<Vec<_>>(),
             [
-                answers.get(CandidateCheck::Option(OptionLetter::A)),
-                answers.get(CandidateCheck::Option(OptionLetter::B)),
-                answers.get(CandidateCheck::Option(OptionLetter::C)),
-            ],
-            [probability(0.98), probability(0.01), probability(0.01)]
+                (CandidateCheck::Answerable, 0.96),
+                (CandidateCheck::AboutArea, 0.78),
+                (CandidateCheck::NeedsChange, 0.54),
+                (CandidateCheck::NoGiveaway, 0.11),
+                (CandidateCheck::Criterion(0), 0.82),
+                (CandidateCheck::Criterion(1), 0.94),
+                (CandidateCheck::Option(OptionLetter::A), 0.98),
+                (CandidateCheck::Option(OptionLetter::B), 0.01),
+                (CandidateCheck::Option(OptionLetter::C), 0.01),
+                (CandidateCheck::Rationale(OptionLetter::A), 0.97),
+                (CandidateCheck::Rationale(OptionLetter::B), 0.89),
+                (CandidateCheck::Rationale(OptionLetter::C), 0.88),
+                (CandidateCheck::WhyItMatters, 0.8),
+                (CandidateCheck::HintPointsToEvidence, 0.95),
+                (CandidateCheck::HintHidesAnswerKey, 0.12),
+            ]
+            .map(|(check, answer)| (check, probability(answer)))
         );
     }
 
