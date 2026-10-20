@@ -48,13 +48,14 @@ Look at how the change decides who may act, and on what.
 
 An area file that isn't valid is listed with the reason and can't be chosen. `whetstone areas init` copies the five defaults into `.whetstone/areas/` as a starting point, and refuses if any `.md` file is already there.
 
-`.whetstone/config.toml` is optional. Its only key is `exclude`: gitignore-style patterns for files that a Practice on this repository leaves out unless the learner brings them back in the outbound review:
+`.whetstone/config.toml` is optional, and so are its two keys. `exclude` lists gitignore-style patterns for files that a Practice on this repository leaves out unless the learner brings them back in the outbound review. `connected_code_limit_kb` lowers the learner's connected code limit for this repository:
 
 ```toml
 exclude = ["fixtures/", "docs/private/*.md"]
+connected_code_limit_kb = 40
 ```
 
-A `!` pattern is invalid, so the config can only leave more out. Lockfiles and common secret paths, such as `.env` and `*.pem`, are left out by default too, and can be brought back the same way. Binary files, submodules and symlinks are always left out.
+A `!` pattern is invalid, and a limit larger than the learner's has no effect, so the config can only leave more out. Lockfiles and common secret paths, such as `.env` and `*.pem`, are left out by default too, and can be brought back the same way. Binary files, submodules and symlinks are always left out.
 
 ## Configure it
 
@@ -67,6 +68,10 @@ provider = "openrouter"
 # How much colour Whetstone draws with: "auto", "24-bit", "256", "16" or "none".
 # Auto reads COLORTERM, then TERM. A non-empty NO_COLOR wins over any value.
 colours = "auto"
+
+# How much connected code Practice adds to the evidence, from 0 to 400 KB.
+# 0 sends none. A repository's .whetstone/config.toml can lower it, never raise it.
+connected_code_limit_kb = 100
 
 # Jev, the evaluator: it returns decisions and probabilities, never prose.
 [jev]
