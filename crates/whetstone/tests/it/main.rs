@@ -1,6 +1,7 @@
 //! Integration tests, built as one crate. `panic_restore.rs` runs on its own
 //! because it replaces the process-wide panic hook.
 
+mod answering;
 mod app;
 mod areas;
 mod areas_init;
@@ -16,6 +17,7 @@ mod config;
 mod connected_code;
 mod connected_code_limits;
 mod dirs;
+mod feedback;
 mod graph_cache;
 mod jobs;
 mod links_and_mentions;

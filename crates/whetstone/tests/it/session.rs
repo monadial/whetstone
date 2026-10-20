@@ -16,15 +16,16 @@ use ratatui::buffer::{Buffer, Cell};
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use tempfile::TempDir;
 use whetstone::{
-    App, Dirs, Environment, Finished, Flow, JobId, JobOutput, Message, Repository, Settings, Theme,
+    App, Dirs, Environment, Finished, Flow, InMemoryStore, JobId, JobOutput, Message, Repository,
+    Settings, Theme,
 };
 use whetstone_ai::{Ai, ScriptedAi, Timeouts};
 use whetstone_core::ShowcaseProject;
 
 /// What the app starts from: a global config file, if any, the environment
 /// variables besides `HOME`, the showcase project, the directory Whetstone
-/// starts in, the time limit on finding connected code, and the AI Practice
-/// asks, if it has one. Unless the
+/// starts in, the time limit on finding connected code, the AI Practice
+/// asks, if it has one, and the session store. Unless the
 /// variables set `TMPDIR`, the system temporary directory is one of the
 /// session's own, and unless they set `XDG_CACHE_HOME`, the cache folder is
 /// in the session's home directory.
@@ -56,6 +57,10 @@ pub(crate) struct Setup<'a> {
     /// time limits the test sets, when the variables set a key: the app's
     /// own requests, which never leave the machine (rule 48).
     pub(crate) local_openrouter: Option<(&'a str, Timeouts)>,
+    /// The session store, as the test keeps it to read its log. Without
+    /// one, the session gives the app a store of its own, which
+    /// [`Session::store`] reads too.
+    pub(crate) store: Option<&'a InMemoryStore>,
 }
 
 /// A terminal with colour turned off: snapshots then list only text
@@ -84,6 +89,8 @@ pub(crate) struct Session {
     /// The time limits the app set on its jobs, each with when it runs out,
     /// waiting for the test to let that time pass.
     time_limits: Vec<(Duration, JobId)>,
+    /// The app's session store, which shares its log with the app's.
+    store: InMemoryStore,
     _home: TempDir,
     _temp: TempDir,
 }
@@ -140,6 +147,8 @@ impl Session {
             Some(time_limit) => app.with_time_limit(time_limit),
             None => app,
         };
+        let store = setup.store.cloned().unwrap_or_default();
+        let app = app.with_store(Box::new(store.clone()));
         let mut session = Self {
             app: match ai {
                 Some(ai) => app.with_ai(ai),
@@ -150,6 +159,7 @@ impl Session {
             finished: Vec::new(),
             now: Duration::ZERO,
             time_limits: Vec::new(),
+            store,
             _home: home,
             _temp: temp,
         };
@@ -273,6 +283,12 @@ impl Session {
                 .push((self.now + limit.duration, limit.job));
         }
         flow
+    }
+
+    /// The app's session store, whose log shows what the app saved, in
+    /// order.
+    pub(crate) fn store(&self) -> &InMemoryStore {
+        &self.store
     }
 
     /// Draws the current frame. Its debug form lists every style change
