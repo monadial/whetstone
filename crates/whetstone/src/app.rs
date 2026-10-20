@@ -38,7 +38,7 @@ use crate::help::KeyHelp;
 use crate::home::Home;
 use crate::job::{Finished, Job, JobId, JobOutcome, JobOutput, Jobs, TimeLimit};
 use crate::keymap::{self, Command, Input};
-use crate::leave::Leave;
+use crate::leave::{Leave, Leaving};
 use crate::overlay::{Outcome, Overlay};
 use crate::palette::Palette;
 use crate::repository::{Repository, Unavailable};
@@ -439,24 +439,25 @@ impl App {
 
     /// Runs `command`, unless it would lose a draft: then it asks first.
     fn run(&mut self, command: Command) -> Flow {
-        if self.loses_draft(command) {
-            self.overlay = Some(Overlay::Leave(Leave::new(command)));
+        if let Some(leaving) = self.loses_draft(command) {
+            self.overlay = Some(Overlay::Leave(Leave::new(leaving)));
             return Flow::Continue;
         }
         self.perform(command)
     }
 
-    /// Whether `command` would close a screen holding a draft: Back closes
-    /// the current screen, and going home or quitting closes every screen
-    /// above home.
-    fn loses_draft(&self, command: Command) -> bool {
-        match command {
-            Command::Back => self.screens.current().holds_draft(),
-            Command::Go(Route::Home) | Command::Quit => {
+    /// How `command` leaves, if it would close a screen holding a draft:
+    /// Back closes the current screen, and going home or quitting closes
+    /// every screen above home.
+    fn loses_draft(&self, command: Command) -> Option<Leaving> {
+        let leaving = Leaving::by(command)?;
+        let loses = match leaving {
+            Leaving::Back => self.screens.current().holds_draft(),
+            Leaving::Home | Leaving::Quit => {
                 self.screens.above.iter().any(|screen| screen.holds_draft())
             }
-            _ => false,
-        }
+        };
+        loses.then_some(leaving)
     }
 
     /// Runs `command` without asking.

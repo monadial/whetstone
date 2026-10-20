@@ -42,8 +42,8 @@ use whetstone_ai::{Ai, CandidateCount, Pending, Reply, RequestFailure};
 use whetstone_core::{
     Area, AreaId, AssessmentPolicy, Band, Candidate, CandidateCheck, CandidateId, Change, CommitId,
     ConnectedCodeLimit, Connections, ConnectionsState, Evidence, ExcludePatterns, Job, Probability,
-    QuestionCheckAnswers, QuestionCount, RepositoryConfig, ReviewChoices, Role, Side, Withheld,
-    WrittenCandidate, pick, plain_checks, show_rule,
+    Provenance, QuestionCheckAnswers, QuestionCount, RepositoryConfig, ReviewChoices, Role, Side,
+    Withheld, WrittenCandidate, pick, plain_checks, show_rule,
 };
 
 use crate::columns;
@@ -123,6 +123,8 @@ pub(crate) struct Practice {
     /// The requests to Jev and the generator it waits for, each with what
     /// it asked (rule 24).
     waiting: Waiting<Asking>,
+    /// The provenance of every reply so far, for the session record.
+    provenance: Vec<Provenance>,
     focus: Position,
 }
 
@@ -371,6 +373,7 @@ impl Practice {
                 cache: Arc::clone(context.cache),
             }))),
             waiting: Waiting::new(),
+            provenance: Vec::new(),
             focus: Position::default(),
         })
     }
@@ -415,6 +418,7 @@ impl Practice {
             gate: Gate::Undecided,
             stage: Stage::CheckingAreas(Request::Unsent),
             waiting: Waiting::new(),
+            provenance: Vec::new(),
             focus: Position::default(),
         })
     }
@@ -454,6 +458,7 @@ impl Practice {
         };
         match reply {
             Ok(reply) => {
+                self.provenance.push(reply.provenance);
                 let policy = AssessmentPolicy::current();
                 let bands: Vec<(AreaId, Band)> = reply
                     .content
@@ -516,6 +521,7 @@ impl Practice {
         };
         *write = match reply {
             Ok(reply) => {
+                self.provenance.push(reply.provenance);
                 let written = reply.content.len();
                 let checked = plain_checks(area, reply.content, evidence);
                 tracing::info!(
@@ -569,7 +575,10 @@ impl Practice {
             return;
         };
         *check = match reply {
-            Ok(reply) => Request::Replied(reply.content),
+            Ok(reply) => {
+                self.provenance.push(reply.provenance);
+                Request::Replied(reply.content)
+            }
             Err(failure) => {
                 tracing::info!(area = %candidate.area(), %failure, "checking a candidate failed");
                 self.failed_requests.note_refusal(Role::Jev, failure);
@@ -994,7 +1003,7 @@ impl View for Practice {
 
     fn keep_record(&mut self, store: &mut dyn SessionStore) {
         if let (Stage::Shown(questions), Some(evidence)) = (&mut self.stage, &self.evidence) {
-            questions.keep_record(store, evidence);
+            questions.keep_record(store, evidence, &self.provenance);
         }
     }
 

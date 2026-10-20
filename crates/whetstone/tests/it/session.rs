@@ -16,11 +16,12 @@ use ratatui::buffer::{Buffer, Cell};
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use tempfile::TempDir;
 use whetstone::{
-    App, Dirs, Environment, Finished, Flow, InMemoryStore, JobId, JobOutput, Message, Repository,
-    Settings, Theme,
+    App, Assessment, Dirs, Durability, Environment, Finished, Flow, InMemoryStore, JobId,
+    JobOutput, Message, NewRecord, Repository, SavedResponse, SessionId, SessionStore, Settings,
+    Signal, StoreError, Theme,
 };
 use whetstone_ai::{Ai, ScriptedAi, Timeouts};
-use whetstone_core::ShowcaseProject;
+use whetstone_core::{CandidateId, Response, ShowcaseProject};
 
 /// What the app starts from: a global config file, if any, the environment
 /// variables besides `HOME`, the showcase project, the directory Whetstone
@@ -57,10 +58,91 @@ pub(crate) struct Setup<'a> {
     /// time limits the test sets, when the variables set a key: the app's
     /// own requests, which never leave the machine (rule 48).
     pub(crate) local_openrouter: Option<(&'a str, Timeouts)>,
-    /// The session store, as the test keeps it to read its log. Without
-    /// one, the session gives the app a store of its own, which
-    /// [`Session::store`] reads too.
-    pub(crate) store: Option<&'a InMemoryStore>,
+    /// The session store, as the test scripts it. Without one, the app
+    /// keeps records in memory, durably nowhere and refusing nothing.
+    pub(crate) store: Option<&'a TestStore>,
+}
+
+/// The session store a session gives its app: in memory, its log shared
+/// with the test through [`Session::store`], refusing what the test scripts
+/// it to and as durable as the test says.
+#[derive(Debug, Clone)]
+pub(crate) struct TestStore {
+    store: InMemoryStore,
+    durability: Durability,
+    refusing: Refusing,
+}
+
+/// Which saves a [`TestStore`] refuses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Refusing {
+    Nothing,
+    /// Starting a record.
+    Starts,
+    /// Saving a response.
+    Responses,
+}
+
+impl TestStore {
+    /// A store as durable as `durability`, refusing what `refusing` says.
+    pub(crate) fn new(durability: Durability, refusing: Refusing) -> Self {
+        Self {
+            store: InMemoryStore::new(),
+            durability,
+            refusing,
+        }
+    }
+}
+
+impl Default for TestStore {
+    fn default() -> Self {
+        Self::new(Durability::InMemory, Refusing::Nothing)
+    }
+}
+
+impl SessionStore for TestStore {
+    fn durability(&self) -> Durability {
+        self.durability
+    }
+
+    fn start(&mut self, record: NewRecord) -> Result<SessionId, StoreError> {
+        if self.refusing == Refusing::Starts {
+            // A refusal names a session, so it takes one from a store of its
+            // own, which the test never reads.
+            let session = InMemoryStore::new().start(record)?;
+            return Err(StoreError::UnknownSession(session));
+        }
+        self.store.start(record)
+    }
+
+    fn save_response(
+        &mut self,
+        session: SessionId,
+        question: &CandidateId,
+        response: Response,
+    ) -> Result<SavedResponse, StoreError> {
+        if self.refusing == Refusing::Responses {
+            return Err(StoreError::UnknownQuestion(session));
+        }
+        self.store.save_response(session, question, response)
+    }
+
+    fn save_assessment(
+        &mut self,
+        saved: &SavedResponse,
+        assessment: Assessment,
+    ) -> Result<(), StoreError> {
+        self.store.save_assessment(saved, assessment)
+    }
+
+    fn save_signal(
+        &mut self,
+        session: SessionId,
+        question: &CandidateId,
+        signal: Signal,
+    ) -> Result<(), StoreError> {
+        self.store.save_signal(session, question, signal)
+    }
 }
 
 /// A terminal with colour turned off: snapshots then list only text
@@ -90,7 +172,7 @@ pub(crate) struct Session {
     /// waiting for the test to let that time pass.
     time_limits: Vec<(Duration, JobId)>,
     /// The app's session store, which shares its log with the app's.
-    store: InMemoryStore,
+    store: TestStore,
     _home: TempDir,
     _temp: TempDir,
 }
@@ -288,7 +370,7 @@ impl Session {
     /// The app's session store, whose log shows what the app saved, in
     /// order.
     pub(crate) fn store(&self) -> &InMemoryStore {
-        &self.store
+        &self.store.store
     }
 
     /// Draws the current frame. Its debug form lists every style change

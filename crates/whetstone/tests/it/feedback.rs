@@ -5,9 +5,11 @@
 //! submitted response is final, and feedback offers Next question, Inspect
 //! source and Finish.
 
-use crate::answering::{answering, reasoning, submit};
+use whetstone::Durability;
+
+use crate::answering::{answering, answering_with, reasoning, submit};
 use crate::preparing_questions::{PAYMENT_LIFECYCLE, touched_path, writing_about_the_domain};
-use crate::session::Session;
+use crate::session::{Refusing, Session, TestStore};
 
 /// A session `width` by `height` on the feedback for a response choosing
 /// `choice` to the first question, whose answer key is A.
@@ -103,6 +105,18 @@ fn the_reasoning_section_shows_it_and_says_it_isnt_assessed_yet_in_this_version(
         !session.text().contains("Saved"),
         "the in-memory store never shows Saved"
     );
+}
+
+#[test]
+fn saved_shows_only_once_a_durable_store_has_saved_the_response() {
+    let ai = writing_about_the_domain(6, PAYMENT_LIFECYCLE);
+    let store = TestStore::new(Durability::Durable, Refusing::Nothing);
+    let mut session = answering_with(&ai, &store, 120, 32);
+    assert!(!session.text().contains("Saved"), "{}", session.text());
+
+    submit(&mut session, "a", "Because.");
+
+    assert_eq!(session.row_with("Saved"), "Saved");
 }
 
 #[test]
