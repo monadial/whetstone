@@ -1,0 +1,47 @@
+# Relevance gate examples: for a showcase commit, whether it is worth asking
+# about in each labelled area. See README.md.
+#
+# Seeds by an agent, for the maintainer to review (#99). Each labels only
+# the areas it is sure of.
+
+[[gate]]
+id = "gate-retry-identity"
+commit = "Preserve payment retry identity"
+by = "agent"
+on = 2026-10-21
+note = "Domain is the change's own area. It adds no logs, metrics or load handling."
+
+[gate.labels]
+domain = "yes"
+observability = "no"
+scalability = "no"
+
+[[gate]]
+id = "gate-rename"
+commit = "Rename ChargeOutcome to ProviderOutcome"
+by = "agent"
+on = 2026-10-21
+note = """
+One of the two deliberately trivial changes. Domain is left unlabelled: a
+rename of a domain type is arguably about the domain's language.\
+"""
+
+[gate.labels]
+infrastructure = "no"
+observability = "no"
+scalability = "no"
+system-design = "no"
+
+[[gate]]
+id = "gate-rustfmt"
+commit = "Run rustfmt over the HTTP layer"
+by = "agent"
+on = 2026-10-21
+note = "The other deliberately trivial change: formatting only, nothing to ask in any area."
+
+[gate.labels]
+domain = "no"
+infrastructure = "no"
+observability = "no"
+scalability = "no"
+system-design = "no"

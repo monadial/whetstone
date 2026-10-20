@@ -10,6 +10,7 @@ built from.
 | `payments/` | The project's code, exactly as the history builds it. It is its own Cargo workspace with its own lockfile and is never a member of the CLI workspace. |
 | `payments/.whetstone/config.toml` | Whetstone's settings for the project. It sets nothing, and the project has no area files, so Practice offers Whetstone's default areas. |
 | `payments-history/` | The curated history: a `git format-patch` series that builds `payments/` from an empty tree. |
+| `labels/` | Labelled examples about the showcase's commits, which `whetstone-labels` measures Jev against. Its `README.md` describes the format. |
 | `check-history.sh` | Replays the series onto an empty tree and checks that it reproduces `payments/` exactly. CI runs it. |
 
 Build and test the project on its own, offline once its dependencies are

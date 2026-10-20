@@ -1,0 +1,62 @@
+# Explanation examples: paragraphs explaining what a response to a
+# candidate example's question missed, each with two labels: whether the
+# evidence supports it, and whether it agrees with its criterion's outcome.
+# See README.md.
+#
+# Seeds by an agent, for the maintainer to review (#99). Both explain
+# `seed-retry-key`'s criteria.
+
+[[explanation]]
+id = "seed-retry-key-explained"
+candidate = "seed-retry-key"
+by = "agent"
+on = 2026-10-21
+note = "A sound paragraph for criterion 2, not met, as for `seed-retry-key-partial`."
+
+[[explanation.paragraphs]]
+criterion = 2
+outcome = "not_met"
+text = """
+Your reasoning says where the key comes from, but not why that matters. The \
+provider deduplicates charges on the operation key, so every attempt that \
+carries the payment's own key is the same charge, and the provider applies \
+it at most once, even when an earlier attempt went through before it timed \
+out.\
+"""
+citations = [{ path = "src/provider.rs", first_line = 1, last_line = 5 }]
+
+[explanation.labels]
+criterion_2_supported = "yes"
+criterion_2_agrees = "yes"
+
+[[explanation]]
+id = "seed-retry-key-misexplained"
+candidate = "seed-retry-key"
+by = "agent"
+on = 2026-10-21
+note = """
+Hand-made broken: the first paragraph claims the learner missed a criterion \
+that needs review; the second says something the evidence contradicts.\
+"""
+
+[[explanation.paragraphs]]
+criterion = 1
+outcome = "needs_review"
+text = "You missed that the key now comes from the payment itself, so no caller can choose it."
+citations = [{ path = "src/provider.rs", first_line = 26, last_line = 37 }]
+
+[[explanation.paragraphs]]
+criterion = 2
+outcome = "not_met"
+text = """
+The provider deduplicates charges on the payment's reference, not its \
+operation key, so the key a retry carries makes no difference to how often \
+the customer is charged.\
+"""
+citations = [{ path = "src/provider.rs", first_line = 16, last_line = 24 }]
+
+[explanation.labels]
+criterion_1_supported = "yes"
+criterion_1_agrees = "no"
+criterion_2_supported = "no"
+criterion_2_agrees = "no"
