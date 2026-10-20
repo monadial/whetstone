@@ -42,16 +42,17 @@ fn startup_removes_old_analysis_directories_and_a_review_leaves_none_of_its_own(
     directory(temp.path(), "whetstone-analysis-crashed", 2 * DAY);
     directory(temp.path(), "whetstone-analysis-running", Duration::ZERO);
     directory(temp.path(), "someone-elses", 2 * DAY);
-    let dirs = TempDir::new().expect("create the config and state directories");
+    let dirs = TempDir::new().expect("create the config, state and cache directories");
 
-    // Started in the repository, which is its home, with its config and
-    // state kept elsewhere.
+    // Started in the repository, which is its home, with its config, state
+    // and cache kept elsewhere.
     let mut session = start(
         LAUNCH,
         &[
             ("HOME", repo.root()),
             ("XDG_CONFIG_HOME", &dirs.path().join("config")),
             ("XDG_STATE_HOME", &dirs.path().join("state")),
+            ("XDG_CACHE_HOME", &dirs.path().join("cache")),
             ("TMPDIR", temp.path()),
         ],
     );
