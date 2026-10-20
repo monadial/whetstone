@@ -21,6 +21,9 @@ const TIMEOUT_MS: u64 = 10_000;
 /// What the shell prints right before `whetstone` starts.
 const STARTS: &str = "whetstone starts\r\n";
 
+/// The refusal `whetstone` prints on stderr under `TERM=dumb`.
+const REFUSAL: &str = "error: whetstone needs a terminal that can move the cursor, but TERM=dumb says this one cannot";
+
 /// Runs `whetstone` as `launch` says, between two records of the terminal
 /// modes.
 fn script(launch: &str) -> String {
@@ -119,7 +122,7 @@ fn with_term_dumb_it_refuses_before_writing_anything_else() {
     transcript.assert_exit_code(1);
     assert_eq!(
         transcript.written(),
-        "error: whetstone needs a terminal that can move the cursor, but TERM=dumb says this one cannot\r\n",
+        format!("{REFUSAL}\r\n"),
         "the refusal is the only thing written: no escape sequence comes first"
     );
     transcript.assert_modes_unchanged();
@@ -139,7 +142,7 @@ fn with_term_dumb_the_refusal_goes_to_stderr_and_nothing_to_the_terminal() {
     assert_eq!(transcript.written(), "", "nothing reaches the terminal");
     assert_eq!(
         std::fs::read_to_string(home.path().join("stderr")).expect("read redirected stderr"),
-        "error: whetstone needs a terminal that can move the cursor, but TERM=dumb says this one cannot\n"
+        format!("{REFUSAL}\n")
     );
     transcript.assert_modes_unchanged();
 }
