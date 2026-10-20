@@ -113,7 +113,10 @@ fn links_resolve_against_the_linking_file_or_the_root_and_only_files_in_the_comm
 #[test]
 fn a_path_a_changed_line_names_is_connected_code_but_a_bare_file_name_or_a_longer_path_is_not() {
     let repo = course();
+    // A file at the root that the bare file name below would name if it
+    // counted.
     repo.write("scripts/check.sh", "#!/bin/sh\necho ok\n")
+        .write("loops.txt", "Print 1 to 10.\n")
         .write("notes.txt", "Start with lessons/intro.md.\n");
     repo.commit("Add a check and notes");
     repo.write(
