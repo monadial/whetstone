@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use whetstone_core::{Area, AreaId, FileContent, TouchedFile};
+use whetstone_core::{Area, AreaId, TouchedFile};
 
 use crate::build_areas;
 
@@ -105,29 +105,42 @@ fn the_build_fails_on_an_areas_trailer_that_names_anything_but_a_default_area_id
 
 #[test]
 fn replaying_every_embedded_change_rebuilds_the_showcase_projects_files_exactly() {
+    let showcase = whetstone::embedded_showcase();
     let mut replayed = BTreeMap::new();
-    for change in whetstone::embedded_showcase().changes() {
+    for (position, change) in showcase.changes().iter().enumerate() {
         for file in change.files() {
             assert_eq!(
-                replayed.get(file.path()).map(String::as_str),
-                file.before().and_then(FileContent::text),
+                replayed.get(file.path()).copied(),
+                file.before(),
                 "{} before {:?}",
                 file.path(),
                 change.summary()
             );
-            match file.after().and_then(FileContent::text) {
-                Some(after) => replayed.insert(file.path().to_owned(), after.to_owned()),
-                None => replayed.remove(file.path()),
-            };
+        }
+        replayed = showcase
+            .files_at(position)
+            .expect("the showcase has a change at every position up to its last");
+        for file in change.files() {
+            assert_eq!(
+                replayed.get(file.path()).copied(),
+                file.after(),
+                "{} after {:?}",
+                file.path(),
+                change.summary()
+            );
         }
     }
+    assert_eq!(showcase.files_at(showcase.changes().len()), None);
 
     // `showcase/check-history.sh` checks that the tree has no other files.
     assert!(replayed.contains_key("src/payment.rs"), "{replayed:#?}");
     for (path, contents) in &replayed {
         let on_disk = fs::read_to_string(project().join(path))
             .unwrap_or_else(|error| panic!("read {path} in the showcase project: {error}"));
-        assert!(*contents == on_disk, "{path} differs from the project");
+        assert!(
+            contents.text() == Some(on_disk.as_str()),
+            "{path} differs from the project"
+        );
     }
 }
 
