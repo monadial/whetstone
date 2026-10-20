@@ -15,6 +15,9 @@ use crate::pty::{Transcript, quit_with, start};
 
 const LEAVE_ALTERNATE_SCREEN: &str = "\x1b[?1049l";
 
+/// Runs `whetstone` in the foreground, attached to the terminal.
+const LAUNCH: &str = r#""$WHETSTONE""#;
+
 /// Runs `whetstone` in the foreground, attached to the terminal, as `exec`
 /// from a shell that first writes the terminal's device to `$HOME/tty`, so
 /// the test can resize it, and its process ID to `$HOME/pid`, so the test
@@ -30,25 +33,29 @@ const LAUNCH_AND_CRASH: &str = r#"WHETSTONE_CRASH_AFTER_FIRST_DRAW=1 "$WHETSTONE
 fn below_50x12_the_notice_shows_and_growing_back_brings_the_screen_back() {
     let home = TempDir::new().expect("create a temporary home");
     let mut session = start(LAUNCH_RECORDING_TTY_AND_PID, &[("HOME", home.path())]);
-    let mut screen = Recording::new(&mut session);
+    let mut recording = Recording::new(&mut session);
 
     // Ratatui moves the cursor between words, so wait for single words.
-    screen.wait_for("Quit");
+    // Settings, not the home screen the app starts on, so a screen that
+    // came back from the start would not pass.
+    recording.wait_for("Quit");
+    recording.send("j\r");
+    recording.wait_for("Generator");
     let tty = recorded(home.path(), "tty");
     resize(&tty, 40, 10);
-    let notice = screen.wait_for("40x10");
+    let notice = recording.wait_for("40x10");
     assert!(
         notice.contains("Window") && notice.contains("small"),
         "the window too small notice is drawn:\n{notice:?}"
     );
     resize(&tty, 80, 24);
-    let home_again = screen.wait_for("Quit");
+    let settings_again = recording.wait_for("Generator");
     assert!(
-        home_again.contains("Practice") && home_again.contains("Settings"),
-        "the home screen is drawn again:\n{home_again:?}"
+        settings_again.contains("Provider"),
+        "Settings is drawn again:\n{settings_again:?}"
     );
-    screen.send("q");
-    let transcript = screen.finish();
+    recording.send("\x03");
+    let transcript = recording.finish();
 
     transcript.assert_exit_code(0);
     transcript.assert_terminal_restored();
@@ -86,17 +93,17 @@ fn assert_signal_quits_and_restores(signal: &str, code: i32) {
 #[test]
 fn no_mouse_mode_or_keyboard_enhancement_is_ever_turned_on() {
     let home = TempDir::new().expect("create a temporary home");
-    let mut session = start(LAUNCH_RECORDING_TTY_AND_PID, &[("HOME", home.path())]);
-    let mut screen = Recording::new(&mut session);
+    let mut session = start(LAUNCH, &[("HOME", home.path())]);
+    let mut recording = Recording::new(&mut session);
 
     // Visit every screen and overlay: the picker, a change in the viewer and
     // its search box, back home, then Settings with key help and the
     // palette over it.
-    screen.wait_for("Quit");
-    screen.send("\rjjjjjjjjj\r/zzqq\rqqj\r??:");
-    screen.wait_for("Leave");
-    screen.send("\x03");
-    let transcript = screen.finish();
+    recording.wait_for("Quit");
+    recording.send("\rjjjjjjjjj\r/zzqq\rqqj\r??:");
+    recording.wait_for("Leave");
+    recording.send("\x03");
+    let transcript = recording.finish();
 
     transcript.assert_exit_code(0);
     transcript.assert_terminal_restored();
@@ -134,6 +141,10 @@ fn no_mouse_mode_or_keyboard_enhancement_is_ever_turned_on() {
 }
 
 #[test]
+#[cfg_attr(
+    not(debug_assertions),
+    ignore = "release builds compile the crash trigger out"
+)]
 fn a_real_panic_restores_the_terminal_before_the_panic_message_prints() {
     let home = TempDir::new().expect("create a temporary home");
     let mut session = start(LAUNCH_AND_CRASH, &[("HOME", home.path())]);
