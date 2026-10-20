@@ -33,24 +33,24 @@ fn a_repository_of_documents_gets_connected_code_from_links_and_mentions_alone()
 
     assert_eq!(
         connected_code(&session)[0],
-        "Connected code: 2 files · 1 KB"
+        "Connected code: 2 files · 1 KB of 100 KB limit"
     );
     assert_eq!(
         connected_rows(&session),
         [
-            [
-                "exercises/loops.txt",
-                "whole file",
-                "1 KB",
-                "included",
-                "named in `README.md`"
-            ],
             [
                 "lessons/intro.md",
                 "whole file",
                 "1 KB",
                 "included",
                 "linked from `README.md`"
+            ],
+            [
+                "exercises/loops.txt",
+                "whole file",
+                "1 KB",
+                "included",
+                "named in `README.md`"
             ],
         ]
     );
@@ -86,6 +86,13 @@ fn links_resolve_against_the_linking_file_or_the_root_and_only_files_in_the_comm
         connected_rows(&session),
         [
             [
+                "lessons/intro.md",
+                "whole file",
+                "1 KB",
+                "included",
+                "linked from `lessons/loops.md`"
+            ],
+            [
                 "README.md",
                 "whole file",
                 "1 KB",
@@ -94,13 +101,6 @@ fn links_resolve_against_the_linking_file_or_the_root_and_only_files_in_the_comm
             ],
             [
                 "exercises/loops.txt",
-                "whole file",
-                "1 KB",
-                "included",
-                "linked from `lessons/loops.md`"
-            ],
-            [
-                "lessons/intro.md",
                 "whole file",
                 "1 KB",
                 "included",
@@ -199,18 +199,11 @@ fn a_file_found_more_than_once_is_sent_whole_once_with_every_relation() {
 
     assert_eq!(
         connected_code(&session)[0],
-        "Connected code: 1 range and 2 files · 1 KB"
+        "Connected code: 1 range and 2 files · 1 KB of 100 KB limit"
     );
     assert_eq!(
         connected_rows(&session),
         [
-            [
-                "docs/payments.md",
-                "whole file",
-                "1 KB",
-                "included",
-                "linked from `README.md`, named in `shop/pay.py`"
-            ],
             [
                 "shop/cart.py",
                 "whole file",
@@ -224,6 +217,13 @@ fn a_file_found_more_than_once_is_sent_whole_once_with_every_relation() {
                 "1 KB",
                 "included",
                 "called by `charge`"
+            ],
+            [
+                "docs/payments.md",
+                "whole file",
+                "1 KB",
+                "included",
+                "linked from `README.md`, named in `shop/pay.py`"
             ],
         ]
     );
@@ -271,18 +271,18 @@ fn a_linked_symlink_or_a_named_binary_file_is_listed_but_always_left_out() {
         connected_rows(&session),
         [
             [
-                "images/loop.png",
-                "whole file",
-                "1 KB",
-                "left out: binary file",
-                "named in `README.md`"
-            ],
-            [
                 "lessons/latest.md",
                 "whole file",
                 "–",
                 "left out: symlink",
                 "linked from `README.md`"
+            ],
+            [
+                "images/loop.png",
+                "whole file",
+                "1 KB",
+                "left out: binary file",
+                "named in `README.md`"
             ],
         ]
     );
