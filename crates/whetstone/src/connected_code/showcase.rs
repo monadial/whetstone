@@ -114,8 +114,90 @@ impl Snapshot for ShowcaseTree {
 #[cfg(test)]
 mod tests {
     use tempfile::TempDir;
+    use whetstone_core::{Connection, ConnectionGroup, Relation};
 
     use super::*;
+    use crate::connected_code::analysis::ENGINE_VERSION;
+
+    /// The expected table's header, before the engine version and the
+    /// changes it numbers.
+    const TABLE_HEADER: &str = "\
+# The connected code of every curated showcase change, as Whetstone finds it
+# through the connected-code module, the same way as a learner's commit.
+# Each line is one connection: change | path | extent | group | relations.
+# A change with none has one \"none found\" line.
+#
+# Review this table whenever cgg is upgraded (ADR 0002): an upgrade can change
+# what is found. The engine version below follows the cgg pin, so an upgrade
+# fails this check until the table has been reviewed. A failing run writes the
+# table it found beside this one, ending in `.snap.new`, to compare and accept.";
+
+    /// The showcase project's expected connected code, kept with the tests:
+    /// each curated change's connections, one per line, in change, path and
+    /// extent order, after a header that numbers the changes as their
+    /// patches in `showcase/payments-history/` are.
+    #[test]
+    fn every_curated_showcase_change_has_the_connected_code_its_table_expects() {
+        let showcase = crate::embedded_showcase();
+        let temp = TempDir::new().expect("create a temporary directory");
+        let cache = TempDir::new().expect("create a cache folder");
+        let cache = GraphCache::open(cache.path(), GraphCache::CAP);
+        let dirs = AnalysisDirs::new(temp.path().to_path_buf());
+
+        let mut table = vec![
+            TABLE_HEADER.to_owned(),
+            format!("# Found with cgg {ENGINE_VERSION}."),
+            "#".to_owned(),
+        ];
+        for (position, change) in showcase.changes().iter().enumerate() {
+            table.push(format!("# {:02} {}", position + 1, change.summary()));
+        }
+        table.push(String::new());
+        for position in 0..showcase.changes().len() {
+            let number = position + 1;
+            let (connections, _) = ShowcaseTree::at(&showcase, position)
+                .expect("the showcase has a change there")
+                .find(&dirs, &cache);
+            match connections {
+                Connections::Found(mut connections) => {
+                    connections.sort_by(|a, b| a.id().cmp(b.id()));
+                    table.extend(connections.iter().map(|connection| row(number, connection)));
+                }
+                Connections::NoneFound => table.push(format!("{number:02} none found")),
+                other => panic!("change {number} has no connected code: {other:?}"),
+            }
+        }
+
+        insta::assert_snapshot!("showcase_connected_code", table.join("\n"));
+    }
+
+    /// `connection` of the change numbered `number` as a row of the table.
+    fn row(number: usize, connection: &Connection) -> String {
+        let group = match connection.group() {
+            ConnectionGroup::ConnectedCode => "connected code",
+            ConnectionGroup::RelatedTest => "related test",
+            ConnectionGroup::RelatedConfiguration => "related configuration",
+        };
+        let relations: Vec<String> = connection
+            .relations()
+            .iter()
+            .map(|relation| match relation {
+                Relation::Calls { touched_file, .. } | Relation::CalledBy { touched_file, .. } => {
+                    format!("{relation} in {touched_file}")
+                }
+                Relation::LinkedFrom { .. }
+                | Relation::NamedIn { .. }
+                | Relation::TestFor { .. }
+                | Relation::ManifestFor { .. } => relation.to_string(),
+            })
+            .collect();
+        format!(
+            "{number:02} | {} | {} | {group} | {}",
+            connection.id().path(),
+            connection.id().extent(),
+            relations.join("; ")
+        )
+    }
 
     #[test]
     fn a_showcase_change_found_again_comes_from_the_cache_and_another_change_does_not() {
