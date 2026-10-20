@@ -19,6 +19,7 @@ mod dirs;
 mod graph_cache;
 mod jobs;
 mod links_and_mentions;
+mod live_practice;
 mod navigation;
 mod openrouter_key;
 mod outbound_review;
