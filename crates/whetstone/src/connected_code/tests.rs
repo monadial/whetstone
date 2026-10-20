@@ -438,7 +438,10 @@ fn callables_the_engine_makes_up_are_never_connected_code() {
     repo.write("billing.js", billing("amount >= 0"));
     let id = repo.commit("Allow free charges");
 
-    assert_eq!(connected(&repo, id), ["routes.js 10-12 high: calls charge"]);
+    assert_eq!(
+        connected(&repo, id),
+        ["routes.js 10-12 high: calls charge in billing.js"]
+    );
 }
 
 #[test]
