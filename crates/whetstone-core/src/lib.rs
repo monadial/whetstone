@@ -8,6 +8,7 @@
 
 mod area;
 mod change;
+mod evidence;
 mod exclusion;
 mod repository_config;
 mod secret;
@@ -16,6 +17,10 @@ mod showcase;
 pub use crate::area::{Area, AreaFileError, AreaId, AreaSource, InvalidAreaFile, InvalidAreaId};
 pub use crate::change::{
     Change, CommitId, Comparison, FileContent, InvalidCommitId, Origin, TouchedFile,
+};
+pub use crate::evidence::{
+    Evidence, Exclusion, FileStatus, Finding, FindingStatus, Place, ReviewChoices, ReviewedFile,
+    SentFile, Side, Unsendable,
 };
 pub use crate::exclusion::{
     DefaultExclusion, DefaultExclusionKind, ExcludePattern, ExcludePatternError,

@@ -270,10 +270,6 @@ impl Repository {
     }
 
     /// The repository's Whetstone config.
-    #[expect(
-        dead_code,
-        reason = "the Evidence builder applies its exclusions, from the outbound review"
-    )]
     pub(crate) fn config(&self) -> &RepositoryConfig {
         &self.config
     }

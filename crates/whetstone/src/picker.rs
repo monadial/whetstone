@@ -2,14 +2,16 @@
 //! the areas questions focus on and one change, from the showcase project's
 //! curated history or from the commits of their own repository.
 
+use std::cell::RefCell;
 use std::ops::Range;
+use std::rc::Rc;
 
 use ratatui::Frame;
 use ratatui::crossterm::event::KeyCode;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{List, ListState, Paragraph};
-use whetstone_core::{Area, InvalidAreaFile, ShowcaseProject};
+use whetstone_core::{Area, CommitId, InvalidAreaFile, ReviewChoices, ShowcaseProject};
 
 use crate::columns;
 use crate::entry::TextEntry;
@@ -17,9 +19,11 @@ use crate::focus::Position;
 use crate::keymap::{self, Binding, Command, Input, Keymap, Press};
 use crate::palette::Action;
 use crate::repository::{Availability, Commit, History, HistoryEnd, HistoryError, Repository};
+use crate::review::Review;
 use crate::search::{self, Query};
 use crate::theme::{ControlKind, ControlState, Theme};
 use crate::view::{ChangeIndex, ChangeRef, Context, Project, Route, View, comparison_label};
+use crate::viewer::Unreadable;
 
 /// Space on the picker: it makes a choice.
 const SPACE: Binding = Binding {
@@ -130,6 +134,10 @@ pub(crate) struct Picker {
     search_box: Option<TextEntry>,
     /// What the last search of the commits looked for.
     query: Option<Query>,
+    /// The learner's choices on the outbound review of the chosen commit,
+    /// kept while it stays chosen, and shared with the review while it is
+    /// open.
+    review: Option<(CommitId, Rc<RefCell<ReviewChoices>>)>,
 }
 
 impl Picker {
@@ -144,6 +152,7 @@ impl Picker {
             focus: Position::default(),
             search_box: None,
             query: None,
+            review: None,
         }
     }
 
@@ -166,6 +175,7 @@ impl Picker {
             focus: Position::default(),
             search_box: None,
             query: None,
+            review: None,
         }
     }
 
@@ -460,6 +470,21 @@ impl Picker {
         }
     }
 
+    /// Opens the outbound review of the chosen commit, with the choices
+    /// kept for it, once a commit and an area are chosen. "Generate
+    /// questions" on the showcase project is disabled until Jev arrives, as
+    /// it says.
+    fn review_chosen(&mut self) -> Option<Command> {
+        if self.proceed().1.is_some() {
+            return None;
+        }
+        let id = self.commits().get(self.chosen?)?.id();
+        if self.review.as_ref().is_none_or(|(kept, _)| *kept != id) {
+            self.review = Some((id, Rc::default()));
+        }
+        Some(Command::Go(Route::Review(id)))
+    }
+
     /// The control after the lists, and why it is disabled, if it is.
     fn proceed(&self) -> (&'static str, Option<&'static str>) {
         match self.source {
@@ -718,6 +743,36 @@ impl View for Picker {
         }
     }
 
+    fn open(&self, route: Route, context: &Context<'_>) -> Option<Box<dyn View>> {
+        let Route::Review(id) = route else {
+            return None;
+        };
+        let repository = context.repository.ok()?;
+        let (kept, choices) = self.review.as_ref()?;
+        if *kept != id {
+            return None;
+        }
+        let change = match repository.load(id) {
+            Ok(change) => change,
+            Err(error) => return Some(Box::new(Unreadable::new(id, &error))),
+        };
+        let areas = repository
+            .areas()
+            .iter()
+            .zip(&self.areas)
+            .filter(|(_, choice)| **choice == AreaChoice::Valid { selected: true })
+            .filter_map(|(area, _)| area.as_ref().ok().cloned())
+            .collect();
+        Some(Box::new(Review::new(
+            id,
+            context.settings,
+            change,
+            areas,
+            repository.config().exclude().clone(),
+            Rc::clone(choices),
+        )))
+    }
+
     fn apply(&mut self, command: Command, _area: Rect) -> Option<Command> {
         if self.search_box.is_some() {
             if let Some(query) = search::edit(&mut self.search_box, command) {
@@ -758,12 +813,17 @@ impl View for Picker {
                         _ => return None,
                     },
                 };
+                // Review choices are for one change, and never carry to
+                // another.
+                if let ChangeRef::Commit(id) = change
+                    && self.review.as_ref().is_some_and(|(kept, _)| *kept != id)
+                {
+                    self.review = None;
+                }
                 self.chosen = Some(index);
                 (command == Command::Open).then_some(Command::Go(Route::Viewer(change)))
             }
-            // "Generate questions" is disabled until Jev arrives, as it
-            // says, and the outbound review is not built yet.
-            Control::Proceed => None,
+            Control::Proceed => self.review_chosen(),
         }
     }
 

@@ -659,7 +659,7 @@ fn with_a_commit_chosen_review_what_will_be_sent_still_waits_for_an_area() {
 }
 
 #[test]
-fn activating_review_what_will_be_sent_does_nothing_yet() {
+fn review_what_will_be_sent_opens_the_outbound_review_and_q_returns_to_the_picker() {
     let repo = with_history();
     let mut session = started_in(repo.root(), 120, 32);
     session.press(TO_THE_NEWEST_COMMIT);
@@ -667,8 +667,10 @@ fn activating_review_what_will_be_sent_does_nothing_yet() {
     assert_eq!(session.row_with(REVIEW), format!("> {REVIEW}"));
     let picker = session.text();
 
-    assert_eq!(session.press("<Enter> <Space>"), Flow::Continue);
+    assert_eq!(session.press("<Enter>"), Flow::Continue);
+    assert_eq!(session.rows()[1].trim(), REVIEW);
 
+    session.press("q");
     assert_eq!(session.text(), picker);
 }
 
