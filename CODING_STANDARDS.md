@@ -74,7 +74,7 @@ These rules apply from the Practice spec, when the AI crate and the session reco
 
 | # | Rule | Enforced by |
 | --- | --- | --- |
-| 36 | Only the AI crate imports Rig ([ADR 0001](docs/adr/0001-build-agents-with-rig.md)). The rest of the app depends on Whetstone ports and domain types. | **Lint/CI**: the `[[bans.deny]]` entry for `rig` in `deny.toml`, whose only wrapper is `whetstone-ai`, fails `cargo deny check` for any other crate that depends on it. **Review**: no Rig type in the AI crate's public interface. |
+| 36 | Only the AI crate imports Rig ([ADR 0001](docs/adr/0001-build-agents-with-rig.md)). The rest of the app depends on Whetstone ports and domain types. | **Lint/CI**: `deny.toml`'s `[[bans.deny]]` entries fail `cargo deny check` for any crate but `whetstone-ai` that depends on `rig`, and for any crate outside Rig that depends on one of Rig's own crates (`rig-core`, `rig-typesafeai` and the rest). **Review**: no Rig type in the AI crate's public interface. |
 | 37 | LLM output is parsed into typed values and validated. Invalid output is a typed failure (withheld, or Needs review), never coerced. | **Review**. **Lint/CI**: contract tests. |
 | 38 | Jev distributions are stored as returned. Thresholds live in application code and need a recorded decision. | **Review**. |
 | 39 | A paid evaluation can only be built from a storage acknowledgement (a `SavedResponse` type). | **Lint/CI**: the compiler; a reducer test. |

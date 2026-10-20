@@ -65,6 +65,41 @@ allow-wildcard-paths = true
 crate = "rig"
 wrappers = ["whetstone-ai"]
 
+# Rig's own crates come into the app only through `rig`: each may be used only
+# by the Rig crates that use it in 0.45.0, so no crate reaches round the ban
+# above. A Rig upgrade updates these lists in its own PR (rule 10).
+[[bans.deny]]
+crate = "rig-agent"
+wrappers = ["rig"]
+
+[[bans.deny]]
+crate = "rig-core"
+wrappers = ["rig", "rig-agent", "rig-memory", "rig-typesafeai"]
+
+[[bans.deny]]
+crate = "rig-derive"
+wrappers = ["rig", "rig-agent", "rig-core"]
+
+[[bans.deny]]
+crate = "rig-harness-protocol"
+wrappers = ["rig"]
+
+[[bans.deny]]
+crate = "rig-http"
+wrappers = ["rig-core", "rig-reqwest"]
+
+[[bans.deny]]
+crate = "rig-memory"
+wrappers = ["rig-agent"]
+
+[[bans.deny]]
+crate = "rig-reqwest"
+wrappers = ["rig", "rig-core", "rig-typesafeai"]
+
+[[bans.deny]]
+crate = "rig-typesafeai"
+wrappers = ["rig"]
+
 # The Git library only reads the learner's repository and never talks to a
 # remote (#29): none of its network client features may be turned on.
 [[bans.features]]
