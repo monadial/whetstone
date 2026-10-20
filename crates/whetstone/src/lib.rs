@@ -75,7 +75,7 @@ fn init_areas(environment: &Environment) -> anyhow::Result<ExitCode> {
 
 /// Opens the TUI. A refusal happens before anything is drawn or written.
 fn launch(environment: &Environment) -> anyhow::Result<ExitCode> {
-    terminal::require_interactive()?;
+    terminal::require_interactive(environment)?;
     let dirs = Dirs::resolve(environment)?;
     logging::init(&dirs.state)?;
     tracing::info!(
