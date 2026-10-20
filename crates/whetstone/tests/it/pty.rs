@@ -30,7 +30,7 @@ echo "modes after:"; stty -a; echo "modes end"
 }
 
 /// Runs `whetstone` in the foreground, attached to the terminal.
-const LAUNCH: &str = r#""$WHETSTONE""#;
+pub(super) const LAUNCH: &str = r#""$WHETSTONE""#;
 
 /// Runs `whetstone` in the foreground with colour turned off.
 const LAUNCH_WITHOUT_COLOR: &str = r#"NO_COLOR=1 "$WHETSTONE""#;
@@ -48,13 +48,13 @@ const HIDE_CURSOR: &str = "\x1b[?25l";
 const SHOW_CURSOR: &str = "\x1b[?25h";
 
 /// Everything the shell printed, from start to end of file.
-struct Transcript(String);
+pub(super) struct Transcript(String);
 
 /// Starts the script in a pseudo-terminal. `env` is the whole environment
 /// besides `PATH` and `TERM`, so the real home directory is never used, and
 /// the script starts in its `HOME`, outside any repository, so the one the
 /// tests run in is never opened.
-fn start(launch: &str, env: &[(&str, &Path)]) -> PtySession {
+pub(super) fn start(launch: &str, env: &[(&str, &Path)]) -> PtySession {
     let home = env
         .iter()
         .find_map(|(name, dir)| (*name == "HOME").then_some(*dir))
@@ -71,7 +71,7 @@ fn start(launch: &str, env: &[(&str, &Path)]) -> PtySession {
     spawn_command(command, Some(TIMEOUT_MS)).expect("spawn whetstone in a pseudo-terminal")
 }
 
-fn quit_with_q(session: &mut PtySession) -> Transcript {
+pub(super) fn quit_with_q(session: &mut PtySession) -> Transcript {
     quit_with(session, |session| {
         session.send("q").expect("send q");
         session.flush().expect("flush q");
@@ -124,7 +124,7 @@ impl Transcript {
 
     /// The parameters of every SGR sequence (`CSI … m`) whetstone drew in the
     /// alternate screen, in order.
-    fn drawn_styles(&self) -> Vec<&str> {
+    pub(super) fn drawn_styles(&self) -> Vec<&str> {
         let (_, tui) = self
             .0
             .split_once(ENTER_ALTERNATE_SCREEN)
@@ -152,7 +152,7 @@ impl Transcript {
         assert_eq!(before, after, "terminal modes are restored exactly");
     }
 
-    fn assert_exit_code(&self, code: i32) {
+    pub(super) fn assert_exit_code(&self, code: i32) {
         assert!(
             self.0.contains(&format!("exit code: {code}")),
             "whetstone exits with {code}:\n{:?}",
@@ -327,7 +327,7 @@ fn with_no_color_nothing_is_coloured_and_focus_stays_bold() {
 
 /// Whether SGR `parameters` set a foreground, background or underline
 /// colour. 39, 49 and 59 return to the terminal's own colours.
-fn sets_a_color(parameters: &str) -> bool {
+pub(super) fn sets_a_color(parameters: &str) -> bool {
     parameters
         .split(';')
         .filter_map(|parameter| parameter.parse::<u16>().ok())
