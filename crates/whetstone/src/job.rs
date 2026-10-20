@@ -339,6 +339,70 @@ impl<T> Drop for Jobs<T> {
     }
 }
 
+/// The jobs a screen waits for, each with the key its result must carry: what
+/// the result is for, such as the area whose questions a job writes, or the
+/// session, question and attempt an evaluation is for. Rule 24: a result is
+/// applied only when the app still waits for its job, which [`Jobs::accept`]
+/// checks, and when the screen waits for that job with the key the result
+/// carries, which [`Waiting::accept`] checks.
+#[derive(Debug)]
+pub struct Waiting<K> {
+    jobs: Vec<(JobId, K)>,
+}
+
+impl<K> Waiting<K> {
+    /// Waiting for no job.
+    #[must_use]
+    pub fn new() -> Self {
+        Self { jobs: Vec::new() }
+    }
+
+    /// Waits for job `job`, whose result must carry `key`.
+    pub fn wait_for(&mut self, job: JobId, key: K) {
+        self.jobs.push((job, key));
+    }
+
+    /// Whether it waits for job `job`.
+    #[must_use]
+    pub fn waits_for(&self, job: JobId) -> bool {
+        self.jobs.iter().any(|(waiting, _)| *waiting == job)
+    }
+
+    /// Whether it waits for no job, as when every result has come.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.jobs.is_empty()
+    }
+
+    /// Rule 24: whether a result from job `job` carrying `key` is to be
+    /// applied, which it is only if it waits for that job with that key. It
+    /// no longer waits for the job either way, since its report has come.
+    pub fn accept(&mut self, job: JobId, key: &K) -> bool
+    where
+        K: PartialEq,
+    {
+        let Some(at) = self.jobs.iter().position(|(waiting, _)| *waiting == job) else {
+            return false;
+        };
+        let (_, waited) = self.jobs.swap_remove(at);
+        waited == *key
+    }
+
+    /// Stops waiting for every job, and cancels each with `jobs`, as Cancel
+    /// does: none of their results is applied, and their requests stop.
+    pub fn cancel<T>(&mut self, jobs: &mut Jobs<T>) {
+        for (job, _) in self.jobs.drain(..) {
+            jobs.cancel(job);
+        }
+    }
+}
+
+impl<K> Default for Waiting<K> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// How many job results can wait in the channel for the UI loop (rule 21).
 /// The loop takes each one as soon as it arrives, so the channel rarely holds
 /// more than one. A job that finds it full waits until the loop takes one,

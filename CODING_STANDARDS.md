@@ -50,7 +50,7 @@ The UI loop (`tui.rs`) runs on a current-thread Tokio runtime. It waits with `se
 | 21 | Channels are bounded, with a documented capacity. An unbounded channel needs a written reason. | **Review**. |
 | 22 | *From network code:* every network stage has an explicit timeout. The HTTP client is built with `connect_timeout` and `timeout`. | **Review**. **Lint/CI**: adapter tests. |
 | 23 | *From network code:* automatic retries use `backon` with jitter and an explicit retryable predicate. They never replay a paid request the user has not authorised. | **Review**. |
-| 24 | A worker result is applied only when its job identity matches the outstanding job, and so do its session, question version and attempt identities once those exist. | **Lint/CI**: the job tests (`tests/it/jobs.rs`); reducer tests at the app seam for each kind of job. |
+| 24 | A worker result is applied only when its job identity matches the outstanding job, and so do its session, question version and attempt identities once those exist: the key a screen waits for the job with (`Waiting`). | **Lint/CI**: the job tests (`tests/it/jobs.rs`); reducer tests at the app seam for each kind of job. |
 
 ## Terminal UI
 
