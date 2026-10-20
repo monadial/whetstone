@@ -21,9 +21,11 @@
 //! whetstone-core's domain and these requests: [`gate_request`] and
 //! [`gate_answers`] ask the relevance gate, [`candidates_request`] and
 //! [`CandidatesOutput`] write candidates, [`question_check_request`] and
-//! [`question_check_answers`] check one, and [`reasoning_request`] and
-//! [`reasoning_answers`] assess a response's reasoning. Their instructions
-//! are Whetstone's base prompts, bundled into this crate, whose version is
+//! [`question_check_answers`] check one, [`reasoning_request`] and
+//! [`reasoning_answers`] assess a response's reasoning, and
+//! [`explanation_request`] and [`explanation_check_request`] explain what
+//! it missed and check the explanation. Their instructions are Whetstone's
+//! base prompts, bundled into this crate, whose version is
 //! [`base_prompts_version`]. Evidence goes out only as the learner approved
 //! it, and area prompts only to the generator.
 //!
@@ -34,6 +36,7 @@ mod answers;
 mod candidates;
 mod connection;
 mod evidence;
+mod explanation;
 mod failure;
 mod gate;
 mod generator;
@@ -41,6 +44,7 @@ mod jev;
 #[cfg(test)]
 mod live;
 mod openrouter_ai;
+mod output;
 mod port;
 mod prompts;
 mod question_check;
@@ -58,6 +62,10 @@ mod usage;
 pub use crate::candidates::{CandidatesOutput, candidates_request};
 pub use crate::connection::{
     CONNECT_TIMEOUT, GENERATOR_TIMEOUT, JEV_TIMEOUT, OPENROUTER_BASE_URL, OpenRouter, Timeouts,
+};
+pub use crate::explanation::{
+    ExplanationOutput, ParagraphCheck, WrittenParagraph, explanation_check_answers,
+    explanation_check_request, explanation_paragraphs, explanation_request,
 };
 pub use crate::failure::AiError;
 pub use crate::gate::{gate_answers, gate_request};

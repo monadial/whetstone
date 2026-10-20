@@ -28,11 +28,13 @@ use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
 use crate::replay::{API, SampleQuestion, live_key, sample_generator_request, sample_jev_request};
 use crate::samples::{
-    REASONING, area, candidate, evidence, generator_model, jev_model, observability, question,
+    OUTCOMES, REASONING, area, candidate, evidence, generator_model, jev_model, observability,
+    paragraphs, question,
 };
 use crate::{
-    AiError, CandidatesOutput, GeneratorRequest, OpenRouter, QuestionWithoutKey, SecretString,
-    Timeouts, candidates_request, gate_request, question_check_request, reasoning_request,
+    AiError, CandidatesOutput, ExplanationOutput, GeneratorRequest, OpenRouter, QuestionWithoutKey,
+    SecretString, Timeouts, candidates_request, explanation_check_request, explanation_request,
+    gate_request, question_check_request, reasoning_request,
 };
 
 const UPSTREAM: &str = "https://openrouter.ai";
@@ -256,6 +258,42 @@ async fn record_reasoning() {
         QuestionWithoutKey::from(&question),
         REASONING,
     );
+
+    let reply = connection
+        .evaluate(&request, &CancellationToken::new())
+        .await;
+
+    println!("{reply:#?}");
+    assert!(reply.is_ok());
+}
+
+#[tokio::test]
+#[ignore = "calls OpenRouter with the maintainer's key"]
+async fn record_explanation() {
+    let (_server, connection) = recording("explanation", "/chat/completions", live_key()).await;
+    let request = explanation_request(
+        &generator_model(),
+        &evidence(),
+        &question(),
+        REASONING,
+        &OUTCOMES,
+    )
+    .expect("a criterion needs explaining");
+
+    let reply = connection
+        .generate::<ExplanationOutput>(&request, &CancellationToken::new())
+        .await;
+
+    println!("{reply:#?}");
+    assert!(reply.is_ok());
+}
+
+/// Checks the recorded explanation, so record it first.
+#[tokio::test]
+#[ignore = "calls OpenRouter with the maintainer's key"]
+async fn record_explanation_check() {
+    let (_server, connection) = recording("explanation-check", "/systemone", live_key()).await;
+    let request = explanation_check_request(&jev_model(), &evidence(), &question(), &paragraphs());
 
     let reply = connection
         .evaluate(&request, &CancellationToken::new())
