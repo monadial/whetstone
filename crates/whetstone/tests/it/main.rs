@@ -22,6 +22,7 @@ mod paste;
 mod picker;
 mod pty;
 mod pty_colours;
+mod pty_connected_code;
 mod pty_dumb;
 mod pty_paste;
 mod pty_suspend;

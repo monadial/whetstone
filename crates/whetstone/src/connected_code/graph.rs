@@ -58,8 +58,9 @@ pub(crate) enum Tier {
 }
 
 /// What a connection has to do with a changed callable, which it names,
-/// with the touched file the changed callable is in.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+/// with the touched file the changed callable is in. Its `Debug` output
+/// hides the callable's name.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Relation {
     /// It calls the changed callable: it is a caller.
     Calls {
@@ -71,6 +72,18 @@ pub(crate) enum Relation {
         callable: String,
         touched_file: String,
     },
+}
+
+impl fmt::Debug for Relation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let (kind, touched_file) = match self {
+            Self::Calls { touched_file, .. } => ("Calls", touched_file),
+            Self::CalledBy { touched_file, .. } => ("CalledBy", touched_file),
+        };
+        f.debug_struct(kind)
+            .field("touched_file", touched_file)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Connection {

@@ -6,14 +6,14 @@
 //! and the alternate screen, so Whetstone owns this. While Whetstone is
 //! suspended, the guard turns the same modes off and later back on.
 //!
-//! A panic the app carries on after, in a background job, is caught with
-//! [`catch_panic`], and the hook then leaves the terminal alone.
+//! A panic on another thread, such as a background job's, leaves the
+//! terminal alone, since the app carries on after it.
 
-use std::cell::Cell;
 use std::ffi::OsStr;
 use std::io::{self, IsTerminal as _, Write};
-use std::panic::{self, AssertUnwindSafe};
+use std::panic;
 use std::sync::{Arc, Mutex, PoisonError, TryLockError};
+use std::thread;
 
 use ratatui::crossterm::event::{DisableBracketedPaste, EnableBracketedPaste};
 use ratatui::crossterm::{cursor, execute, terminal};
@@ -188,60 +188,17 @@ impl Session {
     }
 }
 
-thread_local! {
-    /// What [`catch_panic`] is catching on this thread, if anything.
-    static CATCHING: Cell<Option<Catch>> = const { Cell::new(None) };
-}
-
-/// A panic [`catch_panic`] is catching.
-#[derive(Debug, Default)]
-struct Catch {
-    /// Where it happened, once it has.
-    at: Option<String>,
-}
-
-/// A panic that [`catch_panic`] caught.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("it panicked")]
-pub(crate) struct Panicked;
-
-/// Runs `work` and returns what it returns, or [`Panicked`] once a panic in
-/// it has unwound, dropping what it held. It is for work the app carries on
-/// after, such as a background job's: the terminal guard's panic hook
-/// leaves the terminal as it is and prints nothing for a panic caught here,
-/// and the log records only where it happened, since its message could
-/// name the learner's files.
-pub(crate) fn catch_panic<T>(work: impl FnOnce() -> T) -> Result<T, Panicked> {
-    let outer = CATCHING.replace(Some(Catch::default()));
-    let result = panic::catch_unwind(AssertUnwindSafe(work));
-    let caught = CATCHING.replace(outer).and_then(|catch| catch.at);
-    result.map_err(|_payload| {
-        tracing::warn!(at = caught, "caught a panic, and carried on");
-        Panicked
-    })
-}
-
-/// Whether [`catch_panic`] is catching the panic `info` describes, on this
-/// thread. If it is, it records where the panic happened for it.
-fn caught_here(info: &panic::PanicHookInfo<'_>) -> bool {
-    if CATCHING.take().is_none() {
-        return false;
-    }
-    let at = info
-        .location()
-        .map(|location| format!("{}:{}", location.file(), location.line()));
-    CATCHING.set(Some(Catch { at }));
-    true
-}
-
+/// Installs the guard's panic hook. A panic on the thread that enabled the
+/// guard, the UI loop's, restores the terminal before the message prints.
+/// A panic on any other thread while the terminal is the app's, such as in
+/// a background job or the engine's own threads, leaves the terminal as it
+/// is and prints nothing over the screen, since the app carries on: the job
+/// catches it, or its thread ends. The log records only where it happened,
+/// since its message could name the learner's files.
 fn install_panic_hook(session: Arc<Mutex<Session>>) {
+    let owner = thread::current().id();
     let previous = panic::take_hook();
     panic::set_hook(Box::new(move |info| {
-        // A panic `catch_panic` catches is the app's to handle: leave the
-        // terminal and the screen alone.
-        if caught_here(info) {
-            return;
-        }
         // Never block or panic in here. If the session is busy, a mode switch
         // is mid-call (perhaps the one panicking): skip the restore and let
         // the guard's drop do it while unwinding. Print the message either
@@ -251,6 +208,17 @@ fn install_panic_hook(session: Arc<Mutex<Session>>) {
             Err(TryLockError::Poisoned(poisoned)) => Some(poisoned.into_inner()),
             Err(TryLockError::WouldBlock) => None,
         };
+        if thread::current().id() != owner
+            && session
+                .as_ref()
+                .is_none_or(|session| !session.enabled.is_empty())
+        {
+            let at = info
+                .location()
+                .map(|location| format!("{}:{}", location.file(), location.line()));
+            tracing::warn!(at, "a background thread panicked");
+            return;
+        }
         if let Some(mut session) = session {
             drop(session.restore());
         }
@@ -317,20 +285,21 @@ mod tests {
     }
 
     #[test]
-    fn a_panic_caught_for_the_app_to_carry_on_leaves_the_terminal_as_it_is() {
+    fn a_panic_on_another_thread_leaves_the_terminal_as_it_is_while_one_here_restores_it() {
         let switch = Recording::default();
         let guard =
             TerminalGuard::enable(switch.clone(), &[TerminalMode::Raw]).expect("enable raw mode");
 
-        let caught = catch_panic(|| panic!("a background job panicked"));
+        let job = thread::spawn(|| panic!("a background job panicked"));
 
-        assert_eq!(caught, Err(Panicked));
+        assert!(job.join().is_err(), "the job panicked");
         assert_eq!(*switch.0.lock().expect("log lock"), ["enable Raw"]);
-        assert_eq!(catch_panic(|| 7), Ok(7));
-        drop(guard);
+        let here = panic::catch_unwind(|| panic!("the UI loop panicked"));
+        assert!(here.is_err(), "the UI loop panicked");
         assert_eq!(
             *switch.0.lock().expect("log lock"),
             ["enable Raw", "disable Raw"]
         );
+        drop(guard);
     }
 }

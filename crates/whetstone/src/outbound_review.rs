@@ -13,6 +13,7 @@
 //! for, for this commit (rule 24).
 
 use std::cell::RefCell;
+use std::mem;
 use std::ops::Range;
 use std::rc::Rc;
 
@@ -124,18 +125,36 @@ pub(crate) struct OutboundReview {
     exclude: ExcludePatterns,
     /// The learner's choices for this change, shared with the picker.
     choices: Rc<RefCell<ReviewChoices>>,
-    /// The change's connected code, or why there is none yet.
-    connections: Connections,
-    /// The request for the connected code, until the review starts its
-    /// job.
-    request: Option<Request>,
-    /// The job finding the connected code, while the review waits for it.
-    waiting: Option<JobId>,
-    /// What the change, areas, patterns, connections and choices make.
+    /// Where finding the change's connected code is.
+    lookup: Lookup,
+    /// What the change, areas, patterns, connected code and choices make.
     evidence: Evidence,
     focus: Position,
     /// The line at the top of the screen.
     top: usize,
+}
+
+/// Where finding a review's connected code is.
+#[derive(Debug)]
+enum Lookup {
+    /// Asked for, until the review opens and starts the job that finds it.
+    Requested(Box<Request>),
+    /// Being found by the job with this identity, which the review waits
+    /// for.
+    Running(JobId),
+    /// Found, or why there is none.
+    Done(Connections),
+}
+
+impl Lookup {
+    /// What the evidence is built with: still finding, until it is done.
+    fn connections(&self) -> &Connections {
+        const FINDING: &Connections = &Connections::Finding;
+        match self {
+            Self::Requested(_) | Self::Running(_) => FINDING,
+            Self::Done(connections) => connections,
+        }
+    }
 }
 
 /// The review laid out for a width: its lines, and where each control is.
@@ -203,8 +222,14 @@ impl OutboundReview {
         choices: Rc<RefCell<ReviewChoices>>,
         connected_code: Request,
     ) -> Self {
-        let connections = Connections::Finding;
-        let evidence = Evidence::build(&change, &exclude, &areas, &connections, &choices.borrow());
+        let lookup = Lookup::Requested(Box::new(connected_code));
+        let evidence = Evidence::build(
+            &change,
+            &exclude,
+            &areas,
+            lookup.connections(),
+            &choices.borrow(),
+        );
         tracing::info!(
             commit = id.full(),
             files = evidence.files().len(),
@@ -227,9 +252,7 @@ impl OutboundReview {
             areas,
             exclude,
             choices,
-            connections,
-            request: Some(connected_code),
-            waiting: None,
+            lookup,
             evidence,
             focus: Position::default(),
             top: 0,
@@ -253,8 +276,7 @@ impl OutboundReview {
         if commit != self.id {
             return;
         }
-        self.waiting = None;
-        self.connections = connections;
+        self.lookup = Lookup::Done(connections);
         let focused = self.focused();
         self.rebuild();
         if let Some(at) = self
@@ -294,7 +316,7 @@ impl OutboundReview {
         );
         controls.extend((0..self.evidence.areas().len()).map(Control::Area));
         for (index, finding) in self.evidence.findings().iter().enumerate() {
-            if can_leave_out(finding.place()) {
+            if leave_out_label(finding.place()).is_some() {
                 controls.push(Control::LeaveOut(index));
             }
             controls.push(Control::NotASecret(index));
@@ -318,7 +340,7 @@ impl OutboundReview {
             &self.change,
             &self.exclude,
             &self.areas,
-            &self.connections,
+            self.lookup.connections(),
             &self.choices.borrow(),
         );
         let last = self.controls().len().saturating_sub(1);
@@ -481,12 +503,7 @@ impl OutboundReview {
         for (index, finding) in self.evidence.findings().iter().enumerate() {
             let start = doc.lines.len();
             doc.wrapped(&self.describe(finding), width, Style::new());
-            // A commit message cannot be left out.
-            if can_leave_out(finding.place()) {
-                let label = match finding.place() {
-                    Place::Connection(_) => "Leave out the connected code",
-                    _ => "Leave out the file",
-                };
+            if let Some(label) = leave_out_label(finding.place()) {
                 doc.control(
                     theme.control(label, self.state(Control::LeaveOut(index))),
                     start,
@@ -645,20 +662,20 @@ impl OutboundReview {
                 columns::truncate(&path, path_width.max(1)),
                 self.state(Control::Connection(index)),
             );
-            columns::pad_to(&mut row, marker + path_width + columns::GAP);
-            row.push_span(format!("{extent:<extent_width$}"));
-            row.push_span(" ".repeat(columns::GAP));
+            let extent_at = marker + path_width + columns::GAP;
+            let size_at = extent_at + extent_width + columns::GAP;
+            let status_at = size_at + size_width + columns::GAP;
+            let relations_at = status_at + status_width + columns::GAP;
+            columns::pad_to(&mut row, extent_at);
+            row.push_span(extent);
+            columns::pad_to(&mut row, size_at);
             row.push_span(format!("{size:>size_width$}"));
-            row.push_span(" ".repeat(columns::GAP));
-            let fits =
-                row.width() + status_width + columns::GAP + Line::raw(relations.as_str()).width()
-                    <= width;
+            columns::pad_to(&mut row, status_at);
+            row.push_span(status);
+            let fits = relations_at + Line::raw(relations.as_str()).width() <= width;
             if fits {
-                row.push_span(format!("{status:<status_width$}"));
-                row.push_span(" ".repeat(columns::GAP));
+                columns::pad_to(&mut row, relations_at);
                 row.push_span(relations.clone());
-            } else {
-                row.push_span(status);
             }
             doc.control(
                 row,
@@ -706,8 +723,9 @@ impl OutboundReview {
                 format!("Connected code: {counted} · {}", kilobytes(bytes))
             }
             ConnectionsState::NoneFound => "Connected code: none found for this change.".to_owned(),
+            // Nothing gives up on finding it yet: the time limit is #64's.
             ConnectionsState::TookTooLong => {
-                "Connected code isn't available for this change: finding it took too long."
+                "Connected code isn't available for this change: finding it took longer than 20 s."
                     .to_owned()
             }
             ConnectionsState::AnalysisFailed => {
@@ -848,10 +866,15 @@ impl OutboundReview {
     }
 }
 
-/// Whether a finding at `place` can be resolved by leaving out what it is
-/// in: a file or a connection can be, the commit message cannot.
-fn can_leave_out(place: &Place) -> bool {
-    place.file().is_some() || place.connection().is_some()
+/// The control that resolves a finding at `place` by leaving out what it is
+/// in, if that can be left out: a file or connected code can be, the commit
+/// message cannot.
+fn leave_out_label(place: &Place) -> Option<&'static str> {
+    match place {
+        Place::CommitMessage => None,
+        Place::Content(_) | Place::Diff(_) => Some("Leave out the file"),
+        Place::Connection(_) => Some("Leave out the connected code"),
+    }
 }
 
 /// `count` of `noun`, as "1 range" or "3 ranges".
@@ -915,18 +938,19 @@ impl View for OutboundReview {
     }
 
     fn start_jobs(&mut self, jobs: &mut Jobs<JobOutput>) {
-        if let Some(request) = self.request.take() {
-            self.waiting = Some(jobs.start(move |_token| {
+        self.lookup = match mem::replace(&mut self.lookup, Lookup::Done(Connections::Finding)) {
+            Lookup::Requested(request) => Lookup::Running(jobs.start(move |_token| {
                 Ok(JobOutput::ConnectedCode {
                     commit: request.commit(),
-                    connections: request.connections(),
+                    connections: request.find(),
                 })
-            }));
-        }
+            })),
+            lookup => lookup,
+        };
     }
 
     fn waits_for(&self, job: JobId) -> bool {
-        self.waiting == Some(job)
+        matches!(self.lookup, Lookup::Running(waiting) if waiting == job)
     }
 
     fn finish_job(&mut self, job: JobId, output: JobOutput) {
