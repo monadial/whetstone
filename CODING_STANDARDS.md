@@ -24,7 +24,7 @@ Some rules are both. Rules about code that does not exist yet (network code, AI,
 | 7 | No unsafe code: `unsafe_code = "forbid"`. Lifting it needs an ADR, a `// SAFETY:` comment on every unsafe block and `clippy::undocumented_unsafe_blocks`. | **Lint/CI**: rustc's `unsafe_code`. |
 | 8 | Every new dependency states its reason in the PR that adds it. No dependency with an active RustSec vulnerability, unmaintained or unsound advisory, no yanked version, and no unused dependency. | **Lint/CI**: `cargo deny check` (advisories), `cargo shear --deny-warnings`. **Review**: the stated reason. |
 | 9 | Dependency licenses must be on the allow-list in `deny.toml`. Anything else needs a per-crate `exceptions` entry, with its reason in the PR. Dependencies come from crates.io only (a git source needs a reviewed `allow-git` entry), and no version requirement is `*` (path dependencies between the workspace crates are exempt). | **Lint/CI**: `cargo deny check` (licenses, sources, bans). |
-| 10 | *From the AI crate:* Rig crates move together, in a dedicated upgrade PR that re-runs the AI contract tests. | **Review**. **Lint/CI**: the contract tests. |
+| 10 | Rig crates move together, in a dedicated upgrade PR that re-runs the AI contract tests. | **Lint/CI**: `rig` is the AI crate's only Rig dependency, pinned exactly (`=0.45.0` in `crates/whetstone-ai/Cargo.toml`), and `crates/whetstone-ai/tests/rig_versions.rs` fails unless every `rig-*` crate in `Cargo.lock` is at `rig`'s version; the contract tests in `crates/whetstone-ai` replay recorded `OpenRouter` replies on every PR. **Review**: the upgrade is a PR of its own. |
 
 ## Errors and panics
 
@@ -74,7 +74,7 @@ These rules apply from the Practice spec, when the AI crate and the session reco
 
 | # | Rule | Enforced by |
 | --- | --- | --- |
-| 36 | Only the AI crate imports Rig ([ADR 0001](docs/adr/0001-build-agents-with-rig.md)). The rest of the app depends on Whetstone ports and domain types. | **Review**. **Lint/CI** once the crate exists: a cargo-deny `[bans]` entry with `wrappers`. |
+| 36 | Only the AI crate imports Rig ([ADR 0001](docs/adr/0001-build-agents-with-rig.md)). The rest of the app depends on Whetstone ports and domain types. | **Lint/CI**: the `[[bans.deny]]` entry for `rig` in `deny.toml`, whose only wrapper is `whetstone-ai`, fails `cargo deny check` for any other crate that depends on it. **Review**: no Rig type in the AI crate's public interface. |
 | 37 | LLM output is parsed into typed values and validated. Invalid output is a typed failure (withheld, or Needs review), never coerced. | **Review**. **Lint/CI**: contract tests. |
 | 38 | Jev distributions are stored as returned. Thresholds live in application code and need a recorded decision. | **Review**. |
 | 39 | A paid evaluation can only be built from a storage acknowledgement (a `SavedResponse` type). | **Lint/CI**: the compiler; a reducer test. |
