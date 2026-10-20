@@ -1,0 +1,48 @@
+---
+source: crates/whetstone/tests/it/connected_code.rs
+expression: session.frame()
+---
+Buffer {
+    area: Rect { x: 0, y: 0, width: 120, height: 32 },
+    content: [
+        "                                                                                                                        ",
+        "  Review what will be sent                                                                                              ",
+        "                                                                                                                        ",
+        "  Sends to OpenRouter · Jev: typesafe/jev-1.14 · Generator: anthropic/claude-sonnet-5.5                                 ",
+        "  OpenRouter routes only to endpoints it lists as not keeping prompts.                                                  ",
+        "  https://openrouter.ai/docs/guides/privacy/data-collection                                                             ",
+        "                                                                                                                        ",
+        "  Your answers in this session go to the same places. Nothing outside this list is sent.                                ",
+        "                                                                                                                        ",
+        "  Change                                                                                                                ",
+        "    a2ff539  Swap the operands                                                                                          ",
+        "    Author, committer, dates and the commit ID are not sent.                                                            ",
+        "                                                                                                                        ",
+        "  Files                                                                                                                 ",
+        "    ops.py  1 KB  included · 6 connected                                                                                ",
+        "                                                                                                                        ",
+        "  Connected code: 6 ranges · 1 KB                                                                                       ",
+        "  > callers.py  lines 4–7    1 KB  included  calls `add`, calls `mul`, +1 more                                          ",
+        "    callers.py  lines 10–11  1 KB  included  calls `sub`                                                                ",
+        "    records.py  lines 1–2    1 KB  included  called by `sub`                                                            ",
+        "    use_add.py  lines 4–5    1 KB  included  calls `add`                                                                ",
+        "    use_mul.py  lines 4–5    1 KB  included  calls `mul`                                                                ",
+        "    use_sub.py  lines 4–5    1 KB  included  calls `sub`                                                                ",
+        "                                                                                                                        ",
+        "  Areas                                                                                                                 ",
+        "    Domain          Whetstone default                                                                                   ",
+        "    Infrastructure  Whetstone default                                                                                   ",
+        "    Observability   Whetstone default                                                                                   ",
+        "    Scalability     Whetstone default                                                                                   ",
+        "    System design   Whetstone default                                                                                   ",
+        "  ? keys  : actions  Space toggle  Enter read  q back                                                                   ",
+        "                                                                                                                        ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 26, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 17, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 14, y: 17, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+    ]
+}

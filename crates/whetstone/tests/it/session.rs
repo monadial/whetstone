@@ -156,6 +156,14 @@ impl Session {
         }
     }
 
+    /// Delivers the reports as [`Session::settle`] does, but the newest
+    /// first, as the UI loop can when a later job ends before an earlier
+    /// one.
+    pub(crate) fn settle_newest_first(&mut self) {
+        self.finished.reverse();
+        self.settle();
+    }
+
     /// Ticks once, as the UI loop does while a job runs.
     pub(crate) fn tick(&mut self) {
         assert_eq!(

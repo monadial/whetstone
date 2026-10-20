@@ -1,0 +1,38 @@
+---
+source: crates/whetstone/tests/it/connected_code.rs
+expression: session.frame()
+---
+Buffer {
+    area: Rect { x: 0, y: 0, width: 80, height: 24 },
+    content: [
+        "                                                                                ",
+        "  What is sent for callers.py, lines 4–7                                        ",
+        "                                                                                ",
+        "  Why it is sent                                                                ",
+        "  calls `add`                                                                   ",
+        "  calls `mul`                                                                   ",
+        "  calls `sub`                                                                   ",
+        "                                                                                ",
+        "  Content, as it is sent                                                        ",
+        "  4 def first(a):                                                               ",
+        "  5     return add(a, 1)                                                        ",
+        "  6 def second(a):                                                              ",
+        "  7     return sub(mul(a, 2), 1)                                                ",
+        "                                                                                ",
+        "                                                                                ",
+        "                                                                                ",
+        "                                                                                ",
+        "                                                                                ",
+        "                                                                                ",
+        "                                                                                ",
+        "                                                                                ",
+        "                                                                                ",
+        "  ? keys  : actions  q back                                                     ",
+        "                                                                                ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 40, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+    ]
+}
