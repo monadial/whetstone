@@ -5,13 +5,16 @@
 //! before the panic message prints. Ratatui's own restore only covers raw mode
 //! and the alternate screen, so Whetstone owns this.
 
+use std::ffi::OsStr;
 use std::io::{self, IsTerminal as _, Write};
 use std::panic;
 use std::sync::{Arc, Mutex, PoisonError, TryLockError};
 
 use ratatui::crossterm::{cursor, execute, terminal};
 
-/// Whetstone was started without an interactive terminal to draw in.
+use crate::environment::Environment;
+
+/// Whetstone was started without an interactive terminal it can draw in.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum NotInteractive {
     #[error("whetstone needs an interactive terminal, but stdin is not a terminal")]
@@ -20,11 +23,20 @@ pub(crate) enum NotInteractive {
     Stdout,
     #[error("whetstone needs an interactive terminal, but stdin and stdout are not terminals")]
     StdinAndStdout,
+    #[error(
+        "whetstone needs a terminal that can move the cursor, but TERM=dumb says this one cannot"
+    )]
+    DumbTerminal,
 }
 
-/// Checks that both stdin and stdout are terminals, before anything is drawn.
-pub(crate) fn require_interactive() -> Result<(), NotInteractive> {
+/// Checks that both stdin and stdout are terminals, and that `environment`
+/// does not set `TERM=dumb`, before anything is drawn. An unset or empty
+/// `TERM` is not refused.
+pub(crate) fn require_interactive(environment: &Environment) -> Result<(), NotInteractive> {
     match (io::stdin().is_terminal(), io::stdout().is_terminal()) {
+        (true, true) if environment.get("TERM") == Some(OsStr::new("dumb")) => {
+            Err(NotInteractive::DumbTerminal)
+        }
         (true, true) => Ok(()),
         (false, true) => Err(NotInteractive::Stdin),
         (true, false) => Err(NotInteractive::Stdout),
