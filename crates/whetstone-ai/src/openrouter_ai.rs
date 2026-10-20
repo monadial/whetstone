@@ -22,7 +22,7 @@ use crate::explanation::{
     explanation_check_request, explanation_paragraphs, explanation_request,
 };
 use crate::gate::{gate_answers, gate_request};
-use crate::port::{Ai, CandidateCount, Pending, Reply, RequestFailure, Saved};
+use crate::port::{Ai, CandidateCount, Pending, Reply, RequestFailure, Saved, Stamp};
 use crate::question_check::{question_check_answers, question_check_request};
 use crate::reasoning::{QuestionWithoutKey, reasoning_answers, reasoning_request};
 use crate::usage::Usage;
@@ -63,6 +63,7 @@ fn never_cancelled() -> CancellationToken {
 impl Ai for OpenRouterAi {
     fn check_areas(
         &self,
+        stamp: Stamp,
         evidence: &Evidence,
         areas: &[Area],
     ) -> Pending<Vec<(AreaId, Probability)>> {
@@ -74,20 +75,21 @@ impl Ai for OpenRouterAi {
             let reply = connection.evaluate(&request, &never_cancelled()).await?;
             let content = gate_answers(&areas, &reply)?;
             let provenance = provenance(
-                Provenance::new(Role::Jev, model),
+                Provenance::new(stamp.request, Role::Jev, model, stamp.versions),
                 Some(reply.model),
                 reply.usage,
             );
             log_reply(&provenance);
             Ok(Reply {
                 content,
-                provenance,
+                provenance: Box::new(provenance),
             })
         })
     }
 
     fn write_candidates(
         &self,
+        stamp: Stamp,
         evidence: &Evidence,
         area: &Area,
         count: CandidateCount,
@@ -105,20 +107,21 @@ impl Ai for OpenRouterAi {
                 .generate::<CandidatesOutput>(&request, &never_cancelled())
                 .await?;
             let provenance = provenance(
-                Provenance::new(Role::Generator, model),
+                Provenance::new(stamp.request, Role::Generator, model, stamp.versions),
                 reply.model,
                 reply.usage,
             );
             log_reply(&provenance);
             Ok(Reply {
                 content: reply.output.into_written(),
-                provenance,
+                provenance: Box::new(provenance),
             })
         })
     }
 
     fn check_question(
         &self,
+        stamp: Stamp,
         evidence: &Evidence,
         candidate: &Candidate,
     ) -> Pending<QuestionCheckAnswers> {
@@ -130,20 +133,21 @@ impl Ai for OpenRouterAi {
             let reply = connection.evaluate(&request, &never_cancelled()).await?;
             let content = question_check_answers(&candidate, &reply)?;
             let provenance = provenance(
-                Provenance::new(Role::Jev, model),
+                Provenance::new(stamp.request, Role::Jev, model, stamp.versions),
                 Some(reply.model),
                 reply.usage,
             );
             log_reply(&provenance);
             Ok(Reply {
                 content,
-                provenance,
+                provenance: Box::new(provenance),
             })
         })
     }
 
     fn assess_reasoning(
         &self,
+        stamp: Stamp,
         saved: &dyn Saved,
         evidence: &Evidence,
         question: QuestionWithoutKey<'_>,
@@ -156,20 +160,21 @@ impl Ai for OpenRouterAi {
             let reply = connection.evaluate(&request, &never_cancelled()).await?;
             let content = reasoning_answers(&rubric, &reply)?;
             let provenance = provenance(
-                Provenance::new(Role::Jev, model),
+                Provenance::new(stamp.request, Role::Jev, model, stamp.versions),
                 Some(reply.model),
                 reply.usage,
             );
             log_reply(&provenance);
             Ok(Reply {
                 content,
-                provenance,
+                provenance: Box::new(provenance),
             })
         })
     }
 
     fn explain(
         &self,
+        stamp: Stamp,
         saved: &dyn Saved,
         evidence: &Evidence,
         question: &Question,
@@ -206,20 +211,21 @@ impl Ai for OpenRouterAi {
                 .await?;
             let content = explanation_paragraphs(&outcomes, reply.output)?;
             let provenance = provenance(
-                Provenance::new(Role::Generator, model),
+                Provenance::new(stamp.request, Role::Generator, model, stamp.versions),
                 reply.model,
                 reply.usage,
             );
             log_reply(&provenance);
             Ok(Reply {
                 content,
-                provenance,
+                provenance: Box::new(provenance),
             })
         })
     }
 
     fn check_explanation(
         &self,
+        stamp: Stamp,
         _saved: &dyn Saved,
         evidence: &Evidence,
         question: &Question,
@@ -233,14 +239,14 @@ impl Ai for OpenRouterAi {
             let reply = connection.evaluate(&request, &never_cancelled()).await?;
             let content = explanation_check_answers(&paragraphs, &reply)?;
             let provenance = provenance(
-                Provenance::new(Role::Jev, model),
+                Provenance::new(stamp.request, Role::Jev, model, stamp.versions),
                 Some(reply.model),
                 reply.usage,
             );
             log_reply(&provenance);
             Ok(Reply {
                 content,
-                provenance,
+                provenance: Box::new(provenance),
             })
         })
     }
@@ -293,7 +299,7 @@ mod tests {
     use crate::replay::{connection, received, server};
     use crate::samples::{
         Acknowledged, REASONING, area, area_file, candidate, evidence, generator_model, jev_model,
-        observability, paragraphs, question, with_output,
+        observability, paragraphs, question, stamp, versions, with_output,
     };
     use crate::{AiError, ParagraphCheck, QuestionWithoutKey, Timeouts};
 
@@ -329,7 +335,7 @@ mod tests {
         let (server, ai) = ai("/chat/completions", 200, CANDIDATES).await;
 
         let reply = ai
-            .write_candidates(&evidence(), &area(), two_per_area())
+            .write_candidates(stamp(), &evidence(), &area(), two_per_area())
             .await
             .expect("the recorded reply decodes");
 
@@ -341,14 +347,19 @@ mod tests {
              the change prevents?"
         );
         assert_eq!(
-            reply.provenance,
-            Provenance::new(Role::Generator, generator_model())
-                .with_reported_model(ModelId::new("anthropic/claude-sonnet-5.5".to_owned()))
-                .with_usage(Usage {
-                    input_tokens: Some(3364),
-                    output_tokens: Some(1580),
-                })
-                .with_cost(Cost::new(0.022_528).expect("0.022528 is a cost"))
+            *reply.provenance,
+            Provenance::new(
+                stamp().request,
+                Role::Generator,
+                generator_model(),
+                versions()
+            )
+            .with_reported_model(ModelId::new("anthropic/claude-sonnet-5.5".to_owned()))
+            .with_usage(Usage {
+                input_tokens: Some(3364),
+                output_tokens: Some(1580),
+            })
+            .with_cost(Cost::new(0.022_528).expect("0.022528 is a cost"))
         );
         let (_, body) = received(&server).await;
         assert_eq!(body["model"], generator_model().as_str());
@@ -365,7 +376,7 @@ mod tests {
 
         let candidate = candidate();
         let reply = ai
-            .check_question(&evidence(), &candidate)
+            .check_question(stamp(), &evidence(), &candidate)
             .await
             .expect("the recorded reply decodes");
 
@@ -399,8 +410,8 @@ mod tests {
             "the depth's distribution and expected value, as returned"
         );
         assert_eq!(
-            reply.provenance,
-            Provenance::new(Role::Jev, jev_model())
+            *reply.provenance,
+            Provenance::new(stamp().request, Role::Jev, jev_model(), versions())
                 .with_reported_model(ModelId::new("typesafe/jev-1.14-20261014".to_owned()))
                 .with_usage(Usage {
                     input_tokens: Some(3076),
@@ -455,7 +466,7 @@ mod tests {
         let areas = [area(), observability()];
 
         let reply = ai
-            .check_areas(&evidence(), &areas)
+            .check_areas(stamp(), &evidence(), &areas)
             .await
             .expect("the recorded reply decodes");
 
@@ -470,8 +481,8 @@ mod tests {
             "an answer per area, in the areas' order, as returned"
         );
         assert_eq!(
-            reply.provenance,
-            Provenance::new(Role::Jev, jev_model())
+            *reply.provenance,
+            Provenance::new(stamp().request, Role::Jev, jev_model(), versions())
                 .with_reported_model(ModelId::new("typesafe/jev-1.14-20261014".to_owned()))
                 .with_usage(Usage {
                     input_tokens: Some(1234),
@@ -519,7 +530,7 @@ mod tests {
         );
 
         assert_eq!(
-            ai.check_areas(&evidence(), &[area(), observability(), security])
+            ai.check_areas(stamp(), &evidence(), &[area(), observability(), security])
                 .await
                 .err(),
             Some(RequestFailure::InvalidReply)
@@ -534,6 +545,7 @@ mod tests {
 
         let reply = ai
             .assess_reasoning(
+                stamp(),
                 &Acknowledged(REASONING),
                 &evidence(),
                 QuestionWithoutKey::from(&question),
@@ -546,8 +558,8 @@ mod tests {
             [0.75, 0.96].map(|answer| Probability::new(answer).expect("a probability"))
         );
         assert_eq!(
-            reply.provenance,
-            Provenance::new(Role::Jev, jev_model())
+            *reply.provenance,
+            Provenance::new(stamp().request, Role::Jev, jev_model(), versions())
                 .with_reported_model(ModelId::new("typesafe/jev-1.14-20261014".to_owned()))
                 .with_usage(Usage {
                     input_tokens: Some(1475),
@@ -587,6 +599,7 @@ mod tests {
 
         assert_eq!(
             ai.assess_reasoning(
+                stamp(),
                 &Acknowledged(REASONING),
                 &evidence(),
                 QuestionWithoutKey::from(&question),
@@ -613,6 +626,7 @@ mod tests {
 
         let reply = ai
             .explain(
+                stamp(),
                 &Acknowledged(REASONING),
                 &evidence(),
                 &question(),
@@ -626,14 +640,19 @@ mod tests {
 
         assert_eq!(reply.content, paragraphs());
         assert_eq!(
-            reply.provenance,
-            Provenance::new(Role::Generator, generator_model())
-                .with_reported_model(ModelId::new("anthropic/claude-sonnet-5.5".to_owned()))
-                .with_usage(Usage {
-                    input_tokens: Some(3100),
-                    output_tokens: Some(430),
-                })
-                .with_cost(Cost::new(0.0105).expect("0.0105 is a cost"))
+            *reply.provenance,
+            Provenance::new(
+                stamp().request,
+                Role::Generator,
+                generator_model(),
+                versions()
+            )
+            .with_reported_model(ModelId::new("anthropic/claude-sonnet-5.5".to_owned()))
+            .with_usage(Usage {
+                input_tokens: Some(3100),
+                output_tokens: Some(430),
+            })
+            .with_cost(Cost::new(0.0105).expect("0.0105 is a cost"))
         );
         let (_, body) = received(&server).await;
         assert_eq!(body["model"], generator_model().as_str());
@@ -661,6 +680,7 @@ mod tests {
 
         let reply = ai
             .explain(
+                stamp(),
                 &Acknowledged(REASONING),
                 &evidence(),
                 &question(),
@@ -694,6 +714,7 @@ mod tests {
 
         assert_eq!(
             ai.explain(
+                stamp(),
                 &Acknowledged(REASONING),
                 &evidence(),
                 &question(),
@@ -713,9 +734,15 @@ mod tests {
 
         for criteria in [&[][..], &[(2, CriterionOutcome::NotMet)]] {
             assert_eq!(
-                ai.explain(&Acknowledged(REASONING), &evidence(), &question(), criteria)
-                    .await
-                    .err(),
+                ai.explain(
+                    stamp(),
+                    &Acknowledged(REASONING),
+                    &evidence(),
+                    &question(),
+                    criteria
+                )
+                .await
+                .err(),
                 Some(RequestFailure::InvalidRequest),
                 "{criteria:?}"
             );
@@ -735,6 +762,7 @@ mod tests {
 
         let reply = ai
             .check_explanation(
+                stamp(),
                 &Acknowledged(REASONING),
                 &evidence(),
                 &question(),
@@ -758,8 +786,8 @@ mod tests {
             ]
         );
         assert_eq!(
-            reply.provenance,
-            Provenance::new(Role::Jev, jev_model())
+            *reply.provenance,
+            Provenance::new(stamp().request, Role::Jev, jev_model(), versions())
                 .with_reported_model(ModelId::new("typesafe/jev-1.14-20261014".to_owned()))
                 .with_usage(Usage {
                     input_tokens: Some(2062),
@@ -793,6 +821,7 @@ mod tests {
 
         assert_eq!(
             ai.check_explanation(
+                stamp(),
                 &Acknowledged(REASONING),
                 &evidence(),
                 &question(),
@@ -810,7 +839,7 @@ mod tests {
         let (_server, ai) = ai("/chat/completions", 401, refused).await;
 
         assert_eq!(
-            ai.write_candidates(&evidence(), &area(), two_per_area())
+            ai.write_candidates(stamp(), &evidence(), &area(), two_per_area())
                 .await
                 .err(),
             Some(RequestFailure::KeyRefused)
@@ -823,7 +852,9 @@ mod tests {
         let (_server, ai) = ai("/systemone", 400, body).await;
 
         assert_eq!(
-            ai.check_question(&evidence(), &candidate()).await.err(),
+            ai.check_question(stamp(), &evidence(), &candidate())
+                .await
+                .err(),
             Some(RequestFailure::InvalidRequest)
         );
     }
@@ -836,7 +867,9 @@ mod tests {
         let (_server, ai) = ai("/systemone", 200, other).await;
 
         assert_eq!(
-            ai.check_question(&evidence(), &candidate()).await.err(),
+            ai.check_question(stamp(), &evidence(), &candidate())
+                .await
+                .err(),
             Some(RequestFailure::InvalidReply)
         );
     }
@@ -849,12 +882,17 @@ mod tests {
         let (_write, write) = ai("/chat/completions", status, body).await;
         let (_check, check) = ai("/systemone", status, body).await;
         [
-            gate.check_areas(&evidence(), &[area()]).await.err(),
-            write
-                .write_candidates(&evidence(), &area(), two_per_area())
+            gate.check_areas(stamp(), &evidence(), &[area()])
                 .await
                 .err(),
-            check.check_question(&evidence(), &candidate()).await.err(),
+            write
+                .write_candidates(stamp(), &evidence(), &area(), two_per_area())
+                .await
+                .err(),
+            check
+                .check_question(stamp(), &evidence(), &candidate())
+                .await
+                .err(),
         ]
     }
 
@@ -944,7 +982,9 @@ mod tests {
         let (_gate, gate) = slow("/systemone").await;
         let started = tokio::time::Instant::now();
         assert_eq!(
-            gate.check_areas(&evidence(), &[area()]).await.err(),
+            gate.check_areas(stamp(), &evidence(), &[area()])
+                .await
+                .err(),
             Some(RequestFailure::TimedOut)
         );
         assert_eq!(started.elapsed(), Duration::from_secs(30), "the gate");
@@ -952,7 +992,10 @@ mod tests {
         let (_check, check) = slow("/systemone").await;
         let started = tokio::time::Instant::now();
         assert_eq!(
-            check.check_question(&evidence(), &candidate()).await.err(),
+            check
+                .check_question(stamp(), &evidence(), &candidate())
+                .await
+                .err(),
             Some(RequestFailure::TimedOut)
         );
         assert_eq!(
@@ -968,7 +1011,7 @@ mod tests {
         let started = tokio::time::Instant::now();
 
         assert_eq!(
-            ai.write_candidates(&evidence(), &area(), two_per_area())
+            ai.write_candidates(stamp(), &evidence(), &area(), two_per_area())
                 .await
                 .err(),
             Some(RequestFailure::TimedOut)
@@ -1059,21 +1102,22 @@ mod tests {
 
         let (_generator, generator) = ai("/chat/completions", 200, CANDIDATES).await;
         generator
-            .write_candidates(&evidence(), &area(), two_per_area())
+            .write_candidates(stamp(), &evidence(), &area(), two_per_area())
             .await
             .expect("the recorded reply decodes");
         let (_jev, jev) = ai("/systemone", 200, QUESTION_CHECK).await;
-        jev.check_question(&evidence(), &candidate())
+        jev.check_question(stamp(), &evidence(), &candidate())
             .await
             .expect("the recorded reply decodes");
         let (_gate, gate) = ai("/systemone", 200, GATE).await;
-        gate.check_areas(&evidence(), &[area(), observability()])
+        gate.check_areas(stamp(), &evidence(), &[area(), observability()])
             .await
             .expect("the recorded reply decodes");
         let explained = paragraphs();
         let (_explaining, explaining) = ai("/chat/completions", 200, EXPLANATION).await;
         explaining
             .explain(
+                stamp(),
                 &Acknowledged(REASONING),
                 &evidence(),
                 &question(),
@@ -1087,6 +1131,7 @@ mod tests {
         let (_checking, checking) = ai("/systemone", 200, EXPLANATION_CHECK).await;
         checking
             .check_explanation(
+                stamp(),
                 &Acknowledged(REASONING),
                 &evidence(),
                 &question(),

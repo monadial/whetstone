@@ -67,8 +67,8 @@ use crate::keymap::{self, Binding, Command, Input, Keymap};
 use crate::palette::Action;
 use crate::questions::Questions;
 use crate::reader::{Reader, Section};
-use crate::sent_requests::{SentRequests, Spending};
-use crate::session_record::{SavedResponse, SessionStore};
+use crate::sent_requests::{Asking, SentRequests, Spending};
+use crate::session_record::SessionStore;
 use crate::stage_row::{PracticeStage, Stage as RowStage, StageRow, StageState};
 use crate::summary::{self, Summary};
 use crate::theme::{ControlState, Theme};
@@ -268,26 +268,6 @@ enum Request<T> {
     Replied(T),
 }
 
-/// What a request asked, which its result must carry (rule 24).
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum Asking {
-    /// Jev, to decide which chosen areas are worth asking about.
-    Gate,
-    /// The generator, to write candidates about this area.
-    Write(AreaId),
-    /// Jev, to check this candidate.
-    Check(CandidateId),
-    /// Jev, to assess the reasoning of the response this acknowledges: its
-    /// session, question and attempt.
-    Evaluate(SavedResponse),
-    /// The generator, to explain what the reasoning of the response this
-    /// acknowledges missed.
-    Explain(SavedResponse),
-    /// Jev, to check the explanation of the reasoning of the response this
-    /// acknowledges.
-    CheckExplanation(SavedResponse),
-}
-
 /// The screen's controls, by what Practice stands at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Control {
@@ -396,17 +376,20 @@ fn ask_about_responses(
             attempt = saved.attempt().get(),
             "cancelled assessing the reasoning"
         );
-        for _ in 0..waiting.cancel_for(&Asking::Evaluate(saved), jobs) {
-            sent.unanswered(Role::Jev);
+        let asking = Asking::Evaluate(saved);
+        for _ in 0..waiting.cancel_for(&asking, jobs) {
+            sent.cancelled(&asking);
         }
     }
     questions.evaluate(|saved, question| {
         let key = saved.clone();
+        let asking = Asking::Evaluate(saved.clone());
+        let stamp = sent.stamp(&asking);
         send(
             jobs,
             waiting,
-            Asking::Evaluate(saved.clone()),
-            ai.assess_reasoning(saved, evidence, QuestionWithoutKey::from(question)),
+            asking,
+            ai.assess_reasoning(stamp, saved, evidence, QuestionWithoutKey::from(question)),
             |reply| JobOutput::Evaluated {
                 saved: Box::new(key),
                 reply,
@@ -415,11 +398,13 @@ fn ask_about_responses(
     });
     questions.explain(|saved, question, criteria| {
         let key = saved.clone();
+        let asking = Asking::Explain(saved.clone());
+        let stamp = sent.stamp(&asking);
         send(
             jobs,
             waiting,
-            Asking::Explain(saved.clone()),
-            ai.explain(saved, evidence, question, criteria),
+            asking,
+            ai.explain(stamp, saved, evidence, question, criteria),
             |reply| JobOutput::Explained {
                 saved: Box::new(key),
                 reply,
@@ -428,11 +413,13 @@ fn ask_about_responses(
     });
     questions.check_explanations(|saved, question, paragraphs| {
         let key = saved.clone();
+        let asking = Asking::CheckExplanation(saved.clone());
+        let stamp = sent.stamp(&asking);
         send(
             jobs,
             waiting,
-            Asking::CheckExplanation(saved.clone()),
-            ai.check_explanation(saved, evidence, question, paragraphs),
+            asking,
+            ai.check_explanation(stamp, saved, evidence, question, paragraphs),
             |reply| JobOutput::ExplanationChecked {
                 saved: Box::new(key),
                 reply,
@@ -479,7 +466,7 @@ impl Practice {
                 cache: Arc::clone(context.cache),
             }))),
             waiting: Waiting::new(),
-            sent: SentRequests::new(settings.models()),
+            sent: SentRequests::new(settings.models(), Vec::new()),
             focus: Position::default(),
         })
     }
@@ -524,7 +511,7 @@ impl Practice {
             gate: Gate::Undecided,
             stage: Stage::CheckingAreas(Request::Unsent),
             waiting: Waiting::new(),
-            sent: SentRequests::new(context.settings.models()),
+            sent: SentRequests::new(context.settings.models(), Vec::new()),
             focus: Position::default(),
         })
     }
@@ -1073,11 +1060,12 @@ impl View for Practice {
         match &mut self.stage {
             Stage::CheckingAreas(gate) => {
                 if let Request::Unsent = gate {
+                    let stamp = self.sent.stamp(&Asking::Gate);
                     send(
                         jobs,
                         &mut self.waiting,
                         Asking::Gate,
-                        self.ai.check_areas(evidence, &self.areas),
+                        self.ai.check_areas(stamp, evidence, &self.areas),
                         |reply| JobOutput::AreasChecked { reply },
                     );
                     *gate = Request::Sent;
@@ -1089,11 +1077,13 @@ impl View for Practice {
                 for (area, write) in areas.into_iter().zip(writes) {
                     if let Request::Unsent = write {
                         let id = area.id().clone();
+                        let asking = Asking::Write(id.clone());
+                        let stamp = self.sent.stamp(&asking);
                         send(
                             jobs,
                             &mut self.waiting,
-                            Asking::Write(id.clone()),
-                            self.ai.write_candidates(evidence, area, count),
+                            asking,
+                            self.ai.write_candidates(stamp, evidence, area, count),
                             |reply| JobOutput::Written { area: id, reply },
                         );
                         *write = Request::Sent;
@@ -1104,11 +1094,13 @@ impl View for Practice {
                 for (candidate, check) in checks {
                     if let Request::Unsent = check {
                         let id = candidate.id().clone();
+                        let asking = Asking::Check(id.clone());
+                        let stamp = self.sent.stamp(&asking);
                         send(
                             jobs,
                             &mut self.waiting,
-                            Asking::Check(id.clone()),
-                            self.ai.check_question(evidence, candidate),
+                            asking,
+                            self.ai.check_question(stamp, evidence, candidate),
                             |reply| JobOutput::Checked {
                                 candidate: id,
                                 reply,
@@ -1178,26 +1170,29 @@ impl View for Practice {
             }
             JobOutput::AreasChecked { reply } => {
                 if self.waiting.accept(job, &Asking::Gate) {
-                    let reply = self.sent.ended(Role::Jev, reply);
+                    let reply = self.sent.ended(&Asking::Gate, reply);
                     self.areas_checked(reply);
                 }
             }
             JobOutput::Written { area, reply } => {
-                if self.waiting.accept(job, &Asking::Write(area.clone())) {
-                    let reply = self.sent.ended(Role::Generator, reply);
+                let asking = Asking::Write(area.clone());
+                if self.waiting.accept(job, &asking) {
+                    let reply = self.sent.ended(&asking, reply);
                     self.written(&area, reply);
                 }
             }
             JobOutput::Checked { candidate, reply } => {
-                if self.waiting.accept(job, &Asking::Check(candidate.clone())) {
-                    let reply = self.sent.ended(Role::Jev, reply);
+                let asking = Asking::Check(candidate.clone());
+                if self.waiting.accept(job, &asking) {
+                    let reply = self.sent.ended(&asking, reply);
                     self.checked(&candidate, reply);
                 }
             }
             JobOutput::Evaluated { saved, reply } => {
                 let saved = *saved;
-                if self.waiting.accept(job, &Asking::Evaluate(saved.clone())) {
-                    let reply = self.sent.ended(Role::Jev, reply);
+                let asking = Asking::Evaluate(saved.clone());
+                if self.waiting.accept(job, &asking) {
+                    let reply = self.sent.ended(&asking, reply);
                     if let Err(failure) = &reply {
                         self.failed_requests.note_refusal(Role::Jev, *failure);
                     }
@@ -1208,8 +1203,9 @@ impl View for Practice {
             }
             JobOutput::Explained { saved, reply } => {
                 let saved = *saved;
-                if self.waiting.accept(job, &Asking::Explain(saved.clone())) {
-                    let reply = self.sent.ended(Role::Generator, reply);
+                let asking = Asking::Explain(saved.clone());
+                if self.waiting.accept(job, &asking) {
+                    let reply = self.sent.ended(&asking, reply);
                     // The generator's request routes with zero retention.
                     if let Err(failure) = &reply {
                         self.failed_requests.note_refusal(Role::Generator, *failure);
@@ -1223,11 +1219,9 @@ impl View for Practice {
             }
             JobOutput::ExplanationChecked { saved, reply } => {
                 let saved = *saved;
-                if self
-                    .waiting
-                    .accept(job, &Asking::CheckExplanation(saved.clone()))
-                {
-                    let reply = self.sent.ended(Role::Jev, reply);
+                let asking = Asking::CheckExplanation(saved.clone());
+                if self.waiting.accept(job, &asking) {
+                    let reply = self.sent.ended(&asking, reply);
                     if let Err(failure) = &reply {
                         self.failed_requests.note_refusal(Role::Jev, *failure);
                     }

@@ -1,60 +1,183 @@
-//! Every request a Practice sends to Jev and the generator, as each ends:
-//! the provenance of its reply, or, for a request that failed or that the
-//! learner cancelled, one that reports no usage or cost. The session record
-//! starts with what it holds, and the summary adds up the session's cost
-//! from it, for each role and in all, counting each request that reported
-//! no cost instead of estimating it.
+//! Every request a Practice sends to Jev and the generator, from the stamp
+//! it goes out with to how it ends: the provenance of its reply, or, for a
+//! request that failed or that the learner cancelled, provenance that
+//! reports no usage or cost. The session record starts with what it holds,
+//! and the summary adds up the session's cost from it, for each role and in
+//! all, counting each request that reported no cost instead of estimating
+//! it.
+//!
+//! Each request is stamped as it is sent with Whetstone's own identity for
+//! it, counting from 1 in the order sent, and the versions behind it:
+//! Whetstone's, the base prompts', the assessment policy's, and each area
+//! file's that went into it.
 
-use whetstone_ai::{Models, Reply, RequestFailure};
-use whetstone_core::{Provenance, Role, SessionCost};
+use whetstone_ai::{Models, Reply, RequestFailure, Stamp, base_prompts_hash};
+use whetstone_core::{
+    AreaFileVersion, AreaId, AssessmentPolicy, CandidateId, ContentHash, Provenance, RequestId,
+    Role, SessionCost, Versions,
+};
+
+use crate::session_record::SavedResponse;
+
+/// What a request asked, which its result must carry (rule 24).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Asking {
+    /// Jev, to decide which chosen areas are worth asking about.
+    Gate,
+    /// The generator, to write candidates about this area.
+    Write(AreaId),
+    /// Jev, to check this candidate.
+    Check(CandidateId),
+    /// Jev, to assess the reasoning of the response this acknowledges: its
+    /// session, question and attempt.
+    Evaluate(SavedResponse),
+    /// The generator, to explain what the reasoning of the response this
+    /// acknowledges missed.
+    Explain(SavedResponse),
+    /// Jev, to check the explanation of the reasoning of the response this
+    /// acknowledges.
+    CheckExplanation(SavedResponse),
+}
+
+impl Asking {
+    /// Who the request goes to.
+    fn role(&self) -> Role {
+        match self {
+            Self::Gate | Self::Check(_) | Self::Evaluate(_) | Self::CheckExplanation(_) => {
+                Role::Jev
+            }
+            Self::Write(_) | Self::Explain(_) => Role::Generator,
+        }
+    }
+
+    /// The one area the request is about, or none for the relevance gate,
+    /// which is about every chosen area.
+    fn area(&self) -> Option<&AreaId> {
+        match self {
+            Self::Gate => None,
+            Self::Write(area) => Some(area),
+            Self::Check(candidate) => Some(candidate.area()),
+            Self::Evaluate(saved) | Self::Explain(saved) | Self::CheckExplanation(saved) => {
+                Some(saved.question().area())
+            }
+        }
+    }
+}
 
 /// The requests a Practice sent, each with its provenance, in the order
-/// they ended.
+/// they ended, and those still on their way, each with its stamp.
 #[derive(Debug, Clone)]
 pub(crate) struct SentRequests {
     /// The models the requests ask, as the config names them, for the
     /// provenance of a request with no reply.
     models: Models,
+    /// The base prompts' version, which every request goes out with.
+    base_prompts: ContentHash,
+    /// The chosen areas' files.
+    area_files: Vec<AreaFileVersion>,
+    /// The identity of the last request stamped: none is 0.
+    last: u64,
+    /// Each request on its way, with what it asked and its stamp.
+    sending: Vec<(Asking, Stamp)>,
     provenance: Vec<Provenance>,
 }
 
 impl SentRequests {
-    /// No request yet, to `models`.
-    pub(crate) fn new(models: Models) -> Self {
+    /// No request yet, to `models`, about the chosen areas, whose files
+    /// are `area_files`.
+    pub(crate) fn new(models: Models, area_files: Vec<AreaFileVersion>) -> Self {
         Self {
             models,
+            base_prompts: base_prompts_hash(),
+            area_files,
+            last: 0,
+            sending: Vec::new(),
             provenance: Vec::new(),
         }
     }
 
-    /// Keeps what produced `reply`, to a request to `role`: its provenance,
-    /// or, when it failed, provenance that reports no usage or cost. Returns
-    /// its content, or why it failed.
+    /// The stamp for the next request, which asks `asking`: the next
+    /// identity, and the versions behind it, with the files of the areas it
+    /// is about. It is kept until the request ends.
+    pub(crate) fn stamp(&mut self, asking: &Asking) -> Stamp {
+        let stamp = self.next_stamp(asking);
+        self.sending.push((asking.clone(), stamp.clone()));
+        stamp
+    }
+
+    /// The next identity, with the versions behind a request that asks
+    /// `asking`.
+    fn next_stamp(&mut self, asking: &Asking) -> Stamp {
+        self.last += 1;
+        let area_files = self
+            .area_files
+            .iter()
+            .filter(|file| asking.area().is_none_or(|area| file.area() == area))
+            .cloned()
+            .collect();
+        Stamp {
+            request: RequestId::new(self.last),
+            versions: Versions::new(
+                env!("CARGO_PKG_VERSION").to_owned(),
+                self.base_prompts.clone(),
+                AssessmentPolicy::current().version(),
+                area_files,
+            ),
+        }
+    }
+
+    /// Keeps what produced `reply`, to the request that asked `asking`: its
+    /// provenance, or, when it failed, provenance that reports no usage or
+    /// cost. Returns its content, or why it failed.
     pub(crate) fn ended<T>(
         &mut self,
-        role: Role,
+        asking: &Asking,
         reply: Result<Reply<T>, RequestFailure>,
     ) -> Result<T, RequestFailure> {
+        let stamp = self.take_stamp(asking);
         match reply {
             Ok(reply) => {
-                self.provenance.push(reply.provenance);
+                self.provenance.push(*reply.provenance);
                 Ok(reply.content)
             }
             Err(failure) => {
-                self.unanswered(role);
+                self.unanswered(asking, stamp);
                 Err(failure)
             }
         }
     }
 
-    /// Keeps a request to `role` that ended with no reply, as one does when
-    /// it fails or the learner cancels it: it reports no usage or cost.
-    pub(crate) fn unanswered(&mut self, role: Role) {
+    /// Keeps the request that asked `asking`, which the learner cancelled
+    /// before its reply came: it reports no usage or cost.
+    pub(crate) fn cancelled(&mut self, asking: &Asking) {
+        let stamp = self.take_stamp(asking);
+        self.unanswered(asking, stamp);
+    }
+
+    /// The stamp of the request on its way that asked `asking`, which no
+    /// longer is. A request is stamped as it is sent, so one is always
+    /// there; were it not, a new one stands in.
+    fn take_stamp(&mut self, asking: &Asking) -> Stamp {
+        match self.sending.iter().position(|(sent, _)| sent == asking) {
+            Some(at) => self.sending.remove(at).1,
+            None => self.next_stamp(asking),
+        }
+    }
+
+    /// Keeps the request stamped `stamp`, which asked `asking` and ended
+    /// with no reply: it reports no usage or cost.
+    fn unanswered(&mut self, asking: &Asking, stamp: Stamp) {
+        let role = asking.role();
         let model = match role {
             Role::Jev => &self.models.jev,
             Role::Generator => &self.models.generator,
         };
-        self.provenance.push(Provenance::new(role, model.clone()));
+        self.provenance.push(Provenance::new(
+            stamp.request,
+            role,
+            model.clone(),
+            stamp.versions,
+        ));
     }
 
     /// Each request's provenance, in the order they ended.
