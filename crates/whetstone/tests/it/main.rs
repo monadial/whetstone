@@ -27,6 +27,7 @@ mod pty;
 mod pty_colours;
 mod pty_connected_code;
 mod pty_dumb;
+mod pty_graph_cache;
 mod pty_paste;
 mod pty_suspend;
 mod pty_terminal;
