@@ -42,8 +42,19 @@ const FILES: &[(&str, &str)] = &[
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct QuestionCheckPrompts {
+    pub(crate) answerable: YesNoPrompt,
+    pub(crate) about_area: YesNoPrompt,
+    pub(crate) needs_change: YesNoPrompt,
+    pub(crate) no_giveaway: YesNoPrompt,
+    /// One criterion's check; `{criterion}` is the criterion's name.
+    pub(crate) criterion: YesNoPrompt,
     /// One option's rating; `{letter}` is the option's.
     pub(crate) option: YesNoPrompt,
+    /// One rationale's check; `{letter}` is its option's.
+    pub(crate) rationale: YesNoPrompt,
+    pub(crate) why_it_matters: YesNoPrompt,
+    pub(crate) hint_points_to_evidence: YesNoPrompt,
+    pub(crate) hint_hides_answer_key: YesNoPrompt,
 }
 
 /// A yes/no question to Jev: its instructions, and what yes and no mean.

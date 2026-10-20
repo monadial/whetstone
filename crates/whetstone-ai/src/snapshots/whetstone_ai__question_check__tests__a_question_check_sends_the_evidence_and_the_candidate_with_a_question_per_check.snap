@@ -93,6 +93,70 @@ expression: pretty(&body)
     }
   },
   "questions": {
+    "about_area": {
+      "type": "noul",
+      "instructions": "The candidate is about its area, as the area's name and description define it.",
+      "criteria": {
+        "false": "The question asks about something outside the area, or touches it only in passing.",
+        "true": "The question asks about what the area's name and description cover."
+      }
+    },
+    "answerable": {
+      "type": "noul",
+      "instructions": "The candidate's stem can be answered from the evidence alone: everything needed to choose the correct option and explain why is in the evidence.",
+      "criteria": {
+        "false": "Answering the stem needs something the evidence doesn't show.",
+        "true": "The evidence holds everything needed to answer the stem and explain the answer."
+      }
+    },
+    "criterion_1": {
+      "type": "noul",
+      "instructions": "Rubric criterion criterion_1 of the candidate follows from the evidence and the answer key, and whether a learner's written reasoning meets it can be judged from the reasoning alone.",
+      "criteria": {
+        "false": "The criterion doesn't follow from the evidence and the answer key, or written reasoning can't show whether it is met.",
+        "true": "The criterion follows from the evidence and the answer key, and written reasoning can show whether it is met."
+      }
+    },
+    "criterion_2": {
+      "type": "noul",
+      "instructions": "Rubric criterion criterion_2 of the candidate follows from the evidence and the answer key, and whether a learner's written reasoning meets it can be judged from the reasoning alone.",
+      "criteria": {
+        "false": "The criterion doesn't follow from the evidence and the answer key, or written reasoning can't show whether it is met.",
+        "true": "The criterion follows from the evidence and the answer key, and written reasoning can show whether it is met."
+      }
+    },
+    "hint_hides_answer_key": {
+      "type": "noul",
+      "instructions": "The candidate's hint doesn't reveal the answer key: someone reading only the stem, the options and the hint couldn't tell which option is correct.",
+      "criteria": {
+        "false": "The hint reveals which option is correct, or rules options out.",
+        "true": "The hint leaves the learner to work out which option is correct."
+      }
+    },
+    "hint_points_to_evidence": {
+      "type": "noul",
+      "instructions": "The candidate's hint points to where in the evidence to look for the answer.",
+      "criteria": {
+        "false": "The hint is vague, or points to nothing in the evidence that bears on the answer.",
+        "true": "The hint points to specific parts of the evidence that bear on the answer."
+      }
+    },
+    "needs_change": {
+      "type": "noul",
+      "instructions": "Answering the candidate needs this change: someone with general programming knowledge, but without the evidence, couldn't choose the correct option with confidence.",
+      "criteria": {
+        "false": "General knowledge alone is enough to choose the correct option.",
+        "true": "Choosing the correct option needs understanding what the change does."
+      }
+    },
+    "no_giveaway": {
+      "type": "noul",
+      "instructions": "The candidate's stem and options don't give the answer away: no option stands out as correct or wrong from its wording, length, detail or how it echoes the stem. Judge the stem and the options' text as the learner sees them before answering, without the answer key, rationales or hint.",
+      "criteria": {
+        "false": "The wording of the stem or options points to the correct option, or rules options out.",
+        "true": "Nothing in the wording of the stem or options points to the correct option."
+      }
+    },
     "option_a": {
       "type": "noul",
       "instructions": "Given the evidence, option A correctly answers the candidate's stem. Judge it from the evidence alone, not from the candidate's answer key or rationales.",
@@ -115,6 +179,38 @@ expression: pretty(&body)
       "criteria": {
         "false": "The evidence doesn't show that option C answers the stem correctly, or shows that it doesn't.",
         "true": "The evidence shows that option C is a correct answer to the stem."
+      }
+    },
+    "rationale_a": {
+      "type": "noul",
+      "instructions": "The candidate's rationale for option A, which explains why that option is correct or wrong, is supported by the evidence. Judge the rationale, not the option: a rationale that rightly explains why a wrong option is wrong is supported.",
+      "criteria": {
+        "false": "The rationale for option A says something about the option or the change that the evidence doesn't support, or contradicts.",
+        "true": "The evidence supports what the rationale for option A says about why the option is correct or wrong."
+      }
+    },
+    "rationale_b": {
+      "type": "noul",
+      "instructions": "The candidate's rationale for option B, which explains why that option is correct or wrong, is supported by the evidence. Judge the rationale, not the option: a rationale that rightly explains why a wrong option is wrong is supported.",
+      "criteria": {
+        "false": "The rationale for option B says something about the option or the change that the evidence doesn't support, or contradicts.",
+        "true": "The evidence supports what the rationale for option B says about why the option is correct or wrong."
+      }
+    },
+    "rationale_c": {
+      "type": "noul",
+      "instructions": "The candidate's rationale for option C, which explains why that option is correct or wrong, is supported by the evidence. Judge the rationale, not the option: a rationale that rightly explains why a wrong option is wrong is supported.",
+      "criteria": {
+        "false": "The rationale for option C says something about the option or the change that the evidence doesn't support, or contradicts.",
+        "true": "The evidence supports what the rationale for option C says about why the option is correct or wrong."
+      }
+    },
+    "why_it_matters": {
+      "type": "noul",
+      "instructions": "The candidate's \"why it matters\" line is supported by the evidence.",
+      "criteria": {
+        "false": "The \"why it matters\" line says something the evidence doesn't support, or contradicts.",
+        "true": "The evidence supports what the \"why it matters\" line says."
       }
     }
   }
