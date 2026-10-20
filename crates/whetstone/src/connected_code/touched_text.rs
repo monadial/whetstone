@@ -9,7 +9,6 @@ use whetstone_core::{FileContent, TouchedFile};
 
 /// A touched file as links and mentions read it: its path, its text at the
 /// commit if it has text there, and the lines the change adds or modifies.
-#[derive(Clone)]
 pub(crate) struct TouchedText<'a> {
     path: &'a str,
     /// None for a file that is binary, a symlink or a submodule at the
@@ -69,7 +68,7 @@ impl<'a> TouchedText<'a> {
 
 /// A repository file that the change links to or names, which is sent
 /// whole, with every touched file that links to it or names it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Target {
     /// The file's path, relative to the repository's root.
     pub(crate) path: String,

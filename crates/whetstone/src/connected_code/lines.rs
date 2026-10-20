@@ -39,7 +39,13 @@ pub(super) fn touched(change: &Change) -> HashMap<&str, Touched<'_>> {
         .zip(change.file_diffs())
         .filter_map(|(file, diff)| {
             let text = file.after()?.text().unwrap_or_default();
-            Some((file.path(), Touched::read(diff, text)))
+            Some((
+                file.path(),
+                Touched {
+                    text,
+                    ..Touched::read(diff)
+                },
+            ))
         })
         .collect()
 }
@@ -50,14 +56,14 @@ pub(super) fn touched(change: &Change) -> HashMap<&str, Touched<'_>> {
 /// touches no line here, so a link or a path on the line next to a removal
 /// does not count.
 pub(super) fn added_lines(diff: &str) -> BTreeSet<usize> {
-    Touched::read(diff, "")
+    Touched::read(diff)
         .lines
         .into_iter()
         .map(|line| usize::try_from(line).expect("a line number fits in usize"))
         .collect()
 }
 
-impl<'c> Touched<'c> {
+impl Touched<'_> {
     /// Whether the change touches the lines from `start` to `end`,
     /// inclusive, which a callable at the commit covers: if it adds or
     /// modifies one of them, or removes lines inside them.
@@ -86,12 +92,10 @@ impl<'c> Touched<'c> {
         })
     }
 
-    /// Reads one file's diff, of a file holding `text` at the commit.
-    fn read(diff: &str, text: &'c str) -> Self {
-        let mut touched = Self {
-            text,
-            ..Self::default()
-        };
+    /// Reads one file's diff. It leaves the file's text empty for the
+    /// caller to fill in, since only a removal's indentation needs it.
+    fn read(diff: &str) -> Self {
+        let mut touched = Self::default();
         // The new side's next line number, once inside a hunk.
         let mut next: Option<u32> = None;
         // The run of `-` and `+` lines so far: whether it adds, and its

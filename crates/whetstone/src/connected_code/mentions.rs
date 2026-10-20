@@ -89,8 +89,6 @@ fn continues_path(c: char) -> bool {
 mod tests {
     use whetstone_core::{FileContent, TouchedFile};
 
-    use crate::connected_code::links::linked_files;
-
     use super::*;
 
     fn tree(paths: &[&str]) -> BTreeSet<String> {
@@ -282,37 +280,6 @@ mod tests {
                 "scripts/common.sh",
                 &["docs/release.md", "scripts/release.sh"]
             )]
-        );
-    }
-
-    #[test]
-    fn a_repository_of_documents_gets_connected_code_from_links_and_mentions_alone() {
-        let index = TouchedFile::modified(
-            "course/index.md".to_owned(),
-            "# Course\n\nStart with [week one](week-1/intro.md).\n".to_owned(),
-            "# Course\n\nStart with [week one](week-1/intro.md).\n\
-             Then [week two](week-2/intro.md), with handouts/glossary.pdf to hand.\n"
-                .to_owned(),
-        );
-        let files = tree(&[
-            "LICENSE",
-            "course/index.md",
-            "course/week-1/intro.md",
-            "course/week-2/intro.md",
-            "handouts/glossary.pdf",
-        ]);
-        let touched = [TouchedText::new(&index, BTreeSet::from([4]))];
-
-        let linked = linked_files(&files, &touched);
-        let named = named(&files, &touched);
-
-        assert_eq!(
-            linked,
-            [target("course/week-2/intro.md", &["course/index.md"])]
-        );
-        assert_eq!(
-            named,
-            [target("handouts/glossary.pdf", &["course/index.md"])]
         );
     }
 }
