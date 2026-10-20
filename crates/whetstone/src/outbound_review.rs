@@ -25,9 +25,9 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::Paragraph;
 use whetstone_core::{
-    Area, Change, CommitId, Comparison, ConnectionGroup, Connections, ConnectionsState, Evidence,
-    EvidenceConnection, EvidenceFile, ExcludePatterns, Extent, FileIndex, Finding, FindingStatus,
-    Origin, Place, ReviewChoices, Side, Unsendable,
+    Area, Change, CommitId, Comparison, ConnectedCodeLimit, ConnectionGroup, Connections,
+    ConnectionsState, Evidence, EvidenceConnection, EvidenceFile, ExcludePatterns, Extent,
+    FileIndex, Finding, FindingStatus, Origin, Place, ReviewChoices, Side, Unsendable,
 };
 
 use crate::columns;
@@ -125,6 +125,8 @@ pub(crate) struct OutboundReview {
     areas: Vec<Area>,
     /// The repository's exclude patterns.
     exclude: ExcludePatterns,
+    /// The connected code limit that applies in the repository.
+    connected_code_limit: ConnectedCodeLimit,
     /// The learner's choices for this change, shared with the picker.
     choices: Rc<RefCell<ReviewChoices>>,
     /// Where finding the change's connected code is.
@@ -213,14 +215,16 @@ impl<'a> Document<'a> {
 impl OutboundReview {
     /// The review of the commit `id`, whose change is `change`, sent where
     /// `settings` say, with the selected `areas`, leaving out what `exclude`
-    /// leaves out, as the learner's `choices` adjust it. Its connected code
-    /// is found with `connected_code` once it opens.
+    /// leaves out, within `connected_code_limit`, as the learner's `choices`
+    /// adjust it. Its connected code is found with `connected_code` once it
+    /// opens.
     pub(crate) fn new(
         id: CommitId,
         settings: &Settings,
         change: Change,
         areas: Vec<Area>,
         exclude: ExcludePatterns,
+        connected_code_limit: ConnectedCodeLimit,
         choices: Rc<RefCell<ReviewChoices>>,
         connected_code: Request,
     ) -> Self {
@@ -230,6 +234,7 @@ impl OutboundReview {
             &exclude,
             &areas,
             lookup.connections(),
+            connected_code_limit,
             &choices.borrow(),
         );
         tracing::info!(
@@ -253,6 +258,7 @@ impl OutboundReview {
             change,
             areas,
             exclude,
+            connected_code_limit,
             choices,
             lookup,
             evidence,
@@ -343,6 +349,7 @@ impl OutboundReview {
             &self.exclude,
             &self.areas,
             self.lookup.connections(),
+            self.connected_code_limit,
             &self.choices.borrow(),
         );
         let last = self.controls().len().saturating_sub(1);

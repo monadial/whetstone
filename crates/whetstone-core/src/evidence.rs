@@ -13,9 +13,11 @@ use std::fmt;
 
 use crate::area::{Area, AreaId};
 use crate::change::{Change, FileContent, TouchedFile};
+use crate::connected_code_limit::ConnectedCodeLimit;
 use crate::connection::{Connection, ConnectionGroup, ConnectionId, Connections, Relation, Tier};
 use crate::exclusion::{DefaultExclusion, ExcludePattern, ExcludePatterns};
 use crate::secret::{SecretFinding, find_secrets};
+use crate::selection;
 
 /// What a Practice sends: the commit message; for each included file, its
 /// diff and its full content (the content before the change for a
@@ -36,6 +38,7 @@ pub struct Evidence {
     areas: Vec<Area>,
     connections: Vec<EvidenceConnection>,
     connections_state: ConnectionsState,
+    connected_code_limit: ConnectedCodeLimit,
     findings: Vec<Finding>,
     size: usize,
 }
@@ -293,14 +296,19 @@ impl Evidence {
     ///
     /// The commit message, every file sent and every connection sent are
     /// checked for secrets, so one brought back is checked as it returns.
-    /// Connections are kept in their order, and found connections that are
-    /// empty are [`ConnectionsState::NoneFound`].
+    /// Connections are listed from the most relevant to the least: related
+    /// tests and related configuration first, by path; then connected code,
+    /// the high tier before the medium, then the closest to a touched file
+    /// it connects to first, by the leading path components they share;
+    /// then by path and starting line. Found connections that are empty are
+    /// [`ConnectionsState::NoneFound`].
     #[must_use]
     pub fn build(
         change: &Change,
         exclude: &ExcludePatterns,
         areas: &[Area],
         connections: &Connections,
+        connected_code_limit: ConnectedCodeLimit,
         choices: &ReviewChoices,
     ) -> Self {
         let (connections, connections_state) =
@@ -390,6 +398,7 @@ impl Evidence {
             areas: areas.to_vec(),
             connections,
             connections_state,
+            connected_code_limit,
             findings,
             size,
         }
@@ -419,7 +428,8 @@ impl Evidence {
         &self.areas
     }
 
-    /// Every connection found, in the order found, sent or not.
+    /// Every connection found, from the most relevant to the least, sent or
+    /// not.
     #[must_use]
     pub fn connections(&self) -> &[EvidenceConnection] {
         &self.connections
@@ -429,6 +439,13 @@ impl Evidence {
     #[must_use]
     pub fn connections_state(&self) -> ConnectionsState {
         self.connections_state
+    }
+
+    /// The connected code limit its connections were selected within, and
+    /// where that limit comes from, such as this repository lowering it.
+    #[must_use]
+    pub fn connected_code_limit(&self) -> ConnectedCodeLimit {
+        self.connected_code_limit
     }
 
     /// The possible secrets in what is sent, the commit message's first,
@@ -480,6 +497,7 @@ impl fmt::Debug for Evidence {
             )
             .field("connections", &self.connections)
             .field("connections_state", &self.connections_state)
+            .field("connected_code_limit", &self.connected_code_limit)
             .field("findings", &self.findings)
             .field("size", &self.size)
             .finish()
@@ -698,8 +716,8 @@ fn text_status(
 }
 
 impl EvidenceConnection {
-    /// The evidence's connections from `connections`, in their order, as
-    /// the rules and `choices` leave them, and whether it has any.
+    /// The evidence's connections from `connections`, ranked, as the rules
+    /// and `choices` leave them, and whether it has any.
     fn all(
         connections: &Connections,
         exclude: &ExcludePatterns,
@@ -707,8 +725,8 @@ impl EvidenceConnection {
     ) -> (Vec<Self>, ConnectionsState) {
         match connections {
             Connections::Found(found) if !found.is_empty() => (
-                found
-                    .iter()
+                selection::rank(found)
+                    .into_iter()
                     .map(|connection| Self::new(connection, exclude, choices))
                     .collect(),
                 ConnectionsState::Found,
@@ -1030,7 +1048,14 @@ mod tests {
         connections: &Connections,
         choices: &ReviewChoices,
     ) -> Evidence {
-        Evidence::build(&change(), exclude, &[], connections, choices)
+        Evidence::build(
+            &change(),
+            exclude,
+            &[],
+            connections,
+            ConnectedCodeLimit::effective(None, None),
+            choices,
+        )
     }
 
     fn paths(evidence: &Evidence) -> Vec<&str> {
@@ -1246,20 +1271,36 @@ mod tests {
             caller("src/api.rs", "fn post() { pay() }\n"),
         ]);
         let mut choices = ReviewChoices::default();
-        choices.toggle_connection(&build(&found, &choices).connections()[0]);
+        let statuses = |evidence: &Evidence| -> Vec<(String, String)> {
+            evidence
+                .connections()
+                .iter()
+                .map(|connection| {
+                    (
+                        connection.id().path().to_owned(),
+                        connection.status().to_string(),
+                    )
+                })
+                .collect()
+        };
+        let evidence = build(&found, &choices);
+        let lockfile = evidence
+            .connections()
+            .iter()
+            .find(|connection| connection.id().path() == "Cargo.lock")
+            .expect("the lockfile is listed");
+        choices.toggle_connection(lockfile);
 
         for connection in build(&found, &choices).connections() {
             choices.leave_out_connection(connection.id());
         }
 
-        let evidence = build(&found, &choices);
         assert_eq!(
-            evidence.connections()[0].status().to_string(),
-            "left out: lockfile"
-        );
-        assert_eq!(
-            evidence.connections()[1].status(),
-            &FileStatus::LeftOutByYou
+            statuses(&build(&found, &choices)),
+            [
+                ("src/api.rs".to_owned(), "left out by you".to_owned()),
+                ("Cargo.lock".to_owned(), "left out: lockfile".to_owned()),
+            ]
         );
     }
 
@@ -1366,7 +1407,8 @@ mod tests {
         );
         choices.toggle_connection(&first.connections()[0]);
 
-        // Found again, in another order, beside others in the same file.
+        // Found again, in another order, beside others in the same file,
+        // and listed in rank order.
         let again = build(
             &Connections::Found(vec![
                 api(Extent::WholeFile),
@@ -1385,10 +1427,10 @@ mod tests {
         assert_eq!(
             statuses,
             [
+                ("lines 1–2".to_owned(), &FileStatus::LeftOutByYou),
+                ("lines 1–3".to_owned(), &FileStatus::Included),
                 ("whole file".to_owned(), &FileStatus::Included),
                 ("lines 3–4".to_owned(), &FileStatus::Included),
-                ("lines 1–3".to_owned(), &FileStatus::Included),
-                ("lines 1–2".to_owned(), &FileStatus::LeftOutByYou),
             ]
         );
     }
@@ -1490,7 +1532,7 @@ mod tests {
     }
 
     #[test]
-    fn found_connections_are_in_the_evidence_in_their_order() {
+    fn found_connections_are_in_the_evidence_in_rank_order() {
         let connections = Connections::Found(vec![
             caller("src/checkout.rs", "fn checkout() { pay() }\n"),
             related(
@@ -1505,8 +1547,8 @@ mod tests {
         let evidence = build(&connections, &ReviewChoices::default());
 
         assert_eq!(evidence.connections_state(), ConnectionsState::Found);
-        assert_eq!(paths(&evidence), ["src/checkout.rs", "tests/pay.rs"]);
-        let test = &evidence.connections()[1];
+        assert_eq!(paths(&evidence), ["tests/pay.rs", "src/checkout.rs"]);
+        let test = &evidence.connections()[0];
         assert_eq!(test.group(), ConnectionGroup::RelatedTest);
         assert_eq!(test.tier(), Tier::High);
         assert_eq!(test.relations()[0].to_string(), "test for `src/pay.rs`");

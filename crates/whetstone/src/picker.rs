@@ -796,6 +796,7 @@ impl View for Picker {
             change,
             areas,
             exclude,
+            context.settings.connected_code_limit(repository.config()),
             Rc::clone(choices),
             connected_code,
         )))

@@ -14,6 +14,7 @@ mod evidence;
 mod exclusion;
 mod repository_config;
 mod secret;
+mod selection;
 mod showcase;
 mod toml_error;
 
