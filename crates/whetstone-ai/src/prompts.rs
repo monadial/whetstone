@@ -15,6 +15,7 @@ use std::sync::LazyLock;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use sha2::{Digest, Sha256};
+use whetstone_core::ContentHash;
 
 use crate::jev::JevQuestion;
 
@@ -168,6 +169,20 @@ static VERSION: LazyLock<String> = LazyLock::new(|| {
 #[must_use]
 pub fn base_prompts_version() -> &'static str {
     &VERSION
+}
+
+/// [`base_prompts_version`] as the content hash a request's provenance
+/// keeps among its versions.
+///
+/// ```
+/// use whetstone_ai::{base_prompts_hash, base_prompts_version};
+///
+/// assert_eq!(base_prompts_hash().as_str(), base_prompts_version());
+/// ```
+#[must_use]
+pub fn base_prompts_hash() -> ContentHash {
+    ContentHash::new(base_prompts_version().to_owned())
+        .expect("a SHA-256 digest in lowercase hex is a content hash")
 }
 
 /// A score question to Jev: its instructions, and its three levels, the

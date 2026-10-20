@@ -8,6 +8,10 @@
 //! them, or to the [`RequestFailure`] that stopped it. Nothing is retried
 //! automatically: Retry is always the learner's.
 //!
+//! Each call is stamped by its caller with Whetstone's own identity for the
+//! request and the versions behind it ([`Stamp`]), which the reply's
+//! provenance carries.
+//!
 //! A reasoning evaluation, the explanation of what the reasoning missed
 //! and its check are asked only with a session store's acknowledgement that
 //! the response is saved ([`Saved`]), so none is ever paid for while the
@@ -20,7 +24,7 @@ use std::pin::Pin;
 
 use whetstone_core::{
     Area, AreaId, Candidate, CriterionOutcome, Evidence, Probability, Provenance, Question,
-    QuestionCheckAnswers, QuestionCount, WrittenCandidate,
+    QuestionCheckAnswers, QuestionCount, RequestId, Versions, WrittenCandidate,
 };
 
 use crate::explanation::{ParagraphCheck, WrittenParagraph};
@@ -36,6 +40,7 @@ pub trait Ai: fmt::Debug + Send + Sync {
     /// prompts never reach it.
     fn check_areas(
         &self,
+        stamp: Stamp,
         evidence: &Evidence,
         areas: &[Area],
     ) -> Pending<Vec<(AreaId, Probability)>>;
@@ -44,6 +49,7 @@ pub trait Ai: fmt::Debug + Send + Sync {
     /// `evidence`, as it wrote them, before any check.
     fn write_candidates(
         &self,
+        stamp: Stamp,
         evidence: &Evidence,
         area: &Area,
         count: CandidateCount,
@@ -53,6 +59,7 @@ pub trait Ai: fmt::Debug + Send + Sync {
     /// a yes/no answer to each of [`Candidate::checks`], as returned.
     fn check_question(
         &self,
+        stamp: Stamp,
         evidence: &Evidence,
         candidate: &Candidate,
     ) -> Pending<QuestionCheckAnswers>;
@@ -65,6 +72,7 @@ pub trait Ai: fmt::Debug + Send + Sync {
     /// `question` gives.
     fn assess_reasoning(
         &self,
+        stamp: Stamp,
         saved: &dyn Saved,
         evidence: &Evidence,
         question: QuestionWithoutKey<'_>,
@@ -84,6 +92,7 @@ pub trait Ai: fmt::Debug + Send + Sync {
     /// and the request is invalid.
     fn explain(
         &self,
+        stamp: Stamp,
         saved: &dyn Saved,
         evidence: &Evidence,
         question: &Question,
@@ -99,6 +108,7 @@ pub trait Ai: fmt::Debug + Send + Sync {
     /// response is (rule 39).
     fn check_explanation(
         &self,
+        stamp: Stamp,
         saved: &dyn Saved,
         evidence: &Evidence,
         question: &Question,
@@ -117,6 +127,18 @@ pub trait Saved: fmt::Debug + Send + Sync {
     fn reasoning(&self) -> &str;
 }
 
+/// What a caller stamps on each request it makes: Whetstone's own identity
+/// for the request, and the versions behind it. The reply's provenance
+/// carries both.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Stamp {
+    /// Whetstone's own identity for the request, unique within a run.
+    pub request: RequestId,
+    /// Whetstone's version, the base prompts', the assessment policy's, and
+    /// each area file's that went into the request.
+    pub versions: Versions,
+}
+
 /// A request on its way to Jev or the generator: it resolves to the reply
 /// or to why the request failed. It owns everything it holds, so it can run
 /// as a background job, and dropping it stops the request.
@@ -127,9 +149,12 @@ pub type Pending<T> = Pin<Box<dyn Future<Output = Result<Reply<T>, RequestFailur
 pub struct Reply<T> {
     /// The answers or writing, as returned.
     pub content: T,
-    /// The models asked and answering, and the usage and cost where the
-    /// reply reports them.
-    pub provenance: Provenance,
+    /// What produced it: the request's stamp, the models asked and
+    /// answering, for Jev the questions sent with their answers, and the
+    /// usage and cost where the reply reports them. It is boxed, as it
+    /// holds the versions and the questions, to keep the app's messages
+    /// small.
+    pub provenance: Box<Provenance>,
 }
 
 /// Why a request to Jev or the generator failed. Each is named to the

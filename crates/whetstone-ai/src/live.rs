@@ -29,7 +29,7 @@ use whetstone_core::{CriterionOutcome, DepthLevel, ModelId, Provenance, Question
 use crate::replay::live_key;
 use crate::samples::{
     Acknowledged, OUTCOMES, REASONING, area, candidate, evidence, generator_model, jev_model,
-    observability, paragraphs, question,
+    observability, paragraphs, question, stamp,
 };
 use crate::{Ai, CandidateCount, Models, OpenRouter, OpenRouterAi, QuestionWithoutKey};
 
@@ -86,7 +86,7 @@ async fn live_check_areas() {
     let areas = [area(), observability()];
 
     let reply = live_ai()
-        .check_areas(&evidence(), &areas)
+        .check_areas(stamp(), &evidence(), &areas)
         .await
         .expect("Jev checks the areas");
 
@@ -121,7 +121,7 @@ async fn live_write_candidates() {
     assert_eq!(one.get(), 1);
 
     let reply = live_ai()
-        .write_candidates(&evidence(), &area(), one)
+        .write_candidates(stamp(), &evidence(), &area(), one)
         .await
         .expect("the generator writes candidates");
 
@@ -139,7 +139,7 @@ async fn live_check_question() {
     let candidate = candidate();
 
     let reply = live_ai()
-        .check_question(&evidence(), &candidate)
+        .check_question(stamp(), &evidence(), &candidate)
         .await
         .expect("Jev checks the candidate");
 
@@ -177,6 +177,7 @@ async fn live_assess_reasoning() {
 
     let reply = live_ai()
         .assess_reasoning(
+            stamp(),
             &Acknowledged(REASONING),
             &evidence(),
             QuestionWithoutKey::from(&question),
@@ -202,6 +203,7 @@ async fn live_explain() {
 
     let reply = live_ai()
         .explain(
+            stamp(),
             &Acknowledged(REASONING),
             &evidence(),
             &question(),
@@ -238,6 +240,7 @@ async fn live_check_explanation() {
 
     let reply = live_ai()
         .check_explanation(
+            stamp(),
             &Acknowledged(REASONING),
             &evidence(),
             &question(),

@@ -28,7 +28,7 @@ use whetstone_core::{
 use crate::explanation::{ParagraphCheck, WrittenParagraph};
 use crate::gate::gate_request;
 use crate::jev::JevRequest;
-use crate::port::{Ai, CandidateCount, Pending, Reply, RequestFailure, Saved};
+use crate::port::{Ai, CandidateCount, Pending, Reply, RequestFailure, Saved, Stamp};
 use crate::reasoning::QuestionWithoutKey;
 
 /// An [`Ai`] whose replies a test chooses, and which logs what it was asked.
@@ -306,6 +306,7 @@ impl ScriptedAi {
 impl Ai for ScriptedAi {
     fn check_areas(
         &self,
+        stamp: Stamp,
         evidence: &Evidence,
         areas: &[Area],
     ) -> Pending<Vec<(AreaId, Probability)>> {
@@ -329,7 +330,7 @@ impl Ai for ScriptedAi {
                 })
                 .collect()),
         };
-        reply_at_once(reply, Role::Jev, JEV_MODEL, &script)
+        reply_at_once(stamp, reply, Role::Jev, JEV_MODEL, &script)
     }
 
     #[expect(
@@ -338,6 +339,7 @@ impl Ai for ScriptedAi {
     )]
     fn write_candidates(
         &self,
+        stamp: Stamp,
         evidence: &Evidence,
         area: &Area,
         count: CandidateCount,
@@ -353,7 +355,7 @@ impl Ai for ScriptedAi {
             .get_mut(area.id())
             .and_then(VecDeque::pop_front)
             .unwrap_or_else(|| panic!("no write scripted for the area {}", area.id()));
-        reply_at_once(reply, Role::Generator, GENERATOR_MODEL, &script)
+        reply_at_once(stamp, reply, Role::Generator, GENERATOR_MODEL, &script)
     }
 
     #[expect(
@@ -362,6 +364,7 @@ impl Ai for ScriptedAi {
     )]
     fn check_question(
         &self,
+        stamp: Stamp,
         evidence: &Evidence,
         candidate: &Candidate,
     ) -> Pending<QuestionCheckAnswers> {
@@ -375,7 +378,13 @@ impl Ai for ScriptedAi {
             .get_mut(candidate.stem())
             .and_then(VecDeque::pop_front)
             .unwrap_or_else(|| panic!("no check scripted for {:?}", candidate.stem()));
-        reply_at_once(reply.into_reply(candidate), Role::Jev, JEV_MODEL, &script)
+        reply_at_once(
+            stamp,
+            reply.into_reply(candidate),
+            Role::Jev,
+            JEV_MODEL,
+            &script,
+        )
     }
 
     #[expect(
@@ -384,6 +393,7 @@ impl Ai for ScriptedAi {
     )]
     fn assess_reasoning(
         &self,
+        stamp: Stamp,
         saved: &dyn Saved,
         evidence: &Evidence,
         question: QuestionWithoutKey<'_>,
@@ -402,7 +412,7 @@ impl Ai for ScriptedAi {
             .get_mut(question.stem())
             .and_then(VecDeque::pop_front)
             .unwrap_or_else(|| panic!("no assessment scripted for {:?}", question.stem()));
-        reply_at_once(reply, Role::Jev, JEV_MODEL, &script)
+        reply_at_once(stamp, reply, Role::Jev, JEV_MODEL, &script)
     }
 
     #[expect(
@@ -411,6 +421,7 @@ impl Ai for ScriptedAi {
     )]
     fn explain(
         &self,
+        stamp: Stamp,
         saved: &dyn Saved,
         evidence: &Evidence,
         question: &Question,
@@ -429,7 +440,7 @@ impl Ai for ScriptedAi {
             .get_mut(question.stem())
             .and_then(VecDeque::pop_front)
             .unwrap_or_else(|| panic!("no explanation scripted for {:?}", question.stem()));
-        reply_at_once(reply, Role::Generator, GENERATOR_MODEL, &script)
+        reply_at_once(stamp, reply, Role::Generator, GENERATOR_MODEL, &script)
     }
 
     #[expect(
@@ -438,6 +449,7 @@ impl Ai for ScriptedAi {
     )]
     fn check_explanation(
         &self,
+        stamp: Stamp,
         saved: &dyn Saved,
         evidence: &Evidence,
         question: &Question,
@@ -455,7 +467,7 @@ impl Ai for ScriptedAi {
             .get_mut(question.stem())
             .and_then(VecDeque::pop_front)
             .unwrap_or_else(|| panic!("no explanation check scripted for {:?}", question.stem()));
-        reply_at_once(reply, Role::Jev, JEV_MODEL, &script)
+        reply_at_once(stamp, reply, Role::Jev, JEV_MODEL, &script)
     }
 }
 
@@ -495,9 +507,10 @@ fn default_depth() -> Depth {
         .expect("1 is an expected depth")
 }
 
-/// `reply` as a request that has it at once, from `model` in `role`,
-/// reporting the cost `script` scripts for `role`, if it scripts one.
+/// `reply` as a request stamped `stamp` that has it at once, from `model` in
+/// `role`, reporting the cost `script` scripts for `role`, if it scripts one.
 fn reply_at_once<T: Send + 'static>(
+    stamp: Stamp,
     reply: Result<T, RequestFailure>,
     role: Role,
     model: &str,
@@ -506,13 +519,14 @@ fn reply_at_once<T: Send + 'static>(
     let model = ModelId::new(model.to_owned());
     let cost = script.costs.get(&role).copied();
     let reply = reply.map(|content| {
-        let provenance = Provenance::new(role, model.clone()).with_reported_model(model);
+        let provenance = Provenance::new(stamp.request, role, model.clone(), stamp.versions)
+            .with_reported_model(model);
         Reply {
             content,
-            provenance: match cost {
+            provenance: Box::new(match cost {
                 Some(cost) => provenance.with_cost(cost),
                 None => provenance,
-            },
+            }),
         }
     });
     Box::pin(future::ready(reply))
@@ -533,7 +547,7 @@ mod tests {
 
     use super::*;
     use crate::port::{Ai, CandidateCount, RequestFailure};
-    use crate::samples::Acknowledged;
+    use crate::samples::{Acknowledged, stamp};
 
     /// `request`'s outcome, which the scripted AI has at once.
     fn at_once<T>(request: impl Future<Output = T>) -> T {
@@ -678,8 +692,8 @@ mod tests {
         );
         ai.on_write(area(1).id(), Err(RequestFailure::RateLimited));
 
-        let first = at_once(ai.write_candidates(&evidence(), &area(0), count()));
-        let second = at_once(ai.write_candidates(&evidence(), &area(1), count()));
+        let first = at_once(ai.write_candidates(stamp(), &evidence(), &area(0), count()));
+        let second = at_once(ai.write_candidates(stamp(), &evidence(), &area(1), count()));
 
         let first = first.expect("scripted to write");
         assert_eq!(
@@ -726,7 +740,8 @@ mod tests {
         ai.on_gate(area(2).id(), probability(0.5));
         let areas = [area(0), area(1), area(2)];
 
-        let gate = at_once(ai.check_areas(&evidence(), &areas)).expect("scripted to answer");
+        let gate =
+            at_once(ai.check_areas(stamp(), &evidence(), &areas)).expect("scripted to answer");
 
         assert_eq!(
             gate.content,
@@ -776,8 +791,8 @@ mod tests {
         ai.on_gate(area(0).id(), probability(0.2));
         let areas = [area(0), area(1)];
 
-        let failed = at_once(ai.check_areas(&evidence(), &areas));
-        let again = at_once(ai.check_areas(&evidence(), &areas));
+        let failed = at_once(ai.check_areas(stamp(), &evidence(), &areas));
+        let again = at_once(ai.check_areas(stamp(), &evidence(), &areas));
 
         assert_eq!(failed, Err(RequestFailure::TimedOut));
         assert_eq!(
@@ -797,9 +812,9 @@ mod tests {
         ai.on_check("Why retry?", Err(RequestFailure::TimedOut));
         ai.on_check("Why log?", Ok(answers(0.5, 0.5, 0.5)));
 
-        let first = at_once(ai.check_question(&evidence(), &candidate("Why retry?")));
-        let other = at_once(ai.check_question(&evidence(), &candidate("Why log?")));
-        let again = at_once(ai.check_question(&evidence(), &candidate("Why retry?")));
+        let first = at_once(ai.check_question(stamp(), &evidence(), &candidate("Why retry?")));
+        let other = at_once(ai.check_question(stamp(), &evidence(), &candidate("Why log?")));
+        let again = at_once(ai.check_question(stamp(), &evidence(), &candidate("Why retry?")));
 
         let first = first.expect("scripted to answer");
         assert_eq!(first.content, answers(0.9, 0.1, 0.05), "as scripted");
@@ -827,8 +842,8 @@ mod tests {
         );
         let candidate = candidate_with("Why retry?", "B", 2);
 
-        let passing = at_once(ai.check_question(&evidence(), &candidate));
-        let except = at_once(ai.check_question(&evidence(), &candidate));
+        let passing = at_once(ai.check_question(stamp(), &evidence(), &candidate));
+        let except = at_once(ai.check_question(stamp(), &evidence(), &candidate));
 
         let answers = |answers: &[(CandidateCheck, f64)]| {
             QuestionCheckAnswers::new(
@@ -891,8 +906,10 @@ mod tests {
         ai.on_check_passing("Why retry?");
         let candidate = candidate("Why retry?");
 
-        let deep = at_once(ai.check_question(&evidence(), &candidate)).expect("scripted to pass");
-        let usual = at_once(ai.check_question(&evidence(), &candidate)).expect("scripted to pass");
+        let deep =
+            at_once(ai.check_question(stamp(), &evidence(), &candidate)).expect("scripted to pass");
+        let usual =
+            at_once(ai.check_question(stamp(), &evidence(), &candidate)).expect("scripted to pass");
 
         assert_eq!(deep.content.depth(), deepest, "the depth scripted");
         assert_eq!(
@@ -911,11 +928,13 @@ mod tests {
         let asked = question("Why retry?");
 
         let first = at_once(ai.assess_reasoning(
+            stamp(),
             &Acknowledged("It retries."),
             &evidence(),
             QuestionWithoutKey::from(&asked),
         ));
         let again = at_once(ai.assess_reasoning(
+            stamp(),
             &Acknowledged("It retries once."),
             &evidence(),
             QuestionWithoutKey::from(&asked),
@@ -962,16 +981,27 @@ mod tests {
         let asked = question("Why retry?");
         let criteria = [(0, CriterionOutcome::NotMet)];
 
-        let explained =
-            at_once(ai.explain(&Acknowledged("It retries."), &evidence(), &asked, &criteria));
+        let explained = at_once(ai.explain(
+            stamp(),
+            &Acknowledged("It retries."),
+            &evidence(),
+            &asked,
+            &criteria,
+        ));
         let checked = at_once(ai.check_explanation(
+            stamp(),
             &Acknowledged("It retries."),
             &evidence(),
             &asked,
             std::slice::from_ref(&paragraph),
         ));
-        let again =
-            at_once(ai.explain(&Acknowledged("It retries."), &evidence(), &asked, &criteria));
+        let again = at_once(ai.explain(
+            stamp(),
+            &Acknowledged("It retries."),
+            &evidence(),
+            &asked,
+            &criteria,
+        ));
 
         let explained = explained.expect("scripted to explain");
         assert_eq!(
@@ -1018,13 +1048,13 @@ mod tests {
         ai.on_write(area(0).id(), Ok(Vec::new()));
         let cost = |usd| Cost::new(usd).expect("a cost");
 
-        let unscripted = at_once(ai.check_areas(&evidence(), &[area(0)]));
+        let unscripted = at_once(ai.check_areas(stamp(), &evidence(), &[area(0)]));
         ai.report_cost(Role::Jev, Some(cost(0.25)));
         ai.report_cost(Role::Generator, Some(cost(1.5)));
-        let gate = at_once(ai.check_areas(&evidence(), &[area(0)]));
-        let write = at_once(ai.write_candidates(&evidence(), &area(0), count()));
+        let gate = at_once(ai.check_areas(stamp(), &evidence(), &[area(0)]));
+        let write = at_once(ai.write_candidates(stamp(), &evidence(), &area(0), count()));
         ai.report_cost(Role::Generator, None);
-        let unreported = at_once(ai.write_candidates(&evidence(), &area(0), count()));
+        let unreported = at_once(ai.write_candidates(stamp(), &evidence(), &area(0), count()));
 
         assert_eq!(reported(unscripted), None, "none until a test scripts one");
         assert_eq!(reported(gate), Some(cost(0.25)));
@@ -1035,6 +1065,6 @@ mod tests {
     #[test]
     #[should_panic(expected = "no write scripted")]
     fn a_request_nothing_was_scripted_for_fails_the_test_as_it_is_made() {
-        drop(ScriptedAi::new().write_candidates(&evidence(), &area(0), count()));
+        drop(ScriptedAi::new().write_candidates(stamp(), &evidence(), &area(0), count()));
     }
 }

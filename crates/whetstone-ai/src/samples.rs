@@ -10,17 +10,18 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 use whetstone_core::{
-    Area, AssessmentPolicy, Candidate, CandidateCheck, Change, ConnectedCodeLimit, Connection,
-    ConnectionGroup, Connections, CriterionOutcome, Depth, Evidence, ExcludePatterns, Extent,
-    LineRange, ModelId, OptionLetter, Probability, Question, QuestionCheckAnswers, QuestionType,
-    Relation, ReviewChoices, Tier, TouchedFile, WrittenCandidate, WrittenCitation,
-    WrittenCriterion, WrittenOption, plain_checks, show_rule,
+    Area, AreaFileVersion, AreaSource, AssessmentPolicy, Candidate, CandidateCheck, Change,
+    ConnectedCodeLimit, Connection, ConnectionGroup, Connections, ContentHash, CriterionOutcome,
+    Depth, Evidence, ExcludePatterns, Extent, LineRange, ModelId, OptionLetter, Probability,
+    Question, QuestionCheckAnswers, QuestionType, Relation, RequestId, ReviewChoices, Tier,
+    TouchedFile, Versions, WrittenCandidate, WrittenCitation, WrittenCriterion, WrittenOption,
+    plain_checks, show_rule,
 };
 
 use crate::replay::{GENERATOR_MODEL, JEV_MODEL, connection, received, server};
 use crate::{
-    AiError, GeneratorReply, GeneratorRequest, JevReply, JevRequest, Saved, Timeouts,
-    WrittenParagraph, explanation_paragraphs,
+    AiError, GeneratorReply, GeneratorRequest, JevReply, JevRequest, Saved, Stamp, Timeouts,
+    WrittenParagraph, base_prompts_hash, explanation_paragraphs,
 };
 
 pub(crate) fn jev_model() -> ModelId {
@@ -29,6 +30,30 @@ pub(crate) fn jev_model() -> ModelId {
 
 pub(crate) fn generator_model() -> ModelId {
     ModelId::new(GENERATOR_MODEL.to_owned())
+}
+
+/// The stamp the samples' requests carry: request 1, behind [`versions`].
+pub(crate) fn stamp() -> Stamp {
+    Stamp {
+        request: RequestId::new(1),
+        versions: versions(),
+    }
+}
+
+/// The versions behind the samples' requests: a made-up Whetstone version,
+/// the base prompts as bundled, the current assessment policy and the
+/// sample area's file, with a made-up hash.
+pub(crate) fn versions() -> Versions {
+    Versions::new(
+        "0.0.0-sample".to_owned(),
+        base_prompts_hash(),
+        AssessmentPolicy::current().version(),
+        vec![AreaFileVersion::new(
+            area().id().clone(),
+            AreaSource::Repository,
+            ContentHash::new("5a3e".to_owned()).expect("lowercase hexadecimal"),
+        )],
+    )
 }
 
 /// The area the samples are about.
