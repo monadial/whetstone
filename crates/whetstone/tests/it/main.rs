@@ -15,6 +15,7 @@ mod config;
 mod connected_code;
 mod connected_code_limits;
 mod dirs;
+mod graph_cache;
 mod jobs;
 mod links_and_mentions;
 mod navigation;

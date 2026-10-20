@@ -20,7 +20,8 @@ use whetstone_core::ShowcaseProject;
 /// What the app starts from: a global config file, if any, the environment
 /// variables besides `HOME`, the showcase project, and the directory
 /// Whetstone starts in. Unless the variables set `TMPDIR`, the system
-/// temporary directory is one of the session's own.
+/// temporary directory is one of the session's own, and unless they set
+/// `XDG_CACHE_HOME`, the cache folder is in the session's home directory.
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct Setup<'a> {
     /// The contents of `config.toml` in the global config directory.
@@ -40,7 +41,9 @@ pub(crate) const NO_COLOR: &[(&str, &str)] = &[("NO_COLOR", "1")];
 
 /// A running app in a terminal of a given size. Its home directory is a
 /// fresh temporary directory, so the real one is never read, and so is its
-/// system temporary directory, unless the test sets `TMPDIR`.
+/// system temporary directory, unless the test sets `TMPDIR`. Its graph
+/// cache is in that home directory too, unless the test sets
+/// `XDG_CACHE_HOME`.
 #[derive(Debug)]
 pub(crate) struct Session {
     app: App,
