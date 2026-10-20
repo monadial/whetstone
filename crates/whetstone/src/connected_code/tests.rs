@@ -410,7 +410,7 @@ fn calls_of_low_confidence_are_not_connected_code() {
 }
 
 #[test]
-fn callables_the_engine_makes_up_are_never_connected_code() {
+fn a_callable_the_engine_makes_up_is_connected_code_only_if_it_has_lines_of_its_own() {
     let repo = TestRepo::new();
     let billing = |test: &str| {
         format!(
@@ -418,7 +418,7 @@ fn callables_the_engine_makes_up_are_never_connected_code() {
         )
     };
     // The engine makes up a synthetic callable for the route's inline
-    // handler, and for the framework that calls it.
+    // handler, on its lines, and for the framework that calls it, on none.
     repo.write("billing.js", billing("amount > 0")).write(
         "routes.js",
         "const express = require('express');\n\
@@ -440,7 +440,10 @@ fn callables_the_engine_makes_up_are_never_connected_code() {
 
     assert_eq!(
         connected(&repo, id),
-        ["routes.js 10-12 high: calls charge in billing.js"]
+        [
+            "routes.js 6-8 high: calls charge in billing.js",
+            "routes.js 10-12 high: calls charge in billing.js",
+        ]
     );
 }
 

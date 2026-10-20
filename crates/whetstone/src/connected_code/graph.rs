@@ -168,12 +168,12 @@ impl Graph {
     /// decides. A function the change deletes is not in the graph, so it
     /// has no connected code.
     ///
-    /// Callables the engine marks synthetic are never changed or
-    /// connected: those it makes up with no lines of their own, such as a
-    /// framework's entry point, and also the inline route handlers it names
-    /// itself in JavaScript, which do have lines. Calls of low confidence
-    /// are left out, and so is any callable in a file the change touches,
-    /// which is sent already.
+    /// Callables with no lines of their own, which the engine makes up for
+    /// a framework's entry point, are never changed or connected. Those it
+    /// marks synthetic but places in the file, such as an inline route
+    /// handler in JavaScript, are, since they are real code. Calls of low
+    /// confidence are left out, and so is any callable in a file the change
+    /// touches, which is sent already.
     pub(crate) fn connections(&self, change: &Change) -> Vec<Connection> {
         let touched = lines::touched(change);
         let paths: HashMap<FileId, &str> = self
@@ -185,7 +185,7 @@ impl Graph {
         let placed = |id: &CallableId| {
             let callable = self.0.callables.get(id)?;
             let path = paths.get(&callable.file)?;
-            (!callable.synthetic && callable.start_line > 0).then_some((callable, *path))
+            (callable.start_line > 0).then_some((callable, *path))
         };
         let changed: HashSet<CallableId> = self
             .0
