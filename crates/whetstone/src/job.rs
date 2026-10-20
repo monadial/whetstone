@@ -51,15 +51,15 @@ pub enum JobOutcome<T> {
     Cancelled,
 }
 
-/// How long the app waits for a job before it gives up on it: once `after`
-/// has passed from when it was set, unless the job has ended by then, the
-/// UI loop hands the app [`Message::TimeUp`](crate::Message::TimeUp).
+/// How long the app waits for a job before it gives up on it: once
+/// `duration` has passed from when it was set, unless the job has ended by
+/// then, the UI loop hands the app [`Message::TimeUp`](crate::Message::TimeUp).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TimeLimit {
     /// The job it is for.
     pub job: JobId,
     /// How long it runs, from when the app set it.
-    pub after: Duration,
+    pub duration: Duration,
 }
 
 /// A job's report, sent when it ends.
@@ -119,6 +119,17 @@ impl<T> fmt::Debug for Job<T> {
     }
 }
 
+/// Whose turn it is among the jobs started one at a time.
+#[derive(Debug)]
+enum Turn<T> {
+    /// None of them runs.
+    Free,
+    /// The job `by` runs, from when it is handed to the UI loop until its
+    /// report comes back, and `next`, the newest started since, waits for
+    /// it, if one was.
+    Taken { by: JobId, next: Option<Job<T>> },
+}
+
 /// The app's side of its background jobs: it starts them, for the UI loop
 /// to take and run, and accepts a result only from a job it still waits
 /// for (rule 24). Dropping it, as quitting does, cancels every job.
@@ -133,12 +144,8 @@ pub struct Jobs<T> {
     /// The jobs the app waits for, with their tokens: started, and neither
     /// cancelled, forgotten nor accepted.
     outstanding: Vec<(JobId, CancellationToken)>,
-    /// The job started one at a time whose turn it is, from when it is
-    /// handed to the UI loop until its report comes back.
-    turn: Option<JobId>,
-    /// The newest job started one at a time while another had its turn,
-    /// waiting for that one to end.
-    next_turn: Option<Job<T>>,
+    /// Whose turn it is among the jobs started one at a time.
+    turn: Turn<T>,
     /// Time limits set since the UI loop last took them.
     time_limits: Vec<TimeLimit>,
 }
@@ -152,8 +159,7 @@ impl<T> Jobs<T> {
             next_id: 0,
             started: Vec::new(),
             outstanding: Vec::new(),
-            turn: None,
-            next_turn: None,
+            turn: Turn::Free,
             time_limits: Vec::new(),
         }
     }
@@ -181,13 +187,18 @@ impl<T> Jobs<T> {
     ) -> JobId {
         let job = self.job(body);
         let id = job.id;
-        if self.turn.is_none() {
-            self.turn = Some(id);
-            self.started.push(job);
-        } else if let Some(replaced) = self.next_turn.replace(job) {
-            self.stop_waiting(replaced.id);
-            replaced.token.cancel();
-            self.started.push(replaced);
+        match &mut self.turn {
+            Turn::Free => {
+                self.turn = Turn::Taken { by: id, next: None };
+                self.started.push(job);
+            }
+            Turn::Taken { next, .. } => {
+                if let Some(replaced) = next.replace(job) {
+                    self.stop_waiting(replaced.id);
+                    replaced.token.cancel();
+                    self.started.push(replaced);
+                }
+            }
         }
         id
     }
@@ -208,10 +219,10 @@ impl<T> Jobs<T> {
         }
     }
 
-    /// Sets a time limit of `after`, from now, on job `id`, for the UI loop
-    /// to time.
-    pub fn limit(&mut self, id: JobId, after: Duration) {
-        self.time_limits.push(TimeLimit { job: id, after });
+    /// Sets a time limit of `duration`, from now, on job `id`, for the UI
+    /// loop to time.
+    pub fn limit(&mut self, id: JobId, duration: Duration) {
+        self.time_limits.push(TimeLimit { job: id, duration });
     }
 
     /// Cancels job `id`, if the app still waits for it. Its body may still
@@ -234,12 +245,17 @@ impl<T> Jobs<T> {
     /// already accepted is ignored. Every report comes here, so a job's end
     /// passes its turn on, if it had one, however it ended.
     pub fn accept(&mut self, finished: Finished<T>) -> Option<Finished<T>> {
-        if self.turn == Some(finished.id) {
-            self.turn = self.next_turn.take().map(|next| {
-                let id = next.id;
-                self.started.push(next);
-                id
-            });
+        if let Turn::Taken { by, next } = &mut self.turn
+            && *by == finished.id
+        {
+            self.turn = match next.take() {
+                Some(next) => {
+                    let by = next.id;
+                    self.started.push(next);
+                    Turn::Taken { by, next: None }
+                }
+                None => Turn::Free,
+            };
         }
         self.stop_waiting(finished.id).map(|_| finished)
     }

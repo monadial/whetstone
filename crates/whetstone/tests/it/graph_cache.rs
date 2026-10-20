@@ -46,7 +46,7 @@ const CHARGE_CONNECTED: [[&str; 5]; 2] = [
 /// Starts the app without colour in `repo`, in a 120 by 60 terminal, with
 /// `cache_home` as `XDG_CACHE_HOME` and `temp` as the system temporary
 /// directory.
-fn started_with(repo: &TestRepo, cache_home: &Path, temp: &Path) -> Session {
+pub(crate) fn started_with(repo: &TestRepo, cache_home: &Path, temp: &Path) -> Session {
     Session::start(
         Setup {
             variables: &[
@@ -73,7 +73,7 @@ fn review_newest(repo: &TestRepo, cache_home: &Path) {
 
 /// The files in the graph cache under `cache_home`: its `graphs` folder in
 /// Whetstone's cache folder.
-fn graphs(cache_home: &Path) -> Vec<PathBuf> {
+pub(crate) fn graphs(cache_home: &Path) -> Vec<PathBuf> {
     let mut graphs: Vec<PathBuf> = fs::read_dir(cache_home.join("whetstone/graphs"))
         .expect("read the graphs folder")
         .map(|entry| entry.expect("a graphs folder entry").path())
