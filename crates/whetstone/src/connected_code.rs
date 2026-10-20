@@ -25,6 +25,7 @@
 //! [ADR 0002]: https://github.com/monadial/whetstone/blob/main/docs/adr/0002-embed-cgg-for-connected-code.md
 
 mod analysis;
+mod cache;
 mod detect;
 mod graph;
 mod lines;

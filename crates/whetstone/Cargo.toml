@@ -35,6 +35,9 @@ clap = { version = "4.6", features = ["derive"] }
 # the UI loop can read terminal input as an async stream. The code uses it
 # through `ratatui::crossterm`, so the version must stay ratatui's.
 crossterm = { version = "0.29", default-features = false, features = ["event-stream"] }
+# Compresses cached connected-code graphs. Built on the `zlib-rs` backend,
+# which gix already brings, so no second deflate implementation is added.
+flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
 # `StreamExt::next` reads crossterm's `EventStream`. Already in the tree
 # through tokio-util.
 futures-util = { version = "0.3", default-features = false }
@@ -59,10 +62,15 @@ ratatui = { version = "0.30", features = ["unstable-rendered-line-info"] }
 # tree through crossterm and gix.
 rustix = { version = "1.1", features = ["process"] }
 serde = { version = "1", features = ["derive"] }
+# Cached connected-code graphs are stored as JSON, through their serde
+# implementations.
+serde_json = "1"
 signal-hook = "0.3"
 # The private directory a commit's files are written to for cgg: created
 # mode 0700 with an unpredictable name, and removed on drop, even while a
-# panic unwinds. Already a dev-dependency.
+# panic unwinds. Also writes a cached graph to a temporary file in the cache
+# folder, then renames it into place, so a crash never leaves a half-written
+# graph. Already in the tree as a dev-dependency.
 tempfile = "3"
 thiserror = "2"
 # The UI loop's runtime: one thread (`rt`) waiting with `select!` (`macros`)

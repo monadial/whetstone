@@ -895,6 +895,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0ce7134b9999ecaf8bcd65542e436736ef32ddca1b3e06094cb6ec5755203b80"
 
 [[package]]
+name = "flate2"
+version = "1.1.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e634e2e0ebac1ee034020da1ca582e17ffe4e0f5e985823721e168928136dcb"
+dependencies = [
+ "zlib-rs",
+]
+
+[[package]]
 name = "fnv"
 version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4085,6 +4094,7 @@ dependencies = [
  "cgg-walk",
  "clap",
  "crossterm",
+ "flate2",
  "futures-util",
  "gix",
  "insta",
@@ -4093,6 +4103,7 @@ dependencies = [
  "rexpect",
  "rustix",
  "serde",
+ "serde_json",
  "signal-hook",
  "tempfile",
  "thiserror 2.0.21",
