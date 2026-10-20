@@ -3,16 +3,23 @@
 //! from evidence rather than guessed.
 //!
 //! [`run`] is the whole program: `main.rs` only passes in the process's
-//! arguments and [`Environment`]. Its `check` command reads the examples in
-//! `showcase/labels/` ([`Labels::parse`]) and checks them against the
-//! showcase project ([`Labels::prepare`]), offline and free, as the Jev
-//! calls Practice would make for them, built with the AI crate's request
-//! builders. The tool only reads the assessment policy: setting its values
-//! is a recorded decision that bumps its version (rule 38). It prints
-//! labels by ID, never an example's text, and logs nothing.
+//! arguments and [`Environment`]. It has two commands:
+//!
+//! - `check` reads the examples in `showcase/labels/` ([`Labels::parse`]) and
+//!   checks them against the showcase project ([`Labels::prepare`]),
+//!   offline and free;
+//! - `measure` also sends each example's Jev call three times
+//!   ([`measure()`]), and prints the [`Report`] as Markdown.
+//!
+//! Jev is called exactly as Practice calls it, with the AI crate's request
+//! builders and strict decoders. The tool only reads the assessment policy:
+//! setting its values is a recorded decision that bumps its version (rule
+//! 38). It prints labels by ID, never an example's text, and logs nothing.
 
 mod labels;
+mod measure;
 mod prepare;
+mod report;
 #[cfg(test)]
 mod samples;
 
@@ -20,8 +27,12 @@ pub use crate::labels::{
     CandidateExample, Example, ExampleParagraph, Expected, ExplanationExample, GateExample, Label,
     LabelDate, LabelError, Labeller, Labels, Place, ResponseExample,
 };
+pub use crate::measure::measure;
 pub use crate::prepare::{Call, Item, PrepareError, Prepared};
-/// The injected environment the tool runs in (rule 55): the app's own.
+pub use crate::report::{
+    CutOffs, Failure, JobReport, Measured, Measurements, Report, Row, SWEEP, Spread,
+};
+/// The injected environment the key is read from (rule 55): the app's own.
 pub use whetstone::Environment;
 
 use std::ffi::OsString;
@@ -33,13 +44,15 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
+use whetstone_ai::{AiError, OpenRouter, SecretString};
 use whetstone_core::{Job, ModelId};
 
-/// How many times each example's call is sent to measure it.
+/// How many times `measure` sends each example's call.
 pub const RUNS: NonZeroUsize = NonZeroUsize::new(3).expect("3 is not 0");
 
-/// The Jev model the examples' calls ask: the app's default, which the
-/// assessment policy is checked against.
+/// The Jev model the examples are measured with unless `--model` names
+/// another: the app's default, which the assessment policy is checked
+/// against.
 pub const DEFAULT_JEV_MODEL: &str = "typesafe/jev-1.14";
 
 /// The examples' folder, beside the showcase project in this checkout.
@@ -47,8 +60,12 @@ const LABELS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../showcase/labels
 
 /// Measures Jev against the showcase project's labelled examples.
 ///
-/// `check` reads the examples and checks them against the showcase
-/// project, offline.
+/// `check` reads and checks the examples, offline. `measure` also sends each
+/// example's Jev call three times, through `OpenRouter` with the key in
+/// `OPENROUTER_API_KEY`, and prints how often Jev's clear answers disagree
+/// with the labels at candidate cut-offs, how many answers are unclear, and
+/// how much answers spread across runs. Neither changes the assessment
+/// policy.
 #[derive(Debug, Parser)]
 #[command(name = "whetstone-labels", version)]
 struct Cli {
@@ -64,6 +81,16 @@ enum Command {
         /// The folder of labelled examples [default: showcase/labels]
         #[arg(long)]
         labels: Option<PathBuf>,
+    },
+    /// Send each labelled example's Jev call three times and print the
+    /// report as Markdown. Needs `OPENROUTER_API_KEY`, and costs credit.
+    Measure {
+        /// The folder of labelled examples [default: showcase/labels]
+        #[arg(long)]
+        labels: Option<PathBuf>,
+        /// The Jev model to measure.
+        #[arg(long, default_value = DEFAULT_JEV_MODEL)]
+        model: String,
     },
 }
 
@@ -86,6 +113,18 @@ pub enum ToolError {
     /// An example doesn't fit the showcase project.
     #[error(transparent)]
     Prepare(#[from] PrepareError),
+    /// `measure` needs the key, and it isn't set.
+    #[error("OPENROUTER_API_KEY is not set: `measure` calls Jev through OpenRouter")]
+    NoKey,
+    /// The key isn't valid Unicode.
+    #[error("OPENROUTER_API_KEY is not valid Unicode")]
+    KeyNotUnicode,
+    /// The connection couldn't be made.
+    #[error("cannot call Jev: {0}")]
+    Connection(#[source] AiError),
+    /// The runtime the calls run on couldn't start.
+    #[error("cannot start the runtime the calls run on")]
+    Runtime(#[source] io::Error),
 }
 
 /// Runs the tool with the given command-line arguments, the first of which
@@ -137,6 +176,26 @@ fn execute(command: Command, environment: &Environment) -> Result<String, ToolEr
             let model = ModelId::new(DEFAULT_JEV_MODEL.to_owned());
             let prepared = load(&dir)?.prepare(&showcase, &model)?;
             Ok(summary(&prepared))
+        }
+        Command::Measure { labels, model } => {
+            // The key is read here and only here, from the environment
+            // `main.rs` captured, and goes straight into the connection,
+            // which exposes it only where the auth header is built (rule 41).
+            let key = environment
+                .get("OPENROUTER_API_KEY")
+                .ok_or(ToolError::NoKey)?
+                .to_str()
+                .ok_or(ToolError::KeyNotUnicode)?;
+            let connection = OpenRouter::new(Some(SecretString::from(key.to_owned())))
+                .map_err(ToolError::Connection)?;
+            let dir = labels_dir(labels.as_deref(), environment);
+            let prepared = load(&dir)?.prepare(&showcase, &ModelId::new(model))?;
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(ToolError::Runtime)?;
+            let measurements = runtime.block_on(measure(&connection, &prepared, RUNS));
+            Ok(Report::new(measurements).to_string())
         }
     }
 }
@@ -253,6 +312,24 @@ mod tests {
                 "no seed labels {job:?}"
             );
         }
+    }
+
+    #[test]
+    fn measuring_reads_the_key_from_the_injected_environment() {
+        let measure = || Command::Measure {
+            labels: None,
+            model: DEFAULT_JEV_MODEL.to_owned(),
+        };
+
+        let unset = execute(measure(), &Environment::default()).unwrap_err();
+        assert!(matches!(unset, ToolError::NoKey), "{unset}");
+
+        let blank: Environment = [("OPENROUTER_API_KEY", " ")].into_iter().collect();
+        let blank = execute(measure(), &blank).unwrap_err();
+        assert!(
+            matches!(blank, ToolError::Connection(AiError::NoKey)),
+            "{blank}"
+        );
     }
 
     #[test]
