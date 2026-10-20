@@ -17,10 +17,12 @@ fn xdg_variables_choose_the_directories() {
             ("HOME", "/home/learner"),
             ("XDG_CONFIG_HOME", "/xdg/config"),
             ("XDG_STATE_HOME", "/xdg/state"),
+            ("XDG_CACHE_HOME", "/xdg/cache"),
         ]),
         Ok(Dirs {
             config: PathBuf::from("/xdg/config/whetstone"),
             state: PathBuf::from("/xdg/state/whetstone"),
+            cache: PathBuf::from("/xdg/cache/whetstone"),
         })
     );
 }
@@ -32,6 +34,7 @@ fn without_xdg_variables_the_directories_are_under_home() {
         Ok(Dirs {
             config: PathBuf::from("/home/learner/.config/whetstone"),
             state: PathBuf::from("/home/learner/.local/state/whetstone"),
+            cache: PathBuf::from("/home/learner/.cache/whetstone"),
         })
     );
 }
@@ -43,10 +46,12 @@ fn empty_or_relative_xdg_variables_are_ignored() {
             ("HOME", "/home/learner"),
             ("XDG_CONFIG_HOME", ""),
             ("XDG_STATE_HOME", "relative/state"),
+            ("XDG_CACHE_HOME", "relative/cache"),
         ]),
         Ok(Dirs {
             config: PathBuf::from("/home/learner/.config/whetstone"),
             state: PathBuf::from("/home/learner/.local/state/whetstone"),
+            cache: PathBuf::from("/home/learner/.cache/whetstone"),
         })
     );
 }

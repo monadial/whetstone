@@ -92,6 +92,9 @@ pub struct Dirs {
     /// The state directory, which holds the log file:
     /// `$XDG_STATE_HOME/whetstone`, by default `~/.local/state/whetstone`.
     pub state: PathBuf,
+    /// The cache directory, which holds connected-code graphs:
+    /// `$XDG_CACHE_HOME/whetstone`, by default `~/.cache/whetstone`.
+    pub cache: PathBuf,
 }
 
 /// Neither an XDG variable nor `HOME` says where a directory is.
@@ -111,6 +114,7 @@ impl Dirs {
         Ok(Self {
             config: BaseDir::CONFIG.resolve(environment)?,
             state: BaseDir::STATE.resolve(environment)?,
+            cache: BaseDir::CACHE.resolve(environment)?,
         })
     }
 }
@@ -134,6 +138,11 @@ impl BaseDir {
         name: "state",
         xdg_variable: "XDG_STATE_HOME",
         under_home: ".local/state",
+    };
+    const CACHE: Self = Self {
+        name: "cache",
+        xdg_variable: "XDG_CACHE_HOME",
+        under_home: ".cache",
     };
 
     /// Whetstone's folder inside this base directory.
