@@ -1,0 +1,10 @@
+# The relevance gate: one yes/no question per chosen area, about the change
+# in the state's `evidence`.
+#
+# Placeholders: `{name}` and `{description}` are the area's. What yes and
+# no mean is the same for every area. Area prompts are never sent to Jev.
+
+[area]
+instructions = "This change gives a learner something worth answering about the area {name}: {description}."
+yes = "The change does something in this area that a fair question could ask about, and answering it would need understanding the change."
+no = "The change doesn't touch this area, or touches it only in passing, so any question about it would be forced."

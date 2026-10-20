@@ -18,7 +18,8 @@
 //! interface.
 //!
 //! Above that layer, each AI call has a builder and a decoder, between
-//! whetstone-core's domain and these requests: [`candidates_request`] and
+//! whetstone-core's domain and these requests: [`gate_request`] and
+//! [`gate_answers`] ask the relevance gate, [`candidates_request`] and
 //! [`CandidatesOutput`] write candidates, and [`question_check_request`] and
 //! [`question_check_answers`] check one. Their instructions are Whetstone's
 //! base prompts, bundled into this crate, whose version is
@@ -33,6 +34,7 @@ mod candidates;
 mod connection;
 mod evidence;
 mod failure;
+mod gate;
 mod generator;
 mod jev;
 #[cfg(test)]
@@ -56,6 +58,7 @@ pub use crate::connection::{
     CONNECT_TIMEOUT, GENERATOR_TIMEOUT, JEV_TIMEOUT, OPENROUTER_BASE_URL, OpenRouter, Timeouts,
 };
 pub use crate::failure::AiError;
+pub use crate::gate::{gate_answers, gate_request};
 pub use crate::generator::{GeneratorReply, GeneratorRequest};
 pub use crate::jev::{JevAnswer, JevQuestion, JevReply, JevRequest, YesNoMeanings};
 pub use crate::openrouter_ai::{Models, OpenRouterAi};
