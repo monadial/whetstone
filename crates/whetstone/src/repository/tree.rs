@@ -50,6 +50,8 @@ impl TreeEntry {
 /// only when asked for.
 pub(crate) struct CommitTree<'r> {
     git: &'r gix::Repository,
+    /// The tree's own ID.
+    id: gix::ObjectId,
     /// Every file, in path order. Directories are not files.
     entries: Vec<TreeEntry>,
 }
@@ -67,6 +69,7 @@ impl fmt::Debug for CommitTree<'_> {
 pub(super) fn open(git: &gix::Repository, id: CommitId) -> Result<CommitTree<'_>, LoadError> {
     let object_id = gix::ObjectId::from_hex(id.full().as_bytes())?;
     let tree = git.find_commit(object_id)?.tree()?;
+    let tree_id = tree.id;
     let mut entries: Vec<TreeEntry> = tree
         .traverse()
         .breadthfirst
@@ -91,10 +94,19 @@ pub(super) fn open(git: &gix::Repository, id: CommitId) -> Result<CommitTree<'_>
     // Two paths that are not UTF-8 can read the same once their invalid
     // bytes are replaced; the first is kept, so a path names one file.
     entries.dedup_by(|later, earlier| later.path == earlier.path);
-    Ok(CommitTree { git, entries })
+    Ok(CommitTree {
+        git,
+        id: tree_id,
+        entries,
+    })
 }
 
 impl CommitTree<'_> {
+    /// The tree's ID, which every commit with the same files shares.
+    pub(crate) fn id(&self) -> gix::ObjectId {
+        self.id
+    }
+
     /// Every file in the tree, in path order. Directories are not listed.
     pub(crate) fn entries(&self) -> &[TreeEntry] {
         &self.entries

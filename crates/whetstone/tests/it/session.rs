@@ -85,6 +85,7 @@ impl Session {
                     .unwrap_or_else(whetstone::embedded_showcase),
                 repository,
                 environment.temp_dir(),
+                &dirs.cache,
             ),
             width,
             height,

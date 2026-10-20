@@ -2,20 +2,12 @@
 //! machine so that going back, retrying or practising on it again does not
 //! analyse it again.
 
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "wired into the outbound review by the #63 integration"
-    )
-)]
-
 use std::fs::{DirBuilder, File};
 use std::io::{self, Read as _, Write as _};
 use std::os::unix::fs::DirBuilderExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::Once;
-use std::time::SystemTime;
+use std::time::{Instant, SystemTime};
 
 use flate2::Compression;
 use flate2::read::GzDecoder;
@@ -80,9 +72,17 @@ impl GraphCache {
     /// hold a `T`, is a miss, and is removed so the caller's rebuilt graph
     /// replaces it.
     pub(crate) fn get<T: DeserializeOwned>(&self, key: &GraphKey) -> Option<T> {
+        let started = Instant::now();
         let path = self.graphs.join(key.file_name());
         match read(&path) {
-            Ok(graph) => Some(graph),
+            Ok((graph, bytes)) => {
+                tracing::info!(
+                    bytes,
+                    ms = started.elapsed().as_millis(),
+                    "loaded a cached graph"
+                );
+                Some(graph)
+            }
             Err(Miss::Absent) => None,
             Err(Miss::Damaged) => {
                 tracing::info!("a cached graph cannot be read; removing it");
@@ -97,6 +97,7 @@ impl GraphCache {
     /// Stores `graph` under `key`, replacing what was there, then removes
     /// the least recently used graphs until the rest fit in the cap.
     pub(crate) fn put<T: Serialize>(&self, key: &GraphKey, graph: &T) {
+        let started = Instant::now();
         let json = match serde_json::to_vec(graph) {
             Ok(json) => json,
             Err(error) => {
@@ -105,8 +106,17 @@ impl GraphCache {
                 return;
             }
         };
-        if let Err(error) = self.write(key, &json).and_then(|()| self.evict()) {
-            self.warn_unwritable(&error);
+        match self
+            .write(key, &json)
+            .and_then(|bytes| Ok((bytes, self.evict()?)))
+        {
+            Ok((bytes, removed)) => tracing::info!(
+                bytes,
+                removed,
+                ms = started.elapsed().as_millis(),
+                "cached a graph"
+            ),
+            Err(error) => self.warn_unwritable(&error),
         }
     }
 
@@ -125,9 +135,9 @@ impl GraphCache {
 
     /// Writes `json` compressed to a temporary file in the `graphs` folder,
     /// then renames it to `key`'s file, so a crash never leaves a
-    /// half-written graph. A temporary file that a failed write leaves is
-    /// removed when it drops.
-    fn write(&self, key: &GraphKey, json: &[u8]) -> io::Result<()> {
+    /// half-written graph, and gives the file's size. A temporary file that
+    /// a failed write leaves is removed when it drops.
+    fn write(&self, key: &GraphKey, json: &[u8]) -> io::Result<u64> {
         let mut file = tempfile::NamedTempFile::new_in(&self.graphs)?;
         let mut encoder = GzEncoder::new(&mut file, Compression::default());
         encoder.write_all(json)?;
@@ -135,8 +145,9 @@ impl GraphCache {
         // Stamped rather than left to the file system, whose clock can be
         // too coarse to tell two writes in a row apart.
         file.as_file().set_modified(SystemTime::now())?;
+        let bytes = file.as_file().metadata()?.len();
         file.persist(self.graphs.join(key.file_name()))?;
-        Ok(())
+        Ok(bytes)
     }
 
     /// Removes the least recently used files in the `graphs` folder until
@@ -144,8 +155,8 @@ impl GraphCache {
     /// Every file counts, so one left by an older format or engine version,
     /// or a temporary file left by a crash, is removed in its turn. A file
     /// that goes meanwhile, because another Whetstone shares the folder, is
-    /// not an error.
-    fn evict(&self) -> io::Result<()> {
+    /// not an error. Gives how many files it removed.
+    fn evict(&self) -> io::Result<usize> {
         let mut files: Vec<(SystemTime, u64, PathBuf)> = std::fs::read_dir(&self.graphs)?
             .filter_map(|entry| {
                 let entry = entry.ok()?;
@@ -156,19 +167,36 @@ impl GraphCache {
         let mut total: u64 = files.iter().map(|(_, size, _)| size).sum();
         // Oldest last use first.
         files.sort();
+        let mut removed = 0;
         for (_, size, path) in files {
             if total <= self.cap {
                 break;
             }
             match std::fs::remove_file(path) {
-                Ok(()) => {}
+                Ok(()) => removed += 1,
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {}
                 Err(error) => return Err(error),
             }
             total -= size;
         }
-        Ok(())
+        Ok(removed)
     }
+}
+
+/// Which tree a [`Snapshot`](super::Snapshot) shows, which names its graph
+/// in the cache.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SnapshotId {
+    /// A commit's tree in the learner's repository, by its ID, which every
+    /// commit with the same files shares.
+    Tree(gix::ObjectId),
+    /// The tree at a showcase change, by the change's position in the
+    /// showcase project this Whetstone version ships.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the showcase project's snapshot arrives with #65")
+    )]
+    Showcase(usize),
 }
 
 /// What one cached graph was built from, by which engine version, stored in
@@ -195,6 +223,15 @@ enum Source {
 }
 
 impl GraphKey {
+    /// The key for the graph of the tree `snapshot` names, found by version
+    /// `engine` of the engine.
+    pub(crate) fn of(snapshot: SnapshotId, engine: &str) -> Self {
+        match snapshot {
+            SnapshotId::Tree(tree) => Self::tree(tree, engine),
+            SnapshotId::Showcase(position) => Self::showcase(position, engine),
+        }
+    }
+
     /// The key for a commit's graph: the commit's tree ID, and the version of
     /// the engine that analyses it.
     pub(crate) fn tree(tree: gix::ObjectId, engine: &str) -> Self {
@@ -236,6 +273,18 @@ impl GraphKey {
     }
 }
 
+#[cfg(test)]
+impl GraphKey {
+    /// The same key in another cache format, as another Whetstone release
+    /// makes it.
+    pub(super) fn in_another_format(self) -> Self {
+        Self {
+            format: FORMAT + 1,
+            ..self
+        }
+    }
+}
+
 /// `text` with every byte other than an ASCII letter, a digit or `.` written
 /// as `_` and two hex digits, so it is safe in a file name, never contains
 /// the `-` that separates a key's parts, and two texts never escape alike.
@@ -261,12 +310,13 @@ enum Miss {
 }
 
 /// The graph in the entry at `path`, which then becomes the most recently
-/// used.
-fn read<T: DeserializeOwned>(path: &Path) -> Result<T, Miss> {
+/// used, and the entry's size.
+fn read<T: DeserializeOwned>(path: &Path) -> Result<(T, u64), Miss> {
     let file = File::open(path).map_err(|error| match error.kind() {
         io::ErrorKind::NotFound => Miss::Absent,
         _ => Miss::Damaged,
     })?;
+    let bytes = file.metadata().map_err(|_| Miss::Damaged)?.len();
     let mut json = Vec::new();
     GzDecoder::new(&file)
         .read_to_end(&mut json)
@@ -275,7 +325,7 @@ fn read<T: DeserializeOwned>(path: &Path) -> Result<T, Miss> {
     // A hit stands even if its last use cannot be refreshed: the entry may
     // then be removed sooner than it should be, and is rebuilt.
     let _refreshed = file.set_modified(SystemTime::now());
-    Ok(graph)
+    Ok((graph, bytes))
 }
 
 #[cfg(test)]

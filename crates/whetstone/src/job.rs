@@ -14,6 +14,8 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use whetstone_core::{CommitId, Connections};
 
+use crate::connected_code::GraphOrigin;
+
 /// A job's identity, unique among the jobs one [`Jobs`] starts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct JobId(u64);
@@ -28,6 +30,8 @@ pub enum JobOutput {
         commit: CommitId,
         /// What was found, or why there is none.
         connections: Connections,
+        /// Whether its graph was analysed or came from the cache.
+        origin: GraphOrigin,
     },
 }
 

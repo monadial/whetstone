@@ -18,25 +18,44 @@ use whetstone_core::{Change, CommitId, ExcludePatterns};
 use super::*;
 use crate::repository::test_repo::{TestRepo, files_under};
 
-/// The connected code `find` finds for the commit `id` of `repo`, each
-/// connection described as its path, lines, tier and relations, after
-/// checking that it left nothing in the temporary directory.
+/// The connected code `find` finds for the commit `id` of `repo`, with an
+/// empty cache, each connection described as its path, lines, tier and
+/// relations, after checking that it left nothing in the temporary
+/// directory.
 fn connected(repo: &TestRepo, id: CommitId) -> Vec<String> {
     let temp = TempDir::new().expect("create a temporary directory");
+    let cache = TempDir::new().expect("create a cache folder");
 
-    let (_, found) = found_in(repo, id, temp.path());
+    let found = find_in(repo, id, temp.path(), &cache_in(cache.path()));
 
     assert_eq!(
         files_under(temp.path()),
         Vec::<String>::new(),
         "left behind"
     );
+    described(&found)
+}
+
+/// What `find` finds for the commit `id` of `repo`, writing any files it
+/// analyses in `temp_dir` and caching its graph in `cache`.
+fn find_in(repo: &TestRepo, id: CommitId, temp_dir: &Path, cache: &GraphCache) -> Found {
+    let (_, found) = found_in(repo, id, temp_dir, cache);
+    found
+}
+
+/// The graph cache in the cache folder `folder`, as the app opens it.
+fn cache_in(folder: &Path) -> GraphCache {
+    GraphCache::open(folder, GraphCache::CAP)
+}
+
+/// The connections of `found`, each described as [`describe`] does.
+fn described(found: &Found) -> Vec<String> {
     found.connections().iter().map(describe).collect()
 }
 
 /// The change of the commit `id` of `repo`, and what `find` finds for it,
-/// analysed in `temp`.
-fn found_in(repo: &TestRepo, id: CommitId, temp: &Path) -> (Change, Found) {
+/// analysed in `temp` and cached in `cache`.
+fn found_in(repo: &TestRepo, id: CommitId, temp: &Path, cache: &GraphCache) -> (Change, Found) {
     let repository = repo.open();
     let change = repository.load(id).expect("load the change");
     let found = repository
@@ -47,6 +66,7 @@ fn found_in(repo: &TestRepo, id: CommitId, temp: &Path) -> (Change, Found) {
                 &change,
                 &ExcludePatterns::default(),
                 &AnalysisDirs::new(temp.to_path_buf()),
+                cache,
             )
         })
         .expect("read the commit's tree")
@@ -96,6 +116,10 @@ impl Memory {
 
 impl Snapshot for Memory {
     type Error = Infallible;
+
+    fn id(&self) -> SnapshotId {
+        SnapshotId::Showcase(0)
+    }
 
     fn files(&self) -> Result<Vec<SnapshotFile>, Infallible> {
         Ok(self
@@ -162,6 +186,151 @@ fn a_rust_change_connects_to_the_callers_and_callees_of_the_method_it_modifies()
             "src/shop.rs 3-5 high: calls charge in src/pay.rs",
         ]
     );
+}
+
+/// [`rust_payments`] with a commit that changes `Payments::charge`, whose
+/// connected code is [`CHARGE_CONNECTED`].
+fn double_the_charge() -> (TestRepo, CommitId) {
+    let repo = rust_payments();
+    repo.write("src/pay.rs", rust_pay("validate(amount * 2)"));
+    let id = repo.commit("Double the charge");
+    (repo, id)
+}
+
+/// What finding connected code gives for [`double_the_charge`].
+const CHARGE_CONNECTED: [&str; 2] = [
+    "src/check.rs 1-3 high: called by charge in src/pay.rs",
+    "src/shop.rs 3-5 high: calls charge in src/pay.rs",
+];
+
+#[test]
+fn finding_a_commits_connected_code_again_takes_its_graph_from_the_cache_without_analysing() {
+    let (repo, id) = double_the_charge();
+    let temp = TempDir::new().expect("create a temporary directory");
+    let cache = TempDir::new().expect("create a cache folder");
+    let analysed = find_in(&repo, id, temp.path(), &cache_in(cache.path()));
+    // Where files would be written for analysis. It does not exist, so
+    // writing any there would fail.
+    let nowhere = temp.path().join("nowhere");
+
+    let cached = find_in(&repo, id, &nowhere, &cache_in(cache.path()));
+
+    assert_eq!(analysed.origin(), GraphOrigin::Analysed);
+    assert_eq!(cached.origin(), GraphOrigin::Cached);
+    assert_eq!(described(&cached), CHARGE_CONNECTED);
+    assert_eq!(cached.connections(), analysed.connections());
+    assert!(!nowhere.exists());
+}
+
+#[test]
+fn analysing_a_commit_leaves_exactly_one_graph_in_the_cache_folder() {
+    let (repo, id) = double_the_charge();
+    let temp = TempDir::new().expect("create a temporary directory");
+    let cache = TempDir::new().expect("create a cache folder");
+
+    find_in(&repo, id, temp.path(), &cache_in(cache.path()));
+    assert_eq!(
+        files_under(cache.path()).len(),
+        1,
+        "{:?}",
+        files_under(cache.path())
+    );
+
+    find_in(&repo, id, temp.path(), &cache_in(cache.path()));
+    assert_eq!(
+        files_under(cache.path()).len(),
+        1,
+        "{:?}",
+        files_under(cache.path())
+    );
+}
+
+#[test]
+fn a_damaged_cache_file_is_analysed_again_and_rebuilt() {
+    let (repo, id) = double_the_charge();
+    let temp = TempDir::new().expect("create a temporary directory");
+    let cache = TempDir::new().expect("create a cache folder");
+    find_in(&repo, id, temp.path(), &cache_in(cache.path()));
+    let [graph] = files_under(cache.path())
+        .try_into()
+        .expect("one cached graph");
+    fs::write(cache.path().join(graph), b"not a graph").expect("damage the cached graph");
+
+    let rebuilt = find_in(&repo, id, temp.path(), &cache_in(cache.path()));
+    let again = find_in(&repo, id, temp.path(), &cache_in(cache.path()));
+
+    assert_eq!(rebuilt.origin(), GraphOrigin::Analysed);
+    assert_eq!(described(&rebuilt), CHARGE_CONNECTED);
+    assert_eq!(again.origin(), GraphOrigin::Cached);
+    assert_eq!(described(&again), CHARGE_CONNECTED);
+}
+
+#[test]
+fn a_graph_cached_by_another_engine_version_or_in_another_cache_format_is_never_used() {
+    let (repo, id) = double_the_charge();
+    let temp = TempDir::new().expect("create a temporary directory");
+    let cache = TempDir::new().expect("create a cache folder");
+    let elsewhere = TempDir::new().expect("create another cache folder");
+    // Another tree's graph, which has no connected code for the change.
+    let stale = find(
+        &Memory::default().with("src/main.rs", FileKind::Blob, "fn main() {}\n"),
+        &Change::new(String::new(), Vec::new(), String::new(), Vec::new()),
+        &ExcludePatterns::default(),
+        &AnalysisDirs::new(temp.path().to_path_buf()),
+        &cache_in(elsewhere.path()),
+    )
+    .expect("find connected code")
+    .graph()
+    .clone();
+    let tree = SnapshotId::Tree(
+        repo.open()
+            .handle()
+            .with_tree(id, |tree: &CommitTree<'_>| tree.id())
+            .expect("read the commit's tree"),
+    );
+    let graphs = cache_in(cache.path());
+    graphs.put(&cache::GraphKey::of(tree, "0.10.0"), &stale);
+    graphs.put(
+        &cache::GraphKey::of(tree, analysis::ENGINE_VERSION).in_another_format(),
+        &stale,
+    );
+
+    let found = find_in(&repo, id, temp.path(), &graphs);
+
+    assert_eq!(found.origin(), GraphOrigin::Analysed);
+    assert_eq!(described(&found), CHARGE_CONNECTED);
+
+    // Cached by this version in this format, the same graph is used.
+    graphs.put(&cache::GraphKey::of(tree, analysis::ENGINE_VERSION), &stale);
+    let planted = find_in(&repo, id, temp.path(), &graphs);
+    assert_eq!(planted.origin(), GraphOrigin::Cached);
+    assert_eq!(described(&planted), Vec::<String>::new());
+}
+
+#[test]
+fn graphs_are_cached_under_the_engine_version_cargo_pins() {
+    let manifest = include_str!("../../Cargo.toml");
+
+    let pin = format!("\ncgg = \"={}\"\n", analysis::ENGINE_VERSION);
+    assert!(manifest.contains(&pin), "{pin:?} is not in Cargo.toml");
+}
+
+#[test]
+fn a_cache_folder_that_cannot_be_written_still_gives_connected_code() {
+    let (repo, id) = double_the_charge();
+    let temp = TempDir::new().expect("create a temporary directory");
+    // A file where the cache folder should be, which stops even a
+    // privileged user from writing there.
+    let folder = temp.path().join("cache");
+    fs::write(&folder, "").expect("write a file where the cache folder goes");
+
+    let first = find_in(&repo, id, temp.path(), &cache_in(&folder));
+    let second = find_in(&repo, id, temp.path(), &cache_in(&folder));
+
+    for found in [first, second] {
+        assert_eq!(found.origin(), GraphOrigin::Analysed);
+        assert_eq!(described(&found), CHARGE_CONNECTED);
+    }
 }
 
 #[test]
@@ -449,12 +618,11 @@ fn a_callable_the_engine_makes_up_is_connected_code_only_if_it_has_lines_of_its_
 
 #[test]
 fn the_whole_graph_is_kept_and_never_shows_names_when_debugged() {
-    let repo = rust_payments();
-    repo.write("src/pay.rs", rust_pay("validate(amount * 2)"));
-    let id = repo.commit("Double the charge");
+    let (repo, id) = double_the_charge();
     let temp = TempDir::new().expect("create a temporary directory");
+    let cache = TempDir::new().expect("create a cache folder");
 
-    let (change, found) = found_in(&repo, id, temp.path());
+    let (change, found) = found_in(&repo, id, temp.path(), &cache_in(cache.path()));
 
     assert_eq!(found.graph().connections(&change), found.connections());
     let debug = format!("{:?}", found.graph());
@@ -462,11 +630,10 @@ fn the_whole_graph_is_kept_and_never_shows_names_when_debugged() {
 }
 
 #[test]
-fn the_log_records_counts_and_timings_but_never_files_callables_or_contents() {
-    let repo = rust_payments();
-    repo.write("src/pay.rs", rust_pay("validate(amount * 2)"));
-    let id = repo.commit("Double the charge");
+fn the_log_records_counts_sizes_and_timings_but_never_files_callables_or_contents() {
+    let (repo, id) = double_the_charge();
     let temp = TempDir::new().expect("create a temporary directory");
+    let cache = TempDir::new().expect("create a cache folder");
     let log = Arc::new(Mutex::new(Vec::new()));
     let writer = Arc::clone(&log);
     let subscriber = tracing_subscriber::fmt()
@@ -475,15 +642,26 @@ fn the_log_records_counts_and_timings_but_never_files_callables_or_contents() {
         .with_ansi(false)
         .finish();
 
-    tracing::subscriber::with_default(subscriber, || found_in(&repo, id, temp.path()));
+    tracing::subscriber::with_default(subscriber, || {
+        find_in(&repo, id, temp.path(), &cache_in(cache.path()));
+        find_in(&repo, id, temp.path(), &cache_in(cache.path()));
+    });
 
     let log = String::from_utf8(log.lock().expect("log lock").clone()).expect("UTF-8");
-    assert!(log.contains("wrote a commit's files for analysis"), "{log}");
-    assert!(log.contains("written=4"), "{log}");
-    assert!(log.contains("found connected code"), "{log}");
-    assert!(log.contains("connections=2"), "{log}");
+    for logged in [
+        "wrote a commit's files for analysis",
+        "written=4",
+        "cached a graph",
+        "origin=Analysed",
+        "loaded a cached graph",
+        "origin=Cached",
+        "found connected code",
+        "connections=2",
+    ] {
+        assert!(log.contains(logged), "{logged} not in {log}");
+    }
     for name in [
-        "charge", "validate", "checkout", "Payments", "pay.rs", "amount",
+        "charge", "validate", "checkout", "Payments", "pay.rs", "amount", "graphs", ".json",
     ] {
         assert!(!log.contains(name), "{name} in {log}");
     }
@@ -699,6 +877,10 @@ impl<F: Fn()> fmt::Debug for Interrupted<'_, F> {
 impl<F: Fn()> Snapshot for Interrupted<'_, F> {
     type Error = Infallible;
 
+    fn id(&self) -> SnapshotId {
+        self.snapshot.id()
+    }
+
     fn files(&self) -> Result<Vec<SnapshotFile>, Infallible> {
         self.snapshot.files()
     }
@@ -730,8 +912,15 @@ fn quitting_removes_an_analysis_directory_in_use_and_stops_any_more_from_being_w
 
     assert_eq!(files_under(temp.path()), Vec::<String>::new());
     let change = Change::new(String::new(), Vec::new(), String::new(), Vec::new());
-    let failure = find(&snapshot, &change, &ExcludePatterns::default(), &dirs)
-        .expect_err("nothing is written once the app quits");
+    let cache = TempDir::new().expect("create a cache folder");
+    let failure = find(
+        &snapshot,
+        &change,
+        &ExcludePatterns::default(),
+        &dirs,
+        &cache_in(cache.path()),
+    )
+    .expect_err("nothing is written once the app quits");
     assert!(matches!(failure, Failure::Quitting), "{failure:?}");
     drop(dir);
     assert_eq!(files_under(temp.path()), Vec::<String>::new());
@@ -755,9 +944,16 @@ fn quitting_while_a_commits_files_are_written_stops_before_the_next_and_leaves_n
         },
     };
     let change = Change::new(String::new(), Vec::new(), String::new(), Vec::new());
+    let cache = TempDir::new().expect("create a cache folder");
 
-    let failure =
-        find(&quitting, &change, &ExcludePatterns::default(), &dirs).expect_err("the app quit");
+    let failure = find(
+        &quitting,
+        &change,
+        &ExcludePatterns::default(),
+        &dirs,
+        &cache_in(cache.path()),
+    )
+    .expect_err("the app quit");
 
     assert!(matches!(failure, Failure::Quitting), "{failure:?}");
     assert_eq!(files_under(temp.path()), Vec::<String>::new());
@@ -772,12 +968,14 @@ fn a_panic_while_finding_connected_code_is_a_failure_and_leaves_nothing() {
         on_read: || panic!("a file cannot be read"),
     };
     let change = Change::new(String::new(), Vec::new(), String::new(), Vec::new());
+    let cache = TempDir::new().expect("create a cache folder");
 
     let failure = find(
         &panicking,
         &change,
         &ExcludePatterns::default(),
         &AnalysisDirs::new(temp.path().to_path_buf()),
+        &cache_in(cache.path()),
     )
     .expect_err("finding connected code panicked");
 
@@ -792,12 +990,14 @@ fn a_temporary_directory_inside_a_directory_the_engine_never_reads_fails_before_
     fs::create_dir(&build).expect("create a build directory");
     let snapshot = Memory::default().with("src/main.rs", FileKind::Blob, "fn main() {}\n");
     let change = Change::new(String::new(), Vec::new(), String::new(), Vec::new());
+    let cache = TempDir::new().expect("create a cache folder");
 
     let failure = find(
         &snapshot,
         &change,
         &ExcludePatterns::default(),
         &AnalysisDirs::new(build),
+        &cache_in(cache.path()),
     )
     .expect_err("the engine would read nothing there");
 

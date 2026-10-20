@@ -15,7 +15,8 @@
 //! A background job's result enters the same way, and is applied only if
 //! the app still waits for that job.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use ratatui::Frame;
 use ratatui::crossterm::event::{Event, KeyEvent, KeyEventKind};
@@ -25,7 +26,7 @@ use ratatui::widgets::{Block, Paragraph, Wrap};
 use whetstone_core::ShowcaseProject;
 
 use crate::config::Settings;
-use crate::connected_code::{AnalysisDirs, AnalysisDirsGuard};
+use crate::connected_code::{AnalysisDirs, AnalysisDirsGuard, GraphCache};
 use crate::help::KeyHelp;
 use crate::home::Home;
 use crate::job::{Finished, Job, JobId, JobOutcome, JobOutput, Jobs};
@@ -66,6 +67,9 @@ pub struct App {
     /// Removes the analysis directories still in use when the app drops,
     /// as it quits, even while a job is still writing or analysing one.
     _analysis_guard: AnalysisDirsGuard,
+    /// The graphs connected code was found in before, one cache for the
+    /// whole run, shared with the jobs that find connected code.
+    cache: Arc<GraphCache>,
 }
 
 /// Something for the app to apply: a terminal event the UI loop read, a
@@ -170,7 +174,9 @@ impl App {
     /// Settings, and practicing on `showcase` or on `repository`, the
     /// learner's repository as opened at startup, unless it says why Practice
     /// on it is unavailable. Connected code is analysed in `temp_dir`, the
-    /// system temporary directory.
+    /// system temporary directory, and the graphs it is found in are cached
+    /// in `cache_dir`, the learner's cache directory, which it creates if it
+    /// can.
     #[must_use]
     pub fn new(
         theme: Theme,
@@ -178,6 +184,7 @@ impl App {
         showcase: ShowcaseProject,
         repository: Result<Repository, Unavailable>,
         temp_dir: PathBuf,
+        cache_dir: &Path,
     ) -> Self {
         let home = Home::new(repository.as_ref());
         let analysis = AnalysisDirs::new(temp_dir);
@@ -197,6 +204,7 @@ impl App {
             ticks: 0,
             _analysis_guard: analysis.guard(),
             analysis,
+            cache: Arc::new(GraphCache::open(cache_dir, GraphCache::CAP)),
         }
     }
 
@@ -334,6 +342,7 @@ impl App {
                     repository: self.repository.as_ref(),
                     analysis: &self.analysis,
                     ticks: self.ticks,
+                    cache: &self.cache,
                 };
                 self.screens.go(route, &context, &mut self.jobs);
             }
@@ -367,6 +376,7 @@ impl App {
             repository: self.repository.as_ref(),
             analysis: &self.analysis,
             ticks: self.ticks,
+            cache: &self.cache,
         };
         screen.render(&context, frame, body);
         // While a text entry has focus, the keys that work everywhere type.

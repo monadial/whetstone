@@ -35,7 +35,7 @@ use whetstone_core::{
 
 use crate::columns;
 use crate::config::Settings;
-use crate::connected_code::Request;
+use crate::connected_code::{GraphOrigin, Request};
 use crate::focus::Position;
 use crate::job::{JobId, JobOutput, Jobs};
 use crate::keymap::{self, Binding, Command, Keymap, Press};
@@ -173,8 +173,8 @@ enum Lookup {
     /// Being found by the job with this identity, which the review waits
     /// for.
     Running(JobId),
-    /// Found, or why there is none.
-    Done(Connections),
+    /// Found, or why there is none, and how its graph was found.
+    Done(Connections, GraphOrigin),
 }
 
 impl Lookup {
@@ -183,7 +183,7 @@ impl Lookup {
         const FINDING: &Connections = &Connections::Finding;
         match self {
             Self::Requested(_) | Self::Running(_) => FINDING,
-            Self::Done(connections) => connections,
+            Self::Done(connections, _) => connections,
         }
     }
 }
@@ -312,14 +312,20 @@ impl OutboundReview {
             || !self.evidence.not_sent(listing.groups()).is_empty()
     }
 
-    /// Applies `connections`, found for the commit `commit`: the evidence
-    /// is built again with them, so the size and the secret check cover
-    /// them, and focus stays on the control it was on.
-    fn apply_connections(&mut self, commit: CommitId, connections: Connections) {
+    /// Applies `connections`, found for the commit `commit` from a graph
+    /// found as `origin` says: the evidence is built again with them, so
+    /// the size and the secret check cover them, and focus stays on the
+    /// control it was on.
+    fn apply_connections(
+        &mut self,
+        commit: CommitId,
+        connections: Connections,
+        origin: GraphOrigin,
+    ) {
         if commit != self.id {
             return;
         }
-        self.lookup = Lookup::Done(connections);
+        self.lookup = Lookup::Done(connections, origin);
         let focused = self.focused();
         self.rebuild();
         if let Some(at) = self
@@ -802,7 +808,8 @@ impl OutboundReview {
     }
 
     /// The Connected code section's summary: still finding it, how much is
-    /// sent and of what limit, none found, or why it is not available.
+    /// sent and of what limit, and whether it came from the cache; none
+    /// found; or why it is not available.
     fn connected_code_summary(&self) -> String {
         match self.evidence.connections_state() {
             ConnectionsState::Finding => "Connected code: finding…".to_owned(),
@@ -829,6 +836,10 @@ impl OutboundReview {
                     }
                 };
                 let limit = self.evidence.connected_code_limit();
+                let cached = match self.lookup {
+                    Lookup::Done(_, GraphOrigin::Cached) => " · from cache",
+                    _ => "",
+                };
                 let lowered = match limit.source() {
                     ConnectedCodeLimitSource::LoweredByRepository => {
                         " · limit lowered by this repository"
@@ -836,7 +847,7 @@ impl OutboundReview {
                     ConnectedCodeLimitSource::Default | ConnectedCodeLimitSource::Learner => "",
                 };
                 format!(
-                    "Connected code: {counted} · {} of {} limit{lowered}",
+                    "Connected code: {counted} · {} of {} limit{cached}{lowered}",
                     kilobytes(self.evidence.connected_code_size()),
                     limit.kb()
                 )
@@ -1118,11 +1129,16 @@ impl View for OutboundReview {
     }
 
     fn start_jobs(&mut self, jobs: &mut Jobs<JobOutput>) {
-        self.lookup = match mem::replace(&mut self.lookup, Lookup::Done(Connections::Finding)) {
+        self.lookup = match mem::replace(
+            &mut self.lookup,
+            Lookup::Done(Connections::Finding, GraphOrigin::Analysed),
+        ) {
             Lookup::Requested(request) => Lookup::Running(jobs.start(move |_token| {
+                let (connections, origin) = request.find();
                 Ok(JobOutput::ConnectedCode {
                     commit: request.commit(),
-                    connections: request.find(),
+                    connections,
+                    origin,
                 })
             })),
             lookup => lookup,
@@ -1141,7 +1157,8 @@ impl View for OutboundReview {
             JobOutput::ConnectedCode {
                 commit,
                 connections,
-            } => self.apply_connections(commit, connections),
+                origin,
+            } => self.apply_connections(commit, connections, origin),
         }
     }
 
