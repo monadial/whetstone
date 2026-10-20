@@ -27,6 +27,7 @@ mod detect;
 mod graph;
 mod lines;
 mod links;
+mod mentions;
 mod related;
 mod touched_text;
 

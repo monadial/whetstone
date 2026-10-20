@@ -12,6 +12,10 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+# Finds the repository paths a change names with one multi-pattern search
+# over every path in the commit's tree. Already in the tree through `regex`,
+# with the same default features.
+aho-corasick = "1.1"
 anyhow = "1"
 # Finds connected code (ADR 0002): what a change's functions call and what
 # calls them, in 46 languages, resolved by scope, imports and receiver type,

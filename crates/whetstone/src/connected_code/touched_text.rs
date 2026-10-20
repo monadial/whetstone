@@ -50,6 +50,16 @@ impl<'a> TouchedText<'a> {
     pub(crate) fn is_changed(&self, number: usize) -> bool {
         self.changed.contains(&number)
     }
+
+    /// The lines of the text that the change adds or modifies, in order.
+    pub(crate) fn changed_lines(&self) -> impl Iterator<Item = &'a str> {
+        self.text
+            .into_iter()
+            .flat_map(str::lines)
+            .zip(1..)
+            .filter(|(_, number)| self.changed.contains(number))
+            .map(|(line, _)| line)
+    }
 }
 
 /// A repository file that the change links to or names, which is sent
