@@ -8,7 +8,8 @@
 //! answers that pass the show rule for whichever candidate is asked, with
 //! any checks a test answers otherwise, or at a depth a test chooses. Each
 //! reply scripted for one of them answers one request, in the order
-//! scripted, so a test scripts a Retry's reply as a second one.
+//! scripted, so a test scripts a Retry's reply as a second one. A reply
+//! reports no cost unless a test scripts one for its role.
 //!
 //! The gate lets through, clear yes, any area nothing was scripted for, so
 //! a test about writing or checking needn't script it. Any other request
@@ -20,8 +21,8 @@ use std::future;
 use std::sync::{Mutex, MutexGuard};
 
 use whetstone_core::{
-    Area, AreaId, Candidate, CandidateCheck, Criterion, CriterionOutcome, Depth, Evidence, ModelId,
-    Probability, Provenance, Question, QuestionCheckAnswers, Role, WrittenCandidate,
+    Area, AreaId, Candidate, CandidateCheck, Cost, Criterion, CriterionOutcome, Depth, Evidence,
+    ModelId, Probability, Provenance, Question, QuestionCheckAnswers, Role, WrittenCandidate,
 };
 
 use crate::explanation::{ParagraphCheck, WrittenParagraph};
@@ -55,6 +56,8 @@ struct Script {
     explanations: HashMap<String, VecDeque<Result<Vec<WrittenParagraph>, RequestFailure>>>,
     /// Jev's next checks of the explanation of each question, by its stem.
     explanation_checks: HashMap<String, VecDeque<Result<Vec<ParagraphCheck>, RequestFailure>>>,
+    /// The cost each reply from a role reports: none for a role not in it.
+    costs: HashMap<Role, Cost>,
     asked: Vec<Asked>,
 }
 
@@ -268,6 +271,16 @@ impl ScriptedAi {
             .push_back(reply);
     }
 
+    /// Scripts every later reply from `role` to report `cost`, or no cost
+    /// when it is `None`. Until a test scripts one, replies report none.
+    pub fn report_cost(&self, role: Role, cost: Option<Cost>) {
+        let mut script = self.script();
+        match cost {
+            Some(cost) => script.costs.insert(role, cost),
+            None => script.costs.remove(&role),
+        };
+    }
+
     fn script_check(&self, stem: &str, reply: CheckReply) {
         self.script()
             .checks
@@ -316,7 +329,7 @@ impl Ai for ScriptedAi {
                 })
                 .collect()),
         };
-        reply_at_once(reply, Role::Jev, JEV_MODEL)
+        reply_at_once(reply, Role::Jev, JEV_MODEL, &script)
     }
 
     #[expect(
@@ -340,7 +353,7 @@ impl Ai for ScriptedAi {
             .get_mut(area.id())
             .and_then(VecDeque::pop_front)
             .unwrap_or_else(|| panic!("no write scripted for the area {}", area.id()));
-        reply_at_once(reply, Role::Generator, GENERATOR_MODEL)
+        reply_at_once(reply, Role::Generator, GENERATOR_MODEL, &script)
     }
 
     #[expect(
@@ -362,7 +375,7 @@ impl Ai for ScriptedAi {
             .get_mut(candidate.stem())
             .and_then(VecDeque::pop_front)
             .unwrap_or_else(|| panic!("no check scripted for {:?}", candidate.stem()));
-        reply_at_once(reply.into_reply(candidate), Role::Jev, JEV_MODEL)
+        reply_at_once(reply.into_reply(candidate), Role::Jev, JEV_MODEL, &script)
     }
 
     #[expect(
@@ -389,7 +402,7 @@ impl Ai for ScriptedAi {
             .get_mut(question.stem())
             .and_then(VecDeque::pop_front)
             .unwrap_or_else(|| panic!("no assessment scripted for {:?}", question.stem()));
-        reply_at_once(reply, Role::Jev, JEV_MODEL)
+        reply_at_once(reply, Role::Jev, JEV_MODEL, &script)
     }
 
     #[expect(
@@ -416,7 +429,7 @@ impl Ai for ScriptedAi {
             .get_mut(question.stem())
             .and_then(VecDeque::pop_front)
             .unwrap_or_else(|| panic!("no explanation scripted for {:?}", question.stem()));
-        reply_at_once(reply, Role::Generator, GENERATOR_MODEL)
+        reply_at_once(reply, Role::Generator, GENERATOR_MODEL, &script)
     }
 
     #[expect(
@@ -442,7 +455,7 @@ impl Ai for ScriptedAi {
             .get_mut(question.stem())
             .and_then(VecDeque::pop_front)
             .unwrap_or_else(|| panic!("no explanation check scripted for {:?}", question.stem()));
-        reply_at_once(reply, Role::Jev, JEV_MODEL)
+        reply_at_once(reply, Role::Jev, JEV_MODEL, &script)
     }
 }
 
@@ -482,16 +495,25 @@ fn default_depth() -> Depth {
         .expect("1 is an expected depth")
 }
 
-/// `reply` as a request that has it at once, from `model` in `role`.
+/// `reply` as a request that has it at once, from `model` in `role`,
+/// reporting the cost `script` scripts for `role`, if it scripts one.
 fn reply_at_once<T: Send + 'static>(
     reply: Result<T, RequestFailure>,
     role: Role,
     model: &str,
+    script: &Script,
 ) -> Pending<T> {
     let model = ModelId::new(model.to_owned());
-    let reply = reply.map(|content| Reply {
-        content,
-        provenance: Provenance::new(role, model.clone()).with_reported_model(model),
+    let cost = script.costs.get(&role).copied();
+    let reply = reply.map(|content| {
+        let provenance = Provenance::new(role, model.clone()).with_reported_model(model);
+        Reply {
+            content,
+            provenance: match cost {
+                Some(cost) => provenance.with_cost(cost),
+                None => provenance,
+            },
+        }
     });
     Box::pin(future::ready(reply))
 }
@@ -503,7 +525,7 @@ mod tests {
     use std::task::{Context, Poll, Waker};
 
     use whetstone_core::{
-        Area, AssessmentPolicy, CandidateCheck, Change, ConnectedCodeLimit, Connections,
+        Area, AssessmentPolicy, CandidateCheck, Change, ConnectedCodeLimit, Connections, Cost,
         CriterionOutcome, Depth, Evidence, ExcludePatterns, OptionLetter, Probability, Question,
         QuestionCount, QuestionType, ReviewChoices, Role, TouchedFile, WrittenCandidate,
         WrittenCitation, WrittenCriterion, WrittenOption, plain_checks, show_rule,
@@ -982,6 +1004,32 @@ mod tests {
                 explain,
             ]
         );
+    }
+
+    /// The cost `reply` reports, if it came and reports one.
+    fn reported<T>(reply: Result<Reply<T>, RequestFailure>) -> Option<Cost> {
+        reply.ok().and_then(|reply| reply.provenance.cost())
+    }
+
+    #[test]
+    fn each_reply_reports_the_cost_scripted_for_its_role_from_then_on_and_none_by_default() {
+        let ai = ScriptedAi::new();
+        ai.on_write(area(0).id(), Ok(Vec::new()));
+        ai.on_write(area(0).id(), Ok(Vec::new()));
+        let cost = |usd| Cost::new(usd).expect("a cost");
+
+        let unscripted = at_once(ai.check_areas(&evidence(), &[area(0)]));
+        ai.report_cost(Role::Jev, Some(cost(0.25)));
+        ai.report_cost(Role::Generator, Some(cost(1.5)));
+        let gate = at_once(ai.check_areas(&evidence(), &[area(0)]));
+        let write = at_once(ai.write_candidates(&evidence(), &area(0), count()));
+        ai.report_cost(Role::Generator, None);
+        let unreported = at_once(ai.write_candidates(&evidence(), &area(0), count()));
+
+        assert_eq!(reported(unscripted), None, "none until a test scripts one");
+        assert_eq!(reported(gate), Some(cost(0.25)));
+        assert_eq!(reported(write), Some(cost(1.5)));
+        assert_eq!(reported(unreported), None);
     }
 
     #[test]
