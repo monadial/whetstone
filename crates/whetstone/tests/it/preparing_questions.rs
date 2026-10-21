@@ -1,8 +1,9 @@
 //! Preparing questions on the showcase project, against a scripted AI:
-//! Generate questions finds the change's connected code, then one generator
-//! call per chosen area writes candidates, plain checks drop malformed ones,
-//! Jev checks each one left, the show rule keeps the clear-cut ones and
-//! picking chooses up to `questions` of them.
+//! Generate questions finds the change's connected code, then Jev's
+//! relevance gate lets the chosen areas through (`relevance_gate.rs` tests
+//! the gate), one generator call per area writes candidates, plain checks
+//! drop malformed ones, Jev checks each one left, the show rule keeps the
+//! clear-cut ones and picking chooses up to `questions` of them.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -189,8 +190,13 @@ fn generate_questions_writes_checks_and_shows_the_first_of_the_questions_that_pa
     session.settle();
 
     let asked = ai.asked();
-    let [Asked::WriteCandidates { area, count, .. }, checks @ ..] = asked.as_slice() else {
-        panic!("one write, then the checks: {asked:#?}");
+    let [
+        Asked::CheckAreas { .. },
+        Asked::WriteCandidates { area, count, .. },
+        checks @ ..,
+    ] = asked.as_slice()
+    else {
+        panic!("the relevance gate, one write, then the checks: {asked:#?}");
     };
     assert_eq!(area.id(), &area_id(DOMAIN));
     assert_eq!(count.get(), 6, "4 questions and 2 more, for one area");
@@ -226,13 +232,18 @@ fn one_generator_call_per_chosen_area_goes_out_at_once_then_one_check_per_candid
         }
     }
     let mut session = generate(&ai, &[DOMAIN, INFRASTRUCTURE], SERVE_OVER_HTTP, 120, 32);
+    // The relevance gate first.
+    session.settle_once();
 
     session.settle_once();
     let writes: Vec<(String, usize)> = ai
         .asked()
         .iter()
-        .map(|asked| match asked {
-            Asked::WriteCandidates { area, count, .. } => (area.id().to_string(), count.get()),
+        .filter_map(|asked| match asked {
+            Asked::CheckAreas { .. } => None,
+            Asked::WriteCandidates { area, count, .. } => {
+                Some((area.id().to_string(), count.get()))
+            }
             Asked::CheckQuestion { .. } => panic!("a check before every area is written"),
         })
         .collect();
@@ -248,7 +259,7 @@ fn one_generator_call_per_chosen_area_goes_out_at_once_then_one_check_per_candid
         .iter()
         .filter_map(|asked| match asked {
             Asked::CheckQuestion { candidate, .. } => Some(candidate.stem().to_owned()),
-            Asked::WriteCandidates { .. } => None,
+            Asked::CheckAreas { .. } | Asked::WriteCandidates { .. } => None,
         })
         .collect();
     assert_eq!(
@@ -321,6 +332,7 @@ fn preparing_questions_while_the_generator_writes_at_120x32() {
     let ai = writing_about_the_domain(6, PAYMENT_LIFECYCLE);
     let mut session = generate(&ai, &[DOMAIN], PAYMENT_LIFECYCLE, 120, 32);
     session.settle_once();
+    session.settle_once();
 
     insta::assert_debug_snapshot!("preparing_questions_writing_120x32", session.frame());
 }
@@ -329,6 +341,7 @@ fn preparing_questions_while_the_generator_writes_at_120x32() {
 fn preparing_questions_while_jev_checks_at_80x24() {
     let ai = writing_about_the_domain(6, PAYMENT_LIFECYCLE);
     let mut session = generate(&ai, &[DOMAIN], PAYMENT_LIFECYCLE, 80, 24);
+    session.settle_once();
     session.settle_once();
     session.settle_once();
 
@@ -367,6 +380,7 @@ fn asked_for(ai: &ScriptedAi) -> Vec<String> {
     ai.asked()
         .iter()
         .map(|asked| match asked {
+            Asked::CheckAreas { .. } => "gate".to_owned(),
             Asked::WriteCandidates { area, .. } => format!("write {}", area.id()),
             Asked::CheckQuestion { candidate, .. } => format!("check {}", candidate.stem()),
         })
@@ -397,6 +411,7 @@ fn the_showcase_changes_connected_code_reaches_the_evidence_the_generator_and_je
 
     let asked = ai.asked();
     let [
+        Asked::CheckAreas { .. },
         Asked::WriteCandidates {
             evidence: written_from,
             ..
@@ -407,7 +422,7 @@ fn the_showcase_changes_connected_code_reaches_the_evidence_the_generator_and_je
         },
     ] = asked.as_slice()
     else {
-        panic!("one write and one check: {asked:#?}");
+        panic!("the relevance gate, one write and one check: {asked:#?}");
     };
     assert_eq!(written_from.connections_state(), ConnectionsState::Found);
     assert_ne!(
@@ -468,8 +483,8 @@ fn when_finding_connected_code_takes_too_long_questions_are_written_without_it()
         session.text()
     );
     let asked = ai.asked();
-    let [Asked::WriteCandidates { evidence, .. }] = asked.as_slice() else {
-        panic!("the generator writes at once: {asked:#?}");
+    let [Asked::CheckAreas { evidence, .. }] = asked.as_slice() else {
+        panic!("Jev checks the areas at once: {asked:#?}");
     };
     assert_eq!(evidence.connections_state(), ConnectionsState::TookTooLong);
     assert_eq!(evidence.connections().len(), 0, "no connected code is sent");
@@ -480,7 +495,7 @@ fn when_finding_connected_code_takes_too_long_questions_are_written_without_it()
         "the analysis's late result changes nothing:\n{}",
         session.text()
     );
-    assert_eq!(ai.asked().len(), 2, "nothing is written again");
+    assert_eq!(ai.asked().len(), 3, "nothing is asked again");
 }
 
 #[test]
@@ -488,7 +503,8 @@ fn cancel_returns_to_the_areas_and_changes_and_a_request_that_finishes_after_it_
     let ai = writing_about_the_domain(6, PAYMENT_LIFECYCLE);
     let mut session = generate(&ai, &[DOMAIN], PAYMENT_LIFECYCLE, 80, 24);
     session.settle_once();
-    assert_eq!(asked_for(&ai), ["write domain"]);
+    session.settle_once();
+    assert_eq!(asked_for(&ai), ["gate", "write domain"]);
 
     session.press("<Enter>");
     let picker = session.text();
@@ -496,13 +512,18 @@ fn cancel_returns_to_the_areas_and_changes_and_a_request_that_finishes_after_it_
     session.settle();
 
     assert_eq!(session.text(), picker, "the late write changes nothing");
-    assert_eq!(asked_for(&ai), ["write domain"], "and starts no check");
+    assert_eq!(
+        asked_for(&ai),
+        ["gate", "write domain"],
+        "and starts no check"
+    );
 }
 
 #[test]
 fn q_cancels_while_jev_checks_and_no_late_answer_changes_anything() {
     let ai = writing_about_the_domain(6, PAYMENT_LIFECYCLE);
     let mut session = generate(&ai, &[DOMAIN], PAYMENT_LIFECYCLE, 80, 24);
+    session.settle_once();
     session.settle_once();
     session.settle_once();
     let asked = ai.asked().len();
@@ -534,6 +555,7 @@ fn going_home_while_preparing_cancels_too() {
     let ai = writing_about_the_domain(6, PAYMENT_LIFECYCLE);
     let mut session = generate(&ai, &[DOMAIN], PAYMENT_LIFECYCLE, 80, 24);
     session.settle_once();
+    session.settle_once();
 
     // The palette's first action after Cancel is Home.
     session.press(": j <Enter>");
@@ -542,7 +564,7 @@ fn going_home_while_preparing_cancels_too() {
     session.settle();
 
     assert_eq!(session.text(), home);
-    assert_eq!(asked_for(&ai), ["write domain"]);
+    assert_eq!(asked_for(&ai), ["gate", "write domain"]);
 }
 
 #[test]
@@ -550,6 +572,7 @@ fn generate_questions_again_after_cancel_prepares_afresh() {
     let ai = writing_about_the_domain(6, PAYMENT_LIFECYCLE);
     write_about_the_domain(&ai, 6, PAYMENT_LIFECYCLE);
     let mut session = generate(&ai, &[DOMAIN], PAYMENT_LIFECYCLE, 80, 24);
+    session.settle_once();
     session.settle_once();
     session.press("q");
 
@@ -576,7 +599,7 @@ fn a_failed_request_names_its_stage_and_offers_retry_and_back_and_nothing_is_ret
         session.settle();
         assert_eq!(
             asked_for(&ai),
-            ["write domain"],
+            ["gate", "write domain"],
             "asked once, and never again"
         );
         session
@@ -640,15 +663,16 @@ fn retry_after_a_failed_write_asks_again_only_for_the_area_that_failed() {
 
     let asked = asked_for(&ai);
     assert_eq!(
-        asked[..3],
+        asked[..4],
         [
+            "gate",
             "write domain",
             "write infrastructure",
             "write infrastructure"
         ],
-        "the domain area is not written again"
+        "neither the gate nor the domain area is asked again"
     );
-    assert_eq!(asked.len(), 9, "then every candidate is checked once");
+    assert_eq!(asked.len(), 10, "then every candidate is checked once");
     session.press("l");
     assert_eq!(
         session.row_with("Question 2"),

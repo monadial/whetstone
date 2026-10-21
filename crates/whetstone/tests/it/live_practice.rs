@@ -48,6 +48,7 @@ fn live_generate_questions_on_the_showcase_shows_checked_questions_or_a_named_sh
 
     let text = session.text();
     let shown = text.contains("Question 1 of ")
+        || text.contains("Nothing to practice in this change")
         || text.contains("No questions passed checks")
         || text.contains(" passed checks, 3 asked for");
     assert!(

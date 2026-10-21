@@ -2,12 +2,19 @@
 //!
 //! On the showcase project, Generate questions opens it. Preparing
 //! questions finds the change's connected code the way the outbound review
-//! finds a commit's, and prepares the evidence from it. Then the generator
-//! writes candidates, one request per chosen area, all at once; plain
-//! checks drop the malformed ones; Jev checks each candidate left, all at
-//! once; the show rule keeps the clear-cut ones; and picking chooses up to
-//! `questions` of them for the questions screen. The stage row shows where
-//! it is.
+//! finds a commit's, and prepares the evidence from it. Then Jev's
+//! relevance gate decides, in one call, which chosen areas the change is
+//! worth asking about: an unclear verdict lets an area through, and only a
+//! clear no drops it. The generator writes candidates, one request per area
+//! that passed, all at once; plain checks drop the malformed ones; Jev
+//! checks each candidate left, all at once; the show rule keeps the
+//! clear-cut ones; and picking chooses up to `questions` of them for the
+//! questions screen. The stage row shows where it is.
+//!
+//! When the gate drops every chosen area, Nothing to practice in this change
+//! gives each its verdict and offers Ask anyway, which writes about every
+//! chosen area without the gate; their questions are still checked. Retry on
+//! No questions passed checks keeps the gate's decision.
 //!
 //! A failed request stops its stage, which names itself and offers Retry,
 //! which asks again only what failed, and Back. Nothing is retried
@@ -16,6 +23,7 @@
 //! connected code runs on instead, as it does for the outbound review, so
 //! its graph is cached.
 
+use std::convert::Infallible;
 use std::mem;
 use std::sync::Arc;
 use std::time::Duration;
@@ -27,7 +35,7 @@ use ratatui::widgets::{List, Paragraph};
 use whetstone_ai::{Ai, CandidateCount, Pending, Reply, RequestFailure};
 use whetstone_core::{
     Area, AreaId, AssessmentPolicy, Band, Candidate, CandidateCheck, CandidateId, Change,
-    ConnectedCodeLimit, Connections, ConnectionsState, Evidence, ExcludePatterns,
+    ConnectedCodeLimit, Connections, ConnectionsState, Evidence, ExcludePatterns, Job, Probability,
     QuestionCheckAnswers, QuestionCount, RepositoryConfig, ReviewChoices, Withheld,
     WrittenCandidate, pick, plain_checks, show_rule,
 };
@@ -54,8 +62,8 @@ const KEYMAP: Keymap = &[
     },
 ];
 
-/// The keys once a request failed, or no question passed: `q` and Esc go
-/// back, stopping any request still running.
+/// The keys once a request failed, no area was worth asking about, or no
+/// question passed: `q` and Esc go back, stopping any request still running.
 const BACK_KEYMAP: Keymap = &[
     keymap::MOVE,
     keymap::ACTIVATE,
@@ -72,8 +80,9 @@ const ACTIONS: &[Action] = &[Action {
     command: Command::Back,
 }];
 
-/// The action in the palette once a request failed, on No questions passed
-/// checks, and on the questions screen.
+/// The action in the palette once a request failed, on Nothing to practice
+/// in this change and No questions passed checks, and on the questions
+/// screen.
 const BACK_ACTIONS: &[Action] = &[Action {
     label: "Back",
     does: "Go back to the areas and changes",
@@ -97,6 +106,8 @@ pub(crate) struct Practice {
     /// The evidence, prepared once connected code is found or given up on:
     /// none only while it is found.
     evidence: Option<Evidence>,
+    /// What the relevance gate decided about the chosen areas.
+    gate: Gate,
     stage: Stage,
     /// The requests to Jev and the generator it waits for, each with what
     /// it asked (rule 24).
@@ -122,13 +133,58 @@ struct ShowcaseLookup {
     cache: Arc<GraphCache>,
 }
 
+/// What the relevance gate decided about the chosen areas. Retry on No
+/// questions passed checks keeps it, so the gate isn't asked again; only
+/// the learner's Ask anyway changes it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Gate {
+    /// Jev hasn't decided yet.
+    Undecided,
+    /// Jev decided. `dropped` are the chosen areas it clearly said aren't
+    /// worth asking about, in order; every other chosen area passed.
+    Decided { dropped: Vec<AreaId> },
+    /// The learner chose Ask anyway: every chosen area, without the gate.
+    AskedAnyway,
+}
+
+impl Gate {
+    /// Of the chosen `areas`, those the gate clearly said aren't worth
+    /// asking about, in order.
+    fn dropped<'a>(&self, areas: &'a [Area]) -> Vec<&'a Area> {
+        match self {
+            Self::Undecided | Self::AskedAnyway => Vec::new(),
+            Self::Decided { dropped } => areas
+                .iter()
+                .filter(|area| dropped.contains(area.id()))
+                .collect(),
+        }
+    }
+
+    /// Of the chosen `areas`, those Practice asks about, in order: those the
+    /// gate let through.
+    fn asked_about<'a>(&self, areas: &'a [Area]) -> Vec<&'a Area> {
+        match self {
+            Self::Undecided | Self::AskedAnyway => areas.iter().collect(),
+            Self::Decided { dropped } => areas
+                .iter()
+                .filter(|area| !dropped.contains(area.id()))
+                .collect(),
+        }
+    }
+}
+
 /// Where Practice stands.
 #[derive(Debug)]
 enum Stage {
     /// Finding the change's connected code, before the evidence is
     /// prepared.
     FindingConnectedCode(Lookup),
-    /// The generator writes candidates about each chosen area, in area
+    /// Jev's relevance gate decides which chosen areas are worth asking
+    /// about. Its reply moves Practice on at once, so none is ever held.
+    CheckingAreas(Request<Infallible>),
+    /// Jev clearly said no chosen area is worth asking about in this change.
+    NothingToPractice,
+    /// The generator writes candidates about each area asked about, in area
     /// order: what passed the plain checks.
     Writing(Vec<Request<Vec<Candidate>>>),
     /// Jev checks each candidate that passed the plain checks, in the order
@@ -156,6 +212,8 @@ enum Request<T> {
 /// What a request asked, which its result must carry (rule 24).
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Asking {
+    /// Jev, to decide which chosen areas are worth asking about.
+    Gate,
     /// The generator, to write candidates about this area.
     Write(AreaId),
     /// Jev, to check this candidate.
@@ -169,6 +227,8 @@ enum Control {
     Retry,
     Back,
     PickAnotherChange,
+    PickOtherAreas,
+    AskAnyway,
 }
 
 impl Control {
@@ -178,6 +238,8 @@ impl Control {
             Self::Retry => "Retry",
             Self::Back => "Back",
             Self::PickAnotherChange => "Pick another change",
+            Self::PickOtherAreas => "Pick other areas",
+            Self::AskAnyway => "Ask anyway",
         }
     }
 }
@@ -276,6 +338,7 @@ impl Practice {
             connected_code_limit: settings.connected_code_limit(&RepositoryConfig::default()),
             time_limit: context.time_limit,
             evidence: None,
+            gate: Gate::Undecided,
             stage: Stage::FindingConnectedCode(Lookup::Requested(Arc::new(ShowcaseLookup {
                 tree,
                 position: index.get(),
@@ -305,12 +368,73 @@ impl Practice {
             "prepared the evidence for Preparing questions"
         );
         self.evidence = Some(evidence);
+        self.check_areas();
+    }
+
+    /// Asks Jev's relevance gate which chosen areas are worth asking about.
+    fn check_areas(&mut self) {
+        self.stage = Stage::CheckingAreas(Request::Unsent);
+        self.focus = Position::default();
+    }
+
+    /// Applies Jev's `reply` to the relevance gate, or why the request
+    /// failed: the generator then writes about the areas that passed.
+    fn areas_checked(&mut self, reply: Result<Reply<Vec<(AreaId, Probability)>>, RequestFailure>) {
+        let Stage::CheckingAreas(gate) = &mut self.stage else {
+            return;
+        };
+        match reply {
+            Ok(reply) => {
+                let policy = AssessmentPolicy::current();
+                let bands: Vec<(AreaId, Band)> = reply
+                    .content
+                    .into_iter()
+                    .map(|(area, answer)| (area, policy.band(Job::RelevanceGate, answer)))
+                    .collect();
+                tracing::info!(bands = ?bands, "the relevance gate decided");
+                // Only a clear no drops an area: an unclear verdict lets it
+                // through, for the question check to filter.
+                let dropped = self
+                    .areas
+                    .iter()
+                    .map(Area::id)
+                    .filter(|chosen| {
+                        bands
+                            .iter()
+                            .any(|(area, band)| area == *chosen && *band == Band::ClearNo)
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>();
+                let none_passed = dropped.len() == self.areas.len();
+                self.gate = Gate::Decided { dropped };
+                if none_passed {
+                    self.stage = Stage::NothingToPractice;
+                    self.focus = Position::default();
+                } else {
+                    self.write();
+                }
+            }
+            Err(failure) => {
+                tracing::info!(%failure, "checking the areas failed");
+                *gate = Request::Failed(failure);
+            }
+        }
+    }
+
+    /// Skips the relevance gate, at the learner's word, and asks the
+    /// generator about every chosen area. Their questions are still checked.
+    fn ask_anyway(&mut self) {
+        tracing::info!(
+            areas = self.areas.len(),
+            "asking anyway about the areas the relevance gate dropped"
+        );
+        self.gate = Gate::AskedAnyway;
         self.write();
     }
 
-    /// Asks the generator for candidates about every chosen area.
+    /// Asks the generator for candidates about every area asked about.
     fn write(&mut self) {
-        self.stage = Stage::Writing(Request::all(self.areas.len()));
+        self.stage = Stage::Writing(Request::all(self.gate.asked_about(&self.areas).len()));
         self.focus = Position::default();
     }
 
@@ -326,7 +450,8 @@ impl Practice {
             return;
         };
         let Some(write) = self
-            .areas
+            .gate
+            .asked_about(&self.areas)
             .iter()
             .position(|chosen| chosen.id() == area)
             .and_then(|at| writes.get_mut(at))
@@ -427,7 +552,12 @@ impl Practice {
             .iter()
             .filter(|question| question.hint().is_none())
             .count();
-        let areas: Vec<AreaId> = self.areas.iter().map(|area| area.id().clone()).collect();
+        let areas: Vec<AreaId> = self
+            .gate
+            .asked_about(&self.areas)
+            .into_iter()
+            .map(|area| area.id().clone())
+            .collect();
         let picked = pick(passed, &areas, self.count);
         tracing::info!(
             checked,
@@ -438,7 +568,9 @@ impl Practice {
             "picked the questions that passed their checks"
         );
         self.stage = match Questions::new(picked, &self.areas) {
-            Some(questions) => Stage::Shown(questions),
+            Some(questions) => {
+                Stage::Shown(questions.not_asking_about(self.gate.dropped(&self.areas)))
+            }
             None => Stage::NonePassed,
         };
         self.focus = Position::default();
@@ -448,9 +580,13 @@ impl Practice {
     /// in order.
     fn failure(&self) -> Option<RequestFailure> {
         match &self.stage {
+            Stage::CheckingAreas(gate) => gate.failure(),
             Stage::Writing(writes) => writes.iter().find_map(Request::failure),
             Stage::Checking(checks) => checks.iter().find_map(|(_, check)| check.failure()),
-            Stage::FindingConnectedCode(_) | Stage::Shown(_) | Stage::NonePassed => None,
+            Stage::FindingConnectedCode(_)
+            | Stage::NothingToPractice
+            | Stage::Shown(_)
+            | Stage::NonePassed => None,
         }
     }
 
@@ -463,10 +599,11 @@ impl Practice {
     /// question passed, writes and checks new ones.
     fn retry(&mut self) {
         match &mut self.stage {
+            Stage::CheckingAreas(gate) => gate.retry(),
             Stage::Writing(writes) => writes.iter_mut().for_each(Request::retry),
             Stage::Checking(checks) => checks.iter_mut().for_each(|(_, check)| check.retry()),
             Stage::NonePassed => self.write(),
-            Stage::FindingConnectedCode(_) | Stage::Shown(_) => {}
+            Stage::FindingConnectedCode(_) | Stage::NothingToPractice | Stage::Shown(_) => {}
         }
         self.focus = Position::default();
     }
@@ -474,6 +611,11 @@ impl Practice {
     /// The controls, in focus order, by where Practice stands.
     fn controls(&self) -> &'static [Control] {
         match self.stage {
+            Stage::NothingToPractice => &[
+                Control::PickAnotherChange,
+                Control::PickOtherAreas,
+                Control::AskAnyway,
+            ],
             Stage::NonePassed => &[Control::Retry, Control::PickAnotherChange],
             _ if self.failure().is_some() => &[Control::Retry, Control::Back],
             _ => &[Control::Cancel],
@@ -505,12 +647,26 @@ impl Practice {
 
     /// Practice's stages as it stands, drawn with `theme`, with the current
     /// stage's spinner at its frame for `ticks`. The showcase project has no
-    /// outbound review, and the relevance gate is skipped until it arrives.
+    /// outbound review.
     fn stage_row(&self, theme: &Theme, ticks: usize) -> StageRow<'static> {
         let finding = self.finding_connected_code();
         let failed = self.failure().is_some();
+        let gate = match self.stage {
+            Stage::FindingConnectedCode(_) => StageState::Upcoming,
+            Stage::CheckingAreas(_) if failed => StageState::Failed,
+            Stage::CheckingAreas(_) => StageState::Current,
+            _ if self.gate == Gate::AskedAnyway => StageState::Skipped,
+            Stage::NothingToPractice
+            | Stage::Writing(_)
+            | Stage::Checking(_)
+            | Stage::Shown(_)
+            | Stage::NonePassed => StageState::Done,
+        };
         let (writing, checking) = match self.stage {
-            Stage::FindingConnectedCode(_) => (StageState::Upcoming, StageState::Upcoming),
+            Stage::FindingConnectedCode(_) | Stage::CheckingAreas(_) => {
+                (StageState::Upcoming, StageState::Upcoming)
+            }
+            Stage::NothingToPractice => (StageState::Skipped, StageState::Skipped),
             Stage::Writing(_) if failed => (StageState::Failed, StageState::Upcoming),
             Stage::Writing(_) => (StageState::Current, StageState::Upcoming),
             Stage::Checking(_) if failed => (StageState::Done, StageState::Failed),
@@ -529,8 +685,7 @@ impl Practice {
                         StageState::Done
                     }
                     PracticeStage::OutboundReview => return None,
-                    // The relevance gate arrives later.
-                    PracticeStage::CheckingAreas => StageState::Skipped,
+                    PracticeStage::CheckingAreas => gate,
                     PracticeStage::WritingQuestions => writing,
                     PracticeStage::CheckingQuestions => checking,
                 };
@@ -552,9 +707,21 @@ impl Practice {
     }
 
     /// The lines under the stage row and the title: what went wrong, if
-    /// anything did.
+    /// anything did, or why there is nothing to practice. An empty one is a
+    /// blank line.
     fn status(&self) -> Vec<String> {
         match (&self.stage, self.failure()) {
+            (Stage::NothingToPractice, _) => self
+                .areas
+                .iter()
+                .map(|area| format!("{}: not worth asking about in this change", area.name()))
+                .chain([
+                    String::new(),
+                    "Ask anyway writes questions about every chosen area all the same, and \
+                     each is still checked before it shows."
+                        .to_owned(),
+                ])
+                .collect(),
             (Stage::NonePassed, _) => vec![
                 "None of the questions written passed their checks, so there is nothing to \
                  show. Retry writes and checks new ones."
@@ -564,6 +731,7 @@ impl Practice {
                 format!(
                     "{} failed: {failure}.",
                     match stage {
+                        Stage::CheckingAreas(_) => "Checking areas",
                         Stage::Checking(_) => "Checking questions",
                         _ => "Writing questions",
                     }
@@ -590,27 +758,35 @@ impl View for Practice {
     fn name(&self) -> &'static str {
         match self.stage {
             Stage::Shown(_) => "Questions",
+            Stage::NothingToPractice => "Nothing to practice in this change",
             Stage::NonePassed => "No questions passed checks",
-            Stage::FindingConnectedCode(_) | Stage::Writing(_) | Stage::Checking(_) => {
-                "Preparing questions"
-            }
+            Stage::FindingConnectedCode(_)
+            | Stage::CheckingAreas(_)
+            | Stage::Writing(_)
+            | Stage::Checking(_) => "Preparing questions",
         }
     }
 
     fn keymap(&self) -> Keymap {
         match self.stage {
             Stage::Shown(_) => questions::KEYMAP,
-            Stage::NonePassed => BACK_KEYMAP,
+            Stage::NothingToPractice | Stage::NonePassed => BACK_KEYMAP,
             _ if self.failure().is_some() => BACK_KEYMAP,
-            Stage::FindingConnectedCode(_) | Stage::Writing(_) | Stage::Checking(_) => KEYMAP,
+            Stage::FindingConnectedCode(_)
+            | Stage::CheckingAreas(_)
+            | Stage::Writing(_)
+            | Stage::Checking(_) => KEYMAP,
         }
     }
 
     fn actions(&self) -> &'static [Action] {
         match self.stage {
-            Stage::Shown(_) | Stage::NonePassed => BACK_ACTIONS,
+            Stage::NothingToPractice | Stage::Shown(_) | Stage::NonePassed => BACK_ACTIONS,
             _ if self.failure().is_some() => BACK_ACTIONS,
-            Stage::FindingConnectedCode(_) | Stage::Writing(_) | Stage::Checking(_) => ACTIONS,
+            Stage::FindingConnectedCode(_)
+            | Stage::CheckingAreas(_)
+            | Stage::Writing(_)
+            | Stage::Checking(_) => ACTIONS,
         }
     }
 
@@ -634,9 +810,22 @@ impl View for Practice {
             return;
         };
         match &mut self.stage {
+            Stage::CheckingAreas(gate) => {
+                if let Request::Unsent = gate {
+                    send(
+                        jobs,
+                        &mut self.waiting,
+                        Asking::Gate,
+                        self.ai.check_areas(evidence, &self.areas),
+                        |reply| JobOutput::AreasChecked { reply },
+                    );
+                    *gate = Request::Sent;
+                }
+            }
             Stage::Writing(writes) => {
-                let count = CandidateCount::per_area(self.count, self.areas.len());
-                for (area, write) in self.areas.iter().zip(writes) {
+                let areas = self.gate.asked_about(&self.areas);
+                let count = CandidateCount::per_area(self.count, areas.len());
+                for (area, write) in areas.into_iter().zip(writes) {
                     if let Request::Unsent = write {
                         let id = area.id().clone();
                         send(
@@ -668,7 +857,10 @@ impl View for Practice {
                     }
                 }
             }
-            Stage::FindingConnectedCode(_) | Stage::Shown(_) | Stage::NonePassed => {}
+            Stage::FindingConnectedCode(_)
+            | Stage::NothingToPractice
+            | Stage::Shown(_)
+            | Stage::NonePassed => {}
         }
     }
 
@@ -687,6 +879,11 @@ impl View for Practice {
                     && self.change_ref == ChangeRef::Showcase(ChangeIndex::new(position))
                 {
                     self.prepare_evidence(&connections);
+                }
+            }
+            JobOutput::AreasChecked { reply } => {
+                if self.waiting.accept(job, &Asking::Gate) {
+                    self.areas_checked(reply);
                 }
             }
             JobOutput::Written { area, reply } => {
@@ -731,7 +928,14 @@ impl View for Practice {
             return None;
         }
         match self.focused() {
-            Control::Cancel | Control::Back | Control::PickAnotherChange => Some(Command::Back),
+            Control::Cancel
+            | Control::Back
+            | Control::PickAnotherChange
+            | Control::PickOtherAreas => Some(Command::Back),
+            Control::AskAnyway => {
+                self.ask_anyway();
+                None
+            }
             Control::Retry => {
                 self.retry();
                 None
