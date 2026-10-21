@@ -1,14 +1,15 @@
 //! The hand check, live: Generate questions on the showcase project through
-//! the real Jev and generator, at the app seam. It calls `OpenRouter` with the
-//! maintainer's key, so it is ignored and runs only when asked, costing a few
-//! cents:
+//! the real Jev and generator, at the app seam. It calls `OpenRouter` with a
+//! real key, so it is ignored and runs only when asked, costing a few cents:
+//! in the keyed end-to-end job (`.github/workflows/live.yml`), with the live
+//! tests of each kind of request in whetstone-ai's `live.rs`, or locally:
 //!
 //! ```sh
-//! OPENROUTER_API_KEY=… cargo nextest run -p whetstone --test it live_ --run-ignored only
+//! OPENROUTER_API_KEY=… cargo nextest run --workspace --all-features --locked --no-fail-fast --run-ignored only live_
 //! ```
 //!
-//! Per-PR tests never call `OpenRouter` (rule 48). This is the seed of the
-//! keyed end-to-end job's live tests (#97), its stated exception.
+//! Per-PR tests never call `OpenRouter` (rule 48); the job is one of its
+//! stated exceptions.
 
 use crate::preparing_questions::{DOMAIN, PAYMENT_LIFECYCLE, generate_in};
 use crate::session::Setup;
