@@ -14,7 +14,7 @@ use std::num::NonZeroUsize;
 use tokio_util::sync::CancellationToken;
 use whetstone_core::{
     Area, AreaId, Candidate, Cost, CriterionOutcome, Evidence, GenerationId, ModelId, Probability,
-    Provenance, Question, QuestionCheckAnswers, Role, WrittenCandidate,
+    Provenance, Question, QuestionCheckAnswers, Role, WrittenCandidate, shuffle_options,
 };
 
 use crate::candidates::{CandidatesOutput, candidates_request};
@@ -114,7 +114,12 @@ impl Ai for OpenRouterAi {
             );
             log_reply(&provenance);
             Ok(Reply {
-                content: reply.output.into_written(),
+                content: reply
+                    .output
+                    .into_written()
+                    .into_iter()
+                    .map(shuffle_options)
+                    .collect(),
                 provenance: Box::new(provenance),
             })
         })
@@ -443,6 +448,45 @@ mod tests {
             serde_json::json!({ "zdr": true, "data_collection": "deny" })
         );
         assert_eq!(body.get("tools"), None::<&Value>);
+    }
+
+    #[tokio::test]
+    async fn the_candidates_come_with_their_options_shuffled_each_rationale_and_the_answer_key_with_its_option()
+     {
+        let (_server, ai) = ai("/chat/completions", 200, CANDIDATES).await;
+
+        let reply = ai
+            .write_candidates(stamp(), &evidence(), &area(), two_per_area())
+            .await
+            .expect("the recorded reply decodes");
+
+        // The recorded reply's second candidate has its correct option at B;
+        // the shuffle moves it to C, and the other two up.
+        let second = &reply.content[1];
+        assert_eq!(second.answer_key, "C");
+        let options: Vec<(&str, &str, &str)> = second
+            .options
+            .iter()
+            .map(|option| {
+                (
+                    option.letter.as_str(),
+                    option.text.split(',').next().unwrap_or_default(),
+                    option.rationale.split('.').next().unwrap_or_default(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            options,
+            [
+                ("A", "The retry is limited to a single attempt", "Wrong"),
+                (
+                    "B",
+                    "The retry code checks the provider for an existing charge before retrying",
+                    "Wrong"
+                ),
+                ("C", "The retry reuses the same key", "Correct"),
+            ]
+        );
     }
 
     #[tokio::test]
