@@ -6,8 +6,14 @@ use clap::{Parser, Subcommand};
 /// through questions and written reasoning.
 ///
 /// Run without arguments in a terminal to open the app.
+// `-V` prints the version alone, and `--version` adds the commit the binary
+// was built from and its date (ADR 0003), which `build.rs` sets.
 #[derive(Debug, Parser)]
-#[command(name = "whetstone", version)]
+#[command(
+    name = "whetstone",
+    version,
+    long_version = env!("WHETSTONE_LONG_VERSION")
+)]
 pub(crate) struct Cli {
     #[command(subcommand)]
     pub(crate) command: Option<Command>,

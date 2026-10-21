@@ -9,6 +9,10 @@ mod async_jobs;
 /// The build script's checks on areas, which it shares with these tests.
 #[path = "../../build/areas.rs"]
 mod build_areas;
+/// How the build script names the commit in `--version`, which it shares
+/// with these tests.
+#[path = "../../build/version.rs"]
+mod build_version;
 mod choice_only;
 mod cited_code;
 mod cli;

@@ -1,10 +1,26 @@
 //! Process seam: run the built `whetstone` binary without a terminal and
 //! assert its stdout, stderr and exit code.
 
-use std::process::Output;
+use std::process::{Command, Output};
 
 use assert_cmd::cargo::cargo_bin_cmd;
 use tempfile::TempDir;
+
+use crate::build_version::{GIT_LOG_FORMAT, long_version};
+
+/// What `whetstone --version` prints after `whetstone `: the version, then
+/// the commit this crate's checkout is at and its date, as git says now. The
+/// build script asked git the same when it built the binary.
+pub(crate) fn built_version() -> String {
+    let log = Command::new("git")
+        .args(["log", "-1", GIT_LOG_FORMAT])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok());
+    long_version(env!("CARGO_PKG_VERSION"), log.as_deref())
+}
 
 /// Runs `whetstone` with `args` in a clean environment whose home is a fresh
 /// temporary directory, with stdin and stdout piped rather than a terminal.
@@ -28,8 +44,17 @@ fn stderr(output: &Output) -> String {
 }
 
 #[test]
-fn version_prints_to_stdout_and_exits_successfully() {
+fn version_names_the_commit_it_was_built_from_on_stdout_and_exits_successfully() {
     let (output, _home) = whetstone(&["--version"]);
+
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(stdout(&output), format!("whetstone {}\n", built_version()));
+    assert_eq!(stderr(&output), "");
+}
+
+#[test]
+fn short_version_prints_the_version_alone() {
+    let (output, _home) = whetstone(&["-V"]);
 
     assert_eq!(output.status.code(), Some(0));
     assert_eq!(
