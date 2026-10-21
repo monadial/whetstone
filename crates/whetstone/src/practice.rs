@@ -15,7 +15,9 @@
 //! clear-cut ones; and picking chooses up to `questions` of them for the
 //! questions screen. The stage row shows where it is. On the questions
 //! screen, and on feedback, Inspect source reads the evidence the questions
-//! rest on, exactly as it was sent.
+//! rest on, exactly as it was sent. Once a response is saved, Jev assesses
+//! its reasoning, one request per response, and Cancel evaluation stops that
+//! request alone.
 //!
 //! When the gate drops every chosen area, Nothing to practice in this change
 //! gives each its verdict and offers Ask anyway, which writes about every
@@ -38,7 +40,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::Line;
 use ratatui::widgets::{List, Paragraph};
-use whetstone_ai::{Ai, CandidateCount, Pending, Reply, RequestFailure};
+use whetstone_ai::{Ai, CandidateCount, Pending, QuestionWithoutKey, Reply, RequestFailure};
 use whetstone_core::{
     Area, AreaId, AssessmentPolicy, Band, Candidate, CandidateCheck, CandidateId, Change, CommitId,
     ConnectedCodeLimit, Connections, ConnectionsState, Evidence, ExcludePatterns, Job, Probability,
@@ -55,7 +57,7 @@ use crate::keymap::{self, Binding, Command, Input, Keymap};
 use crate::palette::Action;
 use crate::questions::Questions;
 use crate::reader::{Reader, Section};
-use crate::session_record::SessionStore;
+use crate::session_record::{SavedResponse, SessionStore};
 use crate::stage_row::{PracticeStage, Stage as RowStage, StageRow, StageState};
 use crate::theme::{ControlState, Theme};
 use crate::view::{ChangeIndex, ChangeRef, Context, Reading, Route, View};
@@ -244,6 +246,9 @@ enum Asking {
     Write(AreaId),
     /// Jev, to check this candidate.
     Check(CandidateId),
+    /// Jev, to assess the reasoning of the response this acknowledges: its
+    /// session, question and attempt.
+    Evaluate(SavedResponse),
 }
 
 /// The screen's controls, by what Practice stands at.
@@ -994,10 +999,32 @@ impl View for Practice {
                     }
                 }
             }
-            Stage::FindingConnectedCode(_)
-            | Stage::NothingToPractice
-            | Stage::Shown(_)
-            | Stage::NonePassed => {}
+            Stage::Shown(questions) => {
+                for saved in questions.take_cancelled() {
+                    tracing::info!(
+                        session = %saved.session(),
+                        attempt = saved.attempt().get(),
+                        "cancelled assessing the reasoning"
+                    );
+                    self.waiting.cancel_for(&Asking::Evaluate(saved), jobs);
+                }
+                questions.evaluate(|saved, question, reasoning| {
+                    let key = saved.clone();
+                    send(
+                        jobs,
+                        &mut self.waiting,
+                        Asking::Evaluate(saved.clone()),
+                        self.ai.assess_reasoning(
+                            saved,
+                            evidence,
+                            QuestionWithoutKey::from(question),
+                            reasoning,
+                        ),
+                        |reply| JobOutput::Evaluated { saved: key, reply },
+                    );
+                });
+            }
+            Stage::FindingConnectedCode(_) | Stage::NothingToPractice | Stage::NonePassed => {}
         }
     }
 
@@ -1050,6 +1077,13 @@ impl View for Practice {
             JobOutput::Checked { candidate, reply } => {
                 if self.waiting.accept(job, &Asking::Check(candidate.clone())) {
                     self.checked(&candidate, reply);
+                }
+            }
+            JobOutput::Evaluated { saved, reply } => {
+                if self.waiting.accept(job, &Asking::Evaluate(saved.clone()))
+                    && let Stage::Shown(questions) = &mut self.stage
+                {
+                    questions.evaluated(&saved, reply.map(|reply| reply.content));
                 }
             }
             JobOutput::ConnectedCode { .. } => {}

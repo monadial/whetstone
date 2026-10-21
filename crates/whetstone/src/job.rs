@@ -31,6 +31,7 @@ use whetstone_core::{
 };
 
 use crate::connected_code::GraphOrigin;
+use crate::session_record::SavedResponse;
 
 /// A job's identity, unique among the jobs one [`Jobs`] starts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,6 +81,15 @@ pub enum JobOutput {
         candidate: CandidateId,
         /// Jev's answers as returned, or why the request failed.
         reply: Result<Reply<QuestionCheckAnswers>, RequestFailure>,
+    },
+    /// Jev's answers to whether a saved response's reasoning meets each
+    /// criterion, or why the request failed.
+    Evaluated {
+        /// The saved response whose reasoning was assessed.
+        saved: SavedResponse,
+        /// Jev's answer for each criterion, in rubric order, as returned,
+        /// or why the request failed.
+        reply: Result<Reply<Vec<Probability>>, RequestFailure>,
     },
 }
 
@@ -445,6 +455,23 @@ impl<K> Waiting<K> {
         for (job, _) in self.keys.drain(..) {
             jobs.cancel(job);
         }
+    }
+
+    /// Stops waiting for the jobs whose results must carry `key`, and
+    /// cancels each with `jobs`, as Cancel of one request does: their
+    /// results aren't applied, and their requests stop. Every other job
+    /// runs on, and is still waited for.
+    pub fn cancel_for<T>(&mut self, key: &K, jobs: &mut Jobs<T>)
+    where
+        K: PartialEq,
+    {
+        self.keys.retain(|(job, waited)| {
+            let cancelled = waited == key;
+            if cancelled {
+                jobs.cancel(*job);
+            }
+            !cancelled
+        });
     }
 }
 

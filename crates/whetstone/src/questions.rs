@@ -15,8 +15,11 @@
 //!
 //! The session record starts as the questions show, holding them and the
 //! evidence they cite. Submit saves the response to it first. Then the
-//! choice outcome shows at once on the question's feedback, and the
-//! response is final.
+//! choice outcome shows at once on the question's feedback, the response is
+//! final, and Jev is asked about its reasoning with the store's
+//! acknowledgement (rule 39). Its result applies to the response it names,
+//! even once another question shows, and its outcomes are saved to the
+//! record.
 //!
 //! When fewer questions passed their checks than were asked for, "*n*
 //! passed checks, *N* asked for" heads them, so the learner knows nothing
@@ -24,13 +27,17 @@
 //! chosen area that wasn't asked about, because the relevance gate found it
 //! not worth asking about in this change.
 
+use std::mem;
+
 use ratatui::Frame;
 use ratatui::crossterm::event::KeyCode;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, List, Padding, Paragraph};
+use whetstone_ai::RequestFailure;
 use whetstone_core::{
-    Area, Evidence, OptionLetter, Picked, Provenance, Question, QuestionCount, Response,
+    Area, Evidence, OptionLetter, Picked, Probability, Provenance, Question, QuestionCount,
+    Response,
 };
 
 use crate::columns;
@@ -39,7 +46,9 @@ use crate::focus::Position;
 use crate::keymap::{self, Binding, Command, Input, Keymap, Press};
 use crate::palette::Action;
 use crate::reasoning_editor::{self, Caret, Editing, ReasoningEditor};
-use crate::session_record::{Assessment, NewRecord, SessionId, SessionStore, StoreError};
+use crate::session_record::{
+    Assessment, NewRecord, SavedResponse, SessionId, SessionStore, StoreError,
+};
 use crate::theme::{ControlKind, ControlState, Theme};
 use crate::view::{Reading, Route};
 
@@ -264,6 +273,9 @@ pub(crate) struct Questions {
     /// A response the learner just submitted to the question that shows,
     /// to save before anything else is done with it.
     submitted: Option<Response>,
+    /// The saved responses whose evaluation the learner cancelled, for the
+    /// screen to stop.
+    cancelled: Vec<SavedResponse>,
 }
 
 impl Questions {
@@ -305,6 +317,7 @@ impl Questions {
             at: 0,
             record: Record::ToStart,
             submitted: None,
+            cancelled: Vec::new(),
         })
     }
 
@@ -432,6 +445,52 @@ impl Questions {
         if let Some(response) = self.submitted.take() {
             self.save(store, response);
         }
+        for entry in &mut self.picked {
+            if let Attempt::Submitted(feedback) = &mut entry.attempt {
+                feedback.keep_record(store);
+            }
+        }
+    }
+
+    /// Hands `evaluate` each evaluation of the reasoning that waits to be
+    /// asked for: the store's acknowledgement of the response, its
+    /// question and its reasoning. Each then awaits its result.
+    pub(crate) fn evaluate(&mut self, mut evaluate: impl FnMut(&SavedResponse, &Question, &str)) {
+        for entry in &mut self.picked {
+            if let Attempt::Submitted(feedback) = &mut entry.attempt
+                && let Some((saved, reasoning)) = feedback.take_evaluation()
+            {
+                evaluate(saved, &entry.question, reasoning);
+            }
+        }
+    }
+
+    /// The saved responses whose evaluation the learner cancelled since the
+    /// last take, for the screen to stop.
+    pub(crate) fn take_cancelled(&mut self) -> Vec<SavedResponse> {
+        mem::take(&mut self.cancelled)
+    }
+
+    /// Applies Jev's `reply` about the reasoning of the response `saved`
+    /// acknowledges: a probability for each criterion, or why the request
+    /// failed.
+    pub(crate) fn evaluated(
+        &mut self,
+        saved: &SavedResponse,
+        reply: Result<Vec<Probability>, RequestFailure>,
+    ) {
+        if let Some((question, feedback)) =
+            self.picked
+                .iter_mut()
+                .find_map(|entry| match &mut entry.attempt {
+                    Attempt::Submitted(feedback) if feedback.saved() == saved => {
+                        Some((&entry.question, feedback))
+                    }
+                    Attempt::Draft(_) | Attempt::Submitted(_) => None,
+                })
+        {
+            feedback.evaluated(question, reply);
+        }
     }
 
     /// Saves `response` to the question that shows in `store`, then saves
@@ -503,6 +562,10 @@ impl Questions {
                     }
                     Step::InspectSource => Some(INSPECT_SOURCE.command),
                     Step::Finish => Some(Command::Go(Route::Home)),
+                    Step::CancelEvaluation => {
+                        self.cancelled.push(feedback.saved().clone());
+                        None
+                    }
                 };
             }
         };
