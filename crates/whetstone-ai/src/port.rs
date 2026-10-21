@@ -8,9 +8,9 @@
 //! them, or to the [`RequestFailure`] that stopped it. Nothing is retried
 //! automatically: Retry is always the learner's.
 //!
-//! A reasoning evaluation, and the explanation of what the reasoning
-//! missed, are asked only with a session store's acknowledgement that the
-//! response is saved ([`Saved`]), so neither is ever paid for while the
+//! A reasoning evaluation, the explanation of what the reasoning missed
+//! and its check are asked only with a session store's acknowledgement that
+//! the response is saved ([`Saved`]), so none is ever paid for while the
 //! response could still be lost (rule 39).
 
 use std::fmt;
@@ -80,7 +80,8 @@ pub trait Ai: fmt::Debug + Send + Sync {
     /// come in rubric order, as written, their citations unchecked.
     ///
     /// The outcomes are Jev's, and stand: the explanation never changes
-    /// them. With no criteria, nothing is sent, and the request is invalid.
+    /// them. With no criteria, or one outside the rubric, nothing is sent,
+    /// and the request is invalid.
     fn explain(
         &self,
         saved: &dyn Saved,
@@ -90,11 +91,15 @@ pub trait Ai: fmt::Debug + Send + Sync {
     ) -> Pending<Vec<WrittenParagraph>>;
 
     /// Jev's explanation check of `paragraphs`, explaining criteria of
-    /// `question`, against `evidence`: for each paragraph, in order, whether
-    /// it is supported by the evidence and whether it agrees with its
-    /// criterion's outcome, as returned.
+    /// `question` for the response the session store acknowledged saving
+    /// with `saved`, against `evidence`: for each paragraph, in order,
+    /// whether it is supported by the evidence and whether it agrees with
+    /// its criterion's outcome, as returned. It sends no reasoning, but is
+    /// asked only with the acknowledgement, as every paid request about a
+    /// response is (rule 39).
     fn check_explanation(
         &self,
+        saved: &dyn Saved,
         evidence: &Evidence,
         question: &Question,
         paragraphs: &[WrittenParagraph],

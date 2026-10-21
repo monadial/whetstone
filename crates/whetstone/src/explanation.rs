@@ -35,12 +35,12 @@ use crate::theme::Theme;
 pub(crate) struct Explanation {
     /// Each criterion to explain, in rubric order: none when every
     /// criterion is met, or before Jev's outcomes come.
-    criteria: Vec<Explained>,
+    criteria: Vec<ToExplain>,
 }
 
 /// A criterion to explain, and where its paragraph stands.
 #[derive(Debug)]
-struct Explained {
+struct ToExplain {
     /// Its place in the rubric, counting from 0.
     criterion: usize,
     /// Its outcome: not met, or needs review.
@@ -76,12 +76,12 @@ struct Written {
 }
 
 /// Which request failed, and why.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug)]
 enum Failed {
     /// The generator's, writing the paragraph.
     Writing(RequestFailure),
-    /// Jev's, checking it.
-    Checking(RequestFailure),
+    /// Jev's, checking the paragraph written, which a Retry checks again.
+    Checking(RequestFailure, Written),
 }
 
 impl Paragraph {
@@ -111,7 +111,7 @@ impl Explanation {
                 .filter_map(|(criterion, assessed)| match assessed.outcome() {
                     CriterionOutcome::Met => None,
                     outcome @ (CriterionOutcome::NotMet | CriterionOutcome::NeedsReview) => {
-                        Some(Explained {
+                        Some(ToExplain {
                             criterion,
                             outcome,
                             paragraph: Paragraph::Unsent,
@@ -196,12 +196,12 @@ impl Explanation {
                     asked = writing.len(),
                     "the generator's explanation didn't explain each criterion asked about once"
                 );
-                self.unavailable(Failed::Writing(RequestFailure::InvalidReply));
+                self.writing_failed(RequestFailure::InvalidReply);
                 return Vec::new();
             }
             Err(failure) => {
                 tracing::info!(%session, attempt, %failure, "explaining the reasoning failed");
-                self.unavailable(Failed::Writing(failure));
+                self.writing_failed(failure);
                 return Vec::new();
             }
         };
@@ -272,12 +272,12 @@ impl Explanation {
                     paragraphs = checking,
                     "Jev's check of the explanation didn't answer each paragraph once"
                 );
-                self.unavailable(Failed::Checking(RequestFailure::InvalidReply));
+                self.checking_failed(RequestFailure::InvalidReply);
                 return Vec::new();
             }
             Err(failure) => {
                 tracing::info!(%session, attempt, %failure, "checking the explanation failed");
-                self.unavailable(Failed::Checking(failure));
+                self.checking_failed(failure);
                 return Vec::new();
             }
         };
@@ -332,16 +332,26 @@ impl Explanation {
         checked
     }
 
-    /// Makes every paragraph whose request is running unavailable, as
-    /// `failed` says.
-    fn unavailable(&mut self, failed: Failed) {
+    /// Makes every paragraph being written unavailable, since the
+    /// generator's request failed with `failure`.
+    fn writing_failed(&mut self, failure: RequestFailure) {
         for explained in &mut self.criteria {
-            let running = match failed {
-                Failed::Writing(_) => matches!(explained.paragraph, Paragraph::Writing),
-                Failed::Checking(_) => matches!(explained.paragraph, Paragraph::Checking(_)),
-            };
-            if running {
-                explained.paragraph = Paragraph::Unavailable(failed);
+            if let Paragraph::Writing = explained.paragraph {
+                explained.paragraph = Paragraph::Unavailable(Failed::Writing(failure));
+            }
+        }
+    }
+
+    /// Makes every paragraph being checked unavailable, since Jev's request
+    /// failed with `failure`. Each keeps what the generator wrote, for a
+    /// Retry to check again.
+    fn checking_failed(&mut self, failure: RequestFailure) {
+        for explained in &mut self.criteria {
+            if let Paragraph::Checking(_) = explained.paragraph
+                && let Paragraph::Checking(written) =
+                    mem::replace(&mut explained.paragraph, Paragraph::Writing)
+            {
+                explained.paragraph = Paragraph::Unavailable(Failed::Checking(failure, written));
             }
         }
     }
@@ -359,12 +369,20 @@ impl Explanation {
     }
 
     /// Asks again, once the screen starts its jobs, for each paragraph
-    /// withheld or unavailable. Each paragraph that shows stays.
+    /// withheld or unavailable: Jev alone, to check again a paragraph whose
+    /// check failed, and the generator, to write again, any other. Each
+    /// paragraph that shows stays.
     pub(crate) fn retry(&mut self) {
         for explained in &mut self.criteria {
-            if explained.paragraph.is_retryable() {
-                explained.paragraph = Paragraph::Unsent;
-            }
+            explained.paragraph = match mem::replace(&mut explained.paragraph, Paragraph::Unsent) {
+                Paragraph::Unavailable(Failed::Checking(_, written)) => {
+                    Paragraph::Unchecked(written)
+                }
+                Paragraph::Withheld | Paragraph::Unavailable(Failed::Writing(_)) => {
+                    Paragraph::Unsent
+                }
+                paragraph => paragraph,
+            };
         }
     }
 
@@ -386,7 +404,7 @@ impl Explanation {
             return Vec::new();
         };
         let indented = |text: &str, style| {
-            columns::wrap(text, width.saturating_sub(INDENT.len()))
+            columns::wrap(text, width.saturating_sub(Line::raw(INDENT).width()))
                 .into_iter()
                 .map(move |line| Line::styled(format!("{INDENT}{line}"), style))
         };
@@ -428,7 +446,7 @@ impl Explanation {
                             "Explanation unavailable: the generator's request failed: {failure}."
                         )
                     }
-                    Failed::Checking(failure) => {
+                    Failed::Checking(failure, _) => {
                         format!("Explanation unavailable: Jev's check failed: {failure}.")
                     }
                 },

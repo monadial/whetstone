@@ -533,7 +533,7 @@ impl Feedback {
             }
             Evaluation::Assessed(outcomes) => {
                 lines.push(Line::styled("Reasoning", theme.title));
-                for (index, (criterion, assessed)) in
+                for (place, (criterion, assessed)) in
                     question.rubric().iter().zip(outcomes).enumerate()
                 {
                     let outcome = match assessed.outcome() {
@@ -564,7 +564,7 @@ impl Feedback {
                             .map(|text| Line::styled(format!("  {text}"), theme.muted)),
                         );
                     }
-                    lines.extend(self.explanation.lines(index, theme, width));
+                    lines.extend(self.explanation.lines(place, theme, width));
                 }
             }
         }

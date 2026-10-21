@@ -550,3 +550,106 @@ fn an_explanation_withheld_at_80x24() {
 
     insta::assert_debug_snapshot!("explanation_withheld_80x24", session.frame());
 }
+
+#[test]
+fn retry_after_a_failed_check_asks_jev_again_and_never_pays_for_the_writing_twice() {
+    let ai = writing([0.9, 0.1, 0.9]);
+    let written = paragraph(1, CriterionOutcome::NotMet, NOT_MET);
+    ai.on_explain(FIRST, Ok(vec![written.clone()]));
+    ai.on_check_explanation(FIRST, Err(RequestFailure::TimedOut));
+    ai.on_check_explanation(FIRST, Ok(vec![check(0.9, 0.9)]));
+    let mut session = explained(&ai, 120, TALL);
+
+    session.press("k <Enter>");
+    assert_eq!(
+        session.section("Reasoning")[2],
+        "Jev is checking the generator's explanation."
+    );
+    session.settle();
+
+    assert_eq!(
+        session.section("Reasoning")[1..4],
+        [
+            "Not met · Says why the retry can't charge twice",
+            "Explanation · generator",
+            NOT_MET,
+        ]
+    );
+    let asked = explaining(&ai);
+    assert!(
+        matches!(
+            &asked[..],
+            [
+                Asked::Explain { .. },
+                Asked::CheckExplanation { paragraphs: first, .. },
+                Asked::CheckExplanation { paragraphs: again, .. },
+            ] if first == again && again == &[written]
+        ),
+        "the generator once, then the same check again: {asked:#?}"
+    );
+}
+
+#[test]
+fn retry_after_the_explanation_failed_to_arrive_asks_the_generator_again() {
+    let ai = writing([0.9, 0.1, 0.5]);
+    ai.on_explain(FIRST, Err(RequestFailure::ProviderUnavailable));
+    ai.on_explain(
+        FIRST,
+        Ok(vec![
+            paragraph(1, CriterionOutcome::NotMet, NOT_MET),
+            paragraph(2, CriterionOutcome::NeedsReview, NEEDS_REVIEW),
+        ]),
+    );
+    ai.on_check_explanation(FIRST, Ok(vec![check(0.9, 0.9), check(0.9, 0.9)]));
+    let mut session = explained(&ai, 120, TALL);
+
+    session.press("k <Enter>");
+    session.settle();
+
+    let reasoning = session.section("Reasoning");
+    assert!(reasoning.contains(&NOT_MET.to_owned()), "{reasoning:#?}");
+    assert!(
+        reasoning.contains(&NEEDS_REVIEW.to_owned()),
+        "{reasoning:#?}"
+    );
+    let explains: Vec<Vec<(usize, CriterionOutcome)>> = explaining(&ai)
+        .into_iter()
+        .filter_map(|asked| match asked {
+            Asked::Explain { criteria, .. } => Some(criteria),
+            _ => None,
+        })
+        .collect();
+    let asked = vec![
+        (1, CriterionOutcome::NotMet),
+        (2, CriterionOutcome::NeedsReview),
+    ];
+    assert_eq!(explains, [asked.clone(), asked], "the same criteria again");
+}
+
+#[test]
+fn a_check_after_leaving_the_practice_changes_nothing() {
+    let ai = writing([0.9, 0.1, 0.9]);
+    ai.on_explain(
+        FIRST,
+        Ok(vec![paragraph(1, CriterionOutcome::NotMet, NOT_MET)]),
+    );
+    ai.on_check_explanation(FIRST, Ok(vec![check(0.9, 0.9)]));
+    let mut session = answering(&ai, 120, TALL);
+    submit(&mut session, "a", REASONING);
+    // Delivers the assessment, then the explanation, which asks for its
+    // check.
+    session.settle_once();
+    session.settle_once();
+    assert!(
+        matches!(explaining(&ai).last(), Some(Asked::CheckExplanation { .. })),
+        "the check was asked for: {:#?}",
+        ai.asked()
+    );
+
+    session.press("q");
+    let left = session.text();
+    session.settle();
+
+    assert_eq!(session.text(), left, "the late check changes nothing");
+    assert_eq!(saved_explanations(&session.store().log()), []);
+}
