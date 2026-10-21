@@ -296,13 +296,16 @@ mod tests {
 
     #[tokio::test]
     async fn a_missing_answer_is_an_invalid_reply() {
-        let mut reply = recorded().await;
-        reply.answers.remove("option_b");
+        for missing in ["option_b", "depth"] {
+            let mut reply = recorded().await;
+            reply.answers.remove(missing);
 
-        assert_eq!(
-            question_check_answers(&candidate(), &reply),
-            Err(AiError::InvalidReply)
-        );
+            assert_eq!(
+                question_check_answers(&candidate(), &reply),
+                Err(AiError::InvalidReply),
+                "{missing} missing"
+            );
+        }
     }
 
     #[tokio::test]
