@@ -59,7 +59,9 @@
 //!
 //! When fewer questions passed their checks than were asked for, "*n*
 //! passed checks, *N* asked for" heads them, so the learner knows nothing
-//! unchecked filled the gap. Below the first question, one line names any
+//! unchecked filled the gap, and offers See why fewer passed in the
+//! palette, which reads the reasons No questions passed checks gives
+//! (see [`crate::withheld`]). Below the first question, one line names any
 //! chosen area that wasn't asked about, because the relevance gate found it
 //! not worth asking about in this change.
 
@@ -135,18 +137,33 @@ const OPTIONS_KEYMAP: Keymap = &[
 const KEYMAP: Keymap = &[keymap::MOVE, keymap::ACTIVATE, WRITE, keymap::BACK];
 
 /// The actions in the palette while a question is answered.
-const ACTIONS: &[Action] = &[
-    INSPECT_SOURCE,
-    FINISH,
-    Action {
-        label: "Back",
-        does: "Go back to the areas and changes",
-        command: Command::Back,
-    },
-];
+const ACTIONS: &[Action] = &[INSPECT_SOURCE, FINISH, BACK];
+
+/// The actions in the palette while a question is answered, when fewer
+/// passed their checks than were asked for.
+const SHORTFALL_ACTIONS: &[Action] = &[INSPECT_SOURCE, SEE_WHY, FINISH, BACK];
 
 /// The actions in the palette on feedback.
 const FEEDBACK_ACTIONS: &[Action] = &[INSPECT_SOURCE, FINISH];
+
+/// The actions in the palette on feedback, when fewer passed their checks
+/// than were asked for.
+const SHORTFALL_FEEDBACK_ACTIONS: &[Action] = &[INSPECT_SOURCE, SEE_WHY, FINISH];
+
+/// See why fewer passed, in the palette when fewer passed their checks
+/// than were asked for.
+const SEE_WHY: Action = Action {
+    label: "See why fewer passed",
+    does: "Read why the other questions written didn't pass their checks",
+    command: Command::Go(Route::Read(Reading::WhyWithheld)),
+};
+
+/// Back, in the palette.
+const BACK: Action = Action {
+    label: "Back",
+    does: "Go back to the areas and changes",
+    command: Command::Back,
+};
 
 /// Finish, in the palette.
 const FINISH: Action = Action {
@@ -563,9 +580,13 @@ impl Questions {
         if self.reporting.is_some() {
             return report::ACTIONS;
         }
-        match self.current().attempt {
-            Attempt::Draft(_) => ACTIONS,
-            Attempt::Submitted(_) | Attempt::CannotAnswer(_) => FEEDBACK_ACTIONS,
+        match (&self.current().attempt, self.shortfall) {
+            (Attempt::Draft(_), None) => ACTIONS,
+            (Attempt::Draft(_), Some(_)) => SHORTFALL_ACTIONS,
+            (Attempt::Submitted(_) | Attempt::CannotAnswer(_), None) => FEEDBACK_ACTIONS,
+            (Attempt::Submitted(_) | Attempt::CannotAnswer(_), Some(_)) => {
+                SHORTFALL_FEEDBACK_ACTIONS
+            }
         }
     }
 
@@ -1117,13 +1138,16 @@ impl Questions {
     }
 
     /// The lines that head every question: the shortfall, if there is one,
-    /// and the question's place and area.
+    /// offering why, and the question's place and area.
     fn head(&self, theme: &Theme) -> Vec<Line<'static>> {
         let entry = self.current();
         let mut lines = Vec::new();
         if let Some(asked_for) = self.shortfall {
             lines.push(Line::styled(
-                format!("{} passed checks, {asked_for} asked for", self.picked.len()),
+                format!(
+                    "{} passed checks, {asked_for} asked for · see why in actions",
+                    self.picked.len()
+                ),
                 theme.muted,
             ));
         }

@@ -103,13 +103,19 @@ fn when_fewer_pass_than_were_asked_for_the_shortfall_heads_the_questions() {
     let ai = writing_about_the_domain(3, PAYMENT_LIFECYCLE);
     let mut session = prepared(&ai, 80, 24);
 
-    assert_eq!(session.rows()[1].trim(), "3 passed checks, 4 asked for");
+    assert_eq!(
+        session.rows()[1].trim(),
+        "3 passed checks, 4 asked for · see why in actions"
+    );
     assert_eq!(session.row_with("Question 1"), "Question 1 of 3 · Domain");
     for _ in 0..2 {
         submit(&mut session, "a", "Because.");
         session.press("<Enter>");
     }
-    assert_eq!(session.rows()[1].trim(), "3 passed checks, 4 asked for");
+    assert_eq!(
+        session.rows()[1].trim(),
+        "3 passed checks, 4 asked for · see why in actions"
+    );
     assert_eq!(session.row_with("Question 3"), "Question 3 of 3 · Domain");
 }
 
@@ -250,7 +256,10 @@ fn plain_checks_drop_malformed_candidates_before_jev_sees_them() {
         })
         .collect();
     assert_eq!(checked, ["Well formed?"]);
-    assert_eq!(session.rows()[1].trim(), "1 passed checks, 4 asked for");
+    assert_eq!(
+        session.rows()[1].trim(),
+        "1 passed checks, 4 asked for · see why in actions"
+    );
     assert!(session.text().contains("Well formed?"));
 }
 

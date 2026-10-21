@@ -80,7 +80,10 @@ fn depth_never_withholds_a_question_so_the_shallowest_still_fill_the_set() {
     let stems = write_at_depths(&ai, DOMAIN, "Domain", &[0.0, 2.0, 0.0]);
     let mut session = prepared(&ai, &[DOMAIN]);
 
-    assert_eq!(session.rows()[1].trim(), "3 passed checks, 4 asked for");
+    assert_eq!(
+        session.rows()[1].trim(),
+        "3 passed checks, 4 asked for · see why in actions"
+    );
     assert_eq!(
         every_stem_shown(&mut session, &stems),
         [

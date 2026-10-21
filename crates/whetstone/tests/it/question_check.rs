@@ -69,7 +69,7 @@ fn assert_withheld_unless_clear_yes(tested: &WrittenCandidate, check: CandidateC
 
         assert_eq!(
             session.rows()[1].trim(),
-            "3 passed checks, 4 asked for",
+            "3 passed checks, 4 asked for · see why in actions",
             "{check:?} at {value}"
         );
         assert!(!is_shown(&mut session), "{check:?} at {value}");

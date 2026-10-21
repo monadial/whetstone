@@ -6,7 +6,7 @@ Buffer {
     area: Rect { x: 0, y: 0, width: 80, height: 24 },
     content: [
         "                                                                                ",
-        "  3 passed checks, 4 asked for                                                  ",
+        "  3 passed checks, 4 asked for · see why in actions                             ",
         "  Question 2 of 3 · Domain                                                      ",
         "                                                                                ",
         "  Domain question 2?                                                            ",
