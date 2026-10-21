@@ -1,0 +1,44 @@
+---
+source: crates/whetstone/tests/it/relevance_gate.rs
+expression: "checking_areas(80, 24).frame()"
+---
+Buffer {
+    area: Rect { x: 0, y: 0, width: 80, height: 24 },
+    content: [
+        "                                                                                ",
+        "  ✓ Reading the change → ✓ Finding connected code → ✓ Preparing evidence →      ",
+        "  ⠋ Checking areas · Jev → · Writing questions · generator →                    ",
+        "  · Checking questions · Jev                                                    ",
+        "                                                                                ",
+        "  Preparing questions                                                           ",
+        "  Serve payments over HTTP · Domain                                             ",
+        "                                                                                ",
+        "  > Cancel                                                                      ",
+        "                                                                                ",
+        "                                                                                ",
+        "                                                                                ",
+        "                                                                                ",
+        "                                                                                ",
+        "                                                                                ",
+        "                                                                                ",
+        "                                                                                ",
+        "                                                                                ",
+        "                                                                                ",
+        "                                                                                ",
+        "                                                                                ",
+        "                                                                                ",
+        "  ? keys  : actions  q cancel                                                   ",
+        "                                                                                ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 27, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 58, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 3, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 28, y: 3, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 5, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 21, y: 5, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 8, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 10, y: 8, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+    ]
+}

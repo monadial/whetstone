@@ -1,0 +1,48 @@
+---
+source: crates/whetstone/tests/it/relevance_gate.rs
+expression: session.frame()
+---
+Buffer {
+    area: Rect { x: 0, y: 0, width: 120, height: 32 },
+    content: [
+        "                                                                                                                        ",
+        "  ✓ Reading the change → ✓ Finding connected code → ✓ Preparing evidence → ✓ Checking areas · Jev →                     ",
+        "  – Writing questions · generator → – Checking questions · Jev                                                          ",
+        "                                                                                                                        ",
+        "  Nothing to practice in this change                                                                                    ",
+        "  Serve payments over HTTP · Domain, Infrastructure                                                                     ",
+        "                                                                                                                        ",
+        "  Domain: not worth asking about in this change                                                                         ",
+        "  Infrastructure: not worth asking about in this change                                                                 ",
+        "                                                                                                                        ",
+        "  Ask anyway writes questions about every chosen area all the same, and each is still checked before it shows.          ",
+        "                                                                                                                        ",
+        "  > Pick another change                                                                                                 ",
+        "    Pick other areas                                                                                                    ",
+        "    Ask anyway                                                                                                          ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "  ? keys  : actions  q back                                                                                             ",
+        "                                                                                                                        ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 4, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 36, y: 4, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 12, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 23, y: 12, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+    ]
+}
