@@ -220,7 +220,7 @@ const VIEWS: [(&str, &str, &[&str]); 12] = [
             "( ) Model the payment lifecycle",
             "( ) Run rustfmt over the HTTP layer",
             "Generate questions (needs OPENROUTER_API_KEY)",
-            "? keys  : actions  Space toggle  Enter open  PgDn page  q back",
+            "? keys  : actions  Space toggle  Enter open  PgDn/Up page  q back",
         ],
     ),
     (

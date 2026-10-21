@@ -881,7 +881,7 @@ fn key_help_on_the_repository_picker_says_enter_opens_a_change_and_slash_searche
     session.press("<Enter>");
     assert_eq!(
         session.rows()[22].trim(),
-        "? keys  : actions  Space toggle  Enter open  PgDn page  / search  q back"
+        "? keys  : actions  Space toggle  Enter open  PgDn/Up page  / search  q back"
     );
 
     session.press("?");

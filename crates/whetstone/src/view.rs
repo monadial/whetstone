@@ -111,6 +111,13 @@ pub(crate) trait View: fmt::Debug {
     /// with a text entry implements both.
     fn paste(&mut self, _text: &str) {}
 
+    /// Gets ready to be drawn in `area`. The app calls it when the screen
+    /// opens or comes back, and when the terminal is resized. Drawing never
+    /// changes state, so a screen that must read more to fill `area`, as the
+    /// picker reads more commits for a taller list, reads it here. The state
+    /// never keeps `area`.
+    fn fit(&mut self, _area: Rect) {}
+
     /// Applies `command` to the screen drawn in `area`, and returns what it
     /// asks of the app, if anything. Only scrolling needs `area`, to know
     /// how far a page goes; the state never keeps it.

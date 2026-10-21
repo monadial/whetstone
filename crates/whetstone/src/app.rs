@@ -343,6 +343,7 @@ impl App {
             }
             Message::Terminal(Event::Resize(width, height)) => {
                 self.viewport = Some(Size::new(width, height));
+                self.fit();
                 Flow::Continue
             }
             Message::Finished(finished) => {
@@ -533,13 +534,14 @@ impl App {
                     self.screens
                         .go(route, &context, &mut self.jobs, self.store.as_mut());
                 }
+                self.fit();
             }
-            Command::Back => self.screens.back(&mut self.jobs, self.store.as_mut()),
+            Command::Back => {
+                self.screens.back(&mut self.jobs, self.store.as_mut());
+                self.fit();
+            }
             command => {
-                // Until the loop reports a size, assume the smallest the
-                // screens are drawn in.
-                let size = self.viewport.unwrap_or(MINIMUM);
-                let [area, _] = screen_and_footer(Rect::from((Position::ORIGIN, size)));
+                let area = self.screen_area();
                 let screen = self.screens.current_mut();
                 let next = screen.apply(command, area);
                 screen.keep_record(self.store.as_mut());
@@ -550,6 +552,20 @@ impl App {
             }
         }
         Flow::Continue
+    }
+
+    /// Where the current screen is drawn. Until the loop reports a size, it
+    /// assumes the smallest the screens are drawn in.
+    fn screen_area(&self) -> Rect {
+        let size = self.viewport.unwrap_or(MINIMUM);
+        let [area, _] = screen_and_footer(Rect::from((Position::ORIGIN, size)));
+        area
+    }
+
+    /// Gets the current screen ready to be drawn at the current size.
+    fn fit(&mut self) {
+        let area = self.screen_area();
+        self.screens.current_mut().fit(area);
     }
 
     /// Draws the current screen. Drawing never changes state.

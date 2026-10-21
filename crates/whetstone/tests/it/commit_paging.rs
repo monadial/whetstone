@@ -201,6 +201,70 @@ fn tab_from_the_last_area_lands_on_the_first_commit_in_view() {
 }
 
 #[test]
+fn from_an_area_the_paging_keys_bring_focus_to_the_page_in_view_and_move_it() {
+    let repo = long_history();
+    let log = listed(&repo);
+    let mut session = started_in(repo.root(), 120, 32);
+
+    // Focus starts on the first area.
+    session.press("<Enter> <PageDown>");
+    assert_eq!(focused(&session), log[18]);
+    assert_eq!(in_view(&session), log[18..36]);
+
+    // From Review what will be sent, under the list.
+    session.press("<S-Tab> <S-Tab> <S-Tab> <S-Tab> <C-u>");
+    assert_eq!(focused(&session), log[9]);
+}
+
+#[test]
+fn k_from_review_what_will_be_sent_goes_to_the_last_commit_in_view() {
+    let repo = long_history();
+    let log = listed(&repo);
+    let mut session = started_in(repo.root(), 120, 32);
+    session.press("<Enter> <S-Tab> <S-Tab> <Enter> <Tab>");
+    assert_eq!(in_view(&session), log[18..36]);
+
+    session.press("k");
+    assert_eq!(focused(&session), log[35]);
+    assert_eq!(in_view(&session), log[18..36]);
+
+    // From the paging row, j goes down to Review what will be sent.
+    session.press("<Tab> j");
+    assert!(
+        session
+            .row_with("Review what will be sent")
+            .starts_with("> Review"),
+        "{}",
+        session.text()
+    );
+}
+
+#[test]
+fn a_tall_window_shows_a_whole_page_as_the_picker_opens_and_as_it_grows() {
+    let repo = long_history();
+    let log = listed(&repo);
+
+    // 66 rows of commits, more than the 50 read as the picker opens.
+    let mut session = started_in(repo.root(), 120, 80);
+    session.press("<Enter>");
+    assert_eq!(in_view(&session), log[..66]);
+    assert_eq!(
+        paging(&session),
+        "Previous page (first page)    Commits 1–66 of 150+    Next page"
+    );
+
+    // Paged near the end of what is read, then made taller, the list stays
+    // where it was.
+    let mut session = started_in(repo.root(), 120, 32);
+    session.press(TO_THE_NEWEST);
+    session.press("<PageDown> <PageDown>");
+    assert_eq!(in_view(&session), log[36..54]);
+    session.resize(120, 80);
+    assert_eq!(focused(&session), log[36]);
+    assert_eq!(in_view(&session), log[36..102]);
+}
+
+#[test]
 fn ctrl_d_and_ctrl_u_move_the_focus_by_half_the_rows_the_list_shows() {
     let repo = long_history();
     let log = listed(&repo);
@@ -259,8 +323,13 @@ fn capital_g_reads_at_most_a_thousand_more_commits_before_going_to_the_oldest_re
     assert_eq!(focused(&session), log[1_049]);
     assert_eq!(
         paging(&session),
-        "Previous page    Commits 1,033–1,050 of 1,100+    Next page"
+        "Previous page    Commits 1,033–1,050 of 1,050+    Next page",
+        "focus is on the oldest commit read"
     );
+
+    // Moving past it reads further, as `j` always has.
+    session.press("j");
+    assert_eq!(focused(&session), log[1_050]);
 
     session.press("G");
     assert_eq!(focused(&session), log[1_199]);
@@ -328,7 +397,7 @@ fn key_help_and_the_footer_list_the_paging_keys() {
     let mut session = started_in(repo.root(), 120, 32);
     session.press("<Enter>");
     assert!(
-        footer(&session).contains("PgDn page"),
+        footer(&session).contains("PgDn/Up page"),
         "{}",
         footer(&session)
     );
@@ -380,6 +449,41 @@ fn the_showcase_project_pages_its_changes_too() {
             .starts_with("> ( ) Model the payment lifecycle"),
         "{}",
         session.text()
+    );
+}
+
+#[test]
+fn on_the_showcase_project_page_up_half_pages_capital_g_and_the_controls_work_too() {
+    let mut session = Session::plain(80, 18);
+    let focused_change =
+        |session: &Session| crate::session::columns(&[session.row_with("> ( )")])[0][0].to_owned();
+    session.press("<Enter> G");
+    assert_eq!(
+        focused_change(&session),
+        "> ( ) Run rustfmt over the HTTP layer"
+    );
+    // A page is five changes at this size.
+    session.press("<PageUp>");
+    assert_eq!(
+        focused_change(&session),
+        "> ( ) Preserve payment retry identity"
+    );
+    session.press("<C-d>");
+    assert_eq!(
+        focused_change(&session),
+        "> ( ) Trace requests and export payment metrics"
+    );
+    session.press("<C-u>");
+    assert_eq!(
+        focused_change(&session),
+        "> ( ) Preserve payment retry identity"
+    );
+
+    // Tab out to Next page, and Enter shows the last page.
+    session.press("<Tab> <Tab> <Enter>");
+    assert_eq!(
+        paging(&session),
+        "Previous page    Changes 6–10 of 10  > Next page (last page)"
     );
 }
 

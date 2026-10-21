@@ -47,9 +47,10 @@ fn the_picker_reads_more_commits_as_the_learner_scrolls_past_the_first_fifty() {
     assert_eq!(log.len(), 75);
     let mut session = started_in(repo.root(), 120, 32);
 
-    // From the first area, Shift+Tab wraps round to the control after the
-    // commits, and k goes up to the last commit read.
-    session.press("<Enter> <S-Tab> k");
+    // Past the five areas onto the newest commit, and down to the last of
+    // the first fifty read.
+    session.press("<Enter> j j j j j");
+    session.press(&["j"; 49].join(" "));
 
     assert_eq!(focused(&session), log[49]);
     session.press("j");
@@ -170,7 +171,7 @@ fn esc_closes_the_search_box_without_searching() {
     assert_eq!(status(&session), "");
     assert_eq!(
         footer(&session),
-        "? keys  : actions  Space toggle  Enter open  PgDn page  / search  q back"
+        "? keys  : actions  Space toggle  Enter open  PgDn/Up page  / search  q back"
     );
     assert!(
         focused(&session).starts_with("(x) Domain"),
