@@ -168,6 +168,22 @@ impl Screens {
         }
     }
 
+    /// Goes to `route` in place of the current screen, which builds it if
+    /// it can, as [`Screens::go`] does. The current screen then closes with
+    /// `jobs`, and the new one opens above the screen before it and starts
+    /// its background jobs, so going back from it returns there.
+    fn replace(&mut self, route: Route, context: &Context<'_>, jobs: &mut Jobs<JobOutput>) {
+        if let Some(mut screen) = self
+            .current()
+            .open(route, context)
+            .or_else(|| route.open(context))
+        {
+            self.back(jobs);
+            screen.start_jobs(jobs);
+            self.above.push(screen);
+        }
+    }
+
     /// The open screen that waits for the job `job`, if one does.
     fn waiting_for(&mut self, job: JobId) -> Option<&mut dyn View> {
         if self.home.waits_for(job) {
@@ -398,7 +414,7 @@ impl App {
             Command::Palette => {
                 self.overlay = Some(Overlay::Palette(Palette::new(self.screens.current())));
             }
-            Command::Go(route) => {
+            Command::Go(route) | Command::Replace(route) => {
                 let context = Context {
                     theme: &self.theme,
                     settings: &self.settings,
@@ -410,7 +426,11 @@ impl App {
                     time_limit: self.time_limit,
                     ai: self.ai.as_ref(),
                 };
-                self.screens.go(route, &context, &mut self.jobs);
+                if let Command::Replace(_) = command {
+                    self.screens.replace(route, &context, &mut self.jobs);
+                } else {
+                    self.screens.go(route, &context, &mut self.jobs);
+                }
             }
             Command::Back => self.screens.back(&mut self.jobs),
             command => {

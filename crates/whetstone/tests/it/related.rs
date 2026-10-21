@@ -458,7 +458,7 @@ fn a_secret_in_a_related_test_blocks_send_until_the_test_is_left_out() {
     session.press("<S-Tab> k k k <Space>");
 
     assert_eq!(statuses(&session), [["store_test.go", "left out by you"]]);
-    assert_eq!(send(&session), "Send (arrives with Jev)");
+    assert_eq!(send(&session), "Send (needs OPENROUTER_API_KEY)");
 }
 
 /// A Python shop whose `store.save` is called by `cart.checkout` and by

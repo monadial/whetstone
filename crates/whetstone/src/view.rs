@@ -49,8 +49,9 @@ pub(crate) trait View: fmt::Debug {
 
     /// The screen `route` names, built from this screen's state, if this
     /// screen builds it: the picker builds the outbound review and Practice
-    /// from its choices, and the review builds what it lets the learner
-    /// read. Every other route opens from the route alone.
+    /// from its choices, and the review builds Practice from the evidence
+    /// it shows and what it lets the learner read. Every other route opens
+    /// from the route alone.
     fn open(&self, _route: Route, _context: &Context<'_>) -> Option<Box<dyn View>> {
         None
     }
@@ -146,7 +147,8 @@ pub(crate) enum Route {
     /// Something the outbound review lets the learner read whole.
     Read(Reading),
     /// Practice on a change: Preparing questions, then the questions. The
-    /// picker opens it.
+    /// picker opens it on a showcase change, and the outbound review's Send
+    /// on a commit from the learner's repository, in the review's place.
     Practice(ChangeRef),
 }
 
@@ -195,13 +197,9 @@ impl ChangeIndex {
     }
 }
 
-/// Why Practice cannot go on to the AI step yet, without Jev and the
-/// generator: neither "Generate questions" nor the outbound review's Send
-/// can be used.
-pub(crate) const ARRIVES_WITH_JEV: &str = "arrives with Jev";
-
-/// Why Generate questions can't start Practice: no `OpenRouter` key was
-/// found, so Whetstone can't ask Jev and the generator.
+/// Why Generate questions and the outbound review's Send can't start
+/// Practice: no `OpenRouter` key was found, so Whetstone can't ask Jev and
+/// the generator.
 pub(crate) const NEEDS_KEY: &str = "needs OPENROUTER_API_KEY";
 
 /// What a commit's row in the picker and its title in the viewer say about
