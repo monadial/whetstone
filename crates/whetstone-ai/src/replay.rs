@@ -19,6 +19,16 @@ use crate::{GeneratorRequest, JevQuestion, JevRequest, OpenRouter, SecretString,
 /// The key the tests' connections send. It never leaves the machine.
 pub(crate) const TEST_KEY: &str = "sk-or-v1-test";
 
+/// The real key, which the recorder and the live tests send: the
+/// maintainer's, or the keyed end-to-end job's. Nothing else reads it, and
+/// the app reads the environment in `main.rs` alone (rule 55).
+pub(crate) fn live_key() -> SecretString {
+    SecretString::from(
+        std::env::var("OPENROUTER_API_KEY")
+            .expect("set OPENROUTER_API_KEY to record the fixtures or run the live tests"),
+    )
+}
+
 /// The path prefix of `OpenRouter`'s API, kept on the local server so that
 /// requests go to the same paths they go to live.
 pub(crate) const API: &str = "/api/v1";
