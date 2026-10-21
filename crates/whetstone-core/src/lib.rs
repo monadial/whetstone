@@ -13,6 +13,7 @@ mod change;
 mod connected_code_limit;
 mod connection;
 mod evidence;
+mod excerpt;
 mod exclusion;
 mod jev;
 mod picking;
@@ -48,6 +49,7 @@ pub use crate::evidence::{
     ConnectionsState, Evidence, EvidenceConnection, EvidenceFile, Exclusion, FileIndex, FileStatus,
     Finding, FindingStatus, Place, ReviewChoices, SentConnection, SentFile, Side, Unsendable,
 };
+pub use crate::excerpt::{DiffMark, Excerpt, ExcerptLine, ExcerptSource};
 pub use crate::exclusion::{
     DefaultExclusion, DefaultExclusionKind, ExcludePattern, ExcludePatternError,
     ExcludePatternProblem, ExcludePatterns,
