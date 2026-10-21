@@ -107,11 +107,11 @@ _Avoid_: question review, which clashes with **Needs review** and **Outbound rev
 A candidate question the question check didn't pass. It is never shown in Practice, answered or assessed. The learner can review it and vote on each check that withheld it, and each vote is saved as a labelled example in a local labels file.
 _Avoid_: rejected question, failed question.
 
-**Giveaway check**:
-The part of a question check that asks whether a question's stem and options give its answer away; the assessment policy gives it cut-offs of its own.
-
 **Option rating**:
 Supported, Not supported or Needs review for one option of a question, decided in its question check before the learner sees it.
+
+**Giveaway check**:
+The part of a question check that asks whether a question's stem and options give its answer away; the assessment policy gives it cut-offs of its own.
 
 ## AI roles
 
