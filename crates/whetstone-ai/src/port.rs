@@ -29,8 +29,8 @@ pub trait Ai: fmt::Debug + Send + Sync {
         count: CandidateCount,
     ) -> Pending<Vec<WrittenCandidate>>;
 
-    /// Jev's question check of `candidate` against `evidence`: one yes/no
-    /// answer per option, as returned.
+    /// Jev's question check of `candidate` against `evidence`, in one call:
+    /// a yes/no answer to each of [`Candidate::checks`], as returned.
     fn check_question(
         &self,
         evidence: &Evidence,
