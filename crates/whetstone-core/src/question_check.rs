@@ -398,6 +398,7 @@ impl Question {
     /// wasn't clear yes, in order, each with its place in that rubric,
     /// counting from 0. The answer that dropped each is in
     /// [`answers`](Self::answers). Reasoning is never assessed against them.
+    #[must_use = "it only reads the criteria"]
     pub fn dropped_criteria(&self) -> impl Iterator<Item = (usize, &Criterion)> + '_ {
         self.dropped
             .iter()

@@ -22,12 +22,12 @@ use crate::prompts::QUESTION_CHECK;
 /// instructions from the base prompts. They are `answerable`, `about_area`,
 /// `needs_change` and `no_giveaway`; `criterion_1` and on, one per criterion;
 /// `criterion_1_minimum` and on, one per criterion again, whether it asks
-/// only for what the stem needs; `option_a` to `option_c`, the option
-/// ratings; `rationale_a` to
-/// `rationale_c` and `why_it_matters`; and `hint_points_to_evidence` and
-/// `hint_hides_answer_key`. It also scores the candidate's `depth` over
-/// three levels: answerable by reading one line, needs reading the change,
-/// and needs an understanding of how the change affects the code around it.
+/// only for what the question needs; `option_a` to `option_c`, the option
+/// ratings; `rationale_a` to `rationale_c` and `why_it_matters`; and
+/// `hint_points_to_evidence` and `hint_hides_answer_key`. It also scores
+/// the candidate's `depth` over three levels: answerable by reading one
+/// line, needs reading the change, and needs an understanding of how the
+/// change affects the code around it.
 ///
 /// Its state is the evidence as sent, as `evidence`, and the whole candidate
 /// as `candidate`: its area's name and description, never its area prompt,

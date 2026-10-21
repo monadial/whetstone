@@ -138,7 +138,8 @@ enum Asks {
     WhyItMatters,
 }
 
-/// How Jev answered a check that withheld a candidate.
+/// How Jev answered a check that withheld a candidate. They order from the
+/// clearest answer to none, which `each_reason` relies on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Answered {
     /// Clearly, against what the show rule needs: no, or, for an option
@@ -210,7 +211,7 @@ impl Asks {
                  written reasoning",
             ),
             Self::CriterionMinimum => (
-                "any rubric criterion asks only what the question needs",
+                "any rubric criterion asks only for what the question needs",
                 "every rubric criterion asks for more than the question needs",
             ),
             Self::AnswerKey => (

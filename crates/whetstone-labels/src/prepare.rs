@@ -20,7 +20,7 @@ use std::fmt;
 use whetstone_ai::{
     AiError, JevReply, JevRequest, QuestionWithoutKey, WrittenParagraph, explanation_check_answers,
     explanation_check_request, gate_answers, gate_request, question_check_answers,
-    question_check_request, reasoning_answers, reasoning_request,
+    question_check_name, question_check_request, reasoning_answers, reasoning_request,
 };
 use whetstone_core::{
     Area, AssessmentPolicy, Candidate, CandidateCheck, Change, Citation, ConnectedCodeLimit,
@@ -484,7 +484,10 @@ fn candidate_call(
         });
     };
     let asked = passed.checks();
-    let keys: Vec<String> = asked.iter().map(|&check| check_key(check)).collect();
+    let keys: Vec<String> = asked
+        .iter()
+        .map(|&check| question_check_name(check))
+        .collect();
     let (checks, keys, labels): (Vec<CandidateCheck>, Vec<String>, Vec<Label>) = if vote {
         let labels = labelled_only(example, &keys)?;
         asked
@@ -800,24 +803,6 @@ fn question<'a>(
         candidate: candidate.to_owned(),
     })?;
     Ok((evidence, question))
-}
-
-/// The label key of a question-check question: Jev's name for it.
-fn check_key(check: CandidateCheck) -> String {
-    let letter = |letter: whetstone_core::OptionLetter| letter.to_string().to_lowercase();
-    match check {
-        CandidateCheck::Answerable => "answerable".to_owned(),
-        CandidateCheck::AboutArea => "about_area".to_owned(),
-        CandidateCheck::NeedsChange => "needs_change".to_owned(),
-        CandidateCheck::NoGiveaway => "no_giveaway".to_owned(),
-        CandidateCheck::Criterion(index) => criterion_key(index),
-        CandidateCheck::CriterionMinimum(index) => format!("{}_minimum", criterion_key(index)),
-        CandidateCheck::Option(option) => format!("option_{}", letter(option)),
-        CandidateCheck::Rationale(option) => format!("rationale_{}", letter(option)),
-        CandidateCheck::WhyItMatters => "why_it_matters".to_owned(),
-        CandidateCheck::HintPointsToEvidence => "hint_points_to_evidence".to_owned(),
-        CandidateCheck::HintHidesAnswerKey => "hint_hides_answer_key".to_owned(),
-    }
 }
 
 /// The label key of the criterion at `index` in a rubric, counting from 0:
