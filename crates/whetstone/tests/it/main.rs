@@ -9,6 +9,7 @@ mod async_jobs;
 /// The build script's checks on areas, which it shares with these tests.
 #[path = "../../build/areas.rs"]
 mod build_areas;
+mod choice_only;
 mod cli;
 mod colors;
 mod commit_filter;

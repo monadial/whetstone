@@ -15,8 +15,8 @@ Buffer {
         "    ( ) C  Option C of the question                                             ",
         "                                                                                ",
         "  ┌   Your reas┌ Lose your draft? ──────────────────────────────┐────────────┐  ",
-        "  │ Press i to │ Your draft response hasn't been submitted, and │            │  ",
-        "  │            │ drafts are kept only while Practice is open.   │            │  ",
+        "  │ Optional: e│ Your draft response hasn't been submitted, and │            │  ",
+        "  │ Press i to │ drafts are kept only while Practice is open.   │            │  ",
         "  │            │                                                │            │  ",
         "  │            │ > Keep answering                               │            │  ",
         "  │            │   Go back, and lose the draft                  │            │  ",
@@ -24,7 +24,7 @@ Buffer {
         "  │                                                                          │  ",
         "  └──────────────────────────────────────────────────────────────────────────┘  ",
         "                                                                                ",
-        "    Submit response (write your reasoning)                                      ",
+        "    Submit response                                                             ",
         "    Inspect source                                                              ",
         "    Hint    Show answer    Skip    Cannot answer from this context    Report    ",
         "  ? keys  : actions  a/b/c choose  i write  q back                              ",
@@ -40,7 +40,5 @@ Buffer {
         x: 34, y: 9, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 17, y: 13, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
         x: 33, y: 13, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
-        x: 4, y: 19, fg: Reset, bg: Reset, underline: Reset, modifier: DIM | ITALIC,
-        x: 42, y: 19, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
     ]
 }

@@ -11,7 +11,7 @@ use whetstone::{Assessment, Report, ReportKind, Signal, StoreEntry};
 use whetstone_ai::{Asked, RequestFailure, ScriptedAi};
 use whetstone_core::{CandidateCheck, Probability};
 
-use crate::answering::{answering, reasoning, submit, type_text};
+use crate::answering::{EMPTY_EDITOR, answering, reasoning, submit, type_text};
 use crate::preparing_questions::{
     DOMAIN, PAYMENT_LIFECYCLE, answer, area_id, candidate, reasoning_met, stems,
     writing_about_the_domain,
@@ -320,7 +320,7 @@ fn skip_keeps_the_draft_and_the_skipped_question_comes_round_again_after_the_las
         "( ) B  Option B of the question",
         "the next question has its own draft"
     );
-    assert_eq!(reasoning(&session)[0], "Press i to write your reasoning.");
+    assert_eq!(reasoning(&session)[..2], EMPTY_EDITOR);
     assert_eq!(signals(&session), [(FIRST.to_owned(), Signal::Skip)]);
     assert!(
         !session.store().log().iter().any(|entry| matches!(

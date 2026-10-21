@@ -17,8 +17,8 @@ Buffer {
         "  Not asked about: Infrastructure, Observability (not worth asking about in this change)                                ",
         "                                                                                                                        ",
         "  ┌   Your reasoning ────────────────────────────────────────────────────────────────────────────────────────────────┐  ",
+        "  │ Optional: explain why, to have your reasoning assessed.                                                          │  ",
         "  │ Press i to write your reasoning.                                                                                 │  ",
-        "  │                                                                                                                  │  ",
         "  │                                                                                                                  │  ",
         "  │                                                                                                                  │  ",
         "  │                                                                                                                  │  ",
@@ -32,7 +32,7 @@ Buffer {
         "  │                                                                                                                  │  ",
         "  └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  ",
         "                                                                                                                        ",
-        "    Submit response (choose an option and write your reasoning)                                                         ",
+        "    Submit response (choose an option)                                                                                  ",
         "    Inspect source                                                                                                      ",
         "    Hint    Show answer    Skip    Cannot answer from this context    Report                                            ",
         "  ? keys  : actions  a/b/c choose  i write  q back                                                                      ",
@@ -45,6 +45,6 @@ Buffer {
         x: 2, y: 5, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
         x: 35, y: 5, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 4, y: 27, fg: Reset, bg: Reset, underline: Reset, modifier: DIM | ITALIC,
-        x: 63, y: 27, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 38, y: 27, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
     ]
 }

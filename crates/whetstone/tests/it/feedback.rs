@@ -7,7 +7,7 @@
 
 use whetstone::Durability;
 
-use crate::answering::{answering, answering_with, reasoning, submit};
+use crate::answering::{EMPTY_EDITOR, answering, answering_with, reasoning, submit};
 use crate::preparing_questions::{PAYMENT_LIFECYCLE, touched_path, writing_about_the_domain};
 use crate::session::{Refusing, Session, TestStore};
 
@@ -147,10 +147,10 @@ fn next_question_shows_the_next_one_with_a_fresh_draft() {
         session.row_with("Option A"),
         "> ( ) A  Option A of the question"
     );
-    assert_eq!(reasoning(&session)[0], "Press i to write your reasoning.");
+    assert_eq!(reasoning(&session)[..2], EMPTY_EDITOR);
     assert_eq!(
         session.row_with("Submit response"),
-        "Submit response (choose an option and write your reasoning)"
+        "Submit response (choose an option)"
     );
 }
 

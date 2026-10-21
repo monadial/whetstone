@@ -2,7 +2,8 @@
 //! options have focus, `i` or Enter starts writing reasoning in the
 //! reasoning editor and Esc stops, keeping the draft, and Tab reaches
 //! Submit response, where Enter submits. Submit stays disabled, saying
-//! what's missing, until both are there. The session record starts once
+//! what's missing, until an option is chosen: reasoning is optional. The
+//! session record starts once
 //! questions pass their checks, and Submit saves the response to it before
 //! anything else is done with it.
 
@@ -11,7 +12,7 @@ use std::sync::Arc;
 use ratatui::crossterm::event::Event;
 use whetstone::{Assessment, Durability, Flow, StoreEntry};
 use whetstone_ai::{Asked, ScriptedAi};
-use whetstone_core::{ChoiceOutcome, OptionLetter, Role};
+use whetstone_core::{ChoiceOutcome, OptionLetter, Role, WrittenReasoning};
 
 use crate::preparing_questions::{
     DOMAIN, PAYMENT_LIFECYCLE, generate, generate_in, writing_about_the_domain,
@@ -107,6 +108,13 @@ fn the_session_record_starts_once_questions_pass_with_the_questions_and_the_evid
         "the provenance of the relevance gate, the write and each check"
     );
 }
+
+/// What the empty reasoning editor says, a row each: writing reasoning is
+/// optional.
+pub(crate) const EMPTY_EDITOR: [&str; 2] = [
+    "Optional: explain why, to have your reasoning assessed.",
+    "Press i to write your reasoning.",
+];
 
 /// Types `text` a key at a time, as a terminal sends it: a space as Space
 /// and a line break as Enter.
@@ -211,7 +219,7 @@ fn a_b_and_c_choose_an_option_while_the_options_have_focus() {
 fn i_starts_editing_where_every_key_is_text_and_esc_stops_keeping_the_draft() {
     let ai = writing_about_the_domain(6, PAYMENT_LIFECYCLE);
     let mut session = answering(&ai, 80, 24);
-    assert_eq!(written(&session), ["Press i to write your reasoning."]);
+    assert_eq!(written(&session), EMPTY_EDITOR);
 
     session.press("i");
     assert_eq!(footer(&session), "Esc stop editing  Tab next");
@@ -267,7 +275,7 @@ fn a_paste_goes_into_the_reasoning_as_one_insertion_keeping_its_line_breaks() {
     // Without the editor focused, a paste does nothing (rule 57).
     paste(&mut session, "b\nq");
     assert_eq!(option(&session, "B"), "( ) B  Option B of the question");
-    assert_eq!(written(&session), ["Press i to write your reasoning."]);
+    assert_eq!(written(&session), EMPTY_EDITOR);
 
     session.press("i");
     paste(&mut session, "one\r\ntwo\rthree\u{7}\nq");
@@ -299,40 +307,27 @@ fn a_paste_past_the_limit_is_cut_at_4000_characters_with_a_notice() {
         panic!("the response is saved: {log:#?}");
     };
     assert_eq!(
-        response.reasoning(),
-        format!("ab{}", "e\u{301}".repeat(3_998)),
+        response.reasoning().written().map(WrittenReasoning::as_str),
+        Some(format!("ab{}", "e\u{301}".repeat(3_998)).as_str()),
         "counted in graphemes, not characters"
     );
 }
 
 #[test]
-fn submit_stays_disabled_saying_whats_missing_until_a_choice_and_reasoning_are_there() {
+fn submit_stays_disabled_saying_whats_missing_until_an_option_is_chosen() {
     let ai = writing_about_the_domain(6, PAYMENT_LIFECYCLE);
     let mut session = answering(&ai, 80, 24);
     assert_eq!(
         session.row_with("Submit response"),
-        "Submit response (choose an option and write your reasoning)"
+        "Submit response (choose an option)"
     );
 
     session.press("b");
     assert_eq!(
         session.row_with("Submit response"),
-        "Submit response (write your reasoning)"
+        "Submit response",
+        "reasoning is optional"
     );
-
-    session.press("i <Space> <Enter> <Space> <Tab>");
-    assert_eq!(
-        session.row_with("Submit response"),
-        "> Submit response (write your reasoning)",
-        "whitespace isn't reasoning"
-    );
-    session.press("<Enter>");
-    assert_eq!(session.store().log().len(), 1, "nothing is submitted");
-
-    session.press("i");
-    type_text(&mut session, "Retries reuse the key.");
-    session.press("<Esc>");
-    assert_eq!(session.row_with("Submit response"), "Submit response");
 }
 
 #[test]
@@ -400,7 +395,10 @@ fn submit_saves_the_response_to_the_session_record_then_its_choice_outcome() {
     assert_eq!(saved.question(), record.questions[0].id());
     assert_eq!(saved.attempt().get(), 1);
     assert_eq!(response.choice(), OptionLetter::B);
-    assert_eq!(response.reasoning(), "The key dedupes.");
+    assert_eq!(
+        response.reasoning().written().map(WrittenReasoning::as_str),
+        Some("The key dedupes.")
+    );
     assert_eq!(assessed, saved);
     assert_eq!(outcome.outcome(), ChoiceOutcome::NotSupported);
 }

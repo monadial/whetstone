@@ -24,7 +24,7 @@ Buffer {
         "  │ │                                                                       ││  ",
         "  └─│ A report is kept in your session record. It never changes an outcome. │┘  ",
         "    └ Tab next  Esc cancel ─────────────────────────────────────────────────┘   ",
-        "    Submit response (write your reasoning)                                      ",
+        "    Submit response                                                             ",
         "    Inspect source                                                              ",
         "    Hint    Show answer    Skip    Cannot answer from this context  > Report    ",
         "  Tab next  Esc cancel                                                          ",
@@ -40,8 +40,6 @@ Buffer {
         x: 25, y: 12, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 45, y: 12, fg: Reset, bg: Reset, underline: Reset, modifier: REVERSED,
         x: 46, y: 12, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
-        x: 4, y: 19, fg: Reset, bg: Reset, underline: Reset, modifier: DIM | ITALIC,
-        x: 42, y: 19, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 68, y: 21, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
         x: 76, y: 21, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
     ]
