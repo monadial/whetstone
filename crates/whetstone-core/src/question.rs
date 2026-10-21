@@ -415,7 +415,7 @@ impl OptionLetter {
     pub const ALL: [Self; 3] = [Self::A, Self::B, Self::C];
 
     /// The letter the generator wrote as `letter`, if it is exactly one.
-    fn from_written(letter: &str) -> Option<Self> {
+    pub(crate) fn from_written(letter: &str) -> Option<Self> {
         match letter {
             "A" => Some(Self::A),
             "B" => Some(Self::B),

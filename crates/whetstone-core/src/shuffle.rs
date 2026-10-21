@@ -9,21 +9,21 @@
 
 use std::mem;
 
-use crate::question::{WrittenCandidate, WrittenOption};
+use crate::question::{OptionLetter, WrittenCandidate, WrittenOption};
 
-/// A single-choice question's letters, in the order the learner reads them.
-const LETTERS: [&str; 3] = ["A", "B", "C"];
-
-/// Every order of three options. Each lists, letter by letter, the place in
-/// letter order of the option written there.
-const ORDERS: [[usize; 3]; 6] = [
-    [0, 1, 2],
-    [0, 2, 1],
-    [1, 0, 2],
-    [1, 2, 0],
-    [2, 0, 1],
-    [2, 1, 0],
-];
+/// Every order of three options. Each gives, for A, B and C in turn, the
+/// letter that the option moving there had before the shuffle.
+const ORDERS: [[OptionLetter; 3]; 6] = {
+    use OptionLetter::{A, B, C};
+    [
+        [A, B, C],
+        [A, C, B],
+        [B, A, C],
+        [B, C, A],
+        [C, A, B],
+        [C, B, A],
+    ]
+};
 
 /// `written` with its options shuffled: each option's text and rationale
 /// move together to a new letter, the letters still read A, B and C in
@@ -65,10 +65,7 @@ pub fn shuffle_options(mut written: WrittenCandidate) -> WrittenCandidate {
     let Some(written_at) = in_letter_order(&written.options) else {
         return written;
     };
-    let Some(answer_key) = LETTERS
-        .iter()
-        .position(|&letter| letter == written.answer_key)
-    else {
+    let Some(answer_key) = OptionLetter::from_written(&written.answer_key) else {
         return written;
     };
     let order = ORDERS[order_of(&written, written_at)];
@@ -76,32 +73,33 @@ pub fn shuffle_options(mut written: WrittenCandidate) -> WrittenCandidate {
         .into_iter()
         .map(Some)
         .collect();
-    written.options = order
-        .iter()
-        .zip(LETTERS)
-        .map(|(&from, letter)| {
-            let mut option = options[written_at[from]]
+    written.options = OptionLetter::ALL
+        .into_iter()
+        .zip(order)
+        .map(|(letter, was)| {
+            let mut option = options[written_at[was.index()]]
                 .take()
                 .expect("each option moves to one letter");
-            letter.clone_into(&mut option.letter);
+            option.letter = letter.to_string();
             option
         })
         .collect();
-    let moved_to = order
-        .iter()
-        .position(|&from| from == answer_key)
+    let (moved_to, _) = OptionLetter::ALL
+        .into_iter()
+        .zip(order)
+        .find(|&(_, was)| was == answer_key)
         .expect("every option gets a letter");
-    LETTERS[moved_to].clone_into(&mut written.answer_key);
+    written.answer_key = moved_to.to_string();
     written
 }
 
-/// Where each of A, B and C is among `options`, if they are exactly those
-/// three, each once.
+/// Where the options lettered A, B and C are among `options`, in that
+/// order, if those are exactly its letters, each once.
 fn in_letter_order(options: &[WrittenOption]) -> Option<[usize; 3]> {
     let mut places = [None; 3];
     for (at, option) in options.iter().enumerate() {
-        let letter = LETTERS.iter().position(|&letter| letter == option.letter)?;
-        if places[letter].replace(at).is_some() {
+        let letter = OptionLetter::from_written(&option.letter)?;
+        if places[letter.index()].replace(at).is_some() {
             return None;
         }
     }
@@ -111,11 +109,12 @@ fn in_letter_order(options: &[WrittenOption]) -> Option<[usize; 3]> {
     }
 }
 
-/// Which of [`ORDERS`] `written` gets: from FNV-1a over its stem, its
-/// options' text and rationales in letter order, and its answer key, whose
-/// bits are then mixed (the `SplitMix64` finaliser) so every bit counts. Both
-/// are fixed by their definitions, so the order never changes with the
-/// platform or the release, as the standard library's hasher may.
+/// Which of [`ORDERS`] `written` gets: from an FNV-1a hash over its stem,
+/// its options' text and rationales in letter order, and its answer key.
+/// The hash's bits are then mixed (the `SplitMix64` finaliser), so every
+/// bit counts. Both are fixed by their definitions, so the order never
+/// changes with the platform or the release, as the standard library's
+/// hasher may.
 fn order_of(written: &WrittenCandidate, written_at: [usize; 3]) -> usize {
     const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
     const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;

@@ -96,7 +96,7 @@ These rules apply from the Practice spec, when the AI crate and the session reco
 | --- | --- | --- |
 | 46 | `main.rs` stays thin: it passes the process's arguments and environment to `whetstone::run`. Logic lives in the library, where tests can reach it. | **Review**. |
 | 47 | TUI snapshots are fixed-size and committed: every screen at 120×32 and 80×24. CI runs with `CI=true`, so insta fails on a changed snapshot instead of writing one. | **Lint/CI**: insta in CI. |
-| 48 | Per-PR tests make no network calls. Each HTTP test owns its mock server. The stated exceptions call `OpenRouter` with a real key, and only when asked for: the keyed end-to-end job's live tests and the recorder that re-records the offline replies (see [The keyed end-to-end job](#the-keyed-end-to-end-job)), and the labelled-example tool (`whetstone-labels measure`), which a maintainer runs with their own key and which is never a test; the tool's own tests use mock servers. | **Lint/CI**: `ci.yml` has no API key, and the tests that need one are ignored. **Review**. |
+| 48 | Per-PR tests make no network calls. Each HTTP test owns its mock server. The stated exceptions call `OpenRouter` with a real key, and only when asked for: the keyed end-to-end job's live tests, the recorder that re-records the offline replies, and the base-prompt measuring tests in `crates/whetstone/tests/it/measure_questions.rs`, which are ignored and never named `live_…`, so a maintainer runs them by hand and CI never does (see [The keyed end-to-end job](#the-keyed-end-to-end-job)), and the labelled-example tool (`whetstone-labels measure`), which a maintainer runs with their own key and which is never a test; the tool's own tests use mock servers. | **Lint/CI**: `ci.yml` has no API key, and the tests that need one are ignored. **Review**. |
 | 49 | CI runs `cargo nextest` and `cargo test --doc` (nextest skips doc tests). `proptest-regressions` files are committed. Time-dependent async tests use a paused clock. | **Lint/CI**: the test job. **Review**: regressions and clocks. |
 
 ## Types, naming and docs
@@ -168,6 +168,7 @@ With your own key, you can run the same live tests, or re-record the offline rep
 | --- | --- |
 | Live tests | `OPENROUTER_API_KEY=… cargo nextest run --workspace --all-features --locked --no-fail-fast --run-ignored only -E 'test(/::live_\w+$/)'` |
 | Re-record the offline replies | `OPENROUTER_API_KEY=… cargo test -p whetstone-ai --locked record:: -- --ignored --test-threads 1` |
+| Measure what Generate questions shows on the showcase, per change and area, before and after a change to the base prompts | `OPENROUTER_API_KEY=… cargo nextest run -p whetstone --locked --no-capture --run-ignored only -E 'test(/measure_questions::/)'` |
 
 The recorder saves each reply's body under `crates/whetstone-ai/fixtures/`, never its headers, and refuses to save one that holds a key or an auth header; a per-PR test checks every fixture for the same. A re-recorded reply changes values the contract tests assert, so update them in the same PR.
 
