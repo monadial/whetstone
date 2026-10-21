@@ -109,7 +109,7 @@ pub enum Asked {
         options: [String; 3],
         /// The rubric's criteria, in order.
         rubric: Vec<Criterion>,
-        /// The learner's reasoning.
+        /// The learner's reasoning, as the acknowledgement gives it.
         reasoning: String,
     },
 }
@@ -313,7 +313,6 @@ impl Ai for ScriptedAi {
         saved: &dyn Saved,
         evidence: &Evidence,
         question: QuestionWithoutKey<'_>,
-        reasoning: &str,
     ) -> Pending<Vec<Probability>> {
         let mut script = self.script();
         script.asked.push(Asked::AssessReasoning {
@@ -322,7 +321,7 @@ impl Ai for ScriptedAi {
             stem: question.stem().to_owned(),
             options: question.options().map(str::to_owned),
             rubric: question.rubric().to_vec(),
-            reasoning: reasoning.to_owned(),
+            reasoning: saved.reasoning().to_owned(),
         });
         let reply = script
             .assessments
@@ -397,7 +396,8 @@ mod tests {
     };
 
     use super::*;
-    use crate::port::{Ai, CandidateCount, RequestFailure, Saved};
+    use crate::port::{Ai, CandidateCount, RequestFailure};
+    use crate::samples::Acknowledged;
 
     /// `request`'s outcome, which the scripted AI has at once.
     fn at_once<T>(request: impl Future<Output = T>) -> T {
@@ -521,18 +521,6 @@ mod tests {
         .expect("scripted to pass");
         show_rule(candidate, answers, AssessmentPolicy::current()).expect("every check passes")
     }
-
-    /// A session store's acknowledgement of the response numbered `0`.
-    #[derive(Debug)]
-    struct Acknowledged(
-        #[expect(
-            dead_code,
-            reason = "read only through its Debug output, as the log keeps it"
-        )]
-        u32,
-    );
-
-    impl Saved for Acknowledged {}
 
     fn probabilities(values: &[f64]) -> Vec<Probability> {
         values
@@ -787,24 +775,22 @@ mod tests {
         let asked = question("Why retry?");
 
         let first = at_once(ai.assess_reasoning(
-            &Acknowledged(1),
+            &Acknowledged("It retries."),
             &evidence(),
             QuestionWithoutKey::from(&asked),
-            "It retries.",
         ));
         let again = at_once(ai.assess_reasoning(
-            &Acknowledged(2),
+            &Acknowledged("It retries once."),
             &evidence(),
             QuestionWithoutKey::from(&asked),
-            "It retries once.",
         ));
 
         let first = first.expect("scripted to answer");
         assert_eq!(first.content, probabilities(&[0.9]), "as scripted");
         assert_eq!(first.provenance.role(), Role::Jev);
         assert_eq!(again, Err(RequestFailure::Cancelled));
-        let logged = |saved: &str, reasoning: &str| Asked::AssessReasoning {
-            saved: saved.to_owned(),
+        let logged = |reasoning: &str| Asked::AssessReasoning {
+            saved: format!("Acknowledged({reasoning:?})"),
             evidence: evidence(),
             stem: "Why retry?".to_owned(),
             options: ["An option"; 3].map(str::to_owned),
@@ -813,10 +799,7 @@ mod tests {
         };
         assert_eq!(
             ai.asked(),
-            [
-                logged("Acknowledged(1)", "It retries."),
-                logged("Acknowledged(2)", "It retries once.")
-            ]
+            [logged("It retries."), logged("It retries once.")]
         );
     }
 

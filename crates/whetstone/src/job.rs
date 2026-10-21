@@ -85,8 +85,9 @@ pub enum JobOutput {
     /// Jev's answers to whether a saved response's reasoning meets each
     /// criterion, or why the request failed.
     Evaluated {
-        /// The saved response whose reasoning was assessed.
-        saved: SavedResponse,
+        /// The saved response whose reasoning was assessed, boxed, as it
+        /// holds the response, to keep the app's messages small.
+        saved: Box<SavedResponse>,
         /// Jev's answer for each criterion, in rubric order, as returned,
         /// or why the request failed.
         reply: Result<Reply<Vec<Probability>>, RequestFailure>,

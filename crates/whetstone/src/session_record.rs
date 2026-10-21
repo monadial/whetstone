@@ -91,30 +91,39 @@ pub struct SessionId(u64);
 pub struct AttemptId(u32);
 
 /// A store's acknowledgement that it saved a response: which session record
-/// holds it, which question it responds to, and which attempt at that
-/// question it is.
+/// holds it, which question it responds to, which attempt at that question
+/// it is, and the response, as saved.
 ///
 /// Only a store makes one, in [`SessionStore::save_response`], so a
-/// reasoning evaluation that takes one can be requested only for a saved
-/// response (rule 39). It also names that evaluation's result, so a result
-/// for another session, question or attempt is never applied (rule 24): it
-/// can be the key a screen waits for the result with.
+/// reasoning evaluation, which takes one and sends the reasoning it holds,
+/// can be requested only for a saved response (rule 39). It also names that
+/// evaluation's result, so a result for another session, question or
+/// attempt is never applied (rule 24): it can be the key a screen waits for
+/// the result with.
+///
+/// Its `Debug` output shows its identities, never the response.
 ///
 /// Nothing outside a store can make one:
 ///
 /// ```compile_fail,E0451
 /// use whetstone::{AttemptId, SavedResponse, SessionId};
-/// use whetstone_core::CandidateId;
+/// use whetstone_core::{CandidateId, Response};
 ///
-/// fn forge(session: SessionId, question: CandidateId, attempt: AttemptId) -> SavedResponse {
-///     SavedResponse { session, question, attempt }
+/// fn forge(
+///     session: SessionId,
+///     question: CandidateId,
+///     attempt: AttemptId,
+///     response: Response,
+/// ) -> SavedResponse {
+///     SavedResponse { session, question, attempt, response }
 /// }
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct SavedResponse {
     session: SessionId,
     question: CandidateId,
     attempt: AttemptId,
+    response: Response,
 }
 
 /// An outcome of a saved response. Each kind of outcome a later slice
@@ -300,6 +309,7 @@ impl SessionStore for InMemoryStore {
             session,
             question: question.clone(),
             attempt: AttemptId(u32::try_from(earlier + 1).expect("attempts are counted in u32")),
+            response: response.clone(),
         };
         log.push(StoreEntry::Response {
             saved: saved.clone(),
@@ -343,8 +353,25 @@ impl SessionStore for InMemoryStore {
     }
 }
 
-/// The acknowledgement a reasoning evaluation is asked with (rule 39).
-impl whetstone_ai::Saved for SavedResponse {}
+/// The acknowledgement a reasoning evaluation is asked with, and the
+/// reasoning it sends (rule 39).
+impl whetstone_ai::Saved for SavedResponse {
+    fn reasoning(&self) -> &str {
+        self.response.reasoning()
+    }
+}
+
+/// Shows the identities, never the response, whose choice a reasoning
+/// evaluation must never carry.
+impl fmt::Debug for SavedResponse {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SavedResponse")
+            .field("session", &self.session)
+            .field("question", &self.question)
+            .field("attempt", &self.attempt)
+            .finish_non_exhaustive()
+    }
+}
 
 impl SavedResponse {
     /// The session record the response is saved in.
@@ -363,6 +390,12 @@ impl SavedResponse {
     #[must_use]
     pub fn attempt(&self) -> AttemptId {
         self.attempt
+    }
+
+    /// The response, as saved.
+    #[must_use]
+    pub fn response(&self) -> &Response {
+        &self.response
     }
 }
 

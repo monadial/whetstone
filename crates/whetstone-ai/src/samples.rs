@@ -18,7 +18,7 @@ use whetstone_core::{
 };
 
 use crate::replay::{GENERATOR_MODEL, JEV_MODEL, connection, received, server};
-use crate::{AiError, GeneratorReply, GeneratorRequest, JevReply, JevRequest, Timeouts};
+use crate::{AiError, GeneratorReply, GeneratorRequest, JevReply, JevRequest, Saved, Timeouts};
 
 pub(crate) fn jev_model() -> ModelId {
     ModelId::new(JEV_MODEL.to_owned())
@@ -311,6 +311,17 @@ pub(crate) fn question() -> Question {
 pub(crate) const REASONING: &str = "The provider only charges once for each key and \
      gives back the first receipt when it sees a key again. Reusing the original key \
      means the retry can't turn into a second charge.";
+
+/// A session store's acknowledgement that it saved a response whose
+/// reasoning is `0`, as the app's store gives one.
+#[derive(Debug)]
+pub(crate) struct Acknowledged(pub(crate) &'static str);
+
+impl Saved for Acknowledged {
+    fn reasoning(&self) -> &str {
+        self.0
+    }
+}
 
 /// Sends `request` to Jev through a local server that replies with
 /// `reply`, and returns the decoded reply and the body that was sent.
