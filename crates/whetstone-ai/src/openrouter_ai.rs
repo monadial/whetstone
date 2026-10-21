@@ -450,6 +450,141 @@ mod tests {
         );
     }
 
+    /// How each of the port's requests fails when `OpenRouter` answers
+    /// `status` and `body`: the relevance gate, writing candidates and the
+    /// question check, in that order.
+    async fn failures(status: u16, body: &str) -> [Option<RequestFailure>; 3] {
+        let (_gate, gate) = ai("/systemone", status, body).await;
+        let (_write, write) = ai("/chat/completions", status, body).await;
+        let (_check, check) = ai("/systemone", status, body).await;
+        [
+            gate.check_areas(&evidence(), &[area()]).await.err(),
+            write
+                .write_candidates(&evidence(), &area(), two_per_area())
+                .await
+                .err(),
+            check.check_question(&evidence(), &candidate()).await.err(),
+        ]
+    }
+
+    #[tokio::test]
+    async fn each_failure_openrouter_reports_reaches_the_port_by_its_name() {
+        use RequestFailure::{
+            InvalidReply, InvalidRequest, KeyRefused, NoZeroRetentionEndpoint, OutOfCredits,
+            ProviderUnavailable, RateLimited, TimedOut,
+        };
+        // Bodies that weren't recorded live follow `OpenRouter`'s documented
+        // error shape: https://openrouter.ai/docs/api_reference/errors-and-debugging
+        let server_error = |status| {
+            format!(r#"{{"error":{{"code":{status},"message":"Internal Server Error"}}}}"#)
+        };
+        for (status, body, named) in [
+            (
+                401,
+                include_str!("../fixtures/key-refused.json").to_owned(),
+                [KeyRefused; 3],
+            ),
+            (
+                402,
+                r#"{"error":{"code":402,"message":"Insufficient credits"}}"#.to_owned(),
+                [OutOfCredits; 3],
+            ),
+            (
+                429,
+                r#"{"error":{"code":429,"message":"Rate limit exceeded"}}"#.to_owned(),
+                [RateLimited; 3],
+            ),
+            (500, server_error(500), [ProviderUnavailable; 3]),
+            (502, server_error(502), [ProviderUnavailable; 3]),
+            (503, server_error(503), [ProviderUnavailable; 3]),
+            // Only the generator's requests ask for zero retention until #69,
+            // so only for them is a refused route about it.
+            (
+                404,
+                include_str!("../fixtures/generator-no-zero-retention.json").to_owned(),
+                [
+                    ProviderUnavailable,
+                    NoZeroRetentionEndpoint,
+                    ProviderUnavailable,
+                ],
+            ),
+            (
+                400,
+                r#"{"error":{"code":400,"message":"not a valid model ID"}}"#.to_owned(),
+                [InvalidRequest; 3],
+            ),
+            (
+                403,
+                r#"{"error":{"code":403,"message":"Input was flagged","metadata":{"reasons":["moderation"]}}}"#
+                    .to_owned(),
+                [InvalidRequest; 3],
+            ),
+            (
+                408,
+                r#"{"error":{"code":408,"message":"Request timed out"}}"#.to_owned(),
+                [TimedOut; 3],
+            ),
+            (200, "not json".to_owned(), [InvalidReply; 3]),
+        ] {
+            assert_eq!(
+                failures(status, &body).await,
+                named.map(Some),
+                "status {status}: {body}"
+            );
+        }
+    }
+
+    /// The real AI on a local server that answers `route` only after ten
+    /// minutes, with the default time limits but for connecting, which can't
+    /// fire first: a paused clock jumps to the next timer whenever the
+    /// runtime waits on the socket.
+    async fn slow(route: &str) -> (wiremock::MockServer, OpenRouterAi) {
+        let server = server(route, 200, "{}", Duration::from_secs(600)).await;
+        let timeouts = Timeouts {
+            connect: Duration::from_secs(3600),
+            ..Timeouts::default()
+        };
+        let ai = OpenRouterAi::new(connection(&server, timeouts), models());
+        (server, ai)
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn jev_s_requests_time_out_after_30_seconds() {
+        let (_gate, gate) = slow("/systemone").await;
+        let started = tokio::time::Instant::now();
+        assert_eq!(
+            gate.check_areas(&evidence(), &[area()]).await.err(),
+            Some(RequestFailure::TimedOut)
+        );
+        assert_eq!(started.elapsed(), Duration::from_secs(30), "the gate");
+
+        let (_check, check) = slow("/systemone").await;
+        let started = tokio::time::Instant::now();
+        assert_eq!(
+            check.check_question(&evidence(), &candidate()).await.err(),
+            Some(RequestFailure::TimedOut)
+        );
+        assert_eq!(
+            started.elapsed(),
+            Duration::from_secs(30),
+            "the question check"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_generator_s_requests_time_out_after_120_seconds() {
+        let (_server, ai) = slow("/chat/completions").await;
+        let started = tokio::time::Instant::now();
+
+        assert_eq!(
+            ai.write_candidates(&evidence(), &area(), two_per_area())
+                .await
+                .err(),
+            Some(RequestFailure::TimedOut)
+        );
+        assert_eq!(started.elapsed(), Duration::from_secs(120));
+    }
+
     #[test]
     fn every_failure_keeps_its_name_across_the_port() {
         for (error, failure) in [
