@@ -148,9 +148,10 @@ The root `clippy.toml` allows `unwrap`, `expect`, `panic!` and printing in tests
 | Docs | `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps --locked` | Linux x86_64 |
 | cargo-deny | `cargo deny --locked check` | Linux x86_64 (`deny.toml` checks every supported target at once) |
 | cargo-shear | `cargo shear --deny-warnings --locked` | Linux x86_64 |
+| Release config | `dist generate --check`, then `cargo about generate --locked --fail -o "$RUNNER_TEMP/THIRD-PARTY-LICENSES.md" about.hbs`: `release.yml` is what dist generates from `dist-workspace.toml`, and the licenses each release archive carries can be written ([`docs/releasing.md`](docs/releasing.md)) | Linux x86_64 |
 | Clippy and tests | `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`, then `cargo nextest run --workspace --all-features --locked --profile ci`, then `cargo test --workspace --all-features --locked --doc` | Linux and macOS, each on x86_64 and arm64 |
 
-Run the same commands locally before pushing. The tools are `cargo-nextest`, `cargo-deny` and `cargo-shear`, at the versions the workflow pins.
+Run the same commands locally before pushing. The tools are `cargo-nextest`, `cargo-deny`, `cargo-shear`, dist and `cargo-about`, at the versions the workflow pins.
 
 ### The keyed end-to-end job
 

@@ -8,6 +8,10 @@ version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
+    # dist generates release.yml and pins its actions from
+    # dist-workspace.toml, so an update goes there (docs/releasing.md).
+    exclude-paths:
+      - .github/workflows/release.yml
     schedule:
       interval: weekly
     groups:
