@@ -256,9 +256,13 @@ fn an_explanation_that_fails_to_arrive_is_unavailable_and_the_assessment_stays()
             "Met · Names the key the retry reuses",
             "Not met · Says why the retry can't charge twice",
             "Explanation unavailable: the generator's request failed: rate limited.",
+            "OpenRouter had too many requests from your key too quickly. Wait a moment, then \
+             Retry.",
             "Needs review · Says what the timed-out charge may already have done",
             "Jev couldn't tell whether your reasoning covers this.",
             "Explanation unavailable: the generator's request failed: rate limited.",
+            "OpenRouter had too many requests from your key too quickly. Wait a moment, then \
+             Retry.",
         ]
     );
     assert_eq!(session.row_with("Retry explanation"), "Retry explanation");
@@ -281,13 +285,48 @@ fn a_check_that_fails_leaves_the_explanation_unavailable() {
     let session = explained(&ai, 120, TALL);
 
     assert_eq!(
-        session.section("Reasoning")[1..3],
+        session.section("Reasoning")[1..4],
         [
             "Not met · Says why the retry can't charge twice",
             "Explanation unavailable: Jev's check failed: timed out.",
+            "Jev didn't reply in time. Retry, or try again later.",
         ]
     );
     assert!(!session.text().contains(NOT_MET), "{}", session.text());
+}
+
+#[test]
+fn a_generator_model_refused_while_explaining_is_named_and_marked_in_settings() {
+    let ai = writing([0.9, 0.1, 0.9]);
+    ai.on_explain(FIRST, Err(RequestFailure::NoZeroRetentionEndpoint));
+
+    let mut session = explained(&ai, 120, TALL);
+
+    // Its rows as one line, so a sentence is found wherever it wraps.
+    let reasoning = session.section("Reasoning").join(" ");
+    for said in [
+        "Explanation unavailable: the generator's request failed: no zero-retention endpoint for \
+         the model (refused by OpenRouter).",
+        "OpenRouter has no endpoint for anthropic/claude-sonnet-5.5 that keeps no prompts, so \
+         nothing went to the model. Choose another model under [generator] in config.toml; \
+         Settings marks this one.",
+    ] {
+        assert!(reasoning.contains(said), "{said:?} in {reasoning:?}");
+    }
+    // Back to the areas and changes, then home, then Settings.
+    session.press("q <Esc> j <Enter>");
+    let settings = session
+        .text()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(
+        settings.contains(
+            "anthropic/claude-sonnet-5.5 (default) no zero-retention endpoint (refused by \
+             OpenRouter)"
+        ),
+        "Settings marks the generator model: {settings}"
+    );
 }
 
 #[test]
