@@ -114,6 +114,7 @@ fn question_check(question: &Question, requests: &[SentRequest]) -> Section {
 /// `evaluation` stands, from the requests whose provenance is `requests`.
 fn reasoning(question: &Question, evaluation: &Evaluation, requests: &[&Provenance]) -> Section {
     let text = match evaluation {
+        Evaluation::NotWritten => "Reasoning not written: Jev wasn't asked about it.".to_owned(),
         Evaluation::Unsent | Evaluation::Awaiting => {
             "Awaiting evaluation: Jev hasn't answered yet.".to_owned()
         }

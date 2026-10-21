@@ -5,8 +5,13 @@
 //! review. Outcomes are in words only: Jev's probabilities stay out of
 //! them.
 //!
-//! The reasoning awaits evaluation until Jev's answers come, and then each
-//! criterion of the rubric shows met, not met or needs review. Cancel
+//! Writing reasoning is optional. Without it, Jev isn't asked about the
+//! reasoning and no explanation is written: in place of criterion outcomes,
+//! the rubric shows as what a full answer covers, each criterion's
+//! statement with no outcome, under "Reasoning not written: not assessed".
+//!
+//! Written reasoning awaits evaluation until Jev's answers come, and then
+//! each criterion of the rubric shows met, not met or needs review. Cancel
 //! evaluation stops the request, and the response stays submitted. A
 //! failure or a cancellation shows Evaluation unavailable, with Retry
 //! evaluation, which asks Jev again. A failure is named, then what the
@@ -34,7 +39,7 @@ use ratatui::widgets::{List, Paragraph};
 use whetstone_ai::{ParagraphCheck, RequestFailure, WrittenParagraph};
 use whetstone_core::{
     AppliedCutOffs, Assessed, ChoiceOutcome, CriterionOutcome, Evidence, Extent, OptionLetter,
-    Probability, Question, Role,
+    Probability, Question, Reasoning, Role,
 };
 
 use crate::columns;
@@ -43,7 +48,7 @@ use crate::failures::FailedRequests;
 use crate::focus::Position;
 use crate::keymap::{self, Binding, Command, Keymap};
 use crate::session_record::{
-    Assessment, Durability, ExplanationCheck, SavedResponse, SessionStore,
+    Assessment, Durability, ExplanationCheck, SavedReasoning, SavedResponse, SessionStore,
 };
 use crate::theme::{ColorSupport, ControlState, Theme};
 
@@ -110,6 +115,9 @@ impl Control {
 /// Where Jev's evaluation of the reasoning stands.
 #[derive(Debug)]
 pub(crate) enum Evaluation {
+    /// The learner wrote no reasoning, so there is nothing to assess, and
+    /// nothing is asked for.
+    NotWritten,
     /// To ask for, as soon as the screen starts its jobs.
     Unsent,
     /// Asked for: the reasoning awaits evaluation.
@@ -190,7 +198,8 @@ pub(crate) struct Feedback {
     /// Whether the store that saved the response keeps it after Whetstone
     /// closes: only then does "Saved" show.
     durability: Durability,
-    /// Where Jev's evaluation of the reasoning stands.
+    /// Where Jev's evaluation of the reasoning stands: not written, if the
+    /// learner wrote none.
     evaluation: Evaluation,
     /// Where the explanation of what the reasoning missed stands, once the
     /// outcomes are known.
@@ -226,12 +235,16 @@ impl Feedback {
             Place::BeforeTheLast => Control::NextQuestion,
             Place::Last => Control::Finish,
         };
+        let evaluation = match saved.response().reasoning() {
+            Reasoning::Written(_) => Evaluation::Unsent,
+            Reasoning::NotWritten => Evaluation::NotWritten,
+        };
         Self {
             outcome,
             kind,
             saved,
             durability,
-            evaluation: Evaluation::Unsent,
+            evaluation,
             explanation: Explanation::default(),
             unrecorded: Vec::new(),
             explanation_checks: Vec::new(),
@@ -262,14 +275,15 @@ impl Feedback {
         &self.explanation_checks
     }
 
-    /// The saved response whose reasoning to ask Jev about, if its
+    /// The saved response, with the reasoning to ask Jev about, if its
     /// evaluation waits to be asked for. It then awaits.
-    pub(crate) fn take_evaluation(&mut self) -> Option<&SavedResponse> {
+    pub(crate) fn take_evaluation(&mut self) -> Option<SavedReasoning<'_>> {
         let Evaluation::Unsent = self.evaluation else {
             return None;
         };
+        let reasoning = self.saved.written_reasoning()?;
         self.evaluation = Evaluation::Awaiting;
-        Some(&self.saved)
+        Some(reasoning)
     }
 
     /// Applies Jev's `reply` about the reasoning written for `question`: a
@@ -335,23 +349,26 @@ impl Feedback {
         };
     }
 
-    /// The saved response whose reasoning the generator is to explain, and
-    /// the criteria to explain, each with its outcome, if any wait to be
+    /// The saved response, with the reasoning the generator is to explain,
+    /// and the criteria to explain, each with its outcome, if any wait to be
     /// asked for. They are then being written.
     pub(crate) fn take_explanation(
         &mut self,
-    ) -> Option<(&SavedResponse, Vec<(usize, CriterionOutcome)>)> {
+    ) -> Option<(SavedReasoning<'_>, Vec<(usize, CriterionOutcome)>)> {
+        let reasoning = self.saved.written_reasoning()?;
         let criteria = self.explanation.take_request()?;
-        Some((&self.saved, criteria))
+        Some((reasoning, criteria))
     }
 
-    /// The saved response whose explanation Jev is to check, and the
-    /// paragraphs to check, if any wait to be. They are then being checked.
+    /// The saved response, with the reasoning whose explanation Jev is to
+    /// check, and the paragraphs to check, if any wait to be. They are then
+    /// being checked.
     pub(crate) fn take_explanation_check(
         &mut self,
-    ) -> Option<(&SavedResponse, Vec<WrittenParagraph>)> {
+    ) -> Option<(SavedReasoning<'_>, Vec<WrittenParagraph>)> {
+        let reasoning = self.saved.written_reasoning()?;
         let paragraphs = self.explanation.take_check()?;
-        Some((&self.saved, paragraphs))
+        Some((reasoning, paragraphs))
     }
 
     /// Applies the generator's `reply` explaining the reasoning: a
@@ -414,7 +431,7 @@ impl Feedback {
         let evaluation = match self.evaluation {
             Evaluation::Unsent | Evaluation::Awaiting => Some(Control::CancelEvaluation),
             Evaluation::Unavailable(_) => Some(Control::RetryEvaluation),
-            Evaluation::Assessed(_) => None,
+            Evaluation::NotWritten | Evaluation::Assessed(_) => None,
         };
         let explanation = self
             .explanation
@@ -585,15 +602,17 @@ impl Feedback {
             );
         }
         lines.push(Line::default());
-        lines.push(Line::styled("Your reasoning", theme.title));
-        for line in self.saved.response().reasoning().lines() {
-            if line.trim().is_empty() {
-                lines.push(Line::default());
-            } else {
-                wrapped(&mut lines, line);
+        if let Reasoning::Written(reasoning) = self.saved.response().reasoning() {
+            lines.push(Line::styled("Your reasoning", theme.title));
+            for line in reasoning.as_str().lines() {
+                if line.trim().is_empty() {
+                    lines.push(Line::default());
+                } else {
+                    wrapped(&mut lines, line);
+                }
             }
+            lines.push(Line::default());
         }
-        lines.push(Line::default());
         self.reasoning_outcome(&mut lines, question, theme, width, failed);
         if self.durability == Durability::Durable {
             lines.push(Line::default());
@@ -603,7 +622,8 @@ impl Feedback {
     }
 
     /// Adds the reasoning's outcome to `lines`, `width` cells wide, drawn
-    /// with `theme`: awaiting evaluation, unavailable, why and what to do as
+    /// with `theme`: not assessed, with what a full answer covers, when it
+    /// isn't written, awaiting evaluation, unavailable, why and what to do as
     /// `failed` words it, or each criterion of `question`'s rubric with its
     /// outcome.
     fn reasoning_outcome(
@@ -618,6 +638,20 @@ impl Feedback {
             lines.extend(columns::wrap(text, width).into_iter().map(Line::raw));
         };
         match &self.evaluation {
+            Evaluation::NotWritten => {
+                lines.push(Line::styled(
+                    "Reasoning not written: not assessed",
+                    theme.title,
+                ));
+                lines.push(Line::default());
+                lines.push(Line::styled("What a full answer covers", theme.title));
+                for (place, criterion) in question.rubric().iter().enumerate() {
+                    wrapped(
+                        lines,
+                        &format!("Criterion {} · {}", place + 1, criterion.statement()),
+                    );
+                }
+            }
             Evaluation::Unsent | Evaluation::Awaiting => {
                 lines.push(Line::styled("Reasoning · Awaiting evaluation", theme.title));
                 wrapped(
