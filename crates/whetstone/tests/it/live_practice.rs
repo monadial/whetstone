@@ -13,7 +13,7 @@ use crate::session::Setup;
 /// The real key: the maintainer's, or the keyed end-to-end job's. It is the
 /// one thing the app-seam tests read from the process's environment, and
 /// only here: the app gets it as every test's variables are given (rule 55).
-fn live_key() -> String {
+pub(crate) fn live_key() -> String {
     std::env::var("OPENROUTER_API_KEY").expect("set OPENROUTER_API_KEY to run the live tests")
 }
 
