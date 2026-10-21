@@ -5,6 +5,7 @@
 
 mod app;
 mod areas;
+mod cannot_answer;
 mod cli;
 mod columns;
 mod config;
@@ -32,6 +33,7 @@ mod practice;
 mod questions;
 mod reader;
 mod reasoning_editor;
+mod report;
 mod repository;
 mod search;
 mod session_record;

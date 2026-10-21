@@ -1109,7 +1109,7 @@ impl OutboundReview {
                 )
             }
             // Only Practice's questions show it.
-            Reading::Evidence => return None,
+            Reading::Evidence | Reading::Answer => return None,
         })
     }
 }
