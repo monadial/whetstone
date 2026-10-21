@@ -1,0 +1,23 @@
+name: Idea
+description: Something Whetstone could do, or do differently.
+labels: ["needs-triage"]
+body:
+  - type: textarea
+    id: situation
+    attributes:
+      label: What you're trying to do
+      description: The situation, and what gets in the way today.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would help
+      description: What you'd like Whetstone to do. Rough is fine.
+    validations:
+      required: true
+  - type: textarea
+    id: else
+    attributes:
+      label: Anything else
+      description: Workarounds you use, other tools that do it, or anything else that helps.

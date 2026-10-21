@@ -1,0 +1,54 @@
+name: Bug
+description: Something in Whetstone doesn't work as it should.
+labels: ["needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting it. Never paste your OpenRouter key. Leave out code from a private repository, and describe it instead. A security problem goes to [private reporting](https://github.com/monadial/whetstone/security/advisories/new), not here.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you saw, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: From starting `whetstone`. Say whether you practised on your own repository or on the showcase project.
+      placeholder: |
+        1. Start `whetstone` in …
+        2. …
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: What `whetstone --version` prints.
+      placeholder: whetstone 0.1.0 (04d5bb5 2026-10-21)
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: macOS 26.1 on arm64
+    validations:
+      required: true
+  - type: input
+    id: terminal
+    attributes:
+      label: Terminal
+      description: The terminal, and whether Whetstone ran inside tmux or screen, or over SSH.
+      placeholder: Ghostty 1.2, inside tmux 3.5
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: Any lines that look relevant from `whetstone.log` in Whetstone's state folder, by default `~/.local/state/whetstone/`. Read them before you paste them.
+      render: text
