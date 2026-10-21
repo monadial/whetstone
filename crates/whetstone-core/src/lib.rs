@@ -35,7 +35,7 @@ pub use crate::assessment_policy::{
     PolicyVersion, Validation,
 };
 pub use crate::change::{
-    Change, CommitId, Comparison, FileContent, InvalidCommitId, Origin, TouchedFile,
+    Change, ChangeSize, CommitId, Comparison, FileContent, InvalidCommitId, Origin, TouchedFile,
 };
 pub use crate::connected_code_limit::{
     ConnectedCodeLimit, ConnectedCodeLimitError, ConnectedCodeLimitKb, ConnectedCodeLimitSource,

@@ -397,6 +397,61 @@ impl Change {
             Some(file_diff)
         })
     }
+
+    /// How big the change is: the files it touches, and the lines its diff
+    /// adds and removes. Only lines inside a hunk count, so a binary file
+    /// or a file only renamed adds and removes none.
+    #[must_use]
+    pub fn size(&self) -> ChangeSize {
+        let mut size = ChangeSize {
+            files: self.files.len(),
+            added: 0,
+            removed: 0,
+        };
+        for file_diff in self.file_diffs() {
+            // A file's `---` and `+++` header comes before its first hunk.
+            let in_hunks = file_diff
+                .lines()
+                .skip_while(|line| !line.starts_with("@@ "));
+            for line in in_hunks {
+                match line.as_bytes().first() {
+                    Some(b'+') => size.added += 1,
+                    Some(b'-') => size.removed += 1,
+                    _ => {}
+                }
+            }
+        }
+        size
+    }
+}
+
+/// How big a change is: the files it touches, and the lines its diff adds
+/// and removes, as [`Change::size`] counts them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChangeSize {
+    files: usize,
+    added: usize,
+    removed: usize,
+}
+
+impl ChangeSize {
+    /// How many files the change touches.
+    #[must_use]
+    pub fn files(self) -> usize {
+        self.files
+    }
+
+    /// How many lines its diff adds.
+    #[must_use]
+    pub fn added(self) -> usize {
+        self.added
+    }
+
+    /// How many lines its diff removes.
+    #[must_use]
+    pub fn removed(self) -> usize {
+        self.removed
+    }
 }
 
 impl TouchedFile {
@@ -521,5 +576,60 @@ mod tests {
         assert!(!debug.contains("hunter2"), "{debug}");
         assert!(debug.contains("message_bytes: 19"), "{debug}");
         assert!(debug.contains(".env"), "{debug}");
+    }
+
+    #[test]
+    fn a_changes_size_is_its_files_and_the_lines_its_hunks_add_and_remove() {
+        // Only lines inside hunks count, even those that start like a
+        // file's `---` and `+++` header, and a binary file adds none.
+        let diff = "\
+diff --git a/src/pay.rs b/src/pay.rs
+index 1a2b3c4..5d6e7f8 100644
+--- a/src/pay.rs
++++ b/src/pay.rs
+@@ -1,4 +1,5 @@
+ fn pay() {
+-    charge();
++    let key = key();
++    charge(key);
+ }
+-// done
+\\ No newline at end of file
++// done
+diff --git a/schema.sql b/schema.sql
+new file mode 100644
+index 0000000..2222222
+--- /dev/null
++++ b/schema.sql
+@@ -0,0 +1,2 @@
++-- Payments
++++ counter
+diff --git a/old.sql b/old.sql
+deleted file mode 100644
+index 3333333..0000000
+--- a/old.sql
++++ /dev/null
+@@ -1 +0,0 @@
+--- old
+diff --git a/logo.png b/logo.png
+index 4444444..5555555 100644
+Binary files a/logo.png and b/logo.png differ
+";
+        let text = |text: &str| FileContent::Text(text.to_owned());
+        let change = Change::new(
+            "Charge with a key".to_owned(),
+            Vec::new(),
+            diff.to_owned(),
+            vec![
+                TouchedFile::modified("src/pay.rs".to_owned(), text(""), text("")),
+                TouchedFile::created("schema.sql".to_owned(), text("")),
+                TouchedFile::deleted("old.sql".to_owned(), text("")),
+                TouchedFile::modified("logo.png".to_owned(), text(""), text("")),
+            ],
+        );
+
+        let size = change.size();
+
+        assert_eq!((size.files(), size.added(), size.removed()), (4, 5, 3));
     }
 }
