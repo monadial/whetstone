@@ -40,6 +40,7 @@ mod question_check;
 mod questions_screen;
 mod questions_setting;
 mod related;
+mod relevance_gate;
 mod repo;
 mod repository;
 mod resize;
