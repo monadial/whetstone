@@ -12,9 +12,11 @@
 
 use std::cell::Cell;
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::fs;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::time::SystemTime;
 
 use tempfile::TempDir;
@@ -136,6 +138,50 @@ impl TestRepo {
         self.head()
     }
 
+    /// Makes `count` commits on top of HEAD, the `n`th writing `n` to
+    /// `counter.txt` with the message "Bump the counter to n", dated a
+    /// minute apart as [`TestRepo::commit`] dates them. One `git
+    /// fast-import` makes them all, rather than two `git`s a commit, so a
+    /// test can have a history of hundreds of commits at once.
+    pub(crate) fn bump_counter(&self, count: usize) {
+        let mut stream = String::new();
+        for bump in 1..=count {
+            let made = self.commits.get();
+            self.commits.set(made + 1);
+            let at = FIRST_COMMIT_AT + 60 * made;
+            let message = format!("Bump the counter to {bump}\n");
+            let contents = format!("{bump}\n");
+            // The first continues the branch as it is; fast-import carries
+            // each later one on from the one before.
+            let from = if bump == 1 {
+                "from refs/heads/main^0\n"
+            } else {
+                ""
+            };
+            let (name, email) = AUTHOR;
+            write!(
+                stream,
+                "commit refs/heads/main\n\
+                 author {name} <{email}> {at} +0000\n\
+                 committer {name} <{email}> {at} +0000\n\
+                 data {}\n{message}{from}\
+                 M 644 inline counter.txt\n\
+                 data {}\n{contents}\n",
+                message.len(),
+                contents.len(),
+            )
+            .expect("writing to a string cannot fail");
+        }
+        self.git_fed(
+            &self.root,
+            &["fast-import", "--quiet"],
+            &[],
+            stream.as_bytes(),
+        );
+        // fast-import moves the branch, but not the working tree.
+        self.git(&["reset", "--quiet", "--hard"]);
+    }
+
     /// Merges `branch` into the current branch with a merge commit, even
     /// where it could fast-forward, and returns the merge's full ID.
     pub(crate) fn merge(&self, branch: &str, message: &str) -> String {
@@ -208,9 +254,15 @@ impl TestRepo {
     }
 
     fn git_with(&self, dir: &Path, args: &[&str], env: &[(&str, &str)]) -> String {
+        self.git_fed(dir, args, env, &[])
+    }
+
+    /// Runs `git` with `args` in `dir`, with `env` set and `input` on its
+    /// standard input, and returns its standard output.
+    fn git_fed(&self, dir: &Path, args: &[&str], env: &[(&str, &str)], input: &[u8]) -> String {
         let home = self.dir.path().join(".home");
         fs::create_dir_all(&home).expect("create git's home directory");
-        let output = Command::new("git")
+        let mut git = Command::new("git")
             .current_dir(dir)
             .args(args)
             .env_clear()
@@ -232,8 +284,17 @@ impl TestRepo {
             .env("GIT_COMMITTER_NAME", AUTHOR.0)
             .env("GIT_COMMITTER_EMAIL", AUTHOR.1)
             .envs(env.iter().copied())
-            .output()
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
             .expect("run git");
+        git.stdin
+            .take()
+            .expect("git's standard input is piped")
+            .write_all(input)
+            .expect("write git's standard input");
+        let output = git.wait_with_output().expect("wait for git");
         assert!(
             output.status.success(),
             "git {args:?} failed:\n{}",

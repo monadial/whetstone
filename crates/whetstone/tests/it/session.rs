@@ -283,9 +283,10 @@ impl Session {
     /// Presses each key in `script`, separated by spaces: a character such
     /// as `j`, `?` or `:`, or a named key such as `<Enter>`, `<Space>`,
     /// `<Tab>`, `<S-Tab>`, `<Esc>`, `<BS>` (Backspace), `<Up>`, `<Down>`,
-    /// `<Left>`, `<Right>`, `<C-c>`, `<C-d>`, `<C-u>` or `<C-z>`. Returns
-    /// what the last key asked of the loop, and stops at a quit, as the loop
-    /// does. After a suspend the loop carries on, so keys can follow it.
+    /// `<Left>`, `<Right>`, `<PageDown>`, `<PageUp>`, `<C-c>`, `<C-d>`,
+    /// `<C-u>` or `<C-z>`. Returns what the last key asked of the loop, and
+    /// stops at a quit, as the loop does. After a suspend the loop carries
+    /// on, so keys can follow it.
     pub(crate) fn press(&mut self, script: &str) -> Flow {
         let mut flow = Flow::Continue;
         for name in script.split_whitespace() {
@@ -516,6 +517,8 @@ fn key(name: &str) -> KeyEvent {
         "<Down>" => (KeyCode::Down, KeyModifiers::NONE),
         "<Left>" => (KeyCode::Left, KeyModifiers::NONE),
         "<Right>" => (KeyCode::Right, KeyModifiers::NONE),
+        "<PageDown>" => (KeyCode::PageDown, KeyModifiers::NONE),
+        "<PageUp>" => (KeyCode::PageUp, KeyModifiers::NONE),
         "<C-c>" => (KeyCode::Char('c'), KeyModifiers::CONTROL),
         "<C-d>" => (KeyCode::Char('d'), KeyModifiers::CONTROL),
         "<C-u>" => (KeyCode::Char('u'), KeyModifiers::CONTROL),
