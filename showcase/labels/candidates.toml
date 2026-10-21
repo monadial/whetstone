@@ -1,10 +1,12 @@
 # Candidate examples: questions as the generator would write them, each
 # with a label for every question its question check asks. See README.md.
 #
-# Seeds by an agent, for the maintainer to review (#99). All three are
-# about "Preserve payment retry identity", and cite its lines as they are
-# just after it: src/provider.rs lines 26-37 are `ChargeRequest::new`, and
-# src/service.rs line 57 is where `pay` builds the charge request.
+# Seeds by an agent, for the maintainer to review (#99, #135). The first
+# three are about "Preserve payment retry identity", and cite its lines as
+# they are just after it: src/provider.rs lines 26-37 are
+# `ChargeRequest::new`, and src/service.rs line 57 is where `pay` builds the
+# charge request. The last is about "Cache payments per tenant": src/cache.rs
+# lines 30-62 are `TenantCache::get` to `TenantCache::insert`.
 
 [[candidate]]
 id = "seed-retry-key"
@@ -219,3 +221,109 @@ rationale_c = "yes"
 why_it_matters = "yes"
 hint_points_to_evidence = "yes"
 hint_hides_answer_key = "no"
+
+[[candidate]]
+id = "seed-criterion-asks-too-much"
+commit = "Cache payments per tenant"
+area = "scalability"
+by = "agent"
+on = 2026-10-21
+note = """
+Hand-made broken: criterion 2 asks for more than the question needs. It \
+demands an identifier and a literal condition, so a learner who explains \
+the eviction order in their own words fails it, though it follows from the \
+evidence and can be judged from reasoning (#135). Criterion 1 asks for the \
+same idea, in any words.\
+"""
+stem = """
+When a tenant's space in the cache is full and one more of its payments is \
+cached, which of its payments does the cache evict?\
+"""
+answer_key = "A"
+why_it_matters = """
+A payment clients keep polling is still evicted once it is its tenant's \
+oldest entry, so its next lookup reads from the payment log again.\
+"""
+hint = "Look at `TenantCache::insert` and `TenantCache::get` in src/cache.rs."
+
+[[candidate.options]]
+letter = "A"
+text = "The payment that entered the tenant's cache first."
+rationale = """
+Right: `insert` adds a newly cached payment to the back of the tenant's \
+`order` and, once the tenant holds more than its capacity, evicts the \
+payment at the front (src/cache.rs, lines 54 to 61). A payment already \
+cached returns early without moving (lines 48 to 53), and `get` never \
+touches the order (lines 30 to 32).\
+"""
+
+[[candidate.options]]
+letter = "B"
+text = "The payment that was read or saved least recently."
+rationale = """
+Wrong: a read only clones the cached copy (src/cache.rs, lines 30 to 32), \
+and caching a payment that is already cached leaves its place in `order` as \
+it was (lines 48 to 53), so neither a read nor a save keeps a payment \
+cached longer.\
+"""
+
+[[candidate.options]]
+letter = "C"
+text = "The payment whose state was saved least recently."
+rationale = """
+Wrong: saving a cached payment again replaces its copy and returns without \
+moving it in `order` (src/cache.rs, lines 48 to 53), so the payment cached \
+first goes first even when it was saved since.\
+"""
+
+[[candidate.rubric]]
+statement = """
+Explains that payments leave a tenant's cache in the order they entered it, \
+and that reading or saving one again doesn't change that order.\
+"""
+met = """
+Says, in any words, that the payment cached first is evicted first, and \
+that a later read or save leaves its place as it was, even if only by \
+implication.\
+"""
+not_met = """
+Doesn't say what decides which payment goes, or says a read or a save keeps \
+a payment cached longer.\
+"""
+
+[[candidate.rubric]]
+statement = """
+Names `TenantCache::insert` and quotes its eviction condition, \
+`entries.order.len() > self.capacity_per_tenant`.\
+"""
+met = """
+Names `TenantCache::insert`, quotes the condition \
+`entries.order.len() > self.capacity_per_tenant` exactly, and says it calls \
+`entries.order.pop_front()`.\
+"""
+not_met = """
+Doesn't name `TenantCache::insert`, or doesn't quote its condition and the \
+`pop_front` call.\
+"""
+
+[[candidate.citations]]
+path = "src/cache.rs"
+first_line = 30
+last_line = 62
+
+[candidate.labels]
+answerable = "yes"
+about_area = "yes"
+needs_change = "yes"
+no_giveaway = "yes"
+criterion_1 = "yes"
+criterion_2 = "yes"
+option_a = "yes"
+option_b = "no"
+option_c = "no"
+rationale_a = "yes"
+rationale_b = "yes"
+rationale_c = "yes"
+why_it_matters = "yes"
+hint_points_to_evidence = "yes"
+hint_hides_answer_key = "yes"
