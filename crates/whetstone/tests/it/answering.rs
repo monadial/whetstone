@@ -441,8 +441,8 @@ fn going_home_or_quitting_asks_before_a_draft_would_be_lost_but_ctrl_c_quits() {
     type_text(&mut session, "Draft");
     session.press("<Esc>");
 
-    // The palette's Home, then its Quit, after the screen's own two.
-    session.press(": j j <Enter>");
+    // The palette's Home, then its Quit, after the screen's own three.
+    session.press(": j j j <Enter>");
     assert_eq!(
         session
             .box_rows("Lose your draft?")
@@ -450,7 +450,7 @@ fn going_home_or_quitting_asks_before_a_draft_would_be_lost_but_ctrl_c_quits() {
             .map(String::as_str),
         Some("Go home, and lose the draft")
     );
-    session.press("<Esc> : j j j j j j <Enter>");
+    session.press("<Esc> : j j j j j j j <Enter>");
     assert_eq!(
         session
             .box_rows("Lose your draft?")

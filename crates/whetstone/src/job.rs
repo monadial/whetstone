@@ -481,11 +481,12 @@ impl<K> Waiting<K> {
     /// Stops waiting for the jobs whose results must carry `key`, and
     /// cancels each with `jobs`, as Cancel of one request does: their
     /// results aren't applied, and their requests stop. Every other job
-    /// runs on, and is still waited for.
-    pub fn cancel_for<T>(&mut self, key: &K, jobs: &mut Jobs<T>)
+    /// runs on, and is still waited for. Returns how many it cancelled.
+    pub fn cancel_for<T>(&mut self, key: &K, jobs: &mut Jobs<T>) -> usize
     where
         K: PartialEq,
     {
+        let waited = self.keys.len();
         self.keys.retain(|(job, waited)| {
             let cancelled = waited == key;
             if cancelled {
@@ -493,6 +494,7 @@ impl<K> Waiting<K> {
             }
             !cancelled
         });
+        waited - self.keys.len()
     }
 }
 
