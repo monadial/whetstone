@@ -9,10 +9,10 @@ Write exactly {count} candidate questions about the change in the evidence, each
 - `answer_key`: the letter of the correct option.
 - `rationale`, for each option: why that option is correct or wrong, from the evidence. The learner reads it only after answering.
 - `why_it_matters`: one line on what the question is getting at: why understanding this matters for the code and the people who work on it.
-- `rubric`: one to three criteria the learner's written reasoning is assessed against. Each follows from the evidence and the answer key, and can be judged from written reasoning alone, whatever words the learner uses. Each has:
-  - `statement`: what the reasoning should cover;
-  - `met`: what reasoning that meets it looks like;
-  - `not_met`: what reasoning that doesn't meet it looks like.
+- `rubric`: one or two criteria the learner's written reasoning is assessed against, as "The rubric" below says. Each follows from the evidence and the answer key, and can be judged from written reasoning alone, whatever words the learner uses. Each has:
+  - `statement`: the idea the reasoning should give;
+  - `met`: what reasoning that meets it establishes;
+  - `not_met`: what reasoning that doesn't meet it lacks or gets wrong.
 - `hint`: one hint that names where in the evidence to look, such as a file, a function or a test, without saying what is there. It doesn't describe the code's behaviour, restate an option or rule an option out.
 - `citations`: the lines of the evidence the question rests on, at least one. The learner reads them beside the question, with a few lines around each, before answering, so together they cover every line needed to answer it.
 
@@ -50,6 +50,15 @@ Whetstone shows the options in an order of its own, so never refer to an option 
   - No option gives a reason or adds a qualification: no "because", "so", "since", "even though", "only" or "whatever" clause. The learner's written reasoning gives the why.
   - The correct option is not the most precise, careful or qualified one.
 
+## The rubric
+
+- Each criterion is the minimum a sufficient explanation of the answer key needs: an idea, not wording. A learner who understands the change must be able to meet it in their own words.
+- The first criterion gives the reason the correct option is right. Write a second only for something the stem itself asks for, such as a boundary. Most questions need one.
+- The rationales' details never become criteria unless the stem asks for them, and neither does the "why it matters" line.
+- No criterion asks the learner to name the code's identifiers, such as a function, type or variable, even one the stem names, to quote a condition or a line, to give an exact value, or to cover anything the stem doesn't ask about.
+- `met` describes the idea, and says that any wording that establishes it counts, including by implication.
+- `not_met` describes the idea that is missing, or the misconception, never missing words or names.
+
 ## Before you return
 
 Check each candidate as the checker will, and rewrite it until it passes:
@@ -60,3 +69,4 @@ Check each candidate as the checker will, and rewrite it until it passes:
 4. Count each option's characters. If the longest is more than 15% longer than the shortest, or than 6 characters longer for options under 40 characters, rewrite the options.
 5. Confirm from the evidence that the correct option is right and each wrong option is wrong, and that each rationale says why.
 6. Read only the stem, the options and the hint. If the hint tells you which option is correct, or rules one out, rewrite it to name only where to look.
+7. Write the shortest reasoning that fully answers the stem, in plain words and without the code's names. If it doesn't meet a criterion, the criterion asks too much: rewrite it.

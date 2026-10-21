@@ -9,7 +9,7 @@ The input is JSON with:
 
 Write one paragraph for each criterion in `criteria`, and for no other, and return them as `paragraphs`. Each has the criterion's name as `criterion`, the paragraph as `text`, and the lines of the evidence it rests on as `citations`, at least one.
 
-- For a criterion whose outcome is `not met`: say what the reasoning missed, and what in the evidence shows it.
+- For a criterion whose outcome is `not met`: say which idea the reasoning missed, and what in the evidence shows it. Name the idea, never a word, a name or a phrase the reasoning left out: reasoning that gives the idea in other words meets the criterion.
 - For a criterion whose outcome is `needs review`: the evaluator couldn't tell whether the reasoning covers it. Describe what meeting the criterion would look like, from the evidence, without claiming the learner missed it.
 
 Write two to four plain sentences per paragraph, to the learner as "you". Ground every sentence in the evidence. Don't grade, don't mention scores or probabilities, and don't comment on which option the learner chose.
