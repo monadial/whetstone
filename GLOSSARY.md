@@ -91,7 +91,7 @@ The form a question takes, such as a single choice from A, B and C with optional
 The option the generator marks as a question's correct answer.
 
 **Rubric**:
-The one or two criteria a question's written reasoning is assessed against, written with the question. The question check drops a criterion that asks for more than the question needs.
+The one or two criteria a question's written reasoning is assessed against, written with the question. The question check drops a criterion only when Jev clearly says it asks for more than the question needs; one Jev is unclear about stays.
 
 **Criterion**:
 One point of a rubric, with what meeting it and not meeting it look like. It asks for the minimum a sufficient explanation of the answer key needs: an idea, met in any words, even by implication, never particular names, quoted conditions or exact values.

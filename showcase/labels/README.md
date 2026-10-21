@@ -121,7 +121,8 @@ Depth isn't labelled. It only orders questions, and has no cut-offs.
 
 A criterion labelled `criterion_N_minimum = "no"` asks for more than the
 question needs, so the question its labels show leaves it out, as Practice
-drops it: the question's response and explanation examples label only the
+drops a criterion when Jev's answer is clear no (one Jev is unclear about
+stays): the question's response and explanation examples label only the
 criteria it keeps, numbered from 1 among them. A candidate whose every
 criterion is labelled so is withheld, like any other whose labels fail.
 

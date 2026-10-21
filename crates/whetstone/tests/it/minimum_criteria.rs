@@ -1,7 +1,8 @@
 //! A criterion that asks for more than the question needs is dropped: Jev's
 //! question check answers `criterion_N_minimum` for each criterion, and the
-//! show rule drops a criterion whose answer isn't clear yes, as it drops a
-//! failing hint, keeping the question with the other criteria. Reasoning is
+//! show rule drops a criterion whose answer is clear no, as it drops a
+//! failing hint, keeping the question with the other criteria. A criterion
+//! Jev is unclear about stays, and is assessed as usual. Reasoning is
 //! assessed against the kept criteria alone, and feedback, explanations, the
 //! summary and what a full answer covers show only them. The session record
 //! keeps the dropped criteria and the answers that dropped them, and Inspect
@@ -31,11 +32,14 @@ const KEPT: &str = "Says the retry carries the payment's own key";
 
 /// The first question's criterion that asks for more: an identifier and a
 /// literal condition.
-const DROPPED: &str = "Names `ChargeRequest::new` and quotes `key == payment.key`";
+const ASKS_MORE: &str = "Names `ChargeRequest::new` and quotes `key == payment.key`";
 
-/// Jev's answer to whether [`DROPPED`] asks only for what the question
+/// Jev's answer to whether [`ASKS_MORE`] asks only for what the question
 /// needs: clear no.
-const ASKS_TOO_MUCH: f64 = 0.15;
+const CLEAR_NO: f64 = 0.15;
+
+/// Jev's answer to the same, but unclear.
+const UNCLEAR: f64 = 0.5;
 
 /// A terminal height that fits all of the feedback.
 const TALL: u16 = 60;
@@ -49,18 +53,24 @@ fn probability(value: f64) -> Probability {
 
 /// A scripted AI writing four questions about the domain area of the
 /// payment lifecycle change, each passing every check, its answer key A.
-/// The first's rubric is [`KEPT`] then [`DROPPED`], and Jev answers that
-/// [`DROPPED`] asks for more than the question needs. Jev assesses
+/// The first's rubric is [`KEPT`] then [`ASKS_MORE`], and Jev answers that
+/// [`ASKS_MORE`] asks for more than the question needs. Jev assesses
 /// reasoning written for the first as `assessed`, a probability per
 /// criterion it is asked about.
 fn writing(assessed: &[f64]) -> Arc<ScriptedAi> {
+    writing_with(CLEAR_NO, assessed)
+}
+
+/// The same as [`writing`], but Jev answers `asks_only_what_needed` to
+/// whether [`ASKS_MORE`] asks only for what the question needs.
+fn writing_with(asks_only_what_needed: f64, assessed: &[f64]) -> Arc<ScriptedAi> {
     let ai = Arc::new(ScriptedAi::new());
     let stems = stems("Domain", 4);
     let mut written: Vec<_> = stems
         .iter()
         .map(|stem| candidate(stem, "A", PAYMENT_LIFECYCLE))
         .collect();
-    written[0].rubric = [KEPT, DROPPED]
+    written[0].rubric = [KEPT, ASKS_MORE]
         .iter()
         .map(|&statement| WrittenCriterion {
             statement: statement.to_owned(),
@@ -71,7 +81,10 @@ fn writing(assessed: &[f64]) -> Arc<ScriptedAi> {
     ai.on_write(&area_id(DOMAIN), Ok(written));
     ai.on_check_passing_except(
         FIRST,
-        [answer(CandidateCheck::CriterionMinimum(1), ASKS_TOO_MUCH)],
+        [answer(
+            CandidateCheck::CriterionMinimum(1),
+            asks_only_what_needed,
+        )],
     );
     for stem in &stems[1..] {
         ai.on_check_passing(stem);
@@ -91,6 +104,23 @@ fn answered(ai: &Arc<ScriptedAi>, reasoning: &str, width: u16, height: u16) -> S
     submit(&mut session, "a", reasoning);
     session.settle();
     session
+}
+
+/// The statements of each rubric Jev was asked to assess reasoning
+/// against, in order.
+fn assessed_rubrics(ai: &ScriptedAi) -> Vec<Vec<String>> {
+    ai.asked()
+        .into_iter()
+        .filter_map(|asked| match asked {
+            Asked::AssessReasoning { rubric, .. } => Some(
+                rubric
+                    .iter()
+                    .map(|criterion| criterion.statement().to_owned())
+                    .collect(),
+            ),
+            _ => None,
+        })
+        .collect()
 }
 
 /// The questions the session record started with.
@@ -116,21 +146,30 @@ fn reasoning_is_assessed_against_the_kept_criteria_alone_and_feedback_shows_only
         session.question().section_text("Reasoning"),
         format!("Met · {KEPT}")
     );
-    let assessed: Vec<Vec<String>> = ai
-        .asked()
-        .into_iter()
-        .filter_map(|asked| match asked {
-            Asked::AssessReasoning { rubric, .. } => Some(
-                rubric
-                    .iter()
-                    .map(|criterion| criterion.statement().to_owned())
-                    .collect(),
-            ),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(assessed, [[KEPT]], "Jev is asked about the kept criterion");
-    assert!(!session.text().contains(DROPPED), "{}", session.text());
+    assert_eq!(
+        assessed_rubrics(&ai),
+        [[KEPT]],
+        "Jev is asked about the kept criterion"
+    );
+    assert!(!session.text().contains(ASKS_MORE), "{}", session.text());
+}
+
+#[test]
+fn a_criterion_jev_is_unclear_about_stays_and_reasoning_is_assessed_against_it_as_usual() {
+    let ai = writing_with(UNCLEAR, &[0.9, 0.9]);
+
+    let session = answered(&ai, "The retry reuses the payment's key.", 120, TALL);
+
+    assert_eq!(
+        session.question().section_text("Reasoning"),
+        format!("Met · {KEPT} Met · {ASKS_MORE}")
+    );
+    assert_eq!(
+        assessed_rubrics(&ai),
+        [[KEPT, ASKS_MORE]],
+        "Jev is asked about both"
+    );
+    assert_eq!(recorded(&session)[0].dropped_criteria().count(), 0);
 }
 
 #[test]
@@ -187,7 +226,7 @@ fn a_choice_alone_shows_only_the_kept_criteria_as_what_a_full_answer_covers() {
         session.question().section_text("What a full answer covers"),
         format!("Criterion 1 · {KEPT}")
     );
-    assert!(!session.text().contains(DROPPED), "{}", session.text());
+    assert!(!session.text().contains(ASKS_MORE), "{}", session.text());
 }
 
 #[test]
@@ -207,7 +246,7 @@ fn the_summary_shows_only_the_kept_criteria() {
             format!("Met · {KEPT}")
         ]
     );
-    assert!(!session.text().contains(DROPPED), "{}", session.text());
+    assert!(!session.text().contains(ASKS_MORE), "{}", session.text());
 }
 
 #[test]
@@ -232,11 +271,11 @@ fn the_session_record_keeps_the_dropped_criteria_and_the_answers_that_dropped_th
             .dropped_criteria()
             .map(|(place, criterion)| (place, criterion.statement()))
             .collect::<Vec<_>>(),
-        [(1, DROPPED)]
+        [(1, ASKS_MORE)]
     );
     assert_eq!(
         first.answers().get(CandidateCheck::CriterionMinimum(1)),
-        Some(probability(ASKS_TOO_MUCH)),
+        Some(probability(CLEAR_NO)),
         "the answer that dropped it"
     );
     assert_eq!(
@@ -259,8 +298,8 @@ fn inspect_jevs_answers_says_which_criteria_were_dropped() {
         "Criterion 1 asks only for what the question needs · 0.9 · clear yes",
         "Criterion 2 asks only for what the question needs · 0.15 · clear no",
         &format!(
-            "Criterion 2 dropped · {DROPPED} · it asks for more than the question needs, so \
-             reasoning isn't assessed against it"
+            "Criterion 2 dropped · {ASKS_MORE} · Jev clearly said it asks for more than the \
+             question needs, so reasoning isn't assessed against it"
         ),
     ] {
         assert!(

@@ -207,7 +207,12 @@ impl ReviewWithheld {
     /// answer to it against what the show rule needed.
     fn banded(&self, check: CandidateCheck) -> (String, String) {
         let withheld = &self.current().withheld;
-        let needed = jev_answers::band_name(withheld.needed(check));
+        let needed = withheld
+            .passing(check)
+            .iter()
+            .map(|&band| jev_answers::band_name(band))
+            .collect::<Vec<_>>()
+            .join(" or ");
         let banded = match (withheld.answers().get(check), withheld.band(check)) {
             (Some(answer), Some(band)) => {
                 format!(

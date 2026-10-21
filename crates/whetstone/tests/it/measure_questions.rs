@@ -303,7 +303,7 @@ fn a_row_reads_what_the_app_logs_about_each_candidate() {
     ai.on_write(&area_id(DOMAIN), Ok(written));
     ai.on_check_passing_except(
         &stems[0],
-        [answer(CandidateCheck::CriterionMinimum(0), 0.3)],
+        [answer(CandidateCheck::CriterionMinimum(0), 0.1)],
     );
     ai.on_check_passing_except(
         &stems[1],

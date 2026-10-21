@@ -98,11 +98,18 @@ fn question_check(question: &Question, requests: &[SentRequest]) -> Section {
         answered(&statement(check), answer, policy.band(check.job(), answer))
     }));
     // The answers number the criteria as the generator wrote them, and the
-    // reasoning only those the show rule kept.
+    // reasoning only those the show rule kept. The show rule drops a
+    // criterion only on a clear no, or on no answer at all.
     lines.extend(question.dropped_criteria().map(|(place, criterion)| {
+        let why = match question
+            .answers()
+            .get(CandidateCheck::CriterionMinimum(place))
+        {
+            Some(_) => "Jev clearly said it asks for more than the question needs",
+            None => "Jev didn't answer whether it asks only for what the question needs",
+        };
         format!(
-            "Criterion {} dropped · {} · it asks for more than the question needs, so reasoning \
-             isn't assessed against it",
+            "Criterion {} dropped · {} · {why}, so reasoning isn't assessed against it",
             place + 1,
             criterion.statement()
         )
