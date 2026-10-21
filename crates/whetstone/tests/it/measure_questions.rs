@@ -1,7 +1,7 @@
 //! Measuring the base prompts live: Generate questions on one showcase
 //! change and one area through the real Jev and generator, at the app seam,
-//! under the assessment policy in use, then print one row of what became of
-//! the candidates. The rows of several pairs make the before and after
+//! under the default cut-offs (its config sets no `[cut_offs]`), then print
+//! one row of what became of the candidates. The rows of several pairs make the before and after
 //! tables of a change to the base prompts.
 //!
 //! A row is read from the app's own log lines and the screen, so it shows
@@ -13,22 +13,30 @@
 //! - for each check, how many candidates it withheld, by band;
 //! - the questions shown, the generator's tokens, and what the run cost.
 //!
-//! Each pair calls `OpenRouter` with a real key, about 0.08 USD a run, so
-//! every test here is ignored and runs only when asked:
+//! Each pair calls `OpenRouter` with a real key, about 0.12 to 0.15 USD a
+//! run with the base prompts of #119, so every test that does is ignored and
+//! runs only when asked:
 //!
 //! ```sh
-//! OPENROUTER_API_KEY=… cargo nextest run -p whetstone --locked --run-ignored only -E 'test(/measure_questions::/)'
+//! OPENROUTER_API_KEY=… cargo nextest run -p whetstone --locked --no-capture --run-ignored only -E 'test(/measure_questions::/)'
 //! ```
 //!
 //! None is named `live_…`, so the keyed end-to-end job never runs them.
-//! Per-PR tests never call `OpenRouter` (rule 48).
+//! Per-PR tests never call `OpenRouter` (rule 48): the one test here that
+//! isn't ignored reads a row from what the app logs while a scripted AI
+//! answers, so a change to those log lines shows.
 
 use std::collections::BTreeMap;
 use std::io;
 use std::sync::{Arc, Mutex};
 
+use whetstone_ai::ScriptedAi;
+use whetstone_core::CandidateCheck;
+
 use crate::live_practice::live_key;
-use crate::preparing_questions::generate_in;
+use crate::preparing_questions::{
+    DOMAIN, PAYMENT_LIFECYCLE, answer, area_id, candidate, generate, generate_in, stems,
+};
 use crate::session::Setup;
 
 /// The log lines the app writes while a test runs, as text.
@@ -67,17 +75,33 @@ impl Captured {
 /// area whose ID is `area`, as the picker lists them.
 fn places(subject: &str, area: &str) -> (usize, usize) {
     let showcase = whetstone::embedded_showcase();
-    let change = showcase
+    let change_at = showcase
         .changes()
         .iter()
         .position(|change| change.summary() == subject)
         .expect("the showcase has a change with this subject");
-    let area = showcase
+    let area_at = showcase
         .areas()
         .iter()
         .position(|offered| offered.id().as_str() == area)
         .expect("the showcase offers this area");
-    (change, area)
+    (change_at, area_at)
+}
+
+/// Runs `run` with this thread's log lines captured, and returns what it
+/// returned with the lines. Every job runs on the test's thread, so the
+/// app and the AI port alike write to this thread's subscriber.
+fn capture<T>(run: impl FnOnce() -> T) -> (T, Vec<String>) {
+    let captured = Captured::default();
+    let writer = captured.clone();
+    let returned = tracing::subscriber::with_default(
+        tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_ansi(false)
+            .finish(),
+        run,
+    );
+    (returned, captured.lines())
 }
 
 /// Generates questions about `area` on the showcase change `subject`, with
@@ -85,41 +109,32 @@ fn places(subject: &str, area: &str) -> (usize, usize) {
 /// Returns whether the relevance gate passed the area, and the log lines.
 fn generate_live(subject: &str, area: &str) -> (&'static str, Vec<String>) {
     let key = live_key();
-    let captured = Captured::default();
-    let writer = captured.clone();
-    // Every job runs on the test's thread, so this thread's subscriber hears
-    // the app and the AI port alike.
-    let _log = tracing::subscriber::set_default(
-        tracing_subscriber::fmt()
-            .with_writer(move || writer.clone())
-            .with_ansi(false)
-            .finish(),
-    );
     let (change, place) = places(subject, area);
-    let mut session = generate_in(
-        Setup {
-            config: Some("questions = 3\n"),
-            variables: &[("NO_COLOR", "1"), ("OPENROUTER_API_KEY", &key)],
-            live: true,
-            ..Setup::default()
-        },
-        &[place],
-        change,
-        120,
-        32,
-    );
-    session.settle();
-    let gate = if session
-        .text()
-        .contains("Nothing to practice in this change")
-    {
-        session.press("j j <Enter>");
+    capture(|| {
+        let mut session = generate_in(
+            Setup {
+                config: Some("questions = 3\n"),
+                variables: &[("NO_COLOR", "1"), ("OPENROUTER_API_KEY", &key)],
+                live: true,
+                ..Setup::default()
+            },
+            &[place],
+            change,
+            120,
+            32,
+        );
         session.settle();
-        "dropped (Ask anyway)"
-    } else {
-        "passed"
-    };
-    (gate, captured.lines())
+        if session
+            .text()
+            .contains("Nothing to practice in this change")
+        {
+            session.press("j j <Enter>");
+            session.settle();
+            "dropped (Ask anyway)"
+        } else {
+            "passed"
+        }
+    })
 }
 
 /// The value of the field `name` in a log line: up to the next space, or
@@ -133,11 +148,15 @@ fn field<'a>(line: &'a str, name: &str) -> Option<&'a str> {
     }
 }
 
+/// The number in the field `name` of `line`, if it has one. A field that
+/// is `None` isn't logged at all.
+fn number<T: std::str::FromStr>(line: &str, name: &str) -> Option<T> {
+    field(line, name).and_then(|value| value.parse().ok())
+}
+
 /// The count in the field `name` of `line`.
 fn count(line: &str, name: &str) -> usize {
-    field(line, name)
-        .and_then(|value| value.parse().ok())
-        .expect("the field is a count")
+    number(line, name).expect("the field is a count")
 }
 
 /// For each check that withheld a candidate, how many it withheld in each
@@ -165,26 +184,31 @@ fn withheld_by_check(withheld: &[&String]) -> BTreeMap<String, BTreeMap<String, 
     by_check
 }
 
-/// Measures `area` on the showcase change `subject`, as one Markdown row:
-/// the change, the area, the gate, the candidates written, the plain-check
-/// drops, the candidates withheld, each check's withheld count by band, the
-/// questions shown, the generator's input and output tokens, and the cost
-/// of every request in USD.
+/// Measures `area` on the showcase change `subject`, as one [`row`].
 fn measure(subject: &str, area: &str) -> String {
     let (gate, lines) = generate_live(subject, area);
-    let with = |message: &str| -> Vec<&String> {
+    row(subject, area, gate, &lines)
+}
+
+/// One Markdown row from the log `lines` of Generate questions about `area`
+/// on the change `subject`: the change, the area, the `gate`, the
+/// candidates written, the plain-check drops, the candidates withheld, each
+/// check's withheld count by band, the questions shown, the generator's
+/// input and output tokens, and the cost of every request in USD.
+fn row(subject: &str, area: &str, gate: &str, lines: &[String]) -> String {
+    let lines_with = |message: &str| -> Vec<&String> {
         lines.iter().filter(|line| line.contains(message)).collect()
     };
-    let (written, dropped) =
-        with("the generator wrote candidates")
-            .iter()
-            .fold((0, 0), |(written, dropped), line| {
-                (
-                    written + count(line, "written"),
-                    dropped + count(line, "dropped"),
-                )
-            });
-    let withheld = with("withheld a candidate");
+    let (written, dropped) = lines_with("the generator wrote candidates").iter().fold(
+        (0, 0),
+        |(written, dropped), line| {
+            (
+                written + count(line, "written"),
+                dropped + count(line, "dropped"),
+            )
+        },
+    );
+    let withheld = lines_with("withheld a candidate");
     let mut checks = Vec::new();
     for (check, bands) in withheld_by_check(&withheld) {
         let total: usize = bands.values().sum();
@@ -194,38 +218,25 @@ fn measure(subject: &str, area: &str) -> String {
             .collect();
         checks.push(format!("{check} {total} ({})", bands.join(", ")));
     }
-    let shown = with("picked the questions")
+    let shown = lines_with("picked the questions")
         .last()
         .map(|line| count(line, "picked"))
         .expect("the app picked questions, or none");
-    let replies = with("OpenRouter replied");
+    let replies = lines_with("OpenRouter replied");
     let generator = replies
         .iter()
         .filter(|line| field(line, "role") == Some("Generator"));
     let tokens = |name: &str| -> usize {
         generator
             .clone()
-            .filter_map(|line| field(line, name))
-            .filter_map(|value| {
-                value
-                    .trim_start_matches("Some(")
-                    .trim_end_matches(')')
-                    .parse::<usize>()
-                    .ok()
-            })
+            .filter_map(|line| number::<usize>(line, name))
             .sum()
     };
-    let cost: f64 = replies
+    // Summing no costs gives -0.0, so the total starts at 0.0.
+    let cost = replies
         .iter()
-        .filter_map(|line| field(line, "cost_usd"))
-        .filter_map(|value| {
-            value
-                .trim_start_matches("Some(")
-                .trim_end_matches(')')
-                .parse::<f64>()
-                .ok()
-        })
-        .sum();
+        .filter_map(|line| number::<f64>(line, "cost_usd"))
+        .fold(0.0, |total, cost| total + cost);
     format!(
         "| {subject} | {area} | {gate} | {written} | {dropped} | {} | {} | {shown} | {} / {} | {cost:.4} |",
         withheld.len(),
@@ -272,4 +283,36 @@ fn measure_cache_per_tenant_in_scalability() {
 #[ignore = "calls OpenRouter with a real key"]
 fn measure_cache_per_tenant_in_infrastructure() {
     println!("{}", measure("Cache payments per tenant", "infrastructure"));
+}
+
+#[test]
+fn a_row_reads_what_the_app_logs_about_each_candidate() {
+    let ai = Arc::new(ScriptedAi::new());
+    let stems = stems("Domain", 3);
+    let mut written: Vec<_> = stems
+        .iter()
+        .map(|stem| candidate(stem, "A", PAYMENT_LIFECYCLE))
+        .collect();
+    written.push(candidate("Malformed?", "D", PAYMENT_LIFECYCLE));
+    ai.on_write(&area_id(DOMAIN), Ok(written));
+    ai.on_check_passing(&stems[0]);
+    ai.on_check_passing_except(
+        &stems[1],
+        [
+            answer(CandidateCheck::NoGiveaway, 0.5),
+            answer(CandidateCheck::NeedsChange, 0.1),
+        ],
+    );
+    ai.on_check_passing_except(&stems[2], [answer(CandidateCheck::NoGiveaway, 0.4)]);
+
+    let ((), lines) = capture(|| {
+        generate(&ai, &[DOMAIN], PAYMENT_LIFECYCLE, 120, 32).settle();
+    });
+
+    // A scripted AI reports no tokens or cost.
+    assert_eq!(
+        row("Model the payment lifecycle", "domain", "passed", &lines),
+        "| Model the payment lifecycle | domain | passed | 4 | 1 | 2 | NeedsChange 1 (ClearNo 1); \
+         NoGiveaway 2 (Unclear 2) | 1 | 0 / 0 | 0.0000 |"
+    );
 }
