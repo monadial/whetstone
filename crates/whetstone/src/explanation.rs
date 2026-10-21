@@ -9,9 +9,10 @@
 //! evidence and agrees with its criterion's outcome. A paragraph shows,
 //! under its criterion's outcome and labelled as the generator's, only when
 //! both answers are clear yes under the assessment policy. Otherwise it is
-//! withheld. A failed request leaves its paragraphs unavailable. Either
-//! way, Retry explanation asks again for those paragraphs alone, once no
-//! request is running.
+//! withheld. A failed request leaves its paragraphs unavailable, naming
+//! the failure and what the learner can do about it, as on Preparing
+//! questions. Either way, Retry explanation asks again for those paragraphs
+//! alone, once no request is running.
 //!
 //! The outcomes are Jev's and never change: the explanation only explains
 //! them.
@@ -22,10 +23,11 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use whetstone_ai::{ParagraphCheck, RequestFailure, WrittenParagraph};
 use whetstone_core::{
-    Assessed, AssessmentPolicy, Band, Citation, CriterionOutcome, Evidence, Extent, Job,
+    Assessed, AssessmentPolicy, Band, Citation, CriterionOutcome, Evidence, Extent, Job, Role,
 };
 
 use crate::columns;
+use crate::failures::FailedRequests;
 use crate::session_record::{Assessment, ExplanationCheck, SavedResponse};
 use crate::theme::Theme;
 
@@ -388,13 +390,15 @@ impl Explanation {
 
     /// The lines under the outcome of the criterion at `criterion` in the
     /// rubric, `width` cells wide, drawn with `theme`: where its paragraph
-    /// stands, or the paragraph itself, labelled as the generator's, with
-    /// its citations. None when it isn't explained.
+    /// stands, with a failed request worded by `failed_requests`, or the
+    /// paragraph itself, labelled as the generator's, with its citations.
+    /// None when it isn't explained.
     pub(crate) fn lines(
         &self,
         criterion: usize,
         theme: &Theme,
         width: usize,
+        failed_requests: &FailedRequests,
     ) -> Vec<Line<'static>> {
         let Some(explained) = self
             .criteria
@@ -439,20 +443,28 @@ impl Explanation {
             Paragraph::Withheld => {
                 indented("Explanation withheld: it didn't pass checks", Style::new()).collect()
             }
-            Paragraph::Unavailable(failed) => indented(
-                &match failed {
-                    Failed::Writing(failure) => {
+            Paragraph::Unavailable(failed) => {
+                let (named, role, failure) = match failed {
+                    Failed::Writing(failure) => (
                         format!(
                             "Explanation unavailable: the generator's request failed: {failure}."
-                        )
-                    }
-                    Failed::Checking(failure, _) => {
-                        format!("Explanation unavailable: Jev's check failed: {failure}.")
-                    }
-                },
-                Style::new(),
-            )
-            .collect(),
+                        ),
+                        Role::Generator,
+                        *failure,
+                    ),
+                    Failed::Checking(failure, _) => (
+                        format!("Explanation unavailable: Jev's check failed: {failure}."),
+                        Role::Jev,
+                        *failure,
+                    ),
+                };
+                indented(&named, Style::new())
+                    .chain(indented(
+                        &failed_requests.what_to_do(role, failure),
+                        Style::new(),
+                    ))
+                    .collect()
+            }
         }
     }
 }

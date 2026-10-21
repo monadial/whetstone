@@ -1149,6 +1149,10 @@ impl View for Practice {
                     && let (Stage::Shown(questions), Some(evidence)) =
                         (&mut self.stage, &self.evidence)
                 {
+                    // The generator's request routes with zero retention.
+                    if let Err(failure) = &reply {
+                        self.failed_requests.note_refusal(Role::Generator, *failure);
+                    }
                     questions.explained(&saved, evidence, reply.map(|reply| reply.content));
                 }
             }
@@ -1159,6 +1163,9 @@ impl View for Practice {
                     .accept(job, &Asking::CheckExplanation(saved.clone()))
                     && let Stage::Shown(questions) = &mut self.stage
                 {
+                    if let Err(failure) = &reply {
+                        self.failed_requests.note_refusal(Role::Jev, *failure);
+                    }
                     questions.explanation_checked(&saved, reply.map(|reply| reply.content));
                 }
             }

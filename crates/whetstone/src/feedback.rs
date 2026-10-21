@@ -564,7 +564,7 @@ impl Feedback {
                             .map(|text| Line::styled(format!("  {text}"), theme.muted)),
                         );
                     }
-                    lines.extend(self.explanation.lines(place, theme, width));
+                    lines.extend(self.explanation.lines(place, theme, width, failed));
                 }
             }
         }
