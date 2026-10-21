@@ -13,7 +13,7 @@ use std::fmt::{self, Write as _};
 use whetstone_ai::AiError;
 use whetstone_core::{AssessmentPolicy, Band, Job, ModelId, Probability};
 
-use crate::labels::Expected;
+use crate::labels::{ExampleId, Expected};
 
 /// One label, and Jev's answer to it in each run that answered.
 #[derive(Debug, Clone, PartialEq)]
@@ -32,7 +32,7 @@ pub struct Measured {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Failure {
     /// The example whose call it was.
-    pub example: String,
+    pub example: ExampleId,
     /// The run, counting from 1.
     pub run: usize,
     /// Why it failed.
@@ -202,7 +202,7 @@ impl JobReport {
             .collect();
         let spread = Spread {
             mean: (!ranges.is_empty())
-                .then(|| ranges.iter().map(|(_, range)| range).sum::<f64>() / count(ranges.len())),
+                .then(|| ranges.iter().map(|(_, range)| range).sum::<f64>() / as_f64(ranges.len())),
             largest: ranges
                 .iter()
                 .copied()
@@ -328,12 +328,12 @@ fn range(answers: &[Probability]) -> f64 {
     clippy::cast_precision_loss,
     reason = "a count of labels or answers is far below 2^52"
 )]
-fn count(n: usize) -> f64 {
+fn as_f64(n: usize) -> f64 {
     n as f64
 }
 
 fn ratio(part: usize, whole: usize) -> f64 {
-    count(part) / count(whole)
+    as_f64(part) / as_f64(whole)
 }
 
 /// The whole report: the run, then each job in [`Job::ALL`] order.
@@ -655,7 +655,7 @@ mod tests {
             runs: 3,
             calls: 6,
             failures: vec![Failure {
-                example: "b".to_owned(),
+                example: ExampleId::new("b"),
                 run: 2,
                 error: AiError::RateLimited,
             }],

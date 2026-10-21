@@ -24,8 +24,8 @@ mod report;
 mod samples;
 
 pub use crate::labels::{
-    CandidateExample, Example, ExampleParagraph, Expected, ExplanationExample, GateExample, Label,
-    LabelDate, LabelError, Labeller, Labels, Place, ResponseExample,
+    CandidateExample, Example, ExampleId, ExampleParagraph, Expected, ExplanationExample,
+    GateExample, Label, LabelDate, LabelError, Labeller, Labels, Place, ResponseExample,
 };
 pub use crate::measure::measure;
 pub use crate::prepare::{Call, Item, ParagraphDrop, PrepareError, Prepared};
@@ -114,13 +114,15 @@ pub enum ToolError {
     #[error(transparent)]
     Prepare(#[from] PrepareError),
     /// `measure` needs the key, and it isn't set.
-    #[error("OPENROUTER_API_KEY is not set: `measure` calls Jev through OpenRouter")]
+    #[error(
+        "no OpenRouter key: OPENROUTER_API_KEY is not set, and `measure` calls Jev through OpenRouter"
+    )]
     NoKey,
     /// The key isn't valid Unicode.
-    #[error("OPENROUTER_API_KEY is not valid Unicode")]
+    #[error("the OpenRouter key in OPENROUTER_API_KEY is not valid Unicode")]
     KeyNotUnicode,
     /// The connection couldn't be made.
-    #[error("cannot call Jev: {0}")]
+    #[error("cannot call Jev")]
     Connection(#[source] AiError),
     /// The runtime the calls run on couldn't start.
     #[error("cannot start the runtime the calls run on")]
@@ -160,11 +162,22 @@ where
                 reason = "the tool reports why it stopped on stderr"
             )]
             {
-                eprintln!("error: {error}");
+                eprintln!("error: {}", with_causes(&error));
             }
             ExitCode::FAILURE
         }
     }
+}
+
+/// `error`'s message, followed by each of its causes', as `error: cause`.
+fn with_causes(error: &dyn std::error::Error) -> String {
+    let mut message = error.to_string();
+    let mut cause = error.source();
+    while let Some(source) = cause {
+        write!(message, ": {source}").expect("writing to a String never fails");
+        cause = source.source();
+    }
+    message
 }
 
 /// The text `command` prints.
@@ -247,14 +260,11 @@ pub fn load(dir: &Path) -> Result<Labels, ToolError> {
 /// them takes.
 fn summary(prepared: &Prepared) -> String {
     let items: Vec<&Item> = prepared.items().collect();
-    let by_agent = items
-        .iter()
-        .filter(|item| item.label().by() == &Labeller::Agent)
-        .count();
     let mut summary = format!(
-        "{} examples, {} labels, {by_agent} of them by an agent, as seeds still to review.\n",
+        "{} examples, {} labels, {} of them by an agent, as seeds still to review.\n",
         prepared.calls().len(),
         items.len(),
+        prepared.by_agent(),
     );
     for job in Job::ALL {
         let labels = items.iter().filter(|item| item.job() == job).count();
@@ -329,6 +339,23 @@ mod tests {
         assert!(
             matches!(blank, ToolError::Connection(AiError::NoKey)),
             "{blank}"
+        );
+    }
+
+    #[test]
+    fn why_the_tool_stopped_names_each_cause() {
+        let unread = ToolError::Read {
+            path: PathBuf::from("showcase/labels"),
+            source: io::Error::new(io::ErrorKind::NotFound, "no such directory"),
+        };
+        assert_eq!(
+            with_causes(&unread),
+            "cannot read showcase/labels: no such directory"
+        );
+
+        assert_eq!(
+            with_causes(&ToolError::Connection(AiError::NoKey)),
+            "cannot call Jev: no OpenRouter key: OPENROUTER_API_KEY is not set"
         );
     }
 

@@ -12,7 +12,6 @@ use futures_util::stream::{self, StreamExt as _};
 use tokio_util::sync::CancellationToken;
 use whetstone_ai::OpenRouter;
 
-use crate::labels::Labeller;
 use crate::prepare::Prepared;
 use crate::report::{Failure, Measured, Measurements};
 
@@ -80,10 +79,7 @@ pub async fn measure(
         cost: 0.0,
         cost_not_reported: 0,
         labels: Vec::new(),
-        by_agent: prepared
-            .items()
-            .filter(|item| item.label().by() == &Labeller::Agent)
-            .count(),
+        by_agent: prepared.by_agent(),
     };
     for (run, index, reply) in replies {
         let call = &prepared.calls()[index];
@@ -103,7 +99,9 @@ pub async fn measure(
         };
         match answers {
             Ok(answers) => {
-                for (label, answer) in labels[starts[index]..].iter_mut().zip(answers) {
+                let start = starts[index];
+                let labelled = &mut labels[start..start + call.items().len()];
+                for (label, answer) in labelled.iter_mut().zip(answers) {
                     label.answers.push(answer);
                 }
             }

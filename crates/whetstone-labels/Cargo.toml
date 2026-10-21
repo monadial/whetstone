@@ -20,6 +20,7 @@ clap = { version = "4.6", features = ["derive"] }
 futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
 # Reads the labelled examples' TOML into typed values.
 serde = { version = "1", features = ["derive"] }
+# Error types (rule 13).
 thiserror = "2"
 # The labelled examples are TOML files, as area files' front matter and the
 # base prompts' instructions are; the same version and features as there.
@@ -28,6 +29,9 @@ toml = { version = "1.1", default-features = false, features = ["parse", "serde"
 tokio = { version = "1.53", features = ["rt"] }
 # `OpenRouter::evaluate` takes a `CancellationToken`.
 tokio-util = "0.7"
+# A response's reasoning is measured in graphemes, as the reasoning editor
+# limits it (rule 58). Already in the tree through the app and Ratatui.
+unicode-segmentation = "1.13"
 # The showcase project's changes, as the app embeds them, and the injected
 # `Environment` the key is read from (rule 55).
 whetstone = { path = "../whetstone" }
