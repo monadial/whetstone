@@ -1,0 +1,48 @@
+---
+source: crates/whetstone/tests/it/commit_paging.rs
+expression: session.frame()
+---
+Buffer {
+    area: Rect { x: 0, y: 0, width: 120, height: 32 },
+    content: [
+        "                                                                                                                        ",
+        "  Practice on payments                                                                                                  ",
+        "  Areas the questions focus on                                                                                          ",
+        "    (x) Domain          The rules, concepts and language the work is about                                              ",
+        "    (x) Infrastructure  Where the work runs and what it depends on                                                      ",
+        "    (x) Observability   How you can tell what the work is doing and why                                                 ",
+        "    (x) Scalability     How the work holds up as use and data grow                                                      ",
+        "    (x) System design   How the parts fit together, and why this way                                                    ",
+        "  Change to practice on                                                                                                 ",
+        "    ( ) bdfc37e  Bump the counter to 213                                                                                ",
+        "    ( ) 140c069  Bump the counter to 212                                                                                ",
+        "    (x) 0c5b52a  Bump the counter to 211                                                                                ",
+        "    ( ) 754abe2  Bump the counter to 210                                                                                ",
+        "    ( ) 0a1509c  Bump the counter to 209                                                                                ",
+        "    ( ) 29280a0  Bump the counter to 208                                                                                ",
+        "    ( ) 05974c5  Bump the counter to 207                                                                                ",
+        "    ( ) be991c7  Bump the counter to 206                                                                                ",
+        "    ( ) 2d09f2f  Bump the counter to 205                                                                                ",
+        "    ( ) 4a95609  Bump the counter to 204                                                                                ",
+        "    ( ) ab9a068  Bump the counter to 203                                                                                ",
+        "    ( ) 916e1a7  Bump the counter to 202                                                                                ",
+        "    ( ) 7749e0d  Bump the counter to 201                                                                                ",
+        "    ( ) 825f0a6  Bump the counter to 200                                                                                ",
+        "    ( ) ac0a168  Bump the counter to 199                                                                                ",
+        "    ( ) a36ed78  Bump the counter to 198                                                                                ",
+        "    ( ) 4d39b97  Bump the counter to 197                                                                                ",
+        "    ( ) 7e5ef58  Bump the counter to 196                                                                                ",
+        "    Previous page    Commits 37–54 of 100+  > Next page                                                                 ",
+        "    Review what will be sent                                                                                            ",
+        "                                                                                                                        ",
+        "  ? keys  : actions  Space toggle  Enter open  PgDn page  / search  q back                                              ",
+        "                                                                                                                        ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 22, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 44, y: 27, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 55, y: 27, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+    ]
+}
