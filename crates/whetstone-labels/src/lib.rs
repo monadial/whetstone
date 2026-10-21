@@ -25,10 +25,10 @@ mod samples;
 
 pub use crate::labels::{
     CandidateExample, Example, ExampleId, ExampleParagraph, Expected, ExplanationExample,
-    GateExample, Label, LabelDate, LabelError, Labeller, Labels, Place, ResponseExample,
+    GateExample, Label, LabelDate, LabelError, Labeller, Labels, Place, ResponseExample, Source,
 };
 pub use crate::measure::measure;
-pub use crate::prepare::{Call, Item, ParagraphDrop, PrepareError, Prepared};
+pub use crate::prepare::{Call, Item, ParagraphDrop, PrepareError, Prepared, SkipReason, Skipped};
 pub use crate::report::{
     CutOffs, Failure, JobReport, Measured, Measurements, Report, Row, SWEEP, Spread,
 };
@@ -78,14 +78,16 @@ enum Command {
     /// Read the labelled examples and check them against the showcase
     /// project, without calling Jev.
     Check {
-        /// The folder of labelled examples [default: showcase/labels]
+        /// The folder of labelled examples, or one file of them, such as a
+        /// learner's labels file of votes [default: showcase/labels]
         #[arg(long)]
         labels: Option<PathBuf>,
     },
     /// Send each labelled example's Jev call three times and print the
     /// report as Markdown. Needs `OPENROUTER_API_KEY`, and costs credit.
     Measure {
-        /// The folder of labelled examples [default: showcase/labels]
+        /// The folder of labelled examples, or one file of them, such as a
+        /// learner's labels file of votes [default: showcase/labels]
         #[arg(long)]
         labels: Option<PathBuf>,
         /// The Jev model to measure.
@@ -222,15 +224,23 @@ fn labels_dir(labels: Option<&Path>, environment: &Environment) -> PathBuf {
     )
 }
 
-/// Reads every `.toml` file in `dir`, in file-name order.
+/// Reads every `.toml` file in `dir`, in file-name order, or, when `dir` is
+/// a file, such as a learner's labels file of votes, that file alone.
 pub fn load(dir: &Path) -> Result<Labels, ToolError> {
     let read = |path: &Path, source| ToolError::Read {
         path: path.to_owned(),
         source,
     };
+    let mut paths = Vec::new();
+    if dir.is_file() {
+        paths.push(dir.to_owned());
+    } else {
+        for entry in fs::read_dir(dir).map_err(|source| read(dir, source))? {
+            paths.push(entry.map_err(|source| read(dir, source))?.path());
+        }
+    }
     let mut files = Vec::new();
-    for entry in fs::read_dir(dir).map_err(|source| read(dir, source))? {
-        let path = entry.map_err(|source| read(dir, source))?.path();
+    for path in paths {
         if path
             .extension()
             .is_some_and(|extension| extension == "toml")
@@ -266,6 +276,9 @@ fn summary(prepared: &Prepared) -> String {
         items.len(),
         prepared.by_agent(),
     );
+    if let Some(not_measured) = prepare::not_measured(prepared.skipped()) {
+        writeln!(summary, "Not measured: {not_measured}").expect("writing to a String never fails");
+    }
     for job in Job::ALL {
         let labels = items.iter().filter(|item| item.job() == job).count();
         let yes = items
@@ -356,6 +369,32 @@ mod tests {
         assert_eq!(
             with_causes(&ToolError::Connection(AiError::NoKey)),
             "cannot call Jev: no OpenRouter key: OPENROUTER_API_KEY is not set"
+        );
+    }
+
+    #[test]
+    fn labels_are_read_from_one_file_as_well_as_from_a_folder() {
+        let file = load(&Path::new(LABELS).join("gate.toml")).unwrap();
+
+        assert_ne!(file.gate(), []);
+        assert_eq!(file.candidates(), []);
+    }
+
+    #[test]
+    fn check_counts_the_learner_votes_it_cannot_measure() {
+        let votes = samples::vote(
+            "commit_id = \"0123456789abcdef0123456789abcdef01234567\"\n",
+            "no_giveaway = \"yes\"\n",
+        );
+        let prepared = samples::prepared(&format!("{}{votes}", samples::CANDIDATE)).unwrap();
+
+        assert_eq!(
+            summary(&prepared).lines().nth(1),
+            Some(
+                "Not measured: 1 learner vote, which the tool can't send to Jev as Practice sent \
+                 them: 1 about a commit of the learner's own repository, whose code would go out \
+                 again without a new outbound review."
+            )
         );
     }
 

@@ -14,6 +14,7 @@ use whetstone_ai::AiError;
 use whetstone_core::{AssessmentPolicy, Band, Job, ModelId, Probability};
 
 use crate::labels::{ExampleId, Expected};
+use crate::prepare::{Skipped, not_measured};
 
 /// One label, and Jev's answer to it in each run that answered.
 #[derive(Debug, Clone, PartialEq)]
@@ -60,6 +61,8 @@ pub struct Measurements {
     pub labels: Vec<Measured>,
     /// How many labels an agent made, as seeds still to review.
     pub by_agent: usize,
+    /// The learner votes not measured, each with why.
+    pub skipped: Vec<Skipped>,
 }
 
 /// A pair of cut-offs a report row bands the answers with.
@@ -402,6 +405,9 @@ impl fmt::Display for Report {
             run.labels.len(),
             run.by_agent
         )?;
+        if let Some(not_measured) = not_measured(&run.skipped) {
+            writeln!(f, "- **Not measured:** {not_measured}")?;
+        }
         writeln!(
             f,
             "- **Assessment policy:** version {}, {}. This tool never changes it: setting its \
@@ -518,6 +524,7 @@ fn counted(n: usize, one: &str, many: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::prepare::SkipReason;
 
     fn measured(name: &str, expected: Expected, answers: &[f64]) -> Measured {
         Measured {
@@ -663,8 +670,45 @@ mod tests {
             cost_not_reported: 1,
             labels: option_ratings(),
             by_agent: 5,
+            skipped: Vec::new(),
         };
 
         insta::assert_snapshot!(Report::new(measurements).to_string());
+    }
+
+    #[test]
+    fn the_report_counts_the_learner_votes_it_did_not_measure_and_says_why() {
+        let skipped = |id: &str, reason| Skipped {
+            example: ExampleId::new(id),
+            reason,
+        };
+        let measurements = Measurements {
+            model: ModelId::new("typesafe/jev-1.14".to_owned()),
+            reported_models: BTreeSet::new(),
+            runs: 3,
+            calls: 0,
+            failures: Vec::new(),
+            cost: 0.0,
+            cost_not_reported: 0,
+            labels: Vec::new(),
+            by_agent: 0,
+            skipped: vec![
+                skipped("vote-1", SkipReason::OwnRepository),
+                skipped("vote-2", SkipReason::OwnRepository),
+                skipped("vote-3", SkipReason::NotInEvidence),
+            ],
+        };
+
+        let report = Report::new(measurements).to_string();
+
+        assert!(
+            report.contains(
+                "- **Not measured:** 3 learner votes, which the tool can't send to Jev as \
+                 Practice sent them: 2 about a commit of the learner's own repository, whose \
+                 code would go out again without a new outbound review, and 1 citing lines \
+                 the tool's evidence doesn't send, such as connected code.\n"
+            ),
+            "{report}"
+        );
     }
 }

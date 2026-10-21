@@ -9,6 +9,12 @@
 //! name its own `by` and `on`, as `{ label = "no", by = "…", on = … }`, when
 //! someone other than the example's labeller set it.
 //!
+//! A candidate example may also be a learner's vote, which Whetstone's
+//! review of withheld questions saves in the learner's labels file:
+//! `source = "learner vote"`, labelling only the check voted on, and, when
+//! the vote is about a commit of the learner's own repository rather than
+//! the showcase project, that commit's full ID as `commit_id`.
+//!
 //! [`Labels::parse`] reads the files and checks what each says on its own.
 //! Whether an example fits the showcase project, such as its commit, its
 //! area, its citations and which labels it needs, is checked when it is
@@ -63,6 +69,18 @@ impl fmt::Display for Labeller {
             Self::Person(name) => f.write_str(name),
         }
     }
+}
+
+/// Where a candidate example comes from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Source {
+    /// Written or pasted in to be labelled, by a person or an agent: it
+    /// labels everything its call asks.
+    Labelled,
+    /// A learner's vote on one check that withheld a candidate the generator
+    /// wrote, as Whetstone's review of withheld questions saves it: it
+    /// labels only that check.
+    LearnerVote,
 }
 
 /// The day a label was made.
@@ -209,7 +227,9 @@ impl GateExample {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CandidateExample {
     example: Example,
+    source: Source,
     commit: String,
+    commit_id: Option<String>,
     area: AreaId,
     written: WrittenCandidate,
 }
@@ -221,10 +241,24 @@ impl CandidateExample {
         &self.example
     }
 
-    /// The subject of the showcase commit it is about.
+    /// Where it comes from: labelled, or a learner's vote.
+    #[must_use]
+    pub fn source(&self) -> Source {
+        self.source
+    }
+
+    /// The subject of the commit it is about: a showcase commit's, unless
+    /// [`commit_id`](Self::commit_id) names one of the learner's own.
     #[must_use]
     pub fn commit(&self) -> &str {
         &self.commit
+    }
+
+    /// The full ID of the commit of the learner's own repository a learner's
+    /// vote is about, or none when it is about the showcase project.
+    #[must_use]
+    pub fn commit_id(&self) -> Option<&str> {
+        self.commit_id.as_deref()
     }
 
     /// The ID of the area it is about.
@@ -356,6 +390,12 @@ pub enum LabelError {
         #[source]
         source: InvalidAreaId,
     },
+    /// A candidate example that isn't a learner's vote names a commit of a
+    /// learner's own repository.
+    #[error(
+        "{place}: `commit_id` names a commit of a learner's own repository, which only a learner vote (`source = \"learner vote\"`) is about"
+    )]
+    NotAVote { place: Place },
 }
 
 impl Labels {
@@ -592,11 +632,13 @@ struct RawGate {
 #[serde(deny_unknown_fields)]
 struct RawCandidate {
     id: String,
+    source: Option<RawSource>,
     by: String,
     on: Datetime,
     note: Option<String>,
     labels: BTreeMap<String, RawLabel>,
     commit: String,
+    commit_id: Option<String>,
     area: String,
     stem: String,
     options: Vec<RawOption>,
@@ -605,6 +647,13 @@ struct RawCandidate {
     rubric: Vec<RawCriterion>,
     hint: String,
     citations: Vec<RawCitation>,
+}
+
+/// Where a candidate example says it comes from, when it says.
+#[derive(Debug, Clone, Copy, Deserialize)]
+enum RawSource {
+    #[serde(rename = "learner vote")]
+    LearnerVote,
 }
 
 /// A candidate's parts, as the generator writes them.
@@ -675,11 +724,13 @@ impl RawCandidate {
     fn into_example(self, place: &Place) -> Result<CandidateExample, LabelError> {
         let Self {
             id,
+            source,
             by,
             on,
             note,
             labels,
             commit,
+            commit_id,
             area,
             stem,
             options,
@@ -698,9 +749,22 @@ impl RawCandidate {
             hint,
             citations,
         };
+        let source = match source {
+            None => Source::Labelled,
+            Some(RawSource::LearnerVote) => Source::LearnerVote,
+        };
+        if source == Source::Labelled && commit_id.is_some() {
+            return Err(LabelError::NotAVote {
+                place: place.clone(),
+            });
+        }
         Ok(CandidateExample {
             example: RawCommon::new(id, by, on, note, labels).into_example(place)?,
+            source,
             commit: non_empty(commit, place, "commit")?,
+            commit_id: commit_id
+                .map(|id| non_empty(id, place, "commit_id"))
+                .transpose()?,
             area: AreaId::from_str(&area).map_err(|source| LabelError::NotAnAreaId {
                 place: place.clone(),
                 source,
@@ -1090,6 +1154,54 @@ labels = { option_a = "yes" }
                 first_line: 26,
                 last_line: 37,
             }]
+        );
+    }
+
+    #[test]
+    fn a_learner_vote_reads_its_source_and_the_commit_of_the_learner_s_own_repository() {
+        let showcase = parse(&crate::samples::vote("", "no_giveaway = \"yes\"\n")).unwrap();
+        let [vote] = showcase.candidates() else {
+            panic!("expected one candidate: {showcase:?}");
+        };
+        assert_eq!(vote.source(), Source::LearnerVote);
+        assert_eq!(vote.commit_id(), None);
+        assert_eq!(
+            vote.example().labels()[0].1.by(),
+            &Labeller::Person("learner".to_owned())
+        );
+
+        let own = parse(&crate::samples::vote(
+            "commit_id = \"0123456789abcdef0123456789abcdef01234567\"\n",
+            "no_giveaway = \"yes\"\n",
+        ))
+        .unwrap();
+        assert_eq!(
+            own.candidates()[0].commit_id(),
+            Some("0123456789abcdef0123456789abcdef01234567")
+        );
+
+        let labelled = parse(crate::samples::CANDIDATE).unwrap();
+        assert_eq!(labelled.candidates()[0].source(), Source::Labelled);
+    }
+
+    #[test]
+    fn only_a_learner_vote_is_about_a_commit_of_the_learner_s_own_repository() {
+        let error = parse(&crate::samples::CANDIDATE.replace(
+            "area = \"domain\"\n",
+            "area = \"domain\"\ncommit_id = \"0123456789abcdef\"\n",
+        ))
+        .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "seeds.toml, line 2: `commit_id` names a commit of a learner's own repository, which \
+             only a learner vote (`source = \"learner vote\"`) is about"
+        );
+        let unknown = crate::samples::vote("", "no_giveaway = \"yes\"\n")
+            .replace("source = \"learner vote\"", "source = \"agent\"");
+        assert_eq!(
+            parse(&unknown).unwrap_err().to_string(),
+            "seeds.toml, line 4: unknown variant `agent`, expected `learner vote`"
         );
     }
 
