@@ -94,8 +94,8 @@ pub struct InvalidDepth(f64);
 
 /// A candidate that passed its question check, with Jev's answers, its
 /// depth, the policy that passed it, with its cut-offs, the criteria of its
-/// rubric that ask only for what it needs, and its hint if the hint passed
-/// its checks too. Only questions are ever shown.
+/// rubric the show rule kept, and its hint if the hint passed its checks
+/// too. Only questions are ever shown.
 ///
 /// Its `Debug` output shows no question text.
 #[derive(Clone, PartialEq)]
@@ -255,20 +255,23 @@ impl DepthLevel {
 
 /// The show rule: `candidate` becomes a question only when Jev's `answers`
 /// to its question check are what its question type needs, under `policy`.
-/// Anything unclear fails it, and so does a check left unanswered.
+/// Anything unclear fails it, and so does a check left unanswered, except
+/// where a check below drops a criterion or the hint instead.
 ///
 /// For a single-choice question: checks 1 to 4 and every criterion's check
 /// are clear yes; every rationale check and the "why it matters" check are
 /// clear yes; exactly one option rating is clear yes and it is the answer
 /// key; and the other two are clear no.
 ///
-/// A criterion whose [`CandidateCheck::CriterionMinimum`] isn't clear yes
-/// asks for more than the question needs, so it is dropped, as a failing
-/// hint is: the question keeps the other criteria, in order, and reasoning
-/// is assessed against those alone. When no criterion is left, the candidate
-/// is withheld, naming each criterion's minimum check. The hint's checks
-/// never withhold a question. A hint that isn't clear yes on both is
-/// dropped, and the question has no hint.
+/// A criterion whose [`CandidateCheck::CriterionMinimum`] is clear no, or
+/// left unanswered, asks for more than the question needs, so it is
+/// dropped, as a failing hint is: the question keeps the other criteria, in
+/// order, and reasoning is assessed against those alone. The check drops
+/// only what it is sure of, so a criterion it is unclear about stays, and
+/// reasoning is assessed against it as usual. When every criterion is
+/// dropped, the candidate is withheld, naming each criterion's minimum
+/// check. The hint's checks never withhold a question. A hint that isn't
+/// clear yes on both is dropped, and the question has no hint.
 ///
 /// The withheld candidate keeps itself, Jev's answers and `policy`, and
 /// names every check that failed, in [`Candidate::checks`] order.
@@ -277,28 +280,28 @@ pub fn show_rule(
     answers: QuestionCheckAnswers,
     policy: &AssessmentPolicy,
 ) -> Result<Question, Withheld> {
-    let band = |check: CandidateCheck| {
-        answers
-            .get(check)
-            .map(|answer| policy.band(check.job(), answer))
+    let passes = |check: CandidateCheck| {
+        answers.get(check).is_some_and(|answer| {
+            passing(&candidate, check).contains(&policy.band(check.job(), answer))
+        })
     };
     let checks = candidate.checks();
     let (kept, dropped): (Vec<usize>, Vec<usize>) = (0..candidate.rubric().len())
-        .partition(|&place| band(CandidateCheck::CriterionMinimum(place)) == Some(Band::ClearYes));
+        .partition(|&place| passes(CandidateCheck::CriterionMinimum(place)));
     let failed: Vec<CandidateCheck> = checks
         .iter()
         .copied()
         .filter(|check| !check.is_hint())
         .filter(|&check| match check {
             CandidateCheck::CriterionMinimum(_) => kept.is_empty(),
-            _ => band(check) != Some(needed(&candidate, check)),
+            _ => !passes(check),
         })
         .collect();
     let hint = checks
         .iter()
         .copied()
         .filter(|check| check.is_hint())
-        .all(|check| band(check) == Some(Band::ClearYes))
+        .all(passes)
         .then(|| candidate.hint().clone());
     if failed.is_empty() {
         let rubric = kept
@@ -328,6 +331,20 @@ fn needed(candidate: &Candidate, check: CandidateCheck) -> Band {
     match check {
         CandidateCheck::Option(letter) if letter != candidate.answer_key() => Band::ClearNo,
         _ => Band::ClearYes,
+    }
+}
+
+/// The bands of Jev's answer to `candidate`'s `check` that pass it: the one
+/// [`needed`], or, for a [`CandidateCheck::CriterionMinimum`], clear yes or
+/// unclear, as the check drops only what it is sure of.
+fn passing(candidate: &Candidate, check: CandidateCheck) -> &'static [Band] {
+    match check {
+        CandidateCheck::CriterionMinimum(_) => &[Band::ClearYes, Band::Unclear],
+        _ => match needed(candidate, check) {
+            Band::ClearYes => &[Band::ClearYes],
+            Band::Unclear => &[Band::Unclear],
+            Band::ClearNo => &[Band::ClearNo],
+        },
     }
 }
 
@@ -385,9 +402,9 @@ impl Question {
 
     /// The criteria written reasoning is assessed against: those of the
     /// generator's 1 or 2 the show rule kept, in order, at least one. Jev
-    /// checked that each follows from the evidence and the answer key, can
-    /// be judged from written reasoning, and asks only for what the question
-    /// needs.
+    /// checked that each follows from the evidence and the answer key, and
+    /// can be judged from written reasoning, and didn't clearly say that it
+    /// asks for more than the question needs.
     #[must_use]
     pub fn rubric(&self) -> &[Criterion] {
         &self.rubric
@@ -395,8 +412,8 @@ impl Question {
 
     /// The criteria the show rule dropped from the generator's rubric,
     /// because Jev's answer to their [`CandidateCheck::CriterionMinimum`]
-    /// wasn't clear yes, in order, each with its place in that rubric,
-    /// counting from 0. The answer that dropped each is in
+    /// was clear no, or missing, in order, each with its place in that
+    /// rubric, counting from 0. The answer that dropped each is in
     /// [`answers`](Self::answers). Reasoning is never assessed against them.
     #[must_use = "it only reads the criteria"]
     pub fn dropped_criteria(&self) -> impl Iterator<Item = (usize, &Criterion)> + '_ {
@@ -499,9 +516,21 @@ impl Withheld {
 
     /// The band the show rule needed for its `check`: clear no for an
     /// option rating that isn't the answer key's, and clear yes otherwise.
+    /// For a [`CandidateCheck::CriterionMinimum`], clear yes is the side
+    /// that keeps its criterion, though [`passing`](Self::passing) holds
+    /// every band that keeps it.
     #[must_use]
     pub fn needed(&self, check: CandidateCheck) -> Band {
         needed(&self.candidate, check)
+    }
+
+    /// The bands of Jev's answer to its `check` that would have passed it:
+    /// the one it [`needed`](Self::needed), or, for a
+    /// [`CandidateCheck::CriterionMinimum`], clear yes or unclear, either of
+    /// which keeps its criterion.
+    #[must_use]
+    pub fn passing(&self, check: CandidateCheck) -> &'static [Band] {
+        passing(&self.candidate, check)
     }
 }
 
@@ -896,22 +925,29 @@ pub(crate) mod tests {
         criteria.into_iter().map(Criterion::statement).collect()
     }
 
-    #[test]
-    fn a_criterion_that_asks_more_than_the_question_needs_is_dropped_and_the_question_shown() {
+    /// The show rule's verdict on a candidate answered to pass, but with
+    /// `answer` to whether its first criterion asks only for what the
+    /// question needs, or no answer to it.
+    fn show_with_first_minimum(answer: Option<f64>) -> Result<Question, Withheld> {
         let minimum = CandidateCheck::CriterionMinimum(0);
-        for answer in [Some(0.79), Some(0.5), Some(0.0), None] {
-            let candidate = candidate("domain", 0, OptionLetter::A);
-            let answers = passing(&candidate)
-                .into_iter()
-                .filter(|&(check, _)| check != minimum)
-                .chain(answer.map(|answer| (minimum, probability(answer))));
+        let candidate = candidate("domain", 0, OptionLetter::A);
+        let answers = passing(&candidate)
+            .into_iter()
+            .filter(|&(check, _)| check != minimum)
+            .chain(answer.map(|answer| (minimum, probability(answer))));
+        show_rule(
+            candidate,
+            QuestionCheckAnswers::new(answers, depth(1.3)),
+            AssessmentPolicy::current(),
+        )
+    }
 
-            let question = show_rule(
-                candidate,
-                QuestionCheckAnswers::new(answers, depth(1.3)),
-                AssessmentPolicy::current(),
-            )
-            .expect("shown, with the criterion left");
+    #[test]
+    fn a_criterion_whose_minimum_check_is_clear_no_is_dropped_and_the_question_shown() {
+        let minimum = CandidateCheck::CriterionMinimum(0);
+        // Clear no from 0.20 down, and no answer, which fails any check.
+        for answer in [Some(0.20), Some(0.0), None] {
+            let question = show_with_first_minimum(answer).expect("shown, with the criterion left");
 
             assert_eq!(
                 statements(question.rubric()),
@@ -932,6 +968,24 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_criterion_whose_minimum_check_is_unclear_or_clear_yes_stays_in_the_rubric() {
+        // Unclear from 0.21 to 0.79, and clear yes from 0.80.
+        for answer in [0.21, 0.5, 0.79, 0.80, 1.0] {
+            let question = show_with_first_minimum(Some(answer)).expect("shown");
+
+            assert_eq!(
+                statements(question.rubric()),
+                [
+                    "Links the key to deduplication",
+                    "Says the provider charges once"
+                ],
+                "{answer}"
+            );
+            assert_eq!(question.dropped_criteria().count(), 0, "{answer}");
+        }
+    }
+
+    #[test]
     fn a_question_keeps_its_criteria_in_order_when_every_one_asks_only_what_it_needs() {
         let question = show(OptionLetter::A, Vec::new()).expect("shown");
 
@@ -946,14 +1000,14 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_candidate_whose_every_criterion_asks_too_much_is_withheld_naming_each() {
+    fn a_candidate_whose_every_criterion_is_a_clear_no_is_withheld_naming_each() {
         use CandidateCheck::*;
 
         let withheld = show(
             OptionLetter::A,
             vec![
-                (CriterionMinimum(0), probability(0.4)),
-                (CriterionMinimum(1), probability(0.1)),
+                (CriterionMinimum(0), probability(0.20)),
+                (CriterionMinimum(1), probability(0.0)),
             ],
         )
         .expect_err("no criterion is left");
@@ -962,15 +1016,52 @@ pub(crate) mod tests {
             withheld.failed(),
             [CriterionMinimum(0), CriterionMinimum(1)]
         );
-        assert_eq!(withheld.band(CriterionMinimum(0)), Some(Band::Unclear));
+        assert_eq!(withheld.band(CriterionMinimum(0)), Some(Band::ClearNo));
         assert_eq!(withheld.needed(CriterionMinimum(1)), Band::ClearYes);
+        assert_eq!(
+            withheld.passing(CriterionMinimum(1)),
+            [Band::ClearYes, Band::Unclear]
+        );
+        assert_eq!(
+            withheld.passing(Option(OptionLetter::B)),
+            [Band::ClearNo],
+            "an option besides the answer key"
+        );
+        assert_eq!(withheld.passing(Criterion(0)), [Band::ClearYes]);
+    }
+
+    #[test]
+    fn a_clear_no_and_an_unclear_criterion_keep_the_question_with_the_unclear_one() {
+        use CandidateCheck::*;
+
+        let question = show(
+            OptionLetter::A,
+            vec![
+                (CriterionMinimum(0), probability(0.1)),
+                (CriterionMinimum(1), probability(0.5)),
+            ],
+        )
+        .expect("shown, with the unclear criterion");
+
+        assert_eq!(
+            statements(question.rubric()),
+            ["Says the provider charges once"]
+        );
+        assert_eq!(
+            question
+                .dropped_criteria()
+                .map(|(place, _)| place)
+                .collect::<Vec<_>>(),
+            [0]
+        );
     }
 
     #[test]
     fn a_criterion_check_not_clear_yes_still_withholds_whether_or_not_its_criterion_is_dropped() {
         use CandidateCheck::*;
 
-        for minimum in [0.9, 0.3] {
+        // Kept as clear yes, kept as unclear, and dropped as clear no.
+        for minimum in [0.9, 0.5, 0.1] {
             assert_eq!(
                 failed(show(
                     OptionLetter::A,

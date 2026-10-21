@@ -57,6 +57,36 @@ fn probability(value: f64) -> Probability {
     Probability::new(value).expect("from 0 to 1")
 }
 
+/// Answers that pass a candidate with `criteria` criteria whose answer key
+/// is A, but with `except`'s answer to each of its checks instead, or none.
+fn passing_except(
+    criteria: usize,
+    except: &[(CandidateCheck, Option<f64>)],
+) -> QuestionCheckAnswers {
+    use CandidateCheck::*;
+
+    let checks = [Answerable, AboutArea, NeedsChange, NoGiveaway]
+        .into_iter()
+        .chain((0..criteria).map(Criterion))
+        .chain((0..criteria).map(CriterionMinimum))
+        .chain(OptionLetter::ALL.map(Option))
+        .chain(OptionLetter::ALL.map(Rationale))
+        .chain([WhyItMatters, HintPointsToEvidence, HintHidesAnswerKey]);
+    let answers = checks.filter_map(|check| {
+        let passing = match check {
+            Option(OptionLetter::B | OptionLetter::C) => 0.1,
+            _ => 0.9,
+        };
+        let value = except
+            .iter()
+            .find_map(|&(excepted, value)| (excepted == check).then_some(value))
+            .unwrap_or(Some(passing))?;
+        Some(answer(check, value))
+    });
+    let depth = Depth::new([0.2, 0.3, 0.5].map(probability), 1.3).expect("from 0 to 2");
+    QuestionCheckAnswers::new(answers, depth)
+}
+
 /// The rows between the subject and Retry writes and checks new ones,
 /// trimmed: the reasons.
 fn reasons(session: &Session) -> Vec<String> {
@@ -128,10 +158,10 @@ fn each_check_that_withholds_a_candidate_has_one_sentence_for_jev_saying_no_and_
         (NoGiveaway, 0.5),
         (Criterion(0), 0.1),
         (Criterion(0), 0.5),
-        // The only criterion asks for more than the question needs, so none
-        // is left.
+        // Jev clearly says the only criterion asks for more than the
+        // question needs, so none is left. Unclear, it would stay, so only a
+        // clear no withholds.
         (CriterionMinimum(0), 0.1),
-        (CriterionMinimum(0), 0.5),
         // The answer key is A: Jev clearly says no to it, or can't tell.
         (Option(OptionLetter::A), 0.1),
         (Option(OptionLetter::A), 0.5),
@@ -152,36 +182,15 @@ fn each_check_that_withholds_a_candidate_has_one_sentence_for_jev_saying_no_and_
     for (stem, (check, value)) in stems.iter().zip(failing) {
         ai.on_check_passing_except(stem, [answer(check, value)]);
     }
-    let checks = [
-        Answerable,
-        AboutArea,
-        NeedsChange,
-        Criterion(0),
-        CriterionMinimum(0),
-        Option(OptionLetter::A),
-        Option(OptionLetter::B),
-        Option(OptionLetter::C),
-        Rationale(OptionLetter::A),
-        Rationale(OptionLetter::B),
-        Rationale(OptionLetter::C),
-        WhyItMatters,
-        HintPointsToEvidence,
-        HintHidesAnswerKey,
-    ];
-    let answers = checks.map(|check| match check {
-        Option(OptionLetter::B | OptionLetter::C) => answer(check, 0.1),
-        _ => answer(check, 0.9),
-    });
-    let depth = Depth::new([0.2, 0.3, 0.5].map(probability), 1.3).expect("from 0 to 2");
     // Jev leaves the giveaway check unanswered.
-    ai.on_check("Unanswered?", Ok(QuestionCheckAnswers::new(answers, depth)));
+    ai.on_check("Unanswered?", Ok(passing_except(1, &[(NoGiveaway, None)])));
 
     let session = prepared(&ai, 120, 60);
 
     assert_eq!(
         reasons(&session),
         [
-            "21 written · 21 withheld, using policy 0's cut-offs",
+            "20 written · 20 withheld, using policy 0's cut-offs",
             "1: Jev said the question can't be answered from the evidence",
             "1: Jev couldn't tell whether the question can be answered from the evidence",
             "1: Jev said the question isn't about its area",
@@ -196,7 +205,6 @@ fn each_check_that_withholds_a_candidate_has_one_sentence_for_jev_saying_no_and_
             "1: Jev couldn't tell whether a rubric criterion follows from the evidence and can be \
              judged from written reasoning",
             "1: Jev said every rubric criterion asks for more than the question needs",
-            "1: Jev couldn't tell whether any rubric criterion asks only for what the question needs",
             "1: Jev said the answer key doesn't answer the question",
             "1: Jev couldn't tell whether the answer key answers the question",
             "1: Jev said an option besides the answer key answers the question",
@@ -215,16 +223,36 @@ fn each_check_that_withholds_a_candidate_has_one_sentence_for_jev_saying_no_and_
 fn a_candidate_with_no_criterion_left_gives_one_reason_as_unclear_as_its_least_clear_answer() {
     use CandidateCheck::*;
 
-    let mut two_criteria = candidate("Two criteria?", "A", PAYMENT_LIFECYCLE);
-    two_criteria.rubric.push(two_criteria.rubric[0].clone());
+    let two_criteria = |stem: &str| {
+        let mut written = candidate(stem, "A", PAYMENT_LIFECYCLE);
+        written.rubric.push(written.rubric[0].clone());
+        written
+    };
     let ai = Arc::new(ScriptedAi::new());
-    ai.on_write(&area_id(DOMAIN), Ok(vec![two_criteria]));
+    ai.on_write(
+        &area_id(DOMAIN),
+        Ok(vec![
+            two_criteria("Both clear no?"),
+            two_criteria("Unanswered?"),
+        ]),
+    );
     ai.on_check_passing_except(
-        "Two criteria?",
+        "Both clear no?",
         [
             answer(CriterionMinimum(0), 0.1),
-            answer(CriterionMinimum(1), 0.5),
+            answer(CriterionMinimum(1), 0.2),
         ],
+    );
+    // Clear no to the first criterion, and no answer about the second.
+    ai.on_check(
+        "Unanswered?",
+        Ok(passing_except(
+            2,
+            &[
+                (CriterionMinimum(0), Some(0.1)),
+                (CriterionMinimum(1), None),
+            ],
+        )),
     );
 
     let session = prepared(&ai, 120, 32);
@@ -232,8 +260,10 @@ fn a_candidate_with_no_criterion_left_gives_one_reason_as_unclear_as_its_least_c
     assert_eq!(
         reasons(&session),
         [
-            "1 written · 1 withheld, using policy 0's cut-offs",
-            "1: Jev couldn't tell whether any rubric criterion asks only for what the question needs",
+            "2 written · 2 withheld, using policy 0's cut-offs",
+            "1: Jev said every rubric criterion asks for more than the question needs",
+            "1: Jev didn't answer whether any rubric criterion asks only for what the question \
+             needs",
         ],
         "{}",
         session.text()

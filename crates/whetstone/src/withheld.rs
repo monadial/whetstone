@@ -9,12 +9,14 @@
 //! sentence for each way Jev can answer it against the show rule: "Jev
 //! said …" for a clear answer, "Jev couldn't tell whether …" for an
 //! unclear one. The hint's checks never withhold a candidate, so they are
-//! never a reason. A criterion that asks for more than the question needs
-//! is dropped, and withholds the candidate only when none is left, so those
-//! checks give one reason, as unclear as the least clear of them. The
-//! reasons say whose cut-offs decided, policy 0's or the learner's own from
-//! config, and never a probability or a cut-off: Settings and Inspect hold
-//! the numbers.
+//! never a reason. A criterion is dropped only when Jev clearly says it asks
+//! for more than the question needs, or doesn't answer, and those checks
+//! withhold the candidate only when every criterion is dropped. So they give
+//! one reason, as unclear as the least clear of them: that Jev said every
+//! criterion asks for more, or, if it left one unanswered, that it didn't
+//! answer. The reasons say whose cut-offs decided, policy 0's or the
+//! learner's own from config, and never a probability or a cut-off:
+//! Settings and Inspect hold the numbers.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -103,8 +105,8 @@ fn each_reason(withheld: &Withheld) -> BTreeSet<Reason> {
             })
         })
         .collect();
-    // No criterion left is one reason, as unclear as its least clear answer:
-    // the last, as reasons order.
+    // No criterion left is one reason, as unclear as its least clear answer,
+    // a clear no or none: the last, as reasons order.
     let none_left = |reason: &Reason| reason.asks == Asks::CriterionMinimum;
     if let Some(&least_clear) = reasons.iter().rfind(|reason| none_left(reason)) {
         reasons.retain(|reason| !none_left(reason));

@@ -365,8 +365,8 @@ fn the_review_offers_the_check_that_a_criterion_asks_only_what_the_question_need
         &area_id(DOMAIN),
         Ok(vec![candidate(FIRST, "A", PAYMENT_LIFECYCLE)]),
     );
-    // Its one criterion asks for more than the question needs, so none is
-    // left.
+    // Jev clearly says its one criterion asks for more than the question
+    // needs, so none is left.
     ai.on_check_passing_except(FIRST, [answer(CandidateCheck::CriterionMinimum(0), 0.1)]);
     let mut session = none_passed(&ai, 120, 40);
     activate(&mut session, "Review withheld questions");
@@ -376,7 +376,7 @@ fn the_review_offers_the_check_that_a_criterion_asks_only_what_the_question_need
         [
             "Jev's probability, not a measure of correctness",
             "1. Criterion 1 asks only for what the question needs",
-            "Jev: 0.1 · clear no · it needed clear yes",
+            "Jev: 0.1 · clear no · it needed clear yes or unclear",
             "Your vote: Not voted yet",
         ]
     );
