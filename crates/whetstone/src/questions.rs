@@ -19,7 +19,8 @@
 //! final, and Jev is asked about its reasoning with the store's
 //! acknowledgement (rule 39). Its result applies to the response it names,
 //! even once another question shows, and its outcomes are saved to the
-//! record.
+//! record. So are the generator's explanation of what the reasoning missed
+//! and Jev's check of it, asked with the same acknowledgement.
 //!
 //! When fewer questions passed their checks than were asked for, "*n*
 //! passed checks, *N* asked for" heads them, so the learner knows nothing
@@ -34,10 +35,10 @@ use ratatui::crossterm::event::KeyCode;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, List, Padding, Paragraph};
-use whetstone_ai::RequestFailure;
+use whetstone_ai::{ParagraphCheck, RequestFailure, WrittenParagraph};
 use whetstone_core::{
-    Area, Evidence, OptionLetter, Picked, Probability, Provenance, Question, QuestionCount,
-    Response,
+    Area, CriterionOutcome, Evidence, OptionLetter, Picked, Probability, Provenance, Question,
+    QuestionCount, Response,
 };
 
 use crate::columns;
@@ -489,18 +490,83 @@ impl Questions {
         saved: &SavedResponse,
         reply: Result<Vec<Probability>, RequestFailure>,
     ) {
-        if let Some((question, feedback)) =
-            self.picked
-                .iter_mut()
-                .find_map(|entry| match &mut entry.attempt {
-                    Attempt::Submitted(feedback) if feedback.saved() == saved => {
-                        Some((&entry.question, feedback))
-                    }
-                    Attempt::Draft(_) | Attempt::Submitted(_) => None,
-                })
-        {
+        if let Some((question, feedback)) = self.feedback_on(saved) {
             feedback.evaluated(question, reply);
         }
+    }
+
+    /// Hands `explain` each explanation of the reasoning that waits to be
+    /// asked for: the store's acknowledgement of the response, its
+    /// question, and the criteria to explain, each with its outcome. They
+    /// are then being written.
+    pub(crate) fn explain(
+        &mut self,
+        mut explain: impl FnMut(&SavedResponse, &Question, &[(usize, CriterionOutcome)]),
+    ) {
+        for entry in &mut self.picked {
+            if let Attempt::Submitted(feedback) = &mut entry.attempt
+                && let Some((saved, criteria)) = feedback.take_explanation()
+            {
+                explain(saved, &entry.question, &criteria);
+            }
+        }
+    }
+
+    /// Hands `check` each explanation that waits for Jev's check: the
+    /// store's acknowledgement of the response, its question, and the
+    /// paragraphs to check. They are then being checked.
+    pub(crate) fn check_explanations(
+        &mut self,
+        mut check: impl FnMut(&SavedResponse, &Question, &[WrittenParagraph]),
+    ) {
+        for entry in &mut self.picked {
+            if let Attempt::Submitted(feedback) = &mut entry.attempt
+                && let Some((saved, paragraphs)) = feedback.take_explanation_check()
+            {
+                check(saved, &entry.question, &paragraphs);
+            }
+        }
+    }
+
+    /// Applies the generator's `reply` explaining the reasoning of the
+    /// response `saved` acknowledges, whose citations are checked against
+    /// `evidence`: a paragraph for each criterion asked about, or why the
+    /// request failed.
+    pub(crate) fn explained(
+        &mut self,
+        saved: &SavedResponse,
+        evidence: &Evidence,
+        reply: Result<Vec<WrittenParagraph>, RequestFailure>,
+    ) {
+        if let Some((_, feedback)) = self.feedback_on(saved) {
+            feedback.explained(evidence, reply);
+        }
+    }
+
+    /// Applies Jev's `reply` checking the explanation of the response
+    /// `saved` acknowledges: its answers about each paragraph, or why the
+    /// request failed.
+    pub(crate) fn explanation_checked(
+        &mut self,
+        saved: &SavedResponse,
+        reply: Result<Vec<ParagraphCheck>, RequestFailure>,
+    ) {
+        if let Some((_, feedback)) = self.feedback_on(saved) {
+            feedback.explanation_checked(reply);
+        }
+    }
+
+    /// The question the response `saved` acknowledges responds to, and the
+    /// feedback on it, if it was submitted.
+    fn feedback_on(&mut self, saved: &SavedResponse) -> Option<(&Question, &mut Feedback)> {
+        self.picked
+            .iter_mut()
+            .find_map(|entry| match &mut entry.attempt {
+                Attempt::Submitted(feedback) if feedback.saved() == saved => {
+                    Some((&entry.question, feedback))
+                }
+                Attempt::Draft(_) | Attempt::Submitted(_) => None,
+            })
     }
 
     /// Saves `response` to the question that shows in `store`, then saves

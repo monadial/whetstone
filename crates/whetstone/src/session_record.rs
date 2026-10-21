@@ -15,9 +15,10 @@
 use std::fmt;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
+use whetstone_ai::{ParagraphCheck, WrittenParagraph};
 use whetstone_core::{
-    Assessed, CandidateId, ChoiceOutcome, CriterionOutcome, Evidence, Provenance, Question,
-    Response,
+    Assessed, CandidateId, ChoiceOutcome, CriterionOutcome, Evidence, PolicyVersion, Provenance,
+    Question, Response,
 };
 
 /// Where the app keeps session records. Each save either returns once the
@@ -139,6 +140,41 @@ pub enum Assessment {
         /// Met, not met or needs review, with Jev's answer.
         outcome: Assessed<CriterionOutcome>,
     },
+    /// A paragraph of the explanation of what the reasoning missed, as the
+    /// generator wrote it, and what its checks made of it. Every paragraph
+    /// checked is saved, shown or withheld, including each Retry's.
+    Explanation {
+        /// The paragraph: the criterion it explains, that criterion's
+        /// outcome, its text and its citations.
+        paragraph: WrittenParagraph,
+        /// Whether it passed its checks, and so showed.
+        check: ExplanationCheck,
+    },
+}
+
+/// What the checks made of a paragraph of an explanation: plain code
+/// checks its citations, then Jev checks it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ExplanationCheck {
+    /// Jev's answers were clear yes on both, under the assessment policy of
+    /// version `policy`: it showed.
+    Passed {
+        /// Jev's answers, as returned.
+        answers: ParagraphCheck,
+        /// The version of the policy that banded them.
+        policy: PolicyVersion,
+    },
+    /// Jev's answers weren't clear yes on both, under the assessment policy
+    /// of version `policy`: it was withheld.
+    Failed {
+        /// Jev's answers, as returned.
+        answers: ParagraphCheck,
+        /// The version of the policy that banded them.
+        policy: PolicyVersion,
+    },
+    /// Plain code withheld it before Jev was asked: it has no text or no
+    /// citation, or a citation names lines the evidence doesn't send.
+    FailedPlainChecks,
 }
 
 /// What the learner signalled about a question. None is held against them.

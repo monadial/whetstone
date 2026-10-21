@@ -17,7 +17,9 @@
 //! screen, and on feedback, Inspect source reads the evidence the questions
 //! rest on, exactly as it was sent. Once a response is saved, Jev assesses
 //! its reasoning, one request per response, and Cancel evaluation stops that
-//! request alone.
+//! request alone. When a criterion isn't met or needs review, the generator
+//! explains it, one request per response, and Jev checks that explanation,
+//! one more.
 //!
 //! When the gate drops every chosen area, Nothing to practice in this change
 //! gives each its verdict and offers Ask anyway, which writes about every
@@ -249,6 +251,12 @@ enum Asking {
     /// Jev, to assess the reasoning of the response this acknowledges: its
     /// session, question and attempt.
     Evaluate(SavedResponse),
+    /// The generator, to explain what the reasoning of the response this
+    /// acknowledges missed.
+    Explain(SavedResponse),
+    /// Jev, to check the explanation of the reasoning of the response this
+    /// acknowledges.
+    CheckExplanation(SavedResponse),
 }
 
 /// The screen's controls, by what Practice stands at.
@@ -338,6 +346,67 @@ fn log_withheld(withheld: &Withheld, answers: &QuestionCheckAnswers, policy: &As
         failed = ?failed,
         "withheld a candidate"
     );
+}
+
+/// Starts the requests about the submitted responses to `questions`, all
+/// against `evidence`, as background jobs `waiting` waits for: it stops
+/// each evaluation the learner cancelled, then asks `ai` for each
+/// evaluation, explanation and explanation check that waits to be asked
+/// for.
+fn ask_about_responses(
+    questions: &mut Questions,
+    ai: &dyn Ai,
+    evidence: &Evidence,
+    jobs: &mut Jobs<JobOutput>,
+    waiting: &mut Waiting<Asking>,
+) {
+    for saved in questions.take_cancelled() {
+        tracing::info!(
+            session = %saved.session(),
+            attempt = saved.attempt().get(),
+            "cancelled assessing the reasoning"
+        );
+        waiting.cancel_for(&Asking::Evaluate(saved), jobs);
+    }
+    questions.evaluate(|saved, question| {
+        let key = saved.clone();
+        send(
+            jobs,
+            waiting,
+            Asking::Evaluate(saved.clone()),
+            ai.assess_reasoning(saved, evidence, QuestionWithoutKey::from(question)),
+            |reply| JobOutput::Evaluated {
+                saved: Box::new(key),
+                reply,
+            },
+        );
+    });
+    questions.explain(|saved, question, criteria| {
+        let key = saved.clone();
+        send(
+            jobs,
+            waiting,
+            Asking::Explain(saved.clone()),
+            ai.explain(saved, evidence, question, criteria),
+            |reply| JobOutput::Explained {
+                saved: Box::new(key),
+                reply,
+            },
+        );
+    });
+    questions.check_explanations(|saved, question, paragraphs| {
+        let key = saved.clone();
+        send(
+            jobs,
+            waiting,
+            Asking::CheckExplanation(saved.clone()),
+            ai.check_explanation(evidence, question, paragraphs),
+            |reply| JobOutput::ExplanationChecked {
+                saved: Box::new(key),
+                reply,
+            },
+        );
+    });
 }
 
 impl Practice {
@@ -1000,31 +1069,13 @@ impl View for Practice {
                 }
             }
             Stage::Shown(questions) => {
-                for saved in questions.take_cancelled() {
-                    tracing::info!(
-                        session = %saved.session(),
-                        attempt = saved.attempt().get(),
-                        "cancelled assessing the reasoning"
-                    );
-                    self.waiting.cancel_for(&Asking::Evaluate(saved), jobs);
-                }
-                questions.evaluate(|saved, question| {
-                    let key = saved.clone();
-                    send(
-                        jobs,
-                        &mut self.waiting,
-                        Asking::Evaluate(saved.clone()),
-                        self.ai.assess_reasoning(
-                            saved,
-                            evidence,
-                            QuestionWithoutKey::from(question),
-                        ),
-                        |reply| JobOutput::Evaluated {
-                            saved: Box::new(key),
-                            reply,
-                        },
-                    );
-                });
+                ask_about_responses(
+                    questions,
+                    self.ai.as_ref(),
+                    evidence,
+                    jobs,
+                    &mut self.waiting,
+                );
             }
             Stage::FindingConnectedCode(_) | Stage::NothingToPractice | Stage::NonePassed => {}
         }
@@ -1090,6 +1141,25 @@ impl View for Practice {
                         self.failed_requests.note_refusal(Role::Jev, *failure);
                     }
                     questions.evaluated(&saved, reply.map(|reply| reply.content));
+                }
+            }
+            JobOutput::Explained { saved, reply } => {
+                let saved = *saved;
+                if self.waiting.accept(job, &Asking::Explain(saved.clone()))
+                    && let (Stage::Shown(questions), Some(evidence)) =
+                        (&mut self.stage, &self.evidence)
+                {
+                    questions.explained(&saved, evidence, reply.map(|reply| reply.content));
+                }
+            }
+            JobOutput::ExplanationChecked { saved, reply } => {
+                let saved = *saved;
+                if self
+                    .waiting
+                    .accept(job, &Asking::CheckExplanation(saved.clone()))
+                    && let Stage::Shown(questions) = &mut self.stage
+                {
+                    questions.explanation_checked(&saved, reply.map(|reply| reply.content));
                 }
             }
             JobOutput::ConnectedCode { .. } => {}

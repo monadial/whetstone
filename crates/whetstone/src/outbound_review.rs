@@ -1219,7 +1219,9 @@ impl View for OutboundReview {
             | JobOutput::AreasChecked { .. }
             | JobOutput::Written { .. }
             | JobOutput::Checked { .. }
-            | JobOutput::Evaluated { .. } => {}
+            | JobOutput::Evaluated { .. }
+            | JobOutput::Explained { .. }
+            | JobOutput::ExplanationChecked { .. } => {}
         }
     }
 

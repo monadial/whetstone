@@ -25,7 +25,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
-use whetstone_ai::{Reply, RequestFailure};
+use whetstone_ai::{ParagraphCheck, Reply, RequestFailure, WrittenParagraph};
 use whetstone_core::{
     AreaId, CandidateId, CommitId, Connections, Probability, QuestionCheckAnswers, WrittenCandidate,
 };
@@ -91,6 +91,26 @@ pub enum JobOutput {
         /// Jev's answer for each criterion, in rubric order, as returned,
         /// or why the request failed.
         reply: Result<Reply<Vec<Probability>>, RequestFailure>,
+    },
+    /// The generator's explanation of what a saved response's reasoning
+    /// missed, or why the request failed.
+    Explained {
+        /// The saved response whose reasoning was explained, boxed, as it
+        /// holds the response, to keep the app's messages small.
+        saved: Box<SavedResponse>,
+        /// A paragraph for each criterion asked about, in rubric order, as
+        /// written, or why the request failed.
+        reply: Result<Reply<Vec<WrittenParagraph>>, RequestFailure>,
+    },
+    /// Jev's check of the explanation of a saved response's reasoning, or
+    /// why the request failed.
+    ExplanationChecked {
+        /// The saved response whose explanation was checked, boxed, as it
+        /// holds the response, to keep the app's messages small.
+        saved: Box<SavedResponse>,
+        /// Jev's answers about each paragraph, in order, as returned, or
+        /// why the request failed.
+        reply: Result<Reply<Vec<ParagraphCheck>>, RequestFailure>,
     },
 }
 

@@ -13,21 +13,29 @@
 //! learner can do about it, as on Preparing questions. Each outcome is
 //! saved to the session record once it is known.
 //!
+//! Under each criterion not met or needing review, the generator's
+//! explanation of it shows once Jev has checked it, or says it was withheld
+//! or is unavailable, with Retry explanation (see [`crate::explanation`]).
+//! The outcomes always stay. Each paragraph checked is saved to the session
+//! record.
+//!
 //! A submitted response is final, so feedback offers no way back to it. Its
-//! controls are the evaluation's, while it awaits or failed, then Next
-//! question, Inspect source and Finish.
+//! controls are the evaluation's, while it awaits or failed, and the
+//! explanation's, once Retry explanation is offered, then Next question,
+//! Inspect source and Finish.
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{List, Paragraph};
-use whetstone_ai::RequestFailure;
+use whetstone_ai::{ParagraphCheck, RequestFailure, WrittenParagraph};
 use whetstone_core::{
-    Assessed, AssessmentPolicy, ChoiceOutcome, CriterionOutcome, Extent, OptionLetter, Probability,
-    Question, Role,
+    Assessed, AssessmentPolicy, ChoiceOutcome, CriterionOutcome, Evidence, Extent, OptionLetter,
+    Probability, Question, Role,
 };
 
 use crate::columns;
+use crate::explanation::Explanation;
 use crate::failures::FailedRequests;
 use crate::focus::Position;
 use crate::keymap::{self, Binding, Command, Keymap};
@@ -57,6 +65,9 @@ enum Control {
     CancelEvaluation,
     /// Asks Jev again once the evaluation failed or was cancelled.
     RetryEvaluation,
+    /// Asks again for each paragraph of the explanation withheld or
+    /// unavailable.
+    RetryExplanation,
     NextQuestion,
     InspectSource,
     Finish,
@@ -71,6 +82,7 @@ impl Control {
         match self {
             Self::CancelEvaluation => "Cancel evaluation",
             Self::RetryEvaluation => "Retry evaluation",
+            Self::RetryExplanation => "Retry explanation",
             Self::NextQuestion => "Next question",
             Self::InspectSource => "Inspect source",
             Self::Finish => "Finish",
@@ -128,8 +140,11 @@ pub(crate) struct Feedback {
     durability: Durability,
     /// Where Jev's evaluation of the reasoning stands.
     evaluation: Evaluation,
-    /// The criterion outcomes known but not yet saved to the session
-    /// record.
+    /// Where the explanation of what the reasoning missed stands, once the
+    /// outcomes are known.
+    explanation: Explanation,
+    /// The criterion outcomes and explanation paragraphs known but not yet
+    /// saved to the session record.
     unrecorded: Vec<Assessment>,
     /// The control with focus. If it is gone, as Cancel evaluation goes once
     /// the outcomes come, focus is where it started.
@@ -159,6 +174,7 @@ impl Feedback {
             saved,
             durability,
             evaluation: Evaluation::Unsent,
+            explanation: Explanation::default(),
             unrecorded: Vec::new(),
             focus: start,
             start,
@@ -223,6 +239,7 @@ impl Feedback {
                     .enumerate()
                     .map(|(criterion, &outcome)| Assessment::Criterion { criterion, outcome })
                     .collect();
+                self.explanation = Explanation::of(&outcomes);
                 Evaluation::Assessed(outcomes)
             }
             Ok(answers) => {
@@ -242,26 +259,76 @@ impl Feedback {
         };
     }
 
-    /// Saves to `store` each criterion outcome known since the last save.
-    /// A save that fails loses nothing the learner wrote, and the outcome
-    /// still shows.
+    /// The saved response whose reasoning the generator is to explain, and
+    /// the criteria to explain, each with its outcome, if any wait to be
+    /// asked for. They are then being written.
+    pub(crate) fn take_explanation(
+        &mut self,
+    ) -> Option<(&SavedResponse, Vec<(usize, CriterionOutcome)>)> {
+        let criteria = self.explanation.take_request()?;
+        Some((&self.saved, criteria))
+    }
+
+    /// The saved response whose explanation Jev is to check, and the
+    /// paragraphs to check, if any wait to be. They are then being checked.
+    pub(crate) fn take_explanation_check(
+        &mut self,
+    ) -> Option<(&SavedResponse, Vec<WrittenParagraph>)> {
+        let paragraphs = self.explanation.take_check()?;
+        Some((&self.saved, paragraphs))
+    }
+
+    /// Applies the generator's `reply` explaining the reasoning: a
+    /// paragraph for each criterion asked about, whose citations plain code
+    /// checks against `evidence`, or why the request failed.
+    pub(crate) fn explained(
+        &mut self,
+        evidence: &Evidence,
+        reply: Result<Vec<WrittenParagraph>, RequestFailure>,
+    ) {
+        let withheld = self.explanation.written(&self.saved, evidence, reply);
+        self.unrecorded.extend(withheld);
+    }
+
+    /// Applies Jev's `reply` checking the explanation: its answers about
+    /// each paragraph, or why the request failed.
+    pub(crate) fn explanation_checked(
+        &mut self,
+        reply: Result<Vec<ParagraphCheck>, RequestFailure>,
+    ) {
+        let checked = self.explanation.checked(&self.saved, reply);
+        self.unrecorded.extend(checked);
+    }
+
+    /// Saves to `store` each criterion outcome and explanation paragraph
+    /// known since the last save. A save that fails loses nothing the
+    /// learner wrote, and the outcome still shows.
     pub(crate) fn keep_record(&mut self, store: &mut dyn SessionStore) {
         for assessment in self.unrecorded.drain(..) {
             if let Err(error) = store.save_assessment(&self.saved, assessment) {
-                tracing::warn!(%error, "a criterion outcome wasn't saved");
+                tracing::warn!(%error, "a criterion outcome or explanation wasn't saved");
             }
         }
     }
 
     /// The controls, in focus order: the evaluation's, while it awaits or
-    /// is unavailable, then the rest.
+    /// is unavailable, Retry explanation, while it is offered, then the
+    /// rest.
     fn controls(&self) -> Vec<Control> {
         let evaluation = match self.evaluation {
             Evaluation::Unsent | Evaluation::Awaiting => Some(Control::CancelEvaluation),
             Evaluation::Unavailable(_) => Some(Control::RetryEvaluation),
             Evaluation::Assessed(_) => None,
         };
-        evaluation.into_iter().chain(Control::ALWAYS).collect()
+        let explanation = self
+            .explanation
+            .can_retry()
+            .then_some(Control::RetryExplanation);
+        evaluation
+            .into_iter()
+            .chain(explanation)
+            .chain(Control::ALWAYS)
+            .collect()
     }
 
     fn focused(&self) -> Control {
@@ -306,6 +373,10 @@ impl Feedback {
                     Control::RetryEvaluation => {
                         self.evaluation = Evaluation::Unsent;
                         self.focus = Control::CancelEvaluation;
+                        None
+                    }
+                    Control::RetryExplanation => {
+                        self.explanation.retry();
                         None
                     }
                     Control::NextQuestion => Some(Step::NextQuestion),
@@ -462,7 +533,9 @@ impl Feedback {
             }
             Evaluation::Assessed(outcomes) => {
                 lines.push(Line::styled("Reasoning", theme.title));
-                for (criterion, assessed) in question.rubric().iter().zip(outcomes) {
+                for (index, (criterion, assessed)) in
+                    question.rubric().iter().zip(outcomes).enumerate()
+                {
                     let outcome = match assessed.outcome() {
                         CriterionOutcome::Met => "Met",
                         CriterionOutcome::NotMet => "Not met",
@@ -491,6 +564,7 @@ impl Feedback {
                             .map(|text| Line::styled(format!("  {text}"), theme.muted)),
                         );
                     }
+                    lines.extend(self.explanation.lines(index, theme, width));
                 }
             }
         }
