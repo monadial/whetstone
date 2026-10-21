@@ -664,7 +664,9 @@ fn report_from_feedback_changes_no_outcome() {
     let saved = session.store().log();
 
     activate(&mut session, "Report");
-    session.press("j <Enter> <Tab> <Tab> <Tab> <Enter>");
+    session.press("j <Enter> <Tab> <Tab>");
+    type_text(&mut session, "C is right too");
+    session.press("<Tab> <Enter>");
 
     assert_eq!(session.section("Choice · Not supported"), choice);
     assert_eq!(session.section("Reasoning"), reasoning);
@@ -676,7 +678,7 @@ fn report_from_feedback_changes_no_outcome() {
             [StoreEntry::Signal {
                 signal: Signal::Report(report),
                 ..
-            }] if report.kind() == ReportKind::Mistake && report.note().is_none()
+            }] if report.kind() == ReportKind::Mistake && report.note() == Some("C is right too")
         ),
         "only the report is added: {log:#?}"
     );
@@ -735,8 +737,7 @@ fn report_at_80x24() {
 }
 
 /// A session `width` by `height` on the assessed feedback for an assisted
-/// attempt at the first question, choosing C, after Show answer, scrolled
-/// to its end, where the criterion's outcome is.
+/// attempt at the first question, choosing C, after Show answer.
 fn assisted_feedback(width: u16, height: u16) -> Session {
     let ai = writing_about_the_domain(6, PAYMENT_LIFECYCLE);
     let mut session = answering(&ai, width, height);
@@ -748,13 +749,14 @@ fn assisted_feedback(width: u16, height: u16) -> Session {
         "Retries reuse the key, so the provider dedupes them.",
     );
     session.settle();
-    session.press("G");
     session
 }
 
 #[test]
 fn assisted_feedback_at_120x32() {
-    let session = assisted_feedback(120, 32);
+    let mut session = assisted_feedback(120, 32);
+    // At its end, the criterion's outcome shows too.
+    session.press("G");
 
     insta::assert_debug_snapshot!("assisted_feedback_120x32", session.frame());
 }
@@ -930,4 +932,55 @@ fn key_help_on_the_report_lists_its_own_keys() {
         "{}",
         session.text()
     );
+}
+
+/// A session `width` by `height` reading the answer to the first question,
+/// after Show answer.
+fn showing_the_answer(width: u16, height: u16) -> Session {
+    let ai = writing_about_the_domain(6, PAYMENT_LIFECYCLE);
+    let mut session = answering(&ai, width, height);
+    activate(&mut session, "Show answer");
+    session
+}
+
+#[test]
+fn show_answer_at_120x32() {
+    let session = showing_the_answer(120, 32);
+
+    insta::assert_debug_snapshot!("show_answer_120x32", session.frame());
+}
+
+#[test]
+fn show_answer_at_80x24() {
+    let session = showing_the_answer(80, 24);
+
+    insta::assert_debug_snapshot!("show_answer_80x24", session.frame());
+}
+
+/// A session `width` by `height` on the first question, which the learner
+/// can't answer from this context, as it comes round after the last.
+fn come_round_to_cannot_answer(width: u16, height: u16) -> Session {
+    let ai = writing_about_the_domain(6, PAYMENT_LIFECYCLE);
+    let mut session = answering(&ai, width, height);
+    activate(&mut session, "Cannot answer from this context");
+    activate(&mut session, "Skip");
+    for _ in 3..=4 {
+        submit(&mut session, "a", "Because.");
+        session.press("<Enter>");
+    }
+    session
+}
+
+#[test]
+fn cannot_answer_at_120x32() {
+    let session = come_round_to_cannot_answer(120, 32);
+
+    insta::assert_debug_snapshot!("cannot_answer_120x32", session.frame());
+}
+
+#[test]
+fn cannot_answer_at_80x24() {
+    let session = come_round_to_cannot_answer(80, 24);
+
+    insta::assert_debug_snapshot!("cannot_answer_80x24", session.frame());
 }

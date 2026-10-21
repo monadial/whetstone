@@ -1,0 +1,38 @@
+---
+source: crates/whetstone/tests/it/help_and_signals.rs
+expression: session.frame()
+---
+Buffer {
+    area: Rect { x: 0, y: 0, width: 80, height: 24 },
+    content: [
+        "                                                                                ",
+        "  Answer to question 1 of 4                                                     ",
+        "                                                                                ",
+        "  Assisted attempt                                                              ",
+        "  You chose Show answer, so this is an assisted attempt. You can still submit   ",
+        "  your response, and its outcomes are marked Assisted.                          ",
+        "                                                                                ",
+        "  Answer key                                                                    ",
+        "  A: Option A of the question                                                   ",
+        "                                                                                ",
+        "  Rationale for A                                                               ",
+        "  The rationale for A, which stays hidden                                       ",
+        "                                                                                ",
+        "  Rationale for B                                                               ",
+        "  The rationale for B, which stays hidden                                       ",
+        "                                                                                ",
+        "  Rationale for C                                                               ",
+        "  The rationale for C, which stays hidden                                       ",
+        "                                                                                ",
+        "  Why it matters                                                                ",
+        "  Why it matters, which stays hidden                                            ",
+        "                                                                                ",
+        "  ? keys  : actions  q back                                                     ",
+        "                                                                                ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 27, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+    ]
+}
