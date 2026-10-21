@@ -20,8 +20,9 @@ use whetstone::{
     Asking, Assessment, ExplanationCheck, NewRecord, RequestEnded, SentRequest, StoreEntry,
 };
 use whetstone_ai::{
-    Asked, JevQuestion, JevRequest, ParagraphCheck, RequestFailure, ScriptedAi, WrittenParagraph,
-    base_prompts_hash, question_check_request,
+    Asked, JevQuestion, JevRequest, ParagraphCheck, QuestionWithoutKey, RequestFailure, ScriptedAi,
+    WrittenParagraph, base_prompts_hash, explanation_check_request, question_check_request,
+    reasoning_request,
 };
 use whetstone_core::{
     Area, AreaFileVersion, AreaSource, AssessmentPolicy, ContentHash, CriterionOutcome,
@@ -31,6 +32,7 @@ use whetstone_core::{
 
 use crate::answering::{answering, submit};
 use crate::connected_code::{rust_pay, rust_payments};
+use crate::help_and_signals::activate;
 use crate::preparing_questions::{
     DOMAIN, PAYMENT_LIFECYCLE, area_id, candidate, generate, stems, touched_path,
     writing_about_the_domain,
@@ -315,8 +317,10 @@ fn kinds(log: &[StoreEntry]) -> Vec<String> {
         .collect()
 }
 
-#[test]
-fn each_later_request_is_saved_as_it_ends_before_the_outcomes_it_gives() {
+/// [`writing`], with the first's reasoning missing its criterion, at 0.1,
+/// and the generator's explanation of it passing Jev's check, at 0.93 and
+/// 0.88.
+fn explaining_the_first() -> Arc<ScriptedAi> {
     let ai = writing(Ok(vec![probability(0.1)]));
     ai.on_explain(
         FIRST,
@@ -338,6 +342,12 @@ fn each_later_request_is_saved_as_it_ends_before_the_outcomes_it_gives() {
             agrees: probability(0.88),
         }]),
     );
+    ai
+}
+
+#[test]
+fn each_later_request_is_saved_as_it_ends_before_the_outcomes_it_gives() {
+    let ai = explaining_the_first();
     let mut session = answering(&ai, 120, 32);
 
     submit(&mut session, "a", REASONING);
@@ -374,6 +384,22 @@ fn each_later_request_is_saved_as_it_ends_before_the_outcomes_it_gives() {
         assert_versions(sent);
     }
     assert_eq!(answers(&evaluate), [("criterion_1", 0.1)]);
+    let jev = ModelId::new(SCRIPTED_JEV.to_owned());
+    let record = started(&session);
+    let question = record
+        .questions
+        .iter()
+        .find(|question| question.stem() == FIRST)
+        .expect("the first question is in the record");
+    assert_kept_as_sent(
+        evaluate.provenance.exchanges(),
+        &reasoning_request(
+            &jev,
+            &record.evidence,
+            QuestionWithoutKey::from(question),
+            REASONING,
+        ),
+    );
     assert_eq!(explain.provenance.role(), Role::Generator);
     assert_eq!(
         explain.provenance.generation(),
@@ -385,6 +411,14 @@ fn each_later_request_is_saved_as_it_ends_before_the_outcomes_it_gives() {
             ("criterion_1_agrees", 0.88),
             ("criterion_1_supported", 0.93)
         ]
+    );
+    let asked = ai.asked();
+    let Some(Asked::CheckExplanation { paragraphs, .. }) = asked.last() else {
+        panic!("the explanation's check last: {asked:#?}");
+    };
+    assert_kept_as_sent(
+        check.provenance.exchanges(),
+        &explanation_check_request(&jev, &record.evidence, question, paragraphs),
     );
     let Some(StoreEntry::Assessment {
         assessment: Assessment::Explanation {
@@ -425,6 +459,72 @@ fn a_request_that_fails_is_saved_with_its_failure_and_no_reply() {
     assert_eq!(evaluate.provenance.exchanges(), []);
     assert_eq!(evaluate.provenance.cost(), None);
     assert_versions(&evaluate);
+}
+
+#[test]
+fn a_request_still_running_when_the_learner_leaves_is_saved_as_cancelled() {
+    let ai = writing(Ok(vec![probability(0.9)]));
+    let mut session = answering(&ai, 120, 32);
+    submit(&mut session, "a", REASONING);
+
+    // Back to the areas and changes, before Jev's answers come.
+    session.press("q");
+    session.settle();
+
+    let [evaluate] = saved_requests(&session).try_into().expect("one request");
+    assert!(
+        matches!(evaluate.asking, Asking::Evaluate(_)),
+        "{evaluate:?}"
+    );
+    assert_eq!(
+        evaluate.ended,
+        RequestEnded::Failed(RequestFailure::Cancelled)
+    );
+    assert_eq!(evaluate.provenance.request(), RequestId::new(7));
+}
+
+#[test]
+fn every_request_in_a_run_has_its_own_identity_across_practices() {
+    let ai = writing_about_the_domain(4, PAYMENT_LIFECYCLE);
+    let stems = stems("Domain", 4);
+    ai.on_write(
+        &area_id(DOMAIN),
+        Ok(stems
+            .iter()
+            .map(|stem| candidate(stem, "A", PAYMENT_LIFECYCLE))
+            .collect()),
+    );
+    for stem in &stems {
+        ai.on_check_passing(stem);
+    }
+    let mut session = generate(&ai, &[DOMAIN], PAYMENT_LIFECYCLE, 120, 32);
+    session.settle();
+
+    // Back to the areas and changes, then Generate questions again.
+    session.press("q");
+    activate(&mut session, "Generate questions");
+    session.settle();
+
+    let records: Vec<Vec<u64>> = session
+        .store()
+        .log()
+        .into_iter()
+        .filter_map(|entry| match entry {
+            StoreEntry::Started { record, .. } => Some(
+                record
+                    .requests
+                    .iter()
+                    .map(|sent| sent.provenance.request().get())
+                    .collect(),
+            ),
+            _ => None,
+        })
+        .collect();
+    let [first, second] = records.as_slice() else {
+        panic!("two records: {records:?}");
+    };
+    assert_eq!(first[..2], [1, 2]);
+    assert_eq!(second[..2], [7, 8], "after the first Practice's six");
 }
 
 #[test]

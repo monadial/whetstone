@@ -95,7 +95,7 @@ pub struct RequestId(u64);
 pub struct GenerationId(String);
 
 /// The versions behind a request: Whetstone's own, its base prompts', the
-/// assessment policy's, and each area file's that went into it.
+/// assessment policy's, and the file of each area it is about.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Versions {
     whetstone: String,
@@ -104,7 +104,7 @@ pub struct Versions {
     area_files: Vec<AreaFileVersion>,
 }
 
-/// An area file that went into a request: its area, where the file comes
+/// The file of an area a request is about: its area, where the file comes
 /// from and a hash of its content.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AreaFileVersion {
@@ -285,7 +285,7 @@ impl fmt::Display for GenerationId {
 impl Versions {
     /// The versions behind a request: Whetstone's own `whetstone` version,
     /// such as `0.1.0`; the hash of its `base_prompts`; the assessment
-    /// `policy`'s version; and the `area_files` that went into it.
+    /// `policy`'s version; and the `area_files` of the areas it is about.
     #[must_use]
     pub fn new(
         whetstone: String,
@@ -319,7 +319,7 @@ impl Versions {
         self.policy
     }
 
-    /// The area files that went into the request.
+    /// The files of the areas the request is about.
     #[must_use]
     pub fn area_files(&self) -> &[AreaFileVersion] {
         &self.area_files

@@ -301,22 +301,26 @@ impl InMemoryStore {
     }
 }
 
+/// The record of `session` in `log`, if it started.
+fn started(log: &[StoreEntry], session: SessionId) -> Result<&NewRecord, StoreError> {
+    log.iter()
+        .find_map(|entry| match entry {
+            StoreEntry::Started {
+                session: started,
+                record,
+            } if *started == session => Some(record),
+            _ => None,
+        })
+        .ok_or(StoreError::UnknownSession(session))
+}
+
 /// Whether the record of `session` in `log` asks `question`.
 fn check_question(
     log: &[StoreEntry],
     session: SessionId,
     question: &CandidateId,
 ) -> Result<(), StoreError> {
-    let questions = log
-        .iter()
-        .find_map(|entry| match entry {
-            StoreEntry::Started {
-                session: started,
-                record,
-            } if *started == session => Some(&record.questions),
-            _ => None,
-        })
-        .ok_or(StoreError::UnknownSession(session))?;
+    let questions = &started(log, session)?.questions;
     if questions.iter().any(|asked| asked.id() == question) {
         Ok(())
     } else {
@@ -404,11 +408,7 @@ impl SessionStore for InMemoryStore {
 
     fn save_request(&mut self, session: SessionId, request: SentRequest) -> Result<(), StoreError> {
         let mut log = self.entries();
-        if !log.iter().any(
-            |entry| matches!(entry, StoreEntry::Started { session: started, .. } if *started == session),
-        ) {
-            return Err(StoreError::UnknownSession(session));
-        }
+        started(&log, session)?;
         log.push(StoreEntry::Request { session, request });
         Ok(())
     }

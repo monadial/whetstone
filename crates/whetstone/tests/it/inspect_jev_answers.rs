@@ -283,6 +283,66 @@ fn feedback_itself_shows_no_numbers() {
         assert!(!(around(-1) && around(1)), "a number at byte {at}:\n{text}");
     }
     assert!(!text.contains('%'), "{text}");
+    for answer in [ANSWERABLE, NEEDS_CHANGE, CRITERION, SUPPORTED, AGREES] {
+        let percent = format!("{:.0}", answer * 100.0);
+        assert!(
+            !text.contains(&percent),
+            "{percent}, as a whole number:\n{text}"
+        );
+    }
+}
+
+#[test]
+fn a_paragraph_checked_again_after_retry_explanation_names_each_check() {
+    let ai = Arc::new(ScriptedAi::new());
+    let stems = stems("Domain", 4);
+    ai.on_write(
+        &area_id(DOMAIN),
+        Ok(stems
+            .iter()
+            .map(|stem| candidate(stem, "A", PAYMENT_LIFECYCLE))
+            .collect()),
+    );
+    for stem in &stems {
+        ai.on_check_passing(stem);
+    }
+    ai.on_assess(FIRST, Ok(vec![probability(0.1)]));
+    let paragraph = WrittenParagraph {
+        criterion: 0,
+        outcome: CriterionOutcome::NotMet,
+        text: "You didn't say why reusing the key stops a second charge.".to_owned(),
+        citations: vec![WrittenCitation {
+            path: touched_path(PAYMENT_LIFECYCLE),
+            first_line: 1,
+            last_line: 1,
+        }],
+    };
+    let check = |supported, agrees| ParagraphCheck {
+        supported: probability(supported),
+        agrees: probability(agrees),
+    };
+    ai.on_explain(FIRST, Ok(vec![paragraph.clone()]));
+    ai.on_check_explanation(FIRST, Ok(vec![check(0.41, 0.9)]));
+    ai.on_explain(FIRST, Ok(vec![paragraph]));
+    ai.on_check_explanation(FIRST, Ok(vec![check(0.94, 0.9)]));
+    let mut session = answering(&ai, 120, TALL);
+    submit(&mut session, "a", REASONING);
+    session.settle();
+    activate(&mut session, "Retry explanation");
+    session.settle();
+
+    activate(&mut session, "Inspect Jev's answers");
+
+    assert_eq!(
+        session.section("Explanation check")[1..],
+        [
+            "Criterion 1's explanation, check 1 of 2, is supported by the evidence · 0.41 · unclear",
+            "Criterion 1's explanation, check 1 of 2, agrees with its outcome · 0.9 · clear yes",
+            "Criterion 1's explanation, check 2 of 2, is supported by the evidence · 0.94 · clear \
+             yes",
+            "Criterion 1's explanation, check 2 of 2, agrees with its outcome · 0.9 · clear yes",
+        ]
+    );
 }
 
 #[test]
