@@ -23,6 +23,7 @@ mod repository_config;
 mod secret;
 mod selection;
 mod showcase;
+mod shuffle;
 mod toml_error;
 
 pub use crate::area::{Area, AreaFileError, AreaId, AreaSource, InvalidAreaFile, InvalidAreaId};
@@ -71,3 +72,4 @@ pub use crate::secret::{
 };
 pub use crate::selection::NotSent;
 pub use crate::showcase::ShowcaseProject;
+pub use crate::shuffle::shuffle_options;

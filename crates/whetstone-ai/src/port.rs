@@ -46,7 +46,12 @@ pub trait Ai: fmt::Debug + Send + Sync {
     ) -> Pending<Vec<(AreaId, Probability)>>;
 
     /// The generator writes `count` candidate questions about `area` from
-    /// `evidence`, as it wrote them, before any check.
+    /// `evidence`, as it wrote them, before any check, except that each
+    /// one's options are shuffled ([`shuffle_options`]), so where the answer
+    /// key sits carries no signal. A scripted AI returns its candidates as
+    /// scripted.
+    ///
+    /// [`shuffle_options`]: whetstone_core::shuffle_options
     fn write_candidates(
         &self,
         stamp: Stamp,
