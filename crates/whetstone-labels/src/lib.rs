@@ -28,7 +28,7 @@ pub use crate::labels::{
     LabelDate, LabelError, Labeller, Labels, Place, ResponseExample,
 };
 pub use crate::measure::measure;
-pub use crate::prepare::{Call, Item, PrepareError, Prepared};
+pub use crate::prepare::{Call, Item, ParagraphDrop, PrepareError, Prepared};
 pub use crate::report::{
     CutOffs, Failure, JobReport, Measured, Measurements, Report, Row, SWEEP, Spread,
 };

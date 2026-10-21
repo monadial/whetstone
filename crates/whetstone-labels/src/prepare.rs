@@ -17,9 +17,10 @@ use whetstone_ai::{
     question_check_request, reasoning_answers, reasoning_request,
 };
 use whetstone_core::{
-    Area, AssessmentPolicy, Candidate, CandidateCheck, Change, ConnectedCodeLimit, Connections,
-    Criterion, Depth, DropReason, Evidence, ExcludePatterns, Job, ModelId, Probability, Question,
-    QuestionCheckAnswers, ReviewChoices, ShowcaseProject, Withheld, plain_checks, show_rule,
+    Area, AssessmentPolicy, Candidate, CandidateCheck, Change, Citation, ConnectedCodeLimit,
+    Connections, Criterion, Depth, DropReason, Evidence, ExcludePatterns, Job, ModelId,
+    Probability, Question, QuestionCheckAnswers, ReviewChoices, ShowcaseProject, Withheld,
+    plain_checks, show_rule,
 };
 
 use crate::labels::{
@@ -255,6 +256,32 @@ pub enum PrepareError {
         id: String,
         criterion: usize,
     },
+    /// An explanation paragraph fails the plain checks Practice runs on it,
+    /// so Practice would withhold it and Jev would never see it.
+    #[error(
+        "{place}: `{id}` explains criterion {criterion} in a paragraph that fails the plain checks, so Jev would never see it: {reason}"
+    )]
+    ParagraphPlainChecks {
+        place: Place,
+        id: String,
+        criterion: usize,
+        reason: ParagraphDrop,
+    },
+}
+
+/// Why an explanation paragraph fails the plain checks Practice runs before
+/// Jev checks it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum ParagraphDrop {
+    /// Its text is empty.
+    #[error("it has no text")]
+    NoText,
+    /// It has no citation.
+    #[error("it cites nothing")]
+    NoCitation,
+    /// A citation names a file or lines the evidence does not send.
+    #[error("it cites lines the evidence does not send")]
+    Citation,
 }
 
 impl Labels {
@@ -274,7 +301,8 @@ impl Labels {
     /// candidate fails the plain checks; that leaves something its call asks
     /// unlabelled, or labels something it doesn't ask; that is about a
     /// candidate its labels would withhold; or whose paragraphs explain a
-    /// criterion twice or one the rubric doesn't have.
+    /// criterion twice or one the rubric doesn't have, or fail the plain
+    /// checks Practice runs on a paragraph.
     pub fn prepare(
         &self,
         showcase: &ShowcaseProject,
@@ -405,7 +433,7 @@ fn explanation_call(
 ) -> Result<Call, PrepareError> {
     let example = explanation.example();
     let (evidence, question) = question(questions, example, explanation.candidate())?;
-    let paragraphs = paragraphs(example, question, explanation.paragraphs())?;
+    let paragraphs = paragraphs(example, evidence, question, explanation.paragraphs())?;
     let keys: Vec<String> = paragraphs
         .iter()
         .flat_map(|paragraph| {
@@ -430,9 +458,11 @@ fn explanation_call(
 }
 
 /// `written` as the paragraphs the explanation check takes, when each
-/// explains a different criterion of `question`'s rubric.
+/// explains a different criterion of `question`'s rubric and passes the
+/// plain checks against `evidence`.
 fn paragraphs(
     example: &Example,
+    evidence: &Evidence,
     question: &Question,
     written: &[ExampleParagraph],
 ) -> Result<Vec<WrittenParagraph>, PrepareError> {
@@ -460,6 +490,14 @@ fn paragraphs(
                 criterion,
             });
         }
+        if let Err(reason) = paragraph_checks(paragraph, evidence) {
+            return Err(PrepareError::ParagraphPlainChecks {
+                place: example.place().clone(),
+                id: example.id().to_owned(),
+                criterion,
+                reason,
+            });
+        }
         paragraphs.push(WrittenParagraph {
             criterion: criterion - 1,
             outcome: paragraph.outcome,
@@ -468,6 +506,30 @@ fn paragraphs(
         });
     }
     Ok(paragraphs)
+}
+
+/// The plain checks Practice runs on a written paragraph before Jev checks
+/// it: it has text, it cites the evidence, and every citation names lines
+/// the evidence sends. Practice withholds a paragraph that fails them.
+fn paragraph_checks(
+    paragraph: &ExampleParagraph,
+    evidence: &Evidence,
+) -> Result<(), ParagraphDrop> {
+    if paragraph.text.trim().is_empty() {
+        return Err(ParagraphDrop::NoText);
+    }
+    if paragraph.citations.is_empty() {
+        return Err(ParagraphDrop::NoCitation);
+    }
+    if paragraph
+        .citations
+        .iter()
+        .all(|citation| Citation::in_evidence(citation.clone(), evidence).is_some())
+    {
+        Ok(())
+    } else {
+        Err(ParagraphDrop::Citation)
+    }
 }
 
 /// The showcase change whose subject is `commit`.
@@ -860,6 +922,33 @@ mod tests {
                 .unwrap_err()
                 .to_string(),
             "seeds.toml, line 40: `retry-key-explained` explains criterion 2 twice"
+        );
+    }
+
+    #[test]
+    fn an_explanation_paragraph_practice_would_withhold_before_jev_checks_it_is_refused() {
+        let refused = |explanation: &str| {
+            prepared(&format!("{CANDIDATE}{explanation}"))
+                .unwrap_err()
+                .to_string()
+        };
+        let prefix = "seeds.toml, line 40: `retry-key-explained` explains criterion 2 in a \
+                      paragraph that fails the plain checks, so Jev would never see it:";
+
+        assert_eq!(
+            refused(&EXPLANATION.replace("last_line = 28", "last_line = 999")),
+            format!("{prefix} it cites lines the evidence does not send")
+        );
+        assert_eq!(
+            refused(&EXPLANATION.replace(
+                ", citations = [{ path = \"src/provider.rs\", first_line = 27, last_line = 28 }]",
+                ""
+            )),
+            format!("{prefix} it cites nothing")
+        );
+        assert_eq!(
+            refused(&EXPLANATION.replace("The provider charges once per key.", " ")),
+            format!("{prefix} it has no text")
         );
     }
 }
