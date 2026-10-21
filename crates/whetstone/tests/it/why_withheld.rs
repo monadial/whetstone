@@ -196,7 +196,7 @@ fn each_check_that_withholds_a_candidate_has_one_sentence_for_jev_saying_no_and_
             "1: Jev couldn't tell whether a rubric criterion follows from the evidence and can be \
              judged from written reasoning",
             "1: Jev said every rubric criterion asks for more than the question needs",
-            "1: Jev couldn't tell whether any rubric criterion asks only what the question needs",
+            "1: Jev couldn't tell whether any rubric criterion asks only for what the question needs",
             "1: Jev said the answer key doesn't answer the question",
             "1: Jev couldn't tell whether the answer key answers the question",
             "1: Jev said an option besides the answer key answers the question",
@@ -233,7 +233,7 @@ fn a_candidate_with_no_criterion_left_gives_one_reason_as_unclear_as_its_least_c
         reasons(&session),
         [
             "1 written · 1 withheld, using policy 0's cut-offs",
-            "1: Jev couldn't tell whether any rubric criterion asks only what the question needs",
+            "1: Jev couldn't tell whether any rubric criterion asks only for what the question needs",
         ],
         "{}",
         session.text()

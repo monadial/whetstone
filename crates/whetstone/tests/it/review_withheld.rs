@@ -375,7 +375,7 @@ fn the_review_offers_the_check_that_a_criterion_asks_only_what_the_question_need
         checks(&session),
         [
             "Jev's probability, not a measure of correctness",
-            "1. Criterion 1 asks only what the question needs",
+            "1. Criterion 1 asks only for what the question needs",
             "Jev: 0.1 · clear no · it needed clear yes",
             "Your vote: Not voted yet",
         ]

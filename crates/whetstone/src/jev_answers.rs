@@ -99,11 +99,12 @@ fn question_check(question: &Question, requests: &[SentRequest]) -> Section {
     }));
     // The answers number the criteria as the generator wrote them, and the
     // reasoning only those the show rule kept.
-    lines.extend(question.dropped_criteria().map(|(place, _)| {
+    lines.extend(question.dropped_criteria().map(|(place, criterion)| {
         format!(
-            "Criterion {} dropped: it asks for more than the question needs, so reasoning \
+            "Criterion {} dropped · {} · it asks for more than the question needs, so reasoning \
              isn't assessed against it",
-            place + 1
+            place + 1,
+            criterion.statement()
         )
     }));
     let depth = question.answers().depth();
@@ -261,7 +262,10 @@ pub(crate) fn statement(check: CandidateCheck) -> String {
             index + 1
         ),
         CandidateCheck::CriterionMinimum(index) => {
-            format!("Criterion {} asks only what the question needs", index + 1)
+            format!(
+                "Criterion {} asks only for what the question needs",
+                index + 1
+            )
         }
         CandidateCheck::Option(letter) => format!("Option {letter} answers the question correctly"),
         CandidateCheck::Rationale(letter) => {

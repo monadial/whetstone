@@ -253,16 +253,19 @@ fn inspect_jevs_answers_says_which_criteria_were_dropped() {
 
     activate(&mut session, "Inspect Jev's answers");
 
-    let question_check = session.section("Question check");
+    // Its rows as one line, so a line is found wherever it wraps.
+    let question_check = session.section("Question check").join(" ");
     for line in [
-        "Criterion 1 asks only what the question needs · 0.9 · clear yes",
-        "Criterion 2 asks only what the question needs · 0.15 · clear no",
-        "Criterion 2 dropped: it asks for more than the question needs, so reasoning isn't \
-         assessed against it",
+        "Criterion 1 asks only for what the question needs · 0.9 · clear yes",
+        "Criterion 2 asks only for what the question needs · 0.15 · clear no",
+        &format!(
+            "Criterion 2 dropped · {DROPPED} · it asks for more than the question needs, so \
+             reasoning isn't assessed against it"
+        ),
     ] {
         assert!(
-            question_check.contains(&line.to_owned()),
-            "{line:?} in {question_check:#?}"
+            question_check.contains(line),
+            "{line:?} in {question_check:?}"
         );
     }
     assert_eq!(
