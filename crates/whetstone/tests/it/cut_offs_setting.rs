@@ -67,8 +67,9 @@ const JOBS: [(&str, &str); 7] = [
     ("explanation check", "explanation_check"),
 ];
 
-/// The Cut-offs row when every job has policy 1's.
-const EVERY_JOB_AT_POLICY_1: &str =
+/// The Cut-offs row when every job has policy 1's: the giveaway check's
+/// own are listed under it.
+const EVERY_OTHER_JOB_AT_POLICY_1: &str =
     "Cut-offs              upper 0.8, lower 0.2 for every other job (default)";
 
 /// The line under it that lists the giveaway check's own default.
@@ -88,7 +89,7 @@ fn without_the_table_every_job_shows_policy_1_s_cut_offs_as_the_default() {
 
         assert_eq!(
             session.row_with("Cut-offs"),
-            EVERY_JOB_AT_POLICY_1,
+            EVERY_OTHER_JOB_AT_POLICY_1,
             "{config:?}"
         );
         let text = words(&session);
@@ -105,7 +106,7 @@ fn without_the_table_every_job_shows_policy_1_s_cut_offs_as_the_default() {
 fn a_job_the_table_lists_takes_its_cut_offs_and_every_other_keeps_policy_1_s() {
     let session = settings(Some(LOWER_QUESTION_CHECK), 120, 32);
 
-    assert_eq!(session.row_with("Cut-offs"), EVERY_JOB_AT_POLICY_1);
+    assert_eq!(session.row_with("Cut-offs"), EVERY_OTHER_JOB_AT_POLICY_1);
     let text = words(&session);
     assert!(
         text.contains("question check: upper 0.55, lower 0.2 (from your config)"),
@@ -144,7 +145,7 @@ fn the_learner_s_giveaway_check_is_listed_from_their_config() {
         32,
     );
 
-    assert_eq!(session.row_with("Cut-offs"), EVERY_JOB_AT_POLICY_1);
+    assert_eq!(session.row_with("Cut-offs"), EVERY_OTHER_JOB_AT_POLICY_1);
     let text = words(&session);
     assert!(
         text.contains("giveaway check: upper 0.6, lower 0.25 (from your config)"),
@@ -176,6 +177,26 @@ fn every_job_has_an_entry_and_a_whole_0_or_1_is_a_number() {
 }
 
 #[test]
+fn when_the_jobs_left_at_their_default_differ_evenly_the_first_job_s_is_shared() {
+    let entries = JOBS
+        .into_iter()
+        .filter(|(_, key)| !["relevance_gate", "giveaway_check"].contains(key))
+        .map(|(_, key)| format!("{key} = {{ upper = 0.9, lower = 0.1 }}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let session = settings(Some(&format!("[cut_offs]\n{entries}\n")), 120, 32);
+
+    assert_eq!(session.row_with("Cut-offs"), EVERY_OTHER_JOB_AT_POLICY_1);
+    let text = words(&session);
+    assert!(text.contains(GIVEAWAY_CHECK_AT_POLICY_1), "{text}");
+    assert!(!text.contains("relevance gate:"), "{text}");
+    assert!(
+        text.contains("question check: upper 0.9, lower 0.1 (from your config)"),
+        "{text}"
+    );
+}
+
+#[test]
 fn an_entry_at_policy_1_s_values_is_the_default_and_outcomes_stay_comparable() {
     let session = settings(
         Some(
@@ -186,7 +207,7 @@ fn an_entry_at_policy_1_s_values_is_the_default_and_outcomes_stay_comparable() {
         32,
     );
 
-    assert_eq!(session.row_with("Cut-offs"), EVERY_JOB_AT_POLICY_1);
+    assert_eq!(session.row_with("Cut-offs"), EVERY_OTHER_JOB_AT_POLICY_1);
     let text = words(&session);
     assert!(text.contains(GIVEAWAY_CHECK_AT_POLICY_1), "{text}");
     assert!(!text.contains("from your config"), "{text}");
@@ -404,7 +425,7 @@ fn the_readme_documents_the_table_with_policy_1_s_cut_offs() {
     let session = settings(Some(documented), 120, 32);
     assert_eq!(
         session.row_with("Cut-offs"),
-        EVERY_JOB_AT_POLICY_1,
+        EVERY_OTHER_JOB_AT_POLICY_1,
         "the README's file sets policy 1's"
     );
     assert!(!words(&session).contains("from your config"));

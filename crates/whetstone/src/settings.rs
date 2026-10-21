@@ -130,12 +130,14 @@ impl Control {
                 };
                 (format!("version {}, {validated}", policy.version()), None)
             }
-            Self::CutOffs => match listed_cut_offs(&settings.assessment_policy) {
-                (None, _) => ("from your config for every job".to_owned(), None),
-                (Some(shared), listed) if listed.is_empty() => {
+            Self::CutOffs => match ListedCutOffs::of(&settings.assessment_policy) {
+                ListedCutOffs::Shared(shared) => {
                     (format!("{shared} for every job"), Some(" (default)"))
                 }
-                (Some(shared), _) => (format!("{shared} for every other job"), Some(" (default)")),
+                ListedCutOffs::SharedBut(shared, _) => {
+                    (format!("{shared} for every other job"), Some(" (default)"))
+                }
+                ListedCutOffs::Learner(_) => ("from your config for every job".to_owned(), None),
             },
             Self::Back => (String::new(), None),
         }
@@ -166,10 +168,10 @@ impl Control {
             }
             Self::CutOffs => {
                 let policy = &settings.assessment_policy;
-                let (_, listed) = listed_cut_offs(policy);
-                let mut notes: Vec<String> = listed
-                    .into_iter()
-                    .map(|(job, applied)| {
+                let mut notes: Vec<String> = ListedCutOffs::of(policy)
+                    .listed()
+                    .iter()
+                    .map(|&(job, applied)| {
                         let whose = match applied.origin() {
                             CutOffsOrigin::Default => "default",
                             CutOffsOrigin::Learner => "from your config",
@@ -300,29 +302,59 @@ impl Control {
     }
 }
 
-/// How Settings lists the cut-offs `policy` applies: the defaults most of
-/// the jobs that keep the policy's share, or none when the config sets
-/// every job's, then each job whose cut-offs the config sets or differ from
-/// those, in [`Job::ALL`] order.
-fn listed_cut_offs(policy: &AssessmentPolicy) -> (Option<CutOffs>, Vec<(Job, AppliedCutOffs)>) {
-    let defaults: Vec<CutOffs> = Job::ALL
-        .into_iter()
-        .map(|job| policy.cut_offs(job))
-        .filter(|applied| applied.origin() == CutOffsOrigin::Default)
-        .map(AppliedCutOffs::cut_offs)
-        .collect();
-    let shared = defaults
-        .iter()
-        .copied()
-        .max_by_key(|&cut_offs| defaults.iter().filter(|&&other| other == cut_offs).count());
-    let listed = Job::ALL
-        .into_iter()
-        .map(|job| (job, policy.cut_offs(job)))
-        .filter(|(_, applied)| {
-            applied.origin() == CutOffsOrigin::Learner || Some(applied.cut_offs()) != shared
-        })
-        .collect();
-    (shared, listed)
+/// How the Cut-offs row lists the cut-offs a policy applies.
+#[derive(Debug)]
+enum ListedCutOffs {
+    /// Every job at the same default.
+    Shared(CutOffs),
+    /// The default the jobs not listed share, then each job whose cut-offs
+    /// the config sets or differ from it, in [`Job::ALL`] order.
+    SharedBut(CutOffs, Vec<(Job, AppliedCutOffs)>),
+    /// The config sets every job's, each listed in [`Job::ALL`] order.
+    Learner(Vec<(Job, AppliedCutOffs)>),
+}
+
+impl ListedCutOffs {
+    /// How Settings lists `policy`'s cut-offs. The shared default is the
+    /// one most of the jobs the config leaves out have, the first in
+    /// [`Job::ALL`] order on a tie.
+    fn of(policy: &AssessmentPolicy) -> Self {
+        let applied = Job::ALL.map(|job| (job, policy.cut_offs(job)));
+        let defaults: Vec<CutOffs> = applied
+            .iter()
+            .filter(|(_, applied)| applied.origin() == CutOffsOrigin::Default)
+            .map(|(_, applied)| applied.cut_offs())
+            .collect();
+        let mut shared: Option<(CutOffs, usize)> = None;
+        for &cut_offs in &defaults {
+            let jobs = defaults.iter().filter(|&&other| other == cut_offs).count();
+            if shared.is_none_or(|(_, most)| jobs > most) {
+                shared = Some((cut_offs, jobs));
+            }
+        }
+        let Some((shared, _)) = shared else {
+            return Self::Learner(applied.to_vec());
+        };
+        let listed: Vec<_> = applied
+            .into_iter()
+            .filter(|(_, applied)| {
+                applied.origin() == CutOffsOrigin::Learner || applied.cut_offs() != shared
+            })
+            .collect();
+        if listed.is_empty() {
+            Self::Shared(shared)
+        } else {
+            Self::SharedBut(shared, listed)
+        }
+    }
+
+    /// The jobs listed one by one, under the row's value.
+    fn listed(&self) -> &[(Job, AppliedCutOffs)] {
+        match self {
+            Self::Shared(_) => &[],
+            Self::SharedBut(_, listed) | Self::Learner(listed) => listed,
+        }
+    }
 }
 
 /// The Settings screen's state: which control has focus.
