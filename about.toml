@@ -1,0 +1,34 @@
+# cargo-about writes the licenses of every crate compiled into Whetstone to
+# THIRD-PARTY-LICENSES.md, which each release archive carries (ADR 0003). The
+# release workflow generates the file before each build, and CI checks that
+# it can. Run it locally with:
+#
+#   cargo about generate --locked --fail -o THIRD-PARTY-LICENSES.md about.hbs
+#
+# deny.toml decides which licenses may come in; this file only writes their
+# notices out, so `accepted` is deny.toml's allow-list.
+# Reference: https://embarkstudios.github.io/cargo-about/cli/generate/config.html
+
+accepted = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-3-Clause",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "Unicode-3.0",
+    "Zlib",
+]
+# The platforms Whetstone ships for, as deny.toml checks them.
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+]
+# Only what's compiled into the binary.
+ignore-build-dependencies = true
+ignore-dev-dependencies = true
+# Whetstone's own crates are unpublishable (rule 56), and LICENSE covers them.
+private = { ignore = true }

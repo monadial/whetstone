@@ -50,3 +50,7 @@ serde_json = "1"
 tokio = { version = "1.53", features = ["macros", "rt"] }
 # Each test's own local server, standing in for `OpenRouter` (rule 48).
 wiremock = "0.6"
+
+# A maintainer's tool: dist never releases it (ADR 0003).
+[package.metadata.dist]
+dist = false

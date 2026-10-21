@@ -124,3 +124,8 @@ rexpect = "0.7"
 # through ratatui's re-export.
 [package.metadata.cargo-shear]
 ignored = ["crossterm"]
+
+# dist releases this binary (ADR 0003), although the crate is unpublishable
+# (rule 56): dist would otherwise skip it for `publish = false`.
+[package.metadata.dist]
+dist = true
