@@ -4,7 +4,7 @@
 
 use crate::repo::TestRepo;
 use crate::repository::started_in;
-use crate::session::Session;
+use crate::session::{Session, columns};
 use crate::viewer::{footer, status, typing};
 
 /// A repository called `payments` whose first commit is followed by
@@ -21,15 +21,49 @@ fn with_bumps(bumps: usize) -> TestRepo {
 }
 
 /// The rows of `repo`'s commits as `git log` lists them, newest first: the
-/// short ID and subject, as the picker shows them unfocused.
+/// short ID, author date, author and subject, as the picker shows them
+/// unfocused, and as [`without_size`] reads them.
 pub(crate) fn git_log(repo: &TestRepo) -> Vec<String> {
-    repo.git(&["log", "--format=( ) %h  %s"])
-        .lines()
-        .map(str::to_owned)
-        .collect()
+    repo.git(&[
+        "log",
+        "--date=format:%b %-d",
+        "--format=( ) %h  %ad  %an  %s",
+    ])
+    .lines()
+    .map(without_size)
+    .collect()
 }
 
-/// The focused row, trimmed, without its focus marker.
+/// A commit row's columns, two spaces apart, without the size at its end,
+/// which is found in the background and which a narrow terminal leaves
+/// out: its marker and ID, date, author and summary, and anything that
+/// stands in for a size, such as the first commit's label.
+pub(crate) fn without_size(row: &str) -> String {
+    let row = [row.to_owned()];
+    let mut columns = columns(&row).swap_remove(0);
+    let is_files = |column: &str| {
+        column
+            .strip_suffix(" files")
+            .or_else(|| column.strip_suffix(" file"))
+            .is_some_and(|count| {
+                count
+                    .chars()
+                    .all(|digit| digit.is_ascii_digit() || digit == ',')
+            })
+    };
+    match columns[..] {
+        [.., "…"] => drop(columns.pop()),
+        [.., files, lines] if is_files(files) && lines.starts_with('+') && lines.contains(" −") =>
+        {
+            columns.truncate(columns.len() - 2);
+        }
+        _ => {}
+    }
+    columns.join("  ")
+}
+
+/// The focused row, trimmed, without its focus marker, as
+/// [`without_size`] reads it.
 pub(crate) fn focused(session: &Session) -> String {
     let rows = session.rows();
     let row = rows
@@ -37,7 +71,7 @@ pub(crate) fn focused(session: &Session) -> String {
         .map(|row| row.trim())
         .find(|row| row.starts_with("> "));
     assert!(row.is_some(), "no row has focus:\n{}", session.text());
-    row.unwrap_or_default().trim_start_matches("> ").to_owned()
+    without_size(row.unwrap_or_default().trim_start_matches("> "))
 }
 
 #[test]
@@ -129,13 +163,14 @@ fn a_filter_finds_a_commit_by_the_start_of_its_id() {
     assert_eq!(focused(&session), log[60]);
 }
 
-/// The commit rows the change list shows, without the focus marker.
+/// The commit rows the change list shows, without the focus marker, as
+/// [`without_size`] reads them.
 fn listed(session: &Session) -> Vec<String> {
     session
         .section(CHANGES)
         .into_iter()
         .filter(|row| row.contains("( ) ") || row.contains("(x) "))
-        .map(|row| row.trim_start_matches("> ").to_owned())
+        .map(|row| without_size(row.trim_start_matches("> ")))
         .collect()
 }
 
@@ -172,13 +207,9 @@ fn in_a_shallow_clone_the_commit_whose_parent_is_missing_is_listed_but_cannot_be
 
     session.press("<Enter>");
 
-    let boundary = format!("{} (parent not in this clone)", log[2]);
+    let boundary = format!("{}  (parent not in this clone)", log[2]);
     assert_eq!(
-        session
-            .section(CHANGES)
-            .into_iter()
-            .take_while(|row| !row.starts_with("Previous page"))
-            .collect::<Vec<_>>(),
+        listed(&session),
         [log[0].clone(), log[1].clone(), boundary.clone()]
     );
     session.press("j j j j j j j <Space> <Enter>");
@@ -250,7 +281,7 @@ fn the_palette_on_the_repository_picker_offers_the_filter_and_runs_it() {
     let rows = session.box_rows("Actions on Practice");
     for (index, (label, does)) in [
         ("> Back", "Return to the screen before"),
-        ("Search", "Filter the commits by message or ID"),
+        ("Search", "Filter the commits by message, author or ID"),
     ]
     .into_iter()
     .enumerate()

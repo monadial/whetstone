@@ -3,6 +3,7 @@
 
 use whetstone::Flow;
 
+use crate::commits::{git_log, without_size};
 use crate::repo::TestRepo;
 use crate::repository::started_in;
 use crate::session::Session;
@@ -122,8 +123,9 @@ fn a_subject_over_two_lines_reads_as_git_log_has_it_in_the_picker_and_the_viewer
     let mut session = started_in(repo.root(), 120, 32);
 
     session.press("<Enter>");
-    assert!(
-        session.row_with("Describe the service").ends_with(&subject),
+    assert_eq!(
+        without_size(&session.row_with("Describe the service")),
+        git_log(&repo)[0],
         "{}",
         session.text()
     );

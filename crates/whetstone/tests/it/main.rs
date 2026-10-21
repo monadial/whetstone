@@ -13,6 +13,7 @@ mod cli;
 mod colors;
 mod commit_filter;
 mod commit_paging;
+mod commit_rows;
 mod commit_viewer;
 mod commits;
 mod config;
