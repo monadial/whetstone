@@ -31,6 +31,7 @@ use whetstone_core::ShowcaseProject;
 
 use crate::config::Settings;
 use crate::connected_code::{self, AnalysisDirs, AnalysisDirsGuard, GraphCache};
+use crate::failures::RefusedModels;
 use crate::help::KeyHelp;
 use crate::home::Home;
 use crate::job::{Finished, Job, JobId, JobOutcome, JobOutput, Jobs, TimeLimit};
@@ -79,6 +80,9 @@ pub struct App {
     time_limit: Duration,
     /// Jev and the generator, if Practice can ask them.
     ai: Option<Arc<dyn Ai>>,
+    /// The models `OpenRouter` refused during this run for having no
+    /// zero-retention endpoint, which Settings marks until Whetstone quits.
+    refused_models: Arc<RefusedModels>,
 }
 
 /// Something for the app to apply: a terminal event the UI loop read, a
@@ -250,6 +254,7 @@ impl App {
             cache: Arc::new(GraphCache::open(cache_dir, GraphCache::CAP)),
             time_limit: connected_code::TIME_LIMIT,
             ai: None,
+            refused_models: Arc::default(),
         }
     }
 
@@ -432,6 +437,7 @@ impl App {
                     cache: &self.cache,
                     time_limit: self.time_limit,
                     ai: self.ai.as_ref(),
+                    refused_models: &self.refused_models,
                 };
                 if let Command::Replace(_) = command {
                     self.screens.replace(route, &context, &mut self.jobs);
@@ -475,6 +481,7 @@ impl App {
             cache: &self.cache,
             time_limit: self.time_limit,
             ai: self.ai.as_ref(),
+            refused_models: &self.refused_models,
         };
         screen.render(&context, frame, body);
         // While a text entry has focus, the keys that work everywhere type.

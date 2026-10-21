@@ -1,5 +1,6 @@
 ---
 source: crates/whetstone/tests/it/settings.rs
+assertion_line: 481
 expression: session.frame()
 ---
 Buffer {
@@ -16,6 +17,7 @@ Buffer {
         "    Colours               auto (16 detected) (default)                                                                  ",
         "  > Connected code limit  250 KB                                                                                        ",
         "    Questions             4 (default)                                                                                   ",
+        "    Assessment policy     version 0, not validated                                                                      ",
         "                                                                                                                        ",
         "    Back                                                                                                                ",
         "                                                                                                                        ",
@@ -23,7 +25,6 @@ Buffer {
         "  to or names. From 0 to 400 KB, and 0 sends none; related tests and configuration still apply. A repository's          ",
         "  .whetstone/config.toml can lower it, never raise it. The default is 100 KB.                                           ",
         "  In config.toml: connected_code_limit_kb = 250                                                                         ",
-        "                                                                                                                        ",
         "                                                                                                                        ",
         "                                                                                                                        ",
         "                                                                                                                        ",

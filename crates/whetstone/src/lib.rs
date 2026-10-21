@@ -11,6 +11,7 @@ mod config;
 mod connected_code;
 mod entry;
 mod environment;
+mod failures;
 mod focus;
 mod help;
 mod home;

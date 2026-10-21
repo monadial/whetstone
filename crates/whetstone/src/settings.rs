@@ -1,6 +1,12 @@
 //! The Settings screen: what Practice will use and how much colour Whetstone
 //! draws with, read-only. Each setting is a control, and the focused one says
 //! what it is for and how to change it.
+//!
+//! It also says how far to trust the outcomes and the models: the
+//! assessment policy's version and whether it is validated, a note when
+//! `[jev] model` isn't the model the policy was checked against, and a mark
+//! against a model `OpenRouter` refused during this run for having no
+//! zero-retention endpoint.
 
 use std::fmt;
 
@@ -8,13 +14,14 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{List, Paragraph, Wrap};
-use whetstone_core::{ConnectedCodeLimitKb, QuestionCount};
+use whetstone_core::{AssessmentPolicy, ConnectedCodeLimitKb, QuestionCount, Validation};
 
 use crate::columns;
 use crate::config::{
     ConfigFile, DEFAULT_GENERATOR_MODEL, DEFAULT_JEV_MODEL, KeyStatus, OPENROUTER_KEY_VARIABLE,
     Origin, Setting, Settings,
 };
+use crate::failures::{REFUSED, RefusedModels};
 use crate::focus::Position;
 use crate::keymap::{self, Command, Keymap};
 use crate::palette::Action;
@@ -41,11 +48,12 @@ enum Control {
     Colours,
     ConnectedCodeLimit,
     Questions,
+    AssessmentPolicy,
     Back,
 }
 
 impl Control {
-    const ALL: [Self; 8] = [
+    const ALL: [Self; 9] = [
         Self::Provider,
         Self::JevModel,
         Self::GeneratorModel,
@@ -53,9 +61,10 @@ impl Control {
         Self::Colours,
         Self::ConnectedCodeLimit,
         Self::Questions,
+        Self::AssessmentPolicy,
         Self::Back,
     ];
-    const ROWS: [Self; 7] = [
+    const ROWS: [Self; 8] = [
         Self::Provider,
         Self::JevModel,
         Self::GeneratorModel,
@@ -63,6 +72,7 @@ impl Control {
         Self::Colours,
         Self::ConnectedCodeLimit,
         Self::Questions,
+        Self::AssessmentPolicy,
     ];
 
     fn label(self) -> &'static str {
@@ -74,6 +84,7 @@ impl Control {
             Self::Colours => "Colours",
             Self::ConnectedCodeLimit => "Connected code limit",
             Self::Questions => "Questions",
+            Self::AssessmentPolicy => "Assessment policy",
             Self::Back => "Back",
         }
     }
@@ -103,7 +114,39 @@ impl Control {
             }
             Self::ConnectedCodeLimit => shown(&settings.connected_code_limit),
             Self::Questions => shown(&settings.questions),
+            Self::AssessmentPolicy => {
+                let policy = AssessmentPolicy::current();
+                let validated = match policy.validation() {
+                    Validation::Validated => "validated",
+                    Validation::Unvalidated => "not validated",
+                };
+                (format!("version {}, {validated}", policy.version()), None)
+            }
             Self::Back => (String::new(), None),
+        }
+    }
+
+    /// What Settings adds under the setting's value: the mark against a
+    /// model `OpenRouter` refused during this run, in `refused`, and the note
+    /// when the policy wasn't checked against the Jev model in use.
+    fn notes(self, settings: &Settings, refused: &RefusedModels) -> Vec<String> {
+        let refused_mark = |model: &Setting<String>| {
+            refused
+                .refused(&model.value)
+                .then(|| REFUSED.to_owned())
+                .into_iter()
+                .collect()
+        };
+        match self {
+            Self::JevModel => refused_mark(&settings.jev_model),
+            Self::GeneratorModel => refused_mark(&settings.generator_model),
+            Self::AssessmentPolicy if settings.jev_model.value != DEFAULT_JEV_MODEL => {
+                vec![format!(
+                    "Assessment policy checked against {DEFAULT_JEV_MODEL}; you're using {}",
+                    settings.jev_model.value
+                )]
+            }
+            _ => Vec::new(),
         }
     }
 
@@ -155,6 +198,13 @@ impl Control {
                 "How many questions a Practice asks for, from 3 to 5. The default is {}.",
                 QuestionCount::DEFAULT
             ),
+            Self::AssessmentPolicy => format!(
+                "The versioned cut-offs that turn Jev's probabilities into clear yes, unclear or \
+                 clear no for each kind of check. A policy is validated once its cut-offs have \
+                 been checked against labelled examples on {DEFAULT_JEV_MODEL}; until then, \
+                 take its outcomes as provisional. It is built into Whetstone and can't be \
+                 configured."
+            ),
             Self::Back => "Back to home.".to_owned(),
         }
     }
@@ -186,7 +236,7 @@ impl Control {
                 "In config.toml: questions = {}",
                 settings.questions.value
             )),
-            Self::Back => None,
+            Self::AssessmentPolicy | Self::Back => None,
         }
     }
 }
@@ -238,28 +288,38 @@ impl View for SettingsScreen {
 
     fn render(&self, context: &Context<'_>, frame: &mut Frame<'_>, area: Rect) {
         let Context {
-            theme, settings, ..
+            theme,
+            settings,
+            refused_models,
+            ..
         } = *context;
         let note = Paragraph::new(Line::styled(file_note(&settings.file), theme.muted))
             .wrap(Wrap { trim: true });
-        let [title, note_area, rows, back, about] = layout(area, note.line_count(area.width));
-        frame.render_widget(Paragraph::new(Span::styled("Settings", theme.title)), title);
-        frame.render_widget(note, note_area);
         // Past the focus marker, and the widest label.
         let value_column = 2 + columns::next_column(Control::ROWS.map(Control::label));
-        frame.render_widget(
-            List::new(Control::ROWS.map(|control| {
-                let mut line = self.control(theme, control);
-                let (value, default_note) = control.value(settings);
-                columns::pad_to(&mut line, value_column);
-                line.push_span(value);
-                if let Some(note) = default_note {
-                    line.push_span(Span::styled(note, theme.muted));
-                }
-                line
-            })),
-            rows,
-        );
+        let mut lines = Vec::new();
+        for control in Control::ROWS {
+            let mut line = self.control(theme, control);
+            let (value, default_note) = control.value(settings);
+            columns::pad_to(&mut line, value_column);
+            line.push_span(value);
+            if let Some(note) = default_note {
+                line.push_span(Span::styled(note, theme.muted));
+            }
+            lines.push(line);
+            // Notes go under the value, wrapped in its column.
+            for note in control.notes(settings, refused_models) {
+                let width = usize::from(area.width).saturating_sub(value_column);
+                lines.extend(columns::wrap(&note, width).into_iter().map(|text| {
+                    Line::from(vec![Span::raw(" ".repeat(value_column)), Span::raw(text)])
+                }));
+            }
+        }
+        let [title, note_area, rows, back, about] =
+            layout(area, note.line_count(area.width), lines.len());
+        frame.render_widget(Paragraph::new(Span::styled("Settings", theme.title)), title);
+        frame.render_widget(note, note_area);
+        frame.render_widget(List::new(lines), rows);
         frame.render_widget(self.control(theme, Control::Back), back);
         let focused = self.focused();
         let mut explanation = vec![Line::styled(focused.about(settings), theme.muted)];
@@ -278,13 +338,14 @@ fn shown<T: fmt::Display>(setting: &Setting<T>) -> (String, Option<&'static str>
 
 /// Where the title, the note on the config file, the setting rows, Back and
 /// the focused control's explanation go in `area`, when the note takes
-/// `note_rows` rows. The controls always get their rows; the note, the gaps
-/// and the explanation share what is left, in that order, so no control is
-/// ever pushed out of a short terminal.
-fn layout(area: Rect, note_rows: usize) -> [Rect; 5] {
+/// `note_rows` rows and the settings, with their notes, `setting_rows`. The
+/// controls always get their rows; the note, the gaps and the explanation
+/// share what is left, in that order, so no control is ever pushed out of a
+/// short terminal.
+fn layout(area: Rect, note_rows: usize, setting_rows: usize) -> [Rect; 5] {
     const TITLE: u16 = 1;
     const BACK: u16 = 1;
-    let rows = u16::try_from(Control::ROWS.len()).unwrap_or(u16::MAX);
+    let rows = u16::try_from(setting_rows).unwrap_or(u16::MAX);
     let mut left = area.height.saturating_sub(TITLE + rows + BACK);
     let mut take = |wanted: u16| {
         let taken = wanted.min(left);
