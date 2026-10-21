@@ -1,8 +1,8 @@
 //! The questions screen, read-only for now: one question at a time, with
 //! its place among them, its area, its stem and options, and the next and
-//! previous question. Only questions whose options Jev rated clear-cut are
-//! shown, and a shortfall says so. When none pass, No questions passed
-//! checks offers Retry and Pick another change.
+//! previous question. Only questions that pass every check are shown, and a
+//! shortfall says so. When none pass, No questions passed checks offers
+//! Retry and Pick another change.
 
 use std::sync::Arc;
 
@@ -10,8 +10,8 @@ use whetstone_ai::{Asked, ScriptedAi};
 use whetstone_core::{WrittenCandidate, WrittenCitation, WrittenCriterion};
 
 use crate::preparing_questions::{
-    DOMAIN, PAYMENT_LIFECYCLE, a_is_clearly_right, answers, area_id, candidate, generate, stems,
-    touched_path, writing_about_the_domain,
+    DOMAIN, PAYMENT_LIFECYCLE, area_id, candidate, generate, ratings, stems, touched_path,
+    writing_about_the_domain,
 };
 use crate::session::Session;
 
@@ -25,7 +25,7 @@ fn prepared(ai: &Arc<ScriptedAi>, width: u16, height: u16) -> Session {
 
 /// The stems of the questions shown, from the first to the last, moving on
 /// with `l`, after which it is back on the first.
-fn every_stem_shown(session: &mut Session, among: &[String]) -> Vec<String> {
+pub(crate) fn every_stem_shown(session: &mut Session, among: &[String]) -> Vec<String> {
     let count = session
         .row_with("Question 1 of ")
         .split(" of ")
@@ -147,8 +147,9 @@ fn as_many_as_were_asked_for_are_shown_with_no_shortfall() {
 }
 
 /// A scripted AI writing the candidate `stem`, whose answer key is A, and
-/// whose options Jev rates `ratings`, among three that pass.
-fn among_three_that_pass(stem: &str, ratings: [f64; 3]) -> (Arc<ScriptedAi>, Vec<String>) {
+/// whose options Jev rates `rated`, passing its other checks, among three
+/// that pass.
+fn among_three_that_pass(stem: &str, rated: [f64; 3]) -> (Arc<ScriptedAi>, Vec<String>) {
     let ai = Arc::new(ScriptedAi::new());
     let mut written = vec![stem.to_owned()];
     written.extend(stems("Domain", 3));
@@ -159,10 +160,10 @@ fn among_three_that_pass(stem: &str, ratings: [f64; 3]) -> (Arc<ScriptedAi>, Vec
             .map(|stem| candidate(stem, "A", PAYMENT_LIFECYCLE))
             .collect()),
     );
-    let [a, b, c] = ratings;
-    ai.on_check(stem, Ok(answers(a, b, c)));
+    let [a, b, c] = rated;
+    ai.on_check_passing_except(stem, ratings(a, b, c));
     for passing in &written[1..] {
-        ai.on_check(passing, Ok(a_is_clearly_right()));
+        ai.on_check_passing(passing);
     }
     (ai, written)
 }
@@ -254,7 +255,7 @@ fn plain_checks_drop_malformed_candidates_before_jev_sees_them() {
     ai.on_write(&area_id(DOMAIN), Ok(candidates));
     // Jev is scripted for the well-formed one only: checking any other
     // fails the test.
-    ai.on_check("Well formed?", Ok(a_is_clearly_right()));
+    ai.on_check_passing("Well formed?");
 
     let session = prepared(&ai, 120, 32);
 
@@ -288,10 +289,10 @@ fn none_passed(width: u16, height: u16) -> (Session, Arc<ScriptedAi>) {
         );
     }
     for stem in &first {
-        ai.on_check(stem, Ok(answers(0.1, 0.1, 0.1)));
+        ai.on_check_passing_except(stem, ratings(0.1, 0.1, 0.1));
     }
     for stem in &second {
-        ai.on_check(stem, Ok(a_is_clearly_right()));
+        ai.on_check_passing(stem);
     }
     (prepared(&ai, width, height), ai)
 }

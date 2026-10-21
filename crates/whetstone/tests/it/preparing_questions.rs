@@ -9,8 +9,8 @@ use std::time::Duration;
 
 use whetstone_ai::{Asked, RequestFailure, ScriptedAi};
 use whetstone_core::{
-    AreaId, CandidateCheck, ConnectionsState, OptionLetter, Probability, QuestionCheckAnswers,
-    QuestionType, WrittenCandidate, WrittenCitation, WrittenCriterion, WrittenOption,
+    AreaId, CandidateCheck, ConnectionsState, OptionLetter, Probability, QuestionType,
+    WrittenCandidate, WrittenCitation, WrittenCriterion, WrittenOption,
 };
 
 use crate::session::{NO_COLOR, Session, Setup};
@@ -124,22 +124,20 @@ pub(crate) fn candidate(stem: &str, answer_key: &str, change: usize) -> WrittenC
     }
 }
 
-/// Jev's answers to a single-choice question check: the probability that
-/// each of A, B and C correctly answers the question.
-pub(crate) fn answers(a: f64, b: f64, c: f64) -> QuestionCheckAnswers {
-    QuestionCheckAnswers::new(OptionLetter::ALL.into_iter().zip([a, b, c]).map(
-        |(letter, value)| {
-            (
-                CandidateCheck::Option(letter),
-                Probability::new(value).expect("from 0 to 1"),
-            )
-        },
-    ))
+/// Jev's answer `value` to the question check's `check`.
+pub(crate) fn answer(check: CandidateCheck, value: f64) -> (CandidateCheck, Probability) {
+    (check, Probability::new(value).expect("from 0 to 1"))
 }
 
-/// Answers that pass the show rule for a candidate whose answer key is A.
-pub(crate) fn a_is_clearly_right() -> QuestionCheckAnswers {
-    answers(0.9, 0.1, 0.05)
+/// Jev's option ratings in a single-choice question check: the probability
+/// that each of A, B and C correctly answers the question.
+pub(crate) fn ratings(a: f64, b: f64, c: f64) -> [(CandidateCheck, Probability); 3] {
+    [
+        (OptionLetter::A, a),
+        (OptionLetter::B, b),
+        (OptionLetter::C, c),
+    ]
+    .map(|(letter, value)| answer(CandidateCheck::Option(letter), value))
 }
 
 /// The stems of `count` candidates about `area`, numbered from 1.
@@ -175,7 +173,7 @@ fn generate_questions_writes_checks_and_shows_the_first_of_the_questions_that_pa
             .collect()),
     );
     for stem in &stems {
-        ai.on_check(stem, Ok(a_is_clearly_right()));
+        ai.on_check_passing(stem);
     }
 
     let mut session = generate(&ai, &[DOMAIN], PAYMENT_LIFECYCLE, 120, 32);
@@ -224,7 +222,7 @@ fn one_generator_call_per_chosen_area_goes_out_at_once_then_one_check_per_candid
                 .collect()),
         );
         for stem in stems {
-            ai.on_check(stem, Ok(a_is_clearly_right()));
+            ai.on_check_passing(stem);
         }
     }
     let mut session = generate(&ai, &[DOMAIN, INFRASTRUCTURE], SERVE_OVER_HTTP, 120, 32);
@@ -279,7 +277,7 @@ fn one_generator_call_per_chosen_area_goes_out_at_once_then_one_check_per_candid
 }
 
 /// A scripted AI that writes `count` candidates about the domain area, each
-/// answered clearly right at A, for the change at `change`.
+/// passing every check, for the change at `change`.
 pub(crate) fn writing_about_the_domain(count: usize, change: usize) -> Arc<ScriptedAi> {
     let ai = Arc::new(ScriptedAi::new());
     write_about_the_domain(&ai, count, change);
@@ -287,7 +285,7 @@ pub(crate) fn writing_about_the_domain(count: usize, change: usize) -> Arc<Scrip
 }
 
 /// Scripts `ai` to write `count` candidates about the domain area once
-/// more, each answered clearly right at A, for the change at `change`.
+/// more, each passing every check, for the change at `change`.
 fn write_about_the_domain(ai: &ScriptedAi, count: usize, change: usize) {
     let stems = stems("Domain", count);
     ai.on_write(
@@ -298,7 +296,7 @@ fn write_about_the_domain(ai: &ScriptedAi, count: usize, change: usize) {
             .collect()),
     );
     for stem in &stems {
-        ai.on_check(stem, Ok(a_is_clearly_right()));
+        ai.on_check_passing(stem);
     }
 }
 
@@ -392,7 +390,7 @@ fn the_showcase_changes_connected_code_reaches_the_evidence_the_generator_and_je
         &area_id(DOMAIN),
         Ok(vec![candidate("Served?", "A", SERVE_OVER_HTTP)]),
     );
-    ai.on_check("Served?", Ok(a_is_clearly_right()));
+    ai.on_check_passing("Served?");
     let mut session = generate(&ai, &[DOMAIN], SERVE_OVER_HTTP, 120, 32);
 
     session.settle();
@@ -446,7 +444,7 @@ fn when_finding_connected_code_takes_too_long_questions_are_written_without_it()
             SERVE_OVER_HTTP,
         )]),
     );
-    ai.on_check("Without connected code?", Ok(a_is_clearly_right()));
+    ai.on_check_passing("Without connected code?");
     let mut session = generate_in(
         Setup {
             variables: NO_COLOR,
@@ -625,7 +623,7 @@ fn retry_after_a_failed_write_asks_again_only_for_the_area_that_failed() {
             .collect()),
     );
     for stem in domain.iter().chain(&infrastructure) {
-        ai.on_check(stem, Ok(a_is_clearly_right()));
+        ai.on_check_passing(stem);
     }
     let mut session = generate(&ai, &[DOMAIN, INFRASTRUCTURE], SERVE_OVER_HTTP, 120, 32);
     session.settle();
@@ -673,7 +671,7 @@ fn retry_after_a_failed_check_asks_again_only_for_the_check_that_failed() {
         if index == 2 {
             ai.on_check(stem, Err(RequestFailure::TimedOut));
         }
-        ai.on_check(stem, Ok(a_is_clearly_right()));
+        ai.on_check_passing(stem);
     }
     let mut session = generate(&ai, &[DOMAIN], PAYMENT_LIFECYCLE, 80, 24);
     session.settle();
