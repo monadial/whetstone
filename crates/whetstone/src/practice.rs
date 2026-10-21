@@ -1,4 +1,5 @@
-//! Practice on a change: Preparing questions, then the questions.
+//! Practice on a change: Preparing questions, then the questions, then,
+//! once the learner finishes, the summary.
 //!
 //! On the showcase project, Generate questions opens it. Preparing
 //! questions finds the change's connected code the way the outbound review
@@ -32,6 +33,13 @@
 //! running, and a result that comes after changes nothing (rule 24). Finding
 //! connected code runs on instead, as it does for the outbound review, so
 //! its graph is cached.
+//!
+//! Every request is kept as it ends, with its reply's provenance, or, when
+//! it failed or the learner cancelled it, with provenance that reports no
+//! cost. The session record starts with them, and the summary adds up the
+//! session's cost from them (see [`crate::summary`]). Once the learner
+//! finishes, Practice asks for nothing more: the requests still running run
+//! on, and their results still apply.
 
 use std::convert::Infallible;
 use std::mem;
@@ -46,8 +54,8 @@ use whetstone_ai::{Ai, CandidateCount, Pending, QuestionWithoutKey, Reply, Reque
 use whetstone_core::{
     Area, AreaId, AssessmentPolicy, Band, Candidate, CandidateCheck, CandidateId, Change, CommitId,
     ConnectedCodeLimit, Connections, ConnectionsState, Evidence, ExcludePatterns, Job, Probability,
-    Provenance, QuestionCheckAnswers, QuestionCount, RepositoryConfig, ReviewChoices, Role, Side,
-    Withheld, WrittenCandidate, pick, plain_checks, show_rule,
+    QuestionCheckAnswers, QuestionCount, RepositoryConfig, ReviewChoices, Role, Side, Withheld,
+    WrittenCandidate, pick, plain_checks, show_rule,
 };
 
 use crate::columns;
@@ -59,8 +67,10 @@ use crate::keymap::{self, Binding, Command, Input, Keymap};
 use crate::palette::Action;
 use crate::questions::Questions;
 use crate::reader::{Reader, Section};
+use crate::sent_requests::SentRequests;
 use crate::session_record::{SavedResponse, SessionStore};
 use crate::stage_row::{PracticeStage, Stage as RowStage, StageRow, StageState};
+use crate::summary::{self, Summary};
 use crate::theme::{ControlState, Theme};
 use crate::view::{ChangeIndex, ChangeRef, Context, Reading, Route, View};
 
@@ -127,8 +137,9 @@ pub(crate) struct Practice {
     /// The requests to Jev and the generator it waits for, each with what
     /// it asked (rule 24).
     waiting: Waiting<Asking>,
-    /// The provenance of every reply so far, for the session record.
-    provenance: Vec<Provenance>,
+    /// Every request sent so far, with its provenance, for the session
+    /// record and the summary's cost.
+    sent: SentRequests,
     focus: Position,
 }
 
@@ -221,9 +232,27 @@ enum Stage {
     /// written, area by area.
     Checking(Vec<(Candidate, Request<QuestionCheckAnswers>)>),
     /// The questions picked.
-    Shown(Questions),
+    Shown(Box<Questions>),
     /// No question passed its checks.
     NonePassed,
+    /// The learner finished: the summary of the questions shows.
+    Finished(Box<Summary>),
+}
+
+impl Stage {
+    /// The questions, while they show or once their summary does.
+    fn questions_mut(&mut self) -> Option<&mut Questions> {
+        match self {
+            Self::Shown(questions) => Some(questions.as_mut()),
+            Self::Finished(summary) => Some(summary.questions_mut()),
+            Self::FindingConnectedCode(_)
+            | Self::CheckingAreas(_)
+            | Self::NothingToPractice
+            | Self::Writing(_)
+            | Self::Checking(_)
+            | Self::NonePassed => None,
+        }
+    }
 }
 
 /// One request to Jev or the generator, from sending it to its reply.
@@ -350,15 +379,16 @@ fn log_withheld(withheld: &Withheld, answers: &QuestionCheckAnswers, policy: &As
 
 /// Starts the requests about the submitted responses to `questions`, all
 /// against `evidence`, as background jobs `waiting` waits for: it stops
-/// each evaluation the learner cancelled, then asks `ai` for each
-/// evaluation, explanation and explanation check that waits to be asked
-/// for.
+/// each evaluation the learner cancelled, keeping it in `sent` as a request
+/// with no reply, then asks `ai` for each evaluation, explanation and
+/// explanation check that waits to be asked for.
 fn ask_about_responses(
     questions: &mut Questions,
     ai: &dyn Ai,
     evidence: &Evidence,
     jobs: &mut Jobs<JobOutput>,
     waiting: &mut Waiting<Asking>,
+    sent: &mut SentRequests,
 ) {
     for saved in questions.take_cancelled() {
         tracing::info!(
@@ -366,7 +396,9 @@ fn ask_about_responses(
             attempt = saved.attempt().get(),
             "cancelled assessing the reasoning"
         );
-        waiting.cancel_for(&Asking::Evaluate(saved), jobs);
+        for _ in 0..waiting.cancel_for(&Asking::Evaluate(saved), jobs) {
+            sent.unanswered(Role::Jev);
+        }
     }
     questions.evaluate(|saved, question| {
         let key = saved.clone();
@@ -447,7 +479,7 @@ impl Practice {
                 cache: Arc::clone(context.cache),
             }))),
             waiting: Waiting::new(),
-            provenance: Vec::new(),
+            sent: SentRequests::new(settings.models()),
             focus: Position::default(),
         })
     }
@@ -492,7 +524,7 @@ impl Practice {
             gate: Gate::Undecided,
             stage: Stage::CheckingAreas(Request::Unsent),
             waiting: Waiting::new(),
-            provenance: Vec::new(),
+            sent: SentRequests::new(context.settings.models()),
             focus: Position::default(),
         })
     }
@@ -526,16 +558,14 @@ impl Practice {
 
     /// Applies Jev's `reply` to the relevance gate, or why the request
     /// failed: the generator then writes about the areas that passed.
-    fn areas_checked(&mut self, reply: Result<Reply<Vec<(AreaId, Probability)>>, RequestFailure>) {
+    fn areas_checked(&mut self, reply: Result<Vec<(AreaId, Probability)>, RequestFailure>) {
         let Stage::CheckingAreas(gate) = &mut self.stage else {
             return;
         };
         match reply {
-            Ok(reply) => {
-                self.provenance.push(reply.provenance);
+            Ok(answers) => {
                 let policy = AssessmentPolicy::current();
-                let bands: Vec<(AreaId, Band)> = reply
-                    .content
+                let bands: Vec<(AreaId, Band)> = answers
                     .into_iter()
                     .map(|(area, answer)| (area, policy.band(Job::RelevanceGate, answer)))
                     .collect();
@@ -576,11 +606,7 @@ impl Practice {
     /// Applies the generator's `reply` about `area`: the candidates that
     /// pass the plain checks, or why the request failed. Once every area
     /// has its candidates, Jev checks them.
-    fn written(
-        &mut self,
-        area: &AreaId,
-        reply: Result<Reply<Vec<WrittenCandidate>>, RequestFailure>,
-    ) {
+    fn written(&mut self, area: &AreaId, reply: Result<Vec<WrittenCandidate>, RequestFailure>) {
         let (Stage::Writing(writes), Some(evidence)) = (&mut self.stage, &self.evidence) else {
             return;
         };
@@ -594,10 +620,9 @@ impl Practice {
             return;
         };
         *write = match reply {
-            Ok(reply) => {
-                self.provenance.push(reply.provenance);
-                let written = reply.content.len();
-                let checked = plain_checks(area, reply.content, evidence);
+            Ok(candidates) => {
+                let written = candidates.len();
+                let checked = plain_checks(area, candidates, evidence);
                 tracing::info!(
                     area = %area,
                     written,
@@ -637,7 +662,7 @@ impl Practice {
     fn checked(
         &mut self,
         candidate: &CandidateId,
-        reply: Result<Reply<QuestionCheckAnswers>, RequestFailure>,
+        reply: Result<QuestionCheckAnswers, RequestFailure>,
     ) {
         let Stage::Checking(checks) = &mut self.stage else {
             return;
@@ -649,10 +674,7 @@ impl Practice {
             return;
         };
         *check = match reply {
-            Ok(reply) => {
-                self.provenance.push(reply.provenance);
-                Request::Replied(reply.content)
-            }
+            Ok(answers) => Request::Replied(answers),
             Err(failure) => {
                 tracing::info!(area = %candidate.area(), %failure, "checking a candidate failed");
                 self.failed_requests.note_refusal(Role::Jev, failure);
@@ -709,12 +731,26 @@ impl Practice {
             "picked the questions that passed their checks"
         );
         self.stage = match Questions::new(picked, &self.areas, self.failed_requests.clone()) {
-            Some(questions) => {
-                Stage::Shown(questions.not_asking_about(self.gate.dropped(&self.areas)))
-            }
+            Some(questions) => Stage::Shown(Box::new(
+                questions.not_asking_about(self.gate.dropped(&self.areas)),
+            )),
             None => Stage::NonePassed,
         };
         self.focus = Position::default();
+    }
+
+    /// Ends the Practice, as the learner chose Finish: the summary of the
+    /// questions shows.
+    fn finish(&mut self) {
+        let subject = self.subject();
+        self.stage = match mem::replace(&mut self.stage, Stage::NonePassed) {
+            Stage::Shown(questions) => Stage::Finished(Box::new(Summary::new(
+                *questions,
+                subject,
+                self.sent.cost(),
+            ))),
+            stage => stage,
+        };
     }
 
     /// The failure that stopped the current stage, if one did: the first,
@@ -727,7 +763,8 @@ impl Practice {
             Stage::FindingConnectedCode(_)
             | Stage::NothingToPractice
             | Stage::Shown(_)
-            | Stage::NonePassed => None,
+            | Stage::NonePassed
+            | Stage::Finished(_) => None,
         }
     }
 
@@ -744,7 +781,10 @@ impl Practice {
             Stage::Writing(writes) => writes.iter_mut().for_each(Request::retry),
             Stage::Checking(checks) => checks.iter_mut().for_each(|(_, check)| check.retry()),
             Stage::NonePassed => self.write(),
-            Stage::FindingConnectedCode(_) | Stage::NothingToPractice | Stage::Shown(_) => {}
+            Stage::FindingConnectedCode(_)
+            | Stage::NothingToPractice
+            | Stage::Shown(_)
+            | Stage::Finished(_) => {}
         }
         self.focus = Position::default();
     }
@@ -802,7 +842,8 @@ impl Practice {
             | Stage::Writing(_)
             | Stage::Checking(_)
             | Stage::Shown(_)
-            | Stage::NonePassed => StageState::Done,
+            | Stage::NonePassed
+            | Stage::Finished(_) => StageState::Done,
         };
         let (writing, checking) = match self.stage {
             Stage::FindingConnectedCode(_) | Stage::CheckingAreas(_) => {
@@ -813,7 +854,9 @@ impl Practice {
             Stage::Writing(_) => (StageState::Current, StageState::Upcoming),
             Stage::Checking(_) if failed => (StageState::Done, StageState::Failed),
             Stage::Checking(_) => (StageState::Done, StageState::Current),
-            Stage::Shown(_) | Stage::NonePassed => (StageState::Done, StageState::Done),
+            Stage::Shown(_) | Stage::NonePassed | Stage::Finished(_) => {
+                (StageState::Done, StageState::Done)
+            }
         };
         let stages = PracticeStage::ALL
             .into_iter()
@@ -961,6 +1004,7 @@ impl View for Practice {
     fn name(&self) -> &'static str {
         match &self.stage {
             Stage::Shown(questions) => questions.name(),
+            Stage::Finished(_) => "Summary",
             Stage::NothingToPractice => "Nothing to practice in this change",
             Stage::NonePassed => "No questions passed checks",
             Stage::FindingConnectedCode(_)
@@ -973,6 +1017,7 @@ impl View for Practice {
     fn keymap(&self) -> Keymap {
         match &self.stage {
             Stage::Shown(questions) => questions.keymap(),
+            Stage::Finished(_) => summary::KEYMAP,
             Stage::NothingToPractice | Stage::NonePassed => BACK_KEYMAP,
             _ if self.failure().is_some() => BACK_KEYMAP,
             Stage::FindingConnectedCode(_)
@@ -992,6 +1037,7 @@ impl View for Practice {
     fn actions(&self) -> &'static [Action] {
         match &self.stage {
             Stage::Shown(questions) => questions.actions(),
+            Stage::Finished(_) => &[],
             Stage::NothingToPractice | Stage::NonePassed => BACK_ACTIONS,
             _ if self.failure().is_some() => BACK_ACTIONS,
             Stage::FindingConnectedCode(_)
@@ -1075,15 +1121,20 @@ impl View for Practice {
                     evidence,
                     jobs,
                     &mut self.waiting,
+                    &mut self.sent,
                 );
             }
-            Stage::FindingConnectedCode(_) | Stage::NothingToPractice | Stage::NonePassed => {}
+            // Finishing sends no new request: those running run on.
+            Stage::FindingConnectedCode(_)
+            | Stage::NothingToPractice
+            | Stage::NonePassed
+            | Stage::Finished(_) => {}
         }
     }
 
     fn keep_record(&mut self, store: &mut dyn SessionStore) {
-        if let (Stage::Shown(questions), Some(evidence)) = (&mut self.stage, &self.evidence) {
-            questions.keep_record(store, evidence, &self.provenance);
+        if let (Some(questions), Some(evidence)) = (self.stage.questions_mut(), &self.evidence) {
+            questions.keep_record(store, evidence, self.sent.provenance());
         }
     }
 
@@ -1123,41 +1174,47 @@ impl View for Practice {
             }
             JobOutput::AreasChecked { reply } => {
                 if self.waiting.accept(job, &Asking::Gate) {
+                    let reply = self.sent.ended(Role::Jev, reply);
                     self.areas_checked(reply);
                 }
             }
             JobOutput::Written { area, reply } => {
                 if self.waiting.accept(job, &Asking::Write(area.clone())) {
+                    let reply = self.sent.ended(Role::Generator, reply);
                     self.written(&area, reply);
                 }
             }
             JobOutput::Checked { candidate, reply } => {
                 if self.waiting.accept(job, &Asking::Check(candidate.clone())) {
+                    let reply = self.sent.ended(Role::Jev, reply);
                     self.checked(&candidate, reply);
                 }
             }
             JobOutput::Evaluated { saved, reply } => {
                 let saved = *saved;
-                if self.waiting.accept(job, &Asking::Evaluate(saved.clone()))
-                    && let Stage::Shown(questions) = &mut self.stage
-                {
+                if self.waiting.accept(job, &Asking::Evaluate(saved.clone())) {
+                    let reply = self.sent.ended(Role::Jev, reply);
                     if let Err(failure) = &reply {
                         self.failed_requests.note_refusal(Role::Jev, *failure);
                     }
-                    questions.evaluated(&saved, reply.map(|reply| reply.content));
+                    if let Some(questions) = self.stage.questions_mut() {
+                        questions.evaluated(&saved, reply);
+                    }
                 }
             }
             JobOutput::Explained { saved, reply } => {
                 let saved = *saved;
-                if self.waiting.accept(job, &Asking::Explain(saved.clone()))
-                    && let (Stage::Shown(questions), Some(evidence)) =
-                        (&mut self.stage, &self.evidence)
-                {
+                if self.waiting.accept(job, &Asking::Explain(saved.clone())) {
+                    let reply = self.sent.ended(Role::Generator, reply);
                     // The generator's request routes with zero retention.
                     if let Err(failure) = &reply {
                         self.failed_requests.note_refusal(Role::Generator, *failure);
                     }
-                    questions.explained(&saved, evidence, reply.map(|reply| reply.content));
+                    if let (Some(questions), Some(evidence)) =
+                        (self.stage.questions_mut(), &self.evidence)
+                    {
+                        questions.explained(&saved, evidence, reply);
+                    }
                 }
             }
             JobOutput::ExplanationChecked { saved, reply } => {
@@ -1165,12 +1222,14 @@ impl View for Practice {
                 if self
                     .waiting
                     .accept(job, &Asking::CheckExplanation(saved.clone()))
-                    && let Stage::Shown(questions) = &mut self.stage
                 {
+                    let reply = self.sent.ended(Role::Jev, reply);
                     if let Err(failure) = &reply {
                         self.failed_requests.note_refusal(Role::Jev, *failure);
                     }
-                    questions.explanation_checked(&saved, reply.map(|reply| reply.content));
+                    if let Some(questions) = self.stage.questions_mut() {
+                        questions.explanation_checked(&saved, reply);
+                    }
                 }
             }
             JobOutput::ConnectedCode { .. } => {}
@@ -1203,8 +1262,18 @@ impl View for Practice {
     }
 
     fn apply(&mut self, command: Command, area: Rect) -> Option<Command> {
-        if let Stage::Shown(questions) = &mut self.stage {
-            return questions.apply(command, area);
+        match &mut self.stage {
+            Stage::Shown(questions) => {
+                return match questions.apply(command, area) {
+                    Some(Command::Finish) => {
+                        self.finish();
+                        None
+                    }
+                    next => next,
+                };
+            }
+            Stage::Finished(summary) => return summary.apply(command, area, self.sent.cost()),
+            _ => {}
         }
         if command != Command::Activate {
             self.focus = self.focus.after(command, self.controls().len());
@@ -1228,9 +1297,12 @@ impl View for Practice {
 
     fn render(&self, context: &Context<'_>, frame: &mut Frame<'_>, area: Rect) {
         let theme = context.theme;
-        if let Stage::Shown(questions) = &self.stage {
-            questions.render(theme, frame, area);
-            return;
+        match &self.stage {
+            Stage::Shown(questions) => return questions.render(theme, frame, area),
+            Stage::Finished(summary) => {
+                return summary.render(theme, frame, area, self.sent.cost());
+            }
+            _ => {}
         }
         let width = usize::from(area.width);
         let mut lines = self.stage_row(theme, context.ticks).lines(area.width);

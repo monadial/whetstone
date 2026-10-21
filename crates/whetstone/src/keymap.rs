@@ -87,6 +87,9 @@ pub(crate) enum Command {
     LineEnd,
     /// Stop typing, and close the focused text entry.
     Cancel,
+    /// End the Practice, and show its summary: Practice asks first while a
+    /// question is still unattempted.
+    Finish,
 }
 
 /// What key presses are for on a screen.

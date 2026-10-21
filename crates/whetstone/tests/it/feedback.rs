@@ -175,7 +175,9 @@ fn after_the_last_question_next_question_is_disabled_and_finish_has_focus() {
 fn finish_returns_home() {
     let mut session = submitted("a", 80, 24);
 
-    session.press("j j j <Enter>");
+    // Finish asks first, as three questions are unattempted, then the
+    // summary leads home.
+    session.press("j j j <Enter> j <Enter> <Enter>");
 
     assert!(
         session.text().contains("Practice on the showcase project"),

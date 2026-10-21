@@ -37,6 +37,10 @@
 //!   note (see [`crate::report`]). It is offered on feedback too, and
 //!   never changes an outcome.
 //!
+//! **Finish**, on feedback, on a question that can't be answered and in the
+//! palette, ends the Practice, for its summary. While a question is still
+//! unattempted, it asks first (see [`crate::finish`]).
+//!
 //! Each signal is saved to the session record, in order, as soon as it is
 //! given: the hint used, Show answer, each skip, cannot answer and each
 //! report.
@@ -73,6 +77,7 @@ use crate::cannot_answer::{self, CannotAnswer};
 use crate::columns;
 use crate::failures::FailedRequests;
 use crate::feedback::{self, AttemptKind, Feedback, Place, Step};
+use crate::finish::{self, Drafts, FinishCheck, Finishing};
 use crate::focus::Position;
 use crate::keymap::{self, Binding, Command, Input, Keymap, Press};
 use crate::palette::Action;
@@ -82,6 +87,7 @@ use crate::report::{self, ReportForm, Reporting};
 use crate::session_record::{
     Assessment, NewRecord, SavedResponse, SessionId, SessionStore, Signal, StoreError,
 };
+use crate::summary::{Ended, Listed};
 use crate::theme::{ControlKind, ControlState, Theme};
 use crate::view::{Reading, Route};
 
@@ -126,6 +132,7 @@ const KEYMAP: Keymap = &[keymap::MOVE, keymap::ACTIVATE, WRITE, keymap::BACK];
 /// The actions in the palette while a question is answered.
 const ACTIONS: &[Action] = &[
     INSPECT_SOURCE,
+    FINISH,
     Action {
         label: "Back",
         does: "Go back to the areas and changes",
@@ -134,14 +141,14 @@ const ACTIONS: &[Action] = &[
 ];
 
 /// The actions in the palette on feedback.
-const FEEDBACK_ACTIONS: &[Action] = &[
-    INSPECT_SOURCE,
-    Action {
-        label: "Finish",
-        does: "End the Practice, and go home",
-        command: Command::Go(Route::Home),
-    },
-];
+const FEEDBACK_ACTIONS: &[Action] = &[INSPECT_SOURCE, FINISH];
+
+/// Finish, in the palette.
+const FINISH: Action = Action {
+    label: "Finish",
+    does: "End the Practice, and see its summary",
+    command: Command::Finish,
+};
 
 /// Inspect source, in the palette.
 const INSPECT_SOURCE: Action = Action {
@@ -384,6 +391,9 @@ pub(crate) struct Questions {
     /// The report the learner is writing about the question that shows, if
     /// they are.
     reporting: Option<Box<ReportForm>>,
+    /// Asking whether to finish while questions are still unattempted, if
+    /// the learner chose Finish then.
+    finishing: Option<Box<FinishCheck>>,
     /// The saved responses whose evaluation the learner cancelled, for the
     /// screen to stop.
     cancelled: Vec<SavedResponse>,
@@ -440,6 +450,7 @@ impl Questions {
             submitted: None,
             signals: Vec::new(),
             reporting: None,
+            finishing: None,
             cancelled: Vec::new(),
             failed_requests,
         })
@@ -507,6 +518,9 @@ impl Questions {
 
     /// The screen's name, as key help and the palette title it.
     pub(crate) fn name(&self) -> &'static str {
+        if self.finishing.is_some() {
+            return "Finish";
+        }
         if self.reporting.is_some() {
             return "Report";
         }
@@ -519,6 +533,9 @@ impl Questions {
 
     /// The keys, by what has focus.
     pub(crate) fn keymap(&self) -> Keymap {
+        if self.finishing.is_some() {
+            return finish::KEYMAP;
+        }
         if let Some(form) = &self.reporting {
             return form.keymap();
         }
@@ -535,6 +552,9 @@ impl Questions {
 
     /// The actions in the palette.
     pub(crate) fn actions(&self) -> &'static [Action] {
+        if self.finishing.is_some() {
+            return finish::ACTIONS;
+        }
         if self.reporting.is_some() {
             return report::ACTIONS;
         }
@@ -546,6 +566,9 @@ impl Questions {
 
     /// Text while the reasoning is edited, commands otherwise.
     pub(crate) fn input(&self) -> Input {
+        if self.finishing.is_some() {
+            return Input::Commands;
+        }
         if let Some(form) = &self.reporting {
             return form.input();
         }
@@ -794,10 +817,26 @@ impl Questions {
     /// Applies `command` to the screen drawn in `area`, and returns what it
     /// asks of the app, if anything.
     pub(crate) fn apply(&mut self, command: Command, area: Rect) -> Option<Command> {
+        if let Some(check) = &mut self.finishing {
+            return match check.apply(command) {
+                Finishing::Open => None,
+                Finishing::KeepAnswering => {
+                    self.finishing = None;
+                    None
+                }
+                Finishing::Finish => {
+                    self.finishing = None;
+                    Some(Command::Finish)
+                }
+            };
+        }
         if let Some(form) = &mut self.reporting {
             let reporting = form.apply(command);
             self.reported(reporting);
             return None;
+        }
+        if command == Command::Finish {
+            return self.finish();
         }
         let place = self.place();
         let Entry {
@@ -823,13 +862,38 @@ impl Questions {
                 None
             }
             Step::InspectSource => Some(INSPECT_SOURCE.command),
-            Step::Finish => Some(Command::Go(Route::Home)),
+            Step::Finish => self.finish(),
             Step::Report => {
                 self.reporting = Some(Box::default());
                 None
             }
             Step::CancelEvaluation => None,
         }
+    }
+
+    /// Finish, as the learner chose it: [`Command::Finish`], for the screen to
+    /// end the Practice, or first, while a question is still unattempted,
+    /// the box asking whether to finish.
+    fn finish(&mut self) -> Option<Command> {
+        let unattempted = self
+            .picked
+            .iter()
+            .filter(|entry| entry.is_unattempted())
+            .count();
+        if unattempted == 0 {
+            return Some(Command::Finish);
+        }
+        let drafts = if self.holds_draft() {
+            Drafts::Started
+        } else {
+            Drafts::None
+        };
+        self.finishing = Some(Box::new(FinishCheck::new(
+            unattempted,
+            self.picked.len(),
+            drafts,
+        )));
+        None
     }
 
     /// Applies what the learner did in the report about the question that
@@ -951,6 +1015,24 @@ impl Questions {
         }
     }
 
+    /// Each question, in order, as the summary lists it.
+    pub(crate) fn listed(&self) -> Vec<Listed<'_>> {
+        self.picked
+            .iter()
+            .map(|entry| Listed {
+                question: &entry.question,
+                area_name: &entry.area_name,
+                kind: entry.kind,
+                reports: entry.reports,
+                attempt: match &entry.attempt {
+                    Attempt::Draft(_) => Ended::Skipped,
+                    Attempt::Submitted(feedback) => Ended::Answered(feedback),
+                    Attempt::CannotAnswer(_) => Ended::CannotAnswer,
+                },
+            })
+            .collect()
+    }
+
     /// The reader Show answer opens on the question that shows: its answer
     /// key, each option's rationale, "why it matters", and each criterion
     /// of its rubric, with what meeting it and not meeting it look like.
@@ -1053,6 +1135,9 @@ impl Questions {
         }
         if let Some(form) = &self.reporting {
             form.render(theme, frame);
+        }
+        if let Some(check) = &self.finishing {
+            check.render(theme, frame);
         }
     }
 

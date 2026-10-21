@@ -495,6 +495,12 @@ fn the_last_question_left_that_cannot_be_answered_stays_with_finish() {
     );
     assert_eq!(session.row_with("Finish"), "> Finish");
     session.press("<Enter>");
+    assert_eq!(
+        session.row_with("Cannot answer from this context  "),
+        "Cannot answer from this context  1",
+        "no question is unattempted, so the summary shows at once"
+    );
+    session.press("<Enter>");
     assert!(
         session.text().contains("Practice on the showcase project"),
         "{}",

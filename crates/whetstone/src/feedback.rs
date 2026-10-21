@@ -101,7 +101,7 @@ impl Control {
 
 /// Where Jev's evaluation of the reasoning stands.
 #[derive(Debug)]
-enum Evaluation {
+pub(crate) enum Evaluation {
     /// To ask for, as soon as the screen starts its jobs.
     Unsent,
     /// Asked for: the reasoning awaits evaluation.
@@ -217,6 +217,16 @@ impl Feedback {
     /// The store's acknowledgement of the response.
     pub(crate) fn saved(&self) -> &SavedResponse {
         &self.saved
+    }
+
+    /// The choice's outcome.
+    pub(crate) fn outcome(&self) -> Assessed<ChoiceOutcome> {
+        self.outcome
+    }
+
+    /// Where Jev's evaluation of the reasoning stands.
+    pub(crate) fn evaluation(&self) -> &Evaluation {
+        &self.evaluation
     }
 
     /// The saved response whose reasoning to ask Jev about, if its
