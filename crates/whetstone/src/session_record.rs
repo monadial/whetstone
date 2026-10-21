@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use whetstone_ai::{ParagraphCheck, WrittenParagraph};
 use whetstone_core::{
-    Assessed, CandidateId, ChoiceOutcome, CriterionOutcome, Evidence, PolicyVersion, Question,
+    AppliedCutOffs, Assessed, CandidateId, ChoiceOutcome, CriterionOutcome, Evidence, Question,
     Response,
 };
 
@@ -165,21 +165,22 @@ pub enum Assessment {
 /// checks its citations, then Jev checks it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ExplanationCheck {
-    /// Jev's answers were clear yes on both, under the assessment policy of
-    /// version `policy`: it showed.
+    /// Jev's answers were clear yes on both, under `cut_offs`: it showed.
     Passed {
         /// Jev's answers, as returned.
         answers: ParagraphCheck,
-        /// The version of the policy that banded them.
-        policy: PolicyVersion,
+        /// The cut-offs that banded them, with their policy's version and
+        /// whether they are its defaults or the learner's own.
+        cut_offs: AppliedCutOffs,
     },
-    /// Jev's answers weren't clear yes on both, under the assessment policy
-    /// of version `policy`: it was withheld.
+    /// Jev's answers weren't clear yes on both, under `cut_offs`: it was
+    /// withheld.
     Failed {
         /// Jev's answers, as returned.
         answers: ParagraphCheck,
-        /// The version of the policy that banded them.
-        policy: PolicyVersion,
+        /// The cut-offs that banded them, with their policy's version and
+        /// whether they are its defaults or the learner's own.
+        cut_offs: AppliedCutOffs,
     },
     /// Plain code withheld it before Jev was asked: it has no text or no
     /// citation, or a citation names lines the evidence doesn't send.

@@ -10,9 +10,10 @@
 //! patterns matched against repository-relative paths. A `!` negation
 //! pattern is invalid. `connected_code_limit_kb` is a whole number from 0 to
 //! 400, and only lowers the learner's connected code limit, never raises it.
-//! Every other key is invalid, including the old `areas` array and any
-//! model, endpoint or key setting, so a cloned repository's config can only
-//! add exclusions and lower the limit.
+//! Every other key is invalid, including the old `areas` array, any model,
+//! endpoint or key setting and the assessment policy's `[cut_offs]`, so a
+//! cloned repository's config can only add exclusions and lower the limit:
+//! it can never loosen how its learners are assessed.
 
 use crate::connected_code_limit::{ConnectedCodeLimitError, ConnectedCodeLimitKb};
 use crate::exclusion::{ExcludePatternError, ExcludePatterns};
@@ -143,6 +144,20 @@ mod tests {
             assert_eq!(
                 config.connected_code_limit_kb(),
                 limit.map(|kb| ConnectedCodeLimitKb::try_from(kb).expect("in range")),
+                "{contents:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_repository_config_can_never_set_the_assessment_policy_s_cut_offs() {
+        for contents in [
+            "[cut_offs]\nquestion_check = { upper = 0.55, lower = 0.20 }\n",
+            "cut_offs = {}\n",
+        ] {
+            assert_eq!(
+                RepositoryConfig::parse(contents.as_bytes()),
+                Err(RepositoryConfigError::UnknownKey("cut_offs".to_owned())),
                 "{contents:?}"
             );
         }

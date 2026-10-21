@@ -16,7 +16,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use crate::area::AreaId;
-use crate::assessment_policy::{AssessmentPolicy, Band, Job, PolicyVersion};
+use crate::assessment_policy::{AssessmentPolicy, Band, Job};
 use crate::jev::Probability;
 use crate::question::{
     Candidate, CandidateId, Citation, Criterion, Hint, OptionLetter, QuestionType,
@@ -88,15 +88,15 @@ pub enum DepthLevel {
 pub struct InvalidDepth(f64);
 
 /// A candidate that passed its question check, with Jev's answers, its
-/// depth, the version of the policy that passed it, and its hint if the hint
-/// passed its checks too. Only questions are ever shown.
+/// depth, the policy that passed it, with its cut-offs, and its hint if the
+/// hint passed its checks too. Only questions are ever shown.
 ///
 /// Its `Debug` output shows no question text.
 #[derive(Clone, PartialEq)]
 pub struct Question {
     candidate: Candidate,
     answers: QuestionCheckAnswers,
-    policy: PolicyVersion,
+    policy: AssessmentPolicy,
     hint: Option<Hint>,
 }
 
@@ -277,7 +277,7 @@ pub fn show_rule(
         Ok(Question {
             candidate,
             answers,
-            policy: policy.version(),
+            policy: policy.clone(),
             hint,
         })
     } else {
@@ -383,10 +383,12 @@ impl Question {
         self.answers.depth
     }
 
-    /// The version of the policy that passed it.
+    /// The policy that passed it: its version, and the cut-offs it banded
+    /// the answers with. Its option ratings and the outcomes of its
+    /// responses are banded with them too.
     #[must_use]
-    pub fn policy(&self) -> PolicyVersion {
-        self.policy
+    pub fn policy(&self) -> &AssessmentPolicy {
+        &self.policy
     }
 }
 
@@ -420,6 +422,7 @@ impl Withheld {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::assessment_policy::CutOffs;
     use crate::question::plain_checks;
     use crate::question::tests::{area, evidence, written};
 
@@ -570,7 +573,7 @@ pub(crate) mod tests {
             question.hint().map(Hint::text),
             Some("Look at how the key is made.")
         );
-        assert_eq!(question.policy(), AssessmentPolicy::current().version());
+        assert_eq!(question.policy(), AssessmentPolicy::current());
         assert_eq!(
             question
                 .answers()
@@ -579,6 +582,29 @@ pub(crate) mod tests {
         );
         assert_eq!(question.answers().iter().collect::<Vec<_>>(), answers);
         assert_eq!(question.depth(), depth(1.3));
+    }
+
+    #[test]
+    fn a_check_the_learner_s_cut_offs_make_clear_yes_passes_and_the_question_keeps_them() {
+        let candidate = candidate("domain", 0, OptionLetter::A);
+        let mut answers = passing(&candidate);
+        answers.push((CandidateCheck::NeedsChange, probability(0.6)));
+        let answers = QuestionCheckAnswers::new(answers, depth(1.0));
+        let lower_bar = AssessmentPolicy::with_cut_offs([(
+            Job::QuestionCheck,
+            CutOffs::new(0.55, 0.20).expect("valid"),
+        )]);
+
+        let withheld = show_rule(
+            candidate.clone(),
+            answers.clone(),
+            AssessmentPolicy::current(),
+        );
+        let shown = show_rule(candidate, answers, &lower_bar);
+
+        assert_eq!(failed(withheld), [CandidateCheck::NeedsChange]);
+        let question = shown.expect("clear yes under the learner's cut-offs");
+        assert_eq!(question.policy(), &lower_bar);
     }
 
     #[test]

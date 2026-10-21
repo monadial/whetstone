@@ -14,21 +14,34 @@
 //!
 //! [generator]
 //! model = "anthropic/claude-sonnet-5.5"
+//!
+//! [cut_offs]
+//! relevance_gate = { upper = 0.80, lower = 0.20 }
+//! question_check = { upper = 0.80, lower = 0.20 }
+//! option_rating = { upper = 0.80, lower = 0.20 }
+//! rationale_and_hint_checks = { upper = 0.80, lower = 0.20 }
+//! reasoning_criterion = { upper = 0.80, lower = 0.20 }
+//! explanation_check = { upper = 0.80, lower = 0.20 }
 //! ```
 //!
 //! The values above are the defaults, used for anything the file leaves out
-//! and for everything when there is no file. The API key never lives in the
+//! and for everything when there is no file. The cut-offs are the
+//! assessment policy's, policy 0's by default: a job's own makes its
+//! outcomes not comparable with the policy's, and every outcome records the
+//! cut-offs that banded it. Only this config sets them, never a
+//! repository's. The API key never lives in the
 //! file: it is read from `OPENROUTER_API_KEY`, once, as the config loads,
 //! and Practice asks Jev and the generator with it ([`Settings::openrouter`]).
 
 use std::path::{Path, PathBuf};
 use std::{fmt, fs, io};
 
+use serde::de::{DeserializeSeed, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer};
 use whetstone_ai::{Models, OPENROUTER_BASE_URL, OpenRouter, OpenRouterAi, SecretString, Timeouts};
 use whetstone_core::{
-    ConnectedCodeLimit, ConnectedCodeLimitError, ConnectedCodeLimitKb, ModelId, QuestionCount,
-    QuestionCountError, RepositoryConfig,
+    AssessmentPolicy, ConnectedCodeLimit, ConnectedCodeLimitError, ConnectedCodeLimitKb, CutOffs,
+    InvalidCutOffs, Job, ModelId, QuestionCount, QuestionCountError, RepositoryConfig,
 };
 
 use crate::environment::Environment;
@@ -57,6 +70,9 @@ pub struct Settings {
     pub(crate) connected_code_limit: Setting<ConnectedCodeLimitKb>,
     /// How many questions a Practice asks for.
     pub(crate) questions: Setting<QuestionCount>,
+    /// The assessment policy Practice applies: policy 0, with the cut-offs
+    /// `[cut_offs]` sets for any job.
+    pub(crate) assessment_policy: AssessmentPolicy,
     pub(crate) file: ConfigFile,
     pub(crate) openrouter_key: KeyStatus,
 }
@@ -141,7 +157,17 @@ struct File {
     questions: Option<QuestionCount>,
     jev: Option<Role>,
     generator: Option<Role>,
+    cut_offs: Option<CutOffsTable>,
 }
+
+/// The `[cut_offs]` table as written: each job it has an entry for, with
+/// that entry's cut-offs, in the order written.
+#[derive(Debug, Default)]
+struct CutOffsTable(Vec<(Job, CutOffs)>);
+
+/// A job's key in `[cut_offs]`, which reads that job's entry.
+#[derive(Debug, Clone, Copy)]
+struct CutOffsKey(Job);
 
 /// The settings of one AI role.
 #[derive(Debug, Deserialize)]
@@ -188,6 +214,9 @@ impl Settings {
                 ConnectedCodeLimitKb::DEFAULT,
             ),
             questions: Setting::or_default(contents.questions, QuestionCount::DEFAULT),
+            assessment_policy: AssessmentPolicy::with_cut_offs(
+                contents.cut_offs.unwrap_or_default().0,
+            ),
             file,
             openrouter_key: openrouter_key(environment).map_or(KeyStatus::NotSet, |key| {
                 KeyStatus::Set(SecretString::from(key.to_owned()))
@@ -304,6 +333,103 @@ fn questions<'de, D: Deserializer<'de>>(
         .and_then(QuestionCount::try_from)
         .map(Some)
         .map_err(serde::de::Error::custom)
+}
+
+/// `job`'s key in `[cut_offs]`.
+pub(crate) fn cut_offs_key(job: Job) -> &'static str {
+    match job {
+        Job::RelevanceGate => "relevance_gate",
+        Job::QuestionCheck => "question_check",
+        Job::OptionRating => "option_rating",
+        Job::RationaleAndHintChecks => "rationale_and_hint_checks",
+        Job::ReasoningCriterion => "reasoning_criterion",
+        Job::ExplanationCheck => "explanation_check",
+    }
+}
+
+impl<'de> Deserialize<'de> for CutOffsTable {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_map(CutOffsEntries)
+    }
+}
+
+/// Reads the entries of `[cut_offs]`.
+struct CutOffsEntries;
+
+impl<'de> Visitor<'de> for CutOffsEntries {
+    type Value = CutOffsTable;
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("the `[cut_offs]` table, with an entry for each job it sets")
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut entries: A) -> Result<CutOffsTable, A::Error> {
+        let mut table = Vec::new();
+        while let Some(key) = entries.next_key::<CutOffsKey>()? {
+            table.push((key.0, entries.next_value_seed(key)?));
+        }
+        Ok(CutOffsTable(table))
+    }
+}
+
+impl<'de> Deserialize<'de> for CutOffsKey {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let key = String::deserialize(deserializer)?;
+        Job::ALL
+            .into_iter()
+            .find(|&job| cut_offs_key(job) == key)
+            .map(CutOffsKey)
+            .ok_or_else(|| {
+                serde::de::Error::custom(format!(
+                    "`cut_offs.{key}` is not a job: use {}",
+                    Job::ALL.map(cut_offs_key).join(", ")
+                ))
+            })
+    }
+}
+
+/// Reads the job's entry: a table of an `upper` and a `lower` cut-off, each
+/// a number from 0 to 1, with `lower` below `upper`.
+impl<'de> DeserializeSeed<'de> for CutOffsKey {
+    type Value = CutOffs;
+
+    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<CutOffs, D::Error> {
+        let key = cut_offs_key(self.0);
+        let entry = toml::Value::deserialize(deserializer)?;
+        let both =
+            || serde::de::Error::custom(format!("`cut_offs.{key}` needs both `upper` and `lower`"));
+        let entry = entry.as_table().ok_or_else(both)?;
+        if let Some(other) = entry
+            .keys()
+            .find(|name| !["upper", "lower"].contains(&name.as_str()))
+        {
+            return Err(serde::de::Error::custom(format!(
+                "`cut_offs.{key}` takes only `upper` and `lower`, not `{other}`"
+            )));
+        }
+        let (Some(upper), Some(lower)) = (entry.get("upper"), entry.get("lower")) else {
+            return Err(both());
+        };
+        let invalid =
+            |error: InvalidCutOffs| serde::de::Error::custom(format!("`cut_offs.{key}`: {error}"));
+        let upper = number(upper)
+            .ok_or(InvalidCutOffs::Upper)
+            .map_err(invalid)?;
+        let lower = number(lower)
+            .ok_or(InvalidCutOffs::Lower)
+            .map_err(invalid)?;
+        CutOffs::new(upper, lower).map_err(invalid)
+    }
+}
+
+/// `value` as a number, if it is one: a float, or a whole number.
+fn number(value: &toml::Value) -> Option<f64> {
+    value.as_float().or_else(|| {
+        value
+            .as_integer()
+            .and_then(|whole| i32::try_from(whole).ok())
+            .map(f64::from)
+    })
 }
 
 /// `path` as Settings shows it: under the home directory it starts `~/`.

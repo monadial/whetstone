@@ -9,7 +9,7 @@
 use std::fmt;
 
 use crate::area::{AreaId, AreaSource};
-use crate::assessment_policy::PolicyVersion;
+use crate::assessment_policy::AssessmentPolicy;
 use crate::jev::Probability;
 use crate::question_check::Depth;
 
@@ -95,12 +95,14 @@ pub struct RequestId(u64);
 pub struct GenerationId(String);
 
 /// The versions behind a request: Whetstone's own, its base prompts', the
-/// assessment policy's, and the file of each area it is about.
+/// assessment policy's, with the cut-offs its answers are banded with, and
+/// the file of each area it is about.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Versions {
     whetstone: String,
     base_prompts: ContentHash,
-    policy: PolicyVersion,
+    /// Boxed, as its cut-offs would make every request's provenance large.
+    policy: Box<AssessmentPolicy>,
     area_files: Vec<AreaFileVersion>,
 }
 
@@ -285,18 +287,19 @@ impl fmt::Display for GenerationId {
 impl Versions {
     /// The versions behind a request: Whetstone's own `whetstone` version,
     /// such as `0.1.0`; the hash of its `base_prompts`; the assessment
-    /// `policy`'s version; and the `area_files` of the areas it is about.
+    /// `policy` in effect, whose version and cut-offs band its answers; and
+    /// the `area_files` of the areas it is about.
     #[must_use]
     pub fn new(
         whetstone: String,
         base_prompts: ContentHash,
-        policy: PolicyVersion,
+        policy: AssessmentPolicy,
         area_files: Vec<AreaFileVersion>,
     ) -> Self {
         Self {
             whetstone,
             base_prompts,
-            policy,
+            policy: Box::new(policy),
             area_files,
         }
     }
@@ -313,10 +316,11 @@ impl Versions {
         &self.base_prompts
     }
 
-    /// The assessment policy's version.
+    /// The assessment policy in effect: its version, and the cut-offs its
+    /// answers are banded with, the policy's defaults or the learner's own.
     #[must_use]
-    pub fn policy(&self) -> PolicyVersion {
-        self.policy
+    pub fn policy(&self) -> &AssessmentPolicy {
+        &self.policy
     }
 
     /// The files of the areas the request is about.
@@ -557,7 +561,7 @@ impl Provenance {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::assessment_policy::AssessmentPolicy;
+    use crate::assessment_policy::{CutOffs, CutOffsOrigin, Job};
     use crate::question_check::tests::{depth, probability};
 
     fn model(id: &str) -> ModelId {
@@ -572,7 +576,7 @@ mod tests {
         Versions::new(
             "0.1.0".to_owned(),
             hash("9f2c"),
-            AssessmentPolicy::current().version(),
+            AssessmentPolicy::current().clone(),
             vec![AreaFileVersion::new(
                 "domain".parse().expect("an area ID"),
                 AreaSource::Default,
@@ -601,6 +605,23 @@ mod tests {
     }
 
     #[test]
+    fn a_request_keeps_the_learner_s_cut_offs_its_answers_are_banded_with() {
+        let policy = AssessmentPolicy::with_cut_offs([(
+            Job::QuestionCheck,
+            CutOffs::new(0.55, 0.20).expect("valid"),
+        )]);
+
+        let versions = Versions::new("0.1.0".to_owned(), hash("9f2c"), policy.clone(), Vec::new());
+
+        assert_eq!(versions.policy(), &policy);
+        assert_eq!(versions.policy().version().get(), 0);
+        assert_eq!(
+            versions.policy().cut_offs(Job::QuestionCheck).origin(),
+            CutOffsOrigin::Learner
+        );
+    }
+
+    #[test]
     fn a_request_keeps_the_versions_behind_it() {
         let provenance = Provenance::new(
             RequestId::new(3),
@@ -612,7 +633,7 @@ mod tests {
         let versions = provenance.versions();
         assert_eq!(versions.whetstone(), "0.1.0");
         assert_eq!(versions.base_prompts().as_str(), "9f2c");
-        assert_eq!(versions.policy().get(), 0);
+        assert_eq!(versions.policy(), AssessmentPolicy::current());
         let [area_file] = versions.area_files() else {
             panic!("one area file: {versions:?}");
         };

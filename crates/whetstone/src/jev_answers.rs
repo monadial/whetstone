@@ -3,15 +3,16 @@
 //! the learner's reasoning and the check of its explanation. Each shows as
 //! Jev returned it, a probability or, for depth, a distribution with its
 //! expected level, with its band under the assessment policy, then each
-//! request's models and the policy's version.
+//! request's models, the policy's version and the cut-offs that banded the
+//! answers, each job's marked as the policy's or from the learner's config.
 //!
 //! It is labelled "Jev's probability, not a measure of correctness", as
 //! feedback gives only the words the bands lead to and never a number. The
 //! answers show here alone: they are never logged (rules 43 and 44).
 
 use whetstone_core::{
-    Assessed, AssessmentPolicy, Band, CandidateCheck, DepthLevel, Job, PolicyVersion, Probability,
-    Provenance, Question, Validation,
+    AppliedCutOffs, Assessed, AssessmentPolicy, Band, CandidateCheck, CriterionOutcome,
+    CutOffsOrigin, DepthLevel, Job, PolicyVersion, Probability, Provenance, Question, Validation,
 };
 
 use crate::feedback::{CheckedParagraph, Evaluation, Feedback};
@@ -32,7 +33,7 @@ pub(crate) fn reader(
     requests: &[SentRequest],
 ) -> Reader {
     let saved = feedback.saved();
-    let mut sections = vec![label(), question_check(question, requests)];
+    let mut sections = vec![label(question.policy()), question_check(question, requests)];
     sections.push(reasoning(
         question,
         feedback.evaluation(),
@@ -51,12 +52,20 @@ pub(crate) fn reader(
     )
 }
 
-/// What the numbers are, and what they are not.
-fn label() -> Section {
-    let policy = AssessmentPolicy::current();
+/// What the numbers are, and what they are not, under `policy`, the one
+/// the question was checked with.
+fn label(policy: &AssessmentPolicy) -> Section {
     let validation = match policy.validation() {
         Validation::Unvalidated => "unvalidated",
         Validation::Validated => "validated",
+    };
+    let comparable = match policy.origin() {
+        CutOffsOrigin::Default => String::new(),
+        CutOffsOrigin::Learner => format!(
+            " Your config changes some of its cut-offs, so these bands aren't comparable with \
+             policy {}'s.",
+            policy.version()
+        ),
     };
     Section::plain(
         LABEL,
@@ -64,7 +73,7 @@ fn label() -> Section {
             "Each number is Jev's probability that the statement beside it holds, exactly as \
              Jev returned it: it is not a score of your answer. Assessment policy {}, \
              {validation}, bands each one clear yes, unclear or clear no, and feedback says only \
-             what the bands lead to.",
+             what the bands lead to.{comparable}",
             policy.version()
         ),
     )
@@ -72,11 +81,19 @@ fn label() -> Section {
 
 /// Jev's answers to `question`'s check, before it showed, and its depth.
 fn question_check(question: &Question, requests: &[SentRequest]) -> Section {
-    let policy = AssessmentPolicy::current();
-    let mut lines = vec![models_line(
-        &replied(requests, &Asking::Check(question.id().clone())),
-        question.policy(),
-    )];
+    let policy = question.policy();
+    let mut lines = vec![
+        models_line(
+            &replied(requests, &Asking::Check(question.id().clone())),
+            policy.version(),
+        ),
+        cut_offs_line("the question check", policy.cut_offs(Job::QuestionCheck)),
+        cut_offs_line("option ratings", policy.cut_offs(Job::OptionRating)),
+        cut_offs_line(
+            "rationale and hint checks",
+            policy.cut_offs(Job::RationaleAndHintChecks),
+        ),
+    ];
     lines.extend(question.answers().iter().map(|(check, answer)| {
         answered(&statement(check), answer, policy.band(check.job(), answer))
     }));
@@ -104,15 +121,25 @@ fn reasoning(question: &Question, evaluation: &Evaluation, requests: &[&Provenan
             "Evaluation unavailable: Jev gave no answers to show.".to_owned()
         }
         Evaluation::Assessed(outcomes) => {
-            let policy = AssessmentPolicy::current();
-            let version = outcomes.first().map_or(policy.version(), Assessed::policy);
-            let mut lines = vec![models_line(requests, version)];
+            let cut_offs = outcomes.first().map_or_else(
+                || question.policy().cut_offs(Job::ReasoningCriterion),
+                Assessed::cut_offs,
+            );
+            let mut lines = vec![
+                models_line(requests, cut_offs.policy()),
+                cut_offs_line("reasoning criteria", cut_offs),
+            ];
             lines.extend(question.rubric().iter().zip(outcomes).enumerate().map(
                 |(place, (criterion, assessed))| {
+                    let band = match assessed.outcome() {
+                        CriterionOutcome::Met => Band::ClearYes,
+                        CriterionOutcome::NotMet => Band::ClearNo,
+                        CriterionOutcome::NeedsReview => Band::Unclear,
+                    };
                     answered(
                         &format!("Meets criterion {}: {}", place + 1, criterion.statement()),
                         assessed.answer(),
-                        policy.band(Job::ReasoningCriterion, assessed.answer()),
+                        band,
                     )
                 },
             ));
@@ -123,15 +150,16 @@ fn reasoning(question: &Question, evaluation: &Evaluation, requests: &[&Provenan
 }
 
 /// Jev's `checks` of the explanation's paragraphs, in the order they came,
-/// from the requests whose provenance is `requests`. A paragraph checked
-/// more than once, as Retry explanation writes it again, names each check:
-/// the last is of the paragraph written last.
+/// from the requests whose provenance is `requests`, each banded with the
+/// cut-offs it records. A paragraph checked more than once, as Retry
+/// explanation writes it again, names each check: the last is of the
+/// paragraph written last.
 fn explanation_check(checks: &[CheckedParagraph], requests: &[&Provenance]) -> Section {
-    let policy = AssessmentPolicy::current();
-    let version = checks
-        .first()
-        .map_or(policy.version(), |checked| checked.policy);
-    let mut lines = vec![models_line(requests, version)];
+    let mut lines = Vec::new();
+    if let Some(first) = checks.first() {
+        lines.push(models_line(requests, first.cut_offs.policy()));
+        lines.push(cut_offs_line("explanation checks", first.cut_offs));
+    }
     for (at, checked) in checks.iter().enumerate() {
         let same = |other: &&CheckedParagraph| other.criterion == checked.criterion;
         let explanation = match checks.iter().filter(same).count() {
@@ -142,7 +170,7 @@ fn explanation_check(checks: &[CheckedParagraph], requests: &[&Provenance]) -> S
                 checks[..=at].iter().filter(same).count()
             ),
         };
-        let band = |answer| policy.band(Job::ExplanationCheck, answer);
+        let band = |answer| checked.cut_offs.cut_offs().band(answer);
         let answers = checked.answers;
         lines.push(answered(
             &format!("{explanation} is supported by the evidence"),
@@ -198,6 +226,20 @@ fn models_line(requests: &[&Provenance], policy: PolicyVersion) -> String {
             .unwrap_or_default()
     };
     format!("{models} · assessment policy {policy}")
+}
+
+/// The line naming the cut-offs, `applied`, that banded `what`, and whose
+/// they are.
+fn cut_offs_line(what: &str, applied: AppliedCutOffs) -> String {
+    let whose = match applied.origin() {
+        CutOffsOrigin::Default => format!("policy {}'s", applied.policy()),
+        CutOffsOrigin::Learner => "from your config".to_owned(),
+    };
+    format!(
+        "Cut-offs for {what} · upper {}, lower {} · {whose}",
+        applied.cut_offs().upper(),
+        applied.cut_offs().lower()
+    )
 }
 
 /// One answer's line: its `statement`, Jev's `answer` as returned, and its

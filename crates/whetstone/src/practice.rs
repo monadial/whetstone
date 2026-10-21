@@ -125,6 +125,10 @@ pub(crate) struct Practice {
     areas: Vec<Area>,
     /// How many questions the learner asked for.
     count: QuestionCount,
+    /// The assessment policy that bands Jev's answers: policy 0, with the
+    /// cut-offs the learner's config sets. A question keeps the one it was
+    /// checked with, and its outcomes are banded with it.
+    policy: AssessmentPolicy,
     ai: Arc<dyn Ai>,
     /// What the learner can do about a failed request, and the models
     /// `OpenRouter` refused.
@@ -449,6 +453,7 @@ impl Practice {
         // Whetstone's defaults.
         let sent = SentRequests::new(
             settings.models(),
+            settings.assessment_policy.clone(),
             area_files::of(&areas, &[]),
             context.request_ids,
         );
@@ -462,6 +467,7 @@ impl Practice {
             change,
             areas,
             count: settings.questions.value,
+            policy: settings.assessment_policy.clone(),
             ai,
             failed_requests: FailedRequests::new(settings.models(), context.refused_models),
             // The showcase project's config sets nothing, which its tests
@@ -514,6 +520,7 @@ impl Practice {
             .map_or(&[][..], |repository| repository.area_files());
         let sent = SentRequests::new(
             context.settings.models(),
+            context.settings.assessment_policy.clone(),
             area_files::of(evidence.areas(), repository_files),
             context.request_ids,
         );
@@ -522,6 +529,7 @@ impl Practice {
             change,
             areas: evidence.areas().to_vec(),
             count: context.settings.questions.value,
+            policy: context.settings.assessment_policy.clone(),
             ai,
             failed_requests: FailedRequests::new(context.settings.models(), context.refused_models),
             connected_code_limit: evidence.connected_code_limit(),
@@ -570,10 +578,9 @@ impl Practice {
         };
         match reply {
             Ok(answers) => {
-                let policy = AssessmentPolicy::current();
                 let bands: Vec<(AreaId, Band)> = answers
                     .into_iter()
-                    .map(|(area, answer)| (area, policy.band(Job::RelevanceGate, answer)))
+                    .map(|(area, answer)| (area, self.policy.band(Job::RelevanceGate, answer)))
                     .collect();
                 tracing::info!(bands = ?bands, "the relevance gate decided");
                 self.gate = Gate::decided(&self.areas, &bands);
@@ -702,7 +709,7 @@ impl Practice {
         {
             return;
         }
-        let policy = AssessmentPolicy::current();
+        let policy = &self.policy;
         let checks = mem::take(checks);
         let checked = checks.len();
         let (passed, withheld): (Vec<_>, Vec<_>) = checks

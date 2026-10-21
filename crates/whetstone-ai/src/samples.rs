@@ -47,7 +47,7 @@ pub(crate) fn versions() -> Versions {
     Versions::new(
         "0.0.0-sample".to_owned(),
         base_prompts_hash(),
-        AssessmentPolicy::current().version(),
+        AssessmentPolicy::current().clone(),
         vec![AreaFileVersion::new(
             area().id().clone(),
             AreaSource::Repository,
