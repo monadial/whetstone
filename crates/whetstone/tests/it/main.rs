@@ -27,6 +27,7 @@ mod inspect_jev_answers;
 mod jobs;
 mod links_and_mentions;
 mod live_practice;
+mod measure_questions;
 mod model_settings;
 mod named_failures;
 mod navigation;
