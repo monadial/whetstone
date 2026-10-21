@@ -17,7 +17,7 @@ Early. `whetstone` opens a terminal home screen. Started inside a Git repository
 
 On your repository, **Review what will be sent** opens the outbound review: exactly what a Practice would send and where. It shows the commit message, every touched file with its size and whether it is sent, any possible secrets, each area with its prompt, and the total size against the limit. Questions and feedback on your repository aren't connected yet, so **Send** is disabled. Once they are, Practice will send what you approved and your answers to [OpenRouter](https://openrouter.ai), paid with your own credits. Nothing from your repository is sent today.
 
-On the showcase project, **Generate questions** prepares questions once `OPENROUTER_API_KEY` is set, and is disabled until then. It sends showcase excerpts to OpenRouter, paid with your credits: the generator writes candidate questions, and Jev checks each one, so only questions that pass are shown.
+On the showcase project, **Generate questions** prepares questions once `OPENROUTER_API_KEY` is set, and is disabled until then. It sends showcase excerpts to OpenRouter, paid with your credits: Jev first decides which chosen areas the change is worth asking about, the generator writes candidate questions about those, and Jev checks each one, so only questions that pass are shown. When no chosen area is worth asking about, **Ask anyway** writes about them all the same, and their questions are still checked.
 
 ## Run it
 
