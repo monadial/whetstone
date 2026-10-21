@@ -5,7 +5,7 @@
 //! who doesn't know the keys, and a line between them says where the
 //! learner is.
 
-use crate::commits::{focused, git_log};
+use crate::commits::{focused, git_log, without_size};
 use crate::repo::TestRepo;
 use crate::repository::started_in;
 use crate::session::Session;
@@ -41,7 +41,7 @@ pub(crate) fn in_view(session: &Session) -> Vec<String> {
         .section(CHANGES)
         .into_iter()
         .filter(|row| row.contains("( ) ") || row.contains("(x) "))
-        .map(|row| row.trim_start_matches("> ").to_owned())
+        .map(|row| without_size(row.trim_start_matches("> ")))
         .collect()
 }
 

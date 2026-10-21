@@ -6,6 +6,7 @@ use std::path::Path;
 
 use whetstone::Flow;
 
+use crate::commits::{git_log, without_size};
 use crate::repo::TestRepo;
 use crate::session::{NO_COLOR, Session, Setup, columns};
 
@@ -704,25 +705,24 @@ fn the_picker_lists_the_commits_reachable_from_head_newest_first_with_short_ids_
 
     session.press("<Enter>");
 
-    // Git's own short IDs and subjects, in `git log` order.
-    let expected: Vec<String> = repo
-        .git(&["log", "--format=( ) %h  %s"])
-        .lines()
-        .map(str::to_owned)
-        .collect();
+    // Git's own short IDs, author dates, authors and subjects, in `git log`
+    // order.
+    let expected = git_log(&repo);
     assert_eq!(expected.len(), 5);
     let rows: Vec<String> = session
         .section(CHANGES)
         .into_iter()
         .take_while(|row| !row.starts_with("Previous page"))
+        .map(|row| without_size(&row))
         .collect();
     for (row, expected) in rows.iter().zip(&expected) {
         assert!(row.starts_with(expected), "{row:?} is {expected:?}");
     }
+    // Past the ID, date and author.
     assert_eq!(
         columns(&rows)
             .into_iter()
-            .map(|row| row[1..].join("  "))
+            .map(|row| row[3..].join("  "))
             .collect::<Vec<_>>(),
         [
             "Merge refunds  merge · vs first parent",
@@ -752,7 +752,10 @@ fn choosing_a_commit_with_an_area_selected_enables_review_what_will_be_sent() {
         .filter(|row| row.contains("(x)"))
         .collect();
     assert_eq!(chosen.len(), 1);
-    assert!(chosen[0].ends_with("Describe the service"), "{chosen:?}");
+    assert!(
+        without_size(&chosen[0]).ends_with("Describe the service"),
+        "{chosen:?}"
+    );
     assert_eq!(session.row_with(REVIEW), REVIEW);
 }
 
@@ -889,7 +892,7 @@ fn key_help_on_the_repository_picker_says_enter_opens_a_change_and_slash_searche
     let rows = session.overlay_rows();
     for (key, does) in [
         ("Enter", "Toggle an area, or choose and open a change"),
-        ("/", "Filter the commits by message or ID"),
+        ("/", "Filter the commits by message, author or ID"),
     ] {
         assert!(
             rows.iter()

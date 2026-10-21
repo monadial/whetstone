@@ -138,6 +138,28 @@ impl TestRepo {
         self.head()
     }
 
+    /// Commits everything in the working tree with `message`, as
+    /// [`TestRepo::commit`] does, but authored by `author` at `date`, a date
+    /// as `git` reads `GIT_AUTHOR_DATE`, such as `@1792570502 +0200`, and
+    /// returns the commit's full ID. It is committed a minute after the
+    /// commit before, so the history keeps its order.
+    pub(crate) fn commit_by(&self, message: &str, author: &str, date: &str) -> String {
+        self.git(&["add", "--all"]);
+        let made = self.commits.get();
+        self.commits.set(made + 1);
+        let committed = format!("@{} +0000", FIRST_COMMIT_AT + 60 * made);
+        self.git_with(
+            &self.root,
+            &["commit", "--quiet", "--allow-empty", "--message", message],
+            &[
+                ("GIT_AUTHOR_NAME", author),
+                ("GIT_AUTHOR_DATE", date),
+                ("GIT_COMMITTER_DATE", &committed),
+            ],
+        );
+        self.head()
+    }
+
     /// Makes `count` commits on top of HEAD, the `n`th writing `n` to
     /// `counter.txt` with the message "Bump the counter to n", dated a
     /// minute apart as [`TestRepo::commit`] dates them. One `git
