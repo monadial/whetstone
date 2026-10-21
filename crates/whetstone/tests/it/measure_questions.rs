@@ -1,11 +1,12 @@
 //! Measuring the base prompts live: Generate questions on one showcase
 //! change and one area through the real Jev and generator, at the app seam,
 //! under the default cut-offs (its config sets no `[cut_offs]`), then print
-//! one row of what became of the candidates. The rows of several pairs make the before and after
-//! tables of a change to the base prompts.
+//! one row of what became of the candidates. The rows of several pairs make
+//! the before and after tables of a change to the base prompts.
 //!
-//! A row is read from the app's own log lines and the screen, so it shows
-//! only names, counts, bands and costs, never a question's text:
+//! A row is read from the app's own log lines, the screen and the session
+//! record, so it shows only names, counts, bands, Jev's answers and costs,
+//! never a question's text:
 //!
 //! - whether the relevance gate passed the area; when it didn't, the row is
 //!   measured after Ask anyway;
@@ -13,6 +14,10 @@
 //! - for each check, how many candidates it withheld, by band;
 //! - the questions shown, and how many criteria the show rule dropped from
 //!   the questions that passed, as asking for more than they need;
+//! - from the session record, which starts only once a question is shown:
+//!   how many shown questions kept each number of criteria, Jev's answer to
+//!   the minimum check of each criterion dropped from them, and how many of
+//!   every candidate's minimum checks fell in each band;
 //! - the generator's tokens, and what the run cost.
 //!
 //! Each pair calls `OpenRouter` with a real key, about 0.12 to 0.15 USD a
@@ -32,8 +37,9 @@ use std::collections::BTreeMap;
 use std::io;
 use std::sync::{Arc, Mutex};
 
+use whetstone::{Asking, StoreEntry};
 use whetstone_ai::ScriptedAi;
-use whetstone_core::CandidateCheck;
+use whetstone_core::{CandidateCheck, JevExchange};
 
 use crate::live_practice::live_key;
 use crate::preparing_questions::{
@@ -108,8 +114,9 @@ fn capture<T>(run: impl FnOnce() -> T) -> (T, Vec<String>) {
 
 /// Generates questions about `area` on the showcase change `subject`, with
 /// the fewest questions, so that one generator call writes five candidates.
-/// Returns whether the relevance gate passed the area, and the log lines.
-fn generate_live(subject: &str, area: &str) -> (&'static str, Vec<String>) {
+/// Returns whether the relevance gate passed the area and what the session
+/// store saved, with the log lines.
+fn generate_live(subject: &str, area: &str) -> ((&'static str, Vec<StoreEntry>), Vec<String>) {
     let key = live_key();
     let (change, place) = places(subject, area);
     capture(|| {
@@ -126,7 +133,7 @@ fn generate_live(subject: &str, area: &str) -> (&'static str, Vec<String>) {
             32,
         );
         session.settle();
-        if session
+        let gate = if session
             .text()
             .contains("Nothing to practice in this change")
         {
@@ -135,7 +142,8 @@ fn generate_live(subject: &str, area: &str) -> (&'static str, Vec<String>) {
             "dropped (Ask anyway)"
         } else {
             "passed"
-        }
+        };
+        (gate, session.store().log())
     })
 }
 
@@ -186,19 +194,97 @@ fn withheld_by_check(withheld: &[&String]) -> BTreeMap<String, BTreeMap<String, 
     by_check
 }
 
+/// The three cells of a [`row`] read from the session record in what the
+/// store `saved`: how many shown questions kept each number of criteria;
+/// Jev's answer to the minimum check of each criterion the show rule
+/// dropped from them, or "unanswered"; and how many minimum checks fell in
+/// each band, across every candidate the question check checked. The record
+/// starts only once a question is shown, so with none each cell says so.
+fn criteria(saved: &[StoreEntry]) -> [String; 3] {
+    let Some(record) = saved.iter().find_map(|entry| match entry {
+        StoreEntry::Started { record, .. } => Some(record),
+        _ => None,
+    }) else {
+        return [
+            "no record".to_owned(),
+            "no record".to_owned(),
+            "no record".to_owned(),
+        ];
+    };
+    let mut kept: BTreeMap<usize, usize> = BTreeMap::new();
+    let mut dropped = Vec::new();
+    for question in &record.questions {
+        *kept.entry(question.rubric().len()).or_default() += 1;
+        for (place, _) in question.dropped_criteria() {
+            dropped.push(
+                question
+                    .answers()
+                    .get(CandidateCheck::CriterionMinimum(place))
+                    .map_or_else(
+                        || "unanswered".to_owned(),
+                        |answer| answer.get().to_string(),
+                    ),
+            );
+        }
+    }
+    let policy = record
+        .questions
+        .first()
+        .expect("the record starts with the questions shown")
+        .policy();
+    let job = CandidateCheck::CriterionMinimum(0).job();
+    let mut bands: BTreeMap<String, usize> = BTreeMap::new();
+    for request in &record.requests {
+        let Asking::Check(_) = request.asking else {
+            continue;
+        };
+        for exchange in request.provenance.exchanges() {
+            if let JevExchange::YesNo { name, answer, .. } = exchange
+                && name.starts_with("criterion_")
+                && name.ends_with("_minimum")
+            {
+                let band = policy.band(job, *answer);
+                *bands.entry(format!("{band:?}")).or_default() += 1;
+            }
+        }
+    }
+    let list = |counts: Vec<String>| {
+        if counts.is_empty() {
+            "none".to_owned()
+        } else {
+            counts.join(", ")
+        }
+    };
+    [
+        list(
+            kept.iter()
+                .map(|(criteria, questions)| format!("{criteria}: {questions}"))
+                .collect(),
+        ),
+        list(dropped),
+        list(
+            bands
+                .iter()
+                .map(|(band, count)| format!("{band} {count}"))
+                .collect(),
+        ),
+    ]
+}
+
 /// Measures `area` on the showcase change `subject`, as one [`row`].
 fn measure(subject: &str, area: &str) -> String {
-    let (gate, lines) = generate_live(subject, area);
-    row(subject, area, gate, &lines)
+    let ((gate, saved), lines) = generate_live(subject, area);
+    row(subject, area, gate, &lines, &saved)
 }
 
 /// One Markdown row from the log `lines` of Generate questions about `area`
-/// on the change `subject`: the change, the area, the `gate`, the
-/// candidates written, the plain-check drops, the candidates withheld, each
-/// check's withheld count by band, the questions shown, the criteria dropped
-/// from the questions that passed, the generator's input and output tokens,
-/// and the cost of every request in USD.
-fn row(subject: &str, area: &str, gate: &str, lines: &[String]) -> String {
+/// on the change `subject`, and what the session store `saved`: the change,
+/// the area, the `gate`, the candidates written, the plain-check drops, the
+/// candidates withheld, each check's withheld count by band, the questions
+/// shown, the criteria dropped from the questions that passed, the
+/// [`criteria`] cells, the generator's input and output tokens, and the
+/// cost of every request in USD.
+fn row(subject: &str, area: &str, gate: &str, lines: &[String], saved: &[StoreEntry]) -> String {
     let lines_with = |message: &str| -> Vec<&String> {
         lines.iter().filter(|line| line.contains(message)).collect()
     };
@@ -239,8 +325,9 @@ fn row(subject: &str, area: &str, gate: &str, lines: &[String]) -> String {
         .iter()
         .filter_map(|line| number::<f64>(line, "cost_usd"))
         .fold(0.0, |total, cost| total + cost);
+    let [kept, dropped_at, minimum] = criteria(saved);
     format!(
-        "| {subject} | {area} | {gate} | {written} | {dropped} | {} | {} | {shown} | {criteria_dropped} | {} / {} | {cost:.4} |",
+        "| {subject} | {area} | {gate} | {written} | {dropped} | {} | {} | {shown} | {criteria_dropped} | {kept} | {dropped_at} | {minimum} | {} / {} | {cost:.4} |",
         withheld.len(),
         checks.join("; "),
         tokens("input_tokens"),
@@ -314,14 +401,22 @@ fn a_row_reads_what_the_app_logs_about_each_candidate() {
     );
     ai.on_check_passing_except(&stems[2], [answer(CandidateCheck::NoGiveaway, 0.4)]);
 
-    let ((), lines) = capture(|| {
-        generate(&ai, &[DOMAIN], PAYMENT_LIFECYCLE, 120, 32).settle();
+    let (saved, lines) = capture(|| {
+        let mut session = generate(&ai, &[DOMAIN], PAYMENT_LIFECYCLE, 120, 32);
+        session.settle();
+        session.store().log()
     });
 
     // A scripted AI reports no tokens or cost.
     assert_eq!(
-        row("Model the payment lifecycle", "domain", "passed", &lines),
+        row(
+            "Model the payment lifecycle",
+            "domain",
+            "passed",
+            &lines,
+            &saved
+        ),
         "| Model the payment lifecycle | domain | passed | 4 | 1 | 2 | NeedsChange 1 (ClearNo 1); \
-         NoGiveaway 2 (Unclear 2) | 1 | 1 | 0 / 0 | 0.0000 |"
+         NoGiveaway 2 (Unclear 2) | 1 | 1 | 1: 1 | 0.1 | ClearNo 1, ClearYes 3 | 0 / 0 | 0.0000 |"
     );
 }
