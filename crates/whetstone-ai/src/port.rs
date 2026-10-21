@@ -8,9 +8,10 @@
 //! them, or to the [`RequestFailure`] that stopped it. Nothing is retried
 //! automatically: Retry is always the learner's.
 //!
-//! A reasoning evaluation is asked only with a session store's
-//! acknowledgement that the response is saved ([`Saved`]), so it is never
-//! paid for while the response could still be lost (rule 39).
+//! A reasoning evaluation, and the explanation of what the reasoning
+//! missed, are asked only with a session store's acknowledgement that the
+//! response is saved ([`Saved`]), so neither is ever paid for while the
+//! response could still be lost (rule 39).
 
 use std::fmt;
 use std::future::Future;
@@ -18,10 +19,11 @@ use std::num::NonZeroUsize;
 use std::pin::Pin;
 
 use whetstone_core::{
-    Area, AreaId, Candidate, Evidence, Probability, Provenance, QuestionCheckAnswers,
-    QuestionCount, WrittenCandidate,
+    Area, AreaId, Candidate, CriterionOutcome, Evidence, Probability, Provenance, Question,
+    QuestionCheckAnswers, QuestionCount, WrittenCandidate,
 };
 
+use crate::explanation::{ParagraphCheck, WrittenParagraph};
 use crate::reasoning::QuestionWithoutKey;
 
 /// What Practice asks of Jev and the generator. The real implementation
@@ -67,6 +69,36 @@ pub trait Ai: fmt::Debug + Send + Sync {
         evidence: &Evidence,
         question: QuestionWithoutKey<'_>,
     ) -> Pending<Vec<Probability>>;
+
+    /// The generator explains what the reasoning of the response the
+    /// session store acknowledged saving with `saved`, written for
+    /// `question`, missed, against `evidence`: one paragraph, with
+    /// citations, for each of `criteria`, each a criterion's place in the
+    /// rubric, counting from 0, and its outcome, not met or needs review. For
+    /// one that needs review, the paragraph describes what meeting it would
+    /// look like, without claiming the learner missed it. The paragraphs
+    /// come in rubric order, as written, their citations unchecked.
+    ///
+    /// The outcomes are Jev's, and stand: the explanation never changes
+    /// them. With no criteria, nothing is sent, and the request is invalid.
+    fn explain(
+        &self,
+        saved: &dyn Saved,
+        evidence: &Evidence,
+        question: &Question,
+        criteria: &[(usize, CriterionOutcome)],
+    ) -> Pending<Vec<WrittenParagraph>>;
+
+    /// Jev's explanation check of `paragraphs`, explaining criteria of
+    /// `question`, against `evidence`: for each paragraph, in order, whether
+    /// it is supported by the evidence and whether it agrees with its
+    /// criterion's outcome, as returned.
+    fn check_explanation(
+        &self,
+        evidence: &Evidence,
+        question: &Question,
+        paragraphs: &[WrittenParagraph],
+    ) -> Pending<Vec<ParagraphCheck>>;
 }
 
 /// A session store's acknowledgement that it saved a response, which gives

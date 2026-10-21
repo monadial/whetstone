@@ -11,14 +11,18 @@ use std::num::NonZeroUsize;
 
 use tokio_util::sync::CancellationToken;
 use whetstone_core::{
-    Area, AreaId, Candidate, Cost, Evidence, ModelId, Probability, Provenance,
-    QuestionCheckAnswers, Role, WrittenCandidate,
+    Area, AreaId, Candidate, Cost, CriterionOutcome, Evidence, ModelId, Probability, Provenance,
+    Question, QuestionCheckAnswers, Role, WrittenCandidate,
 };
 
 use crate::candidates::{CandidatesOutput, candidates_request};
 use crate::connection::OpenRouter;
+use crate::explanation::{
+    ExplanationOutput, ParagraphCheck, WrittenParagraph, explanation_check_answers,
+    explanation_check_request, explanation_paragraphs, explanation_request,
+};
 use crate::gate::{gate_answers, gate_request};
-use crate::port::{Ai, CandidateCount, Pending, Reply, Saved};
+use crate::port::{Ai, CandidateCount, Pending, Reply, RequestFailure, Saved};
 use crate::question_check::{question_check_answers, question_check_request};
 use crate::reasoning::{QuestionWithoutKey, reasoning_answers, reasoning_request};
 use crate::usage::Usage;
@@ -163,6 +167,75 @@ impl Ai for OpenRouterAi {
             })
         })
     }
+
+    fn explain(
+        &self,
+        saved: &dyn Saved,
+        evidence: &Evidence,
+        question: &Question,
+        criteria: &[(usize, CriterionOutcome)],
+    ) -> Pending<Vec<WrittenParagraph>> {
+        // The request explains each criterion that isn't met, so the
+        // criteria not asked about count as met here; they aren't sent.
+        let mut outcomes = vec![CriterionOutcome::Met; question.rubric().len()];
+        for &(criterion, outcome) in criteria {
+            if let Some(slot) = outcomes.get_mut(criterion) {
+                *slot = outcome;
+            }
+        }
+        let request = explanation_request(
+            &self.models.generator,
+            evidence,
+            question,
+            saved.reasoning(),
+            &outcomes,
+        );
+        let connection = self.connection.clone();
+        let model = self.models.generator.clone();
+        Box::pin(async move {
+            let request = request.ok_or(RequestFailure::InvalidRequest)?;
+            let reply = connection
+                .generate::<ExplanationOutput>(&request, &never_cancelled())
+                .await?;
+            let content = explanation_paragraphs(&outcomes, reply.output)?;
+            let provenance = provenance(
+                Provenance::new(Role::Generator, model),
+                reply.model,
+                reply.usage,
+            );
+            log_reply(&provenance);
+            Ok(Reply {
+                content,
+                provenance,
+            })
+        })
+    }
+
+    fn check_explanation(
+        &self,
+        evidence: &Evidence,
+        question: &Question,
+        paragraphs: &[WrittenParagraph],
+    ) -> Pending<Vec<ParagraphCheck>> {
+        let request = explanation_check_request(&self.models.jev, evidence, question, paragraphs);
+        let paragraphs = paragraphs.to_vec();
+        let connection = self.connection.clone();
+        let model = self.models.jev.clone();
+        Box::pin(async move {
+            let reply = connection.evaluate(&request, &never_cancelled()).await?;
+            let content = explanation_check_answers(&paragraphs, &reply)?;
+            let provenance = provenance(
+                Provenance::new(Role::Jev, model),
+                Some(reply.model),
+                reply.usage,
+            );
+            log_reply(&provenance);
+            Ok(Reply {
+                content,
+                provenance,
+            })
+        })
+    }
 }
 
 /// `requested` with what the reply reports: the model that answered, and its
@@ -204,21 +277,24 @@ mod tests {
     use std::time::Duration;
 
     use serde_json::Value;
-    use whetstone_core::{CandidateCheck, Depth, OptionLetter, Probability, QuestionCount, Usage};
+    use whetstone_core::{
+        CandidateCheck, CriterionOutcome, Depth, OptionLetter, Probability, QuestionCount, Usage,
+    };
 
     use super::*;
-    use crate::port::RequestFailure;
     use crate::replay::{connection, received, server};
     use crate::samples::{
         Acknowledged, REASONING, area, area_file, candidate, evidence, generator_model, jev_model,
-        observability, question,
+        observability, paragraphs, question, with_output,
     };
-    use crate::{AiError, QuestionWithoutKey, Timeouts};
+    use crate::{AiError, ParagraphCheck, QuestionWithoutKey, Timeouts};
 
     const CANDIDATES: &str = include_str!("../fixtures/candidates.json");
     const QUESTION_CHECK: &str = include_str!("../fixtures/question-check.json");
     const GATE: &str = include_str!("../fixtures/gate.json");
     const REASONING_REPLY: &str = include_str!("../fixtures/reasoning.json");
+    const EXPLANATION: &str = include_str!("../fixtures/explanation.json");
+    const EXPLANATION_CHECK: &str = include_str!("../fixtures/explanation-check.json");
 
     fn models() -> Models {
         Models {
@@ -509,6 +585,199 @@ mod tests {
             )
             .await
             .err(),
+            Some(RequestFailure::InvalidReply)
+        );
+    }
+
+    /// The input the generator was sent, from the request `body`.
+    fn generator_input(body: &Value) -> Value {
+        serde_json::from_str(
+            body["messages"][1]["content"]
+                .as_str()
+                .expect("the input is text"),
+        )
+        .expect("the input is JSON")
+    }
+
+    #[tokio::test]
+    async fn the_generator_explains_each_criterion_asked_with_zero_retention_and_what_it_cost() {
+        let (server, ai) = ai("/chat/completions", 200, EXPLANATION).await;
+
+        let reply = ai
+            .explain(
+                &Acknowledged(REASONING),
+                &evidence(),
+                &question(),
+                &[
+                    (0, CriterionOutcome::NotMet),
+                    (1, CriterionOutcome::NeedsReview),
+                ],
+            )
+            .await
+            .expect("the recorded reply decodes");
+
+        assert_eq!(reply.content, paragraphs());
+        assert_eq!(
+            reply.provenance,
+            Provenance::new(Role::Generator, generator_model())
+                .with_reported_model(ModelId::new("anthropic/claude-sonnet-5.5".to_owned()))
+                .with_usage(Usage {
+                    input_tokens: Some(3100),
+                    output_tokens: Some(430),
+                })
+                .with_cost(Cost::new(0.0105).expect("0.0105 is a cost"))
+        );
+        let (_, body) = received(&server).await;
+        assert_eq!(body["model"], generator_model().as_str());
+        assert_eq!(
+            body["provider"],
+            serde_json::json!({ "zdr": true, "data_collection": "deny" })
+        );
+        assert_eq!(body.get("tools"), None::<&Value>);
+        let input = generator_input(&body);
+        assert_eq!(input["reasoning"], REASONING, "the reasoning as saved");
+        assert_eq!(input["criteria"]["criterion_1"]["outcome"], "not met");
+        assert_eq!(input["criteria"]["criterion_2"]["outcome"], "needs review");
+    }
+
+    #[tokio::test]
+    async fn the_generator_is_asked_about_the_criteria_given_alone() {
+        let output = serde_json::json!({
+            "paragraphs": [{
+                "criterion": "criterion_2",
+                "text": "Meeting it would name what the first charge may have done.",
+                "citations": [{ "path": "src/payments/retry.rs", "first_line": 2, "last_line": 6 }],
+            }],
+        });
+        let (server, ai) = ai("/chat/completions", 200, &with_output(EXPLANATION, &output)).await;
+
+        let reply = ai
+            .explain(
+                &Acknowledged(REASONING),
+                &evidence(),
+                &question(),
+                &[(1, CriterionOutcome::NeedsReview)],
+            )
+            .await
+            .expect("the reply explains the criterion asked about");
+
+        assert_eq!(
+            reply
+                .content
+                .iter()
+                .map(|paragraph| (paragraph.criterion, paragraph.outcome))
+                .collect::<Vec<_>>(),
+            [(1, CriterionOutcome::NeedsReview)]
+        );
+        let (_, body) = received(&server).await;
+        let input = generator_input(&body);
+        let criteria: Vec<&str> = input["criteria"]
+            .as_object()
+            .expect("the criteria are an object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(criteria, ["criterion_2"]);
+    }
+
+    #[tokio::test]
+    async fn an_explanation_that_leaves_out_a_criterion_asked_is_an_invalid_reply() {
+        let (_server, ai) = ai("/chat/completions", 200, EXPLANATION).await;
+
+        assert_eq!(
+            ai.explain(
+                &Acknowledged(REASONING),
+                &evidence(),
+                &question(),
+                &[(0, CriterionOutcome::NotMet)],
+            )
+            .await
+            .err(),
+            Some(RequestFailure::InvalidReply),
+            "the recording also explains criterion 2, which wasn't asked about"
+        );
+    }
+
+    #[tokio::test]
+    async fn nothing_to_explain_is_an_invalid_request_that_sends_nothing() {
+        let (server, ai) = ai("/chat/completions", 200, EXPLANATION).await;
+
+        assert_eq!(
+            ai.explain(&Acknowledged(REASONING), &evidence(), &question(), &[])
+                .await
+                .err(),
+            Some(RequestFailure::InvalidRequest)
+        );
+        assert_eq!(
+            server
+                .received_requests()
+                .await
+                .map(|requests| requests.len()),
+            Some(0)
+        );
+    }
+
+    #[tokio::test]
+    async fn jev_checks_each_paragraph_with_the_model_it_was_asked_and_what_it_cost() {
+        let (server, ai) = ai("/systemone", 200, EXPLANATION_CHECK).await;
+
+        let reply = ai
+            .check_explanation(&evidence(), &question(), &paragraphs())
+            .await
+            .expect("the recorded reply decodes");
+
+        let answer = |value| Probability::new(value).expect("a probability");
+        assert_eq!(
+            reply.content,
+            [
+                ParagraphCheck {
+                    supported: answer(0.71),
+                    agrees: answer(0.85),
+                },
+                ParagraphCheck {
+                    supported: answer(0.95),
+                    agrees: answer(0.89),
+                },
+            ]
+        );
+        assert_eq!(
+            reply.provenance,
+            Provenance::new(Role::Jev, jev_model())
+                .with_reported_model(ModelId::new("typesafe/jev-1.14-20261014".to_owned()))
+                .with_usage(Usage {
+                    input_tokens: Some(2062),
+                    output_tokens: Some(90),
+                })
+                .with_cost(Cost::new(0.000_086_604).expect("0.000086604 is a cost"))
+        );
+        let (_, body) = received(&server).await;
+        assert_eq!(body["model"], jev_model().as_str());
+        assert_eq!(body.get("provider"), None::<&Value>);
+        let questions: Vec<&str> = body["questions"]
+            .as_object()
+            .expect("the questions are an object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(
+            questions,
+            [
+                "criterion_1_agrees",
+                "criterion_1_supported",
+                "criterion_2_agrees",
+                "criterion_2_supported",
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn an_explanation_check_reply_that_answers_other_questions_is_an_invalid_reply() {
+        let (_server, ai) = ai("/systemone", 200, REASONING_REPLY).await;
+
+        assert_eq!(
+            ai.check_explanation(&evidence(), &question(), &paragraphs())
+                .await
+                .err(),
             Some(RequestFailure::InvalidReply)
         );
     }

@@ -244,7 +244,9 @@ fn plain_checks_drop_malformed_candidates_before_jev_sees_them() {
             Asked::CheckQuestion { candidate, .. } => Some(candidate.stem().to_owned()),
             Asked::CheckAreas { .. }
             | Asked::WriteCandidates { .. }
-            | Asked::AssessReasoning { .. } => None,
+            | Asked::AssessReasoning { .. }
+            | Asked::Explain { .. }
+            | Asked::CheckExplanation { .. } => None,
         })
         .collect();
     assert_eq!(checked, ["Well formed?"]);
