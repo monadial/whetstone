@@ -26,9 +26,10 @@ use ratatui::text::Line;
 use ratatui::widgets::{List, Paragraph};
 use whetstone_ai::{Ai, CandidateCount, Pending, Reply, RequestFailure};
 use whetstone_core::{
-    Area, AreaId, AssessmentPolicy, Candidate, CandidateId, Change, ConnectedCodeLimit,
-    Connections, ConnectionsState, Evidence, ExcludePatterns, QuestionCheckAnswers, QuestionCount,
-    RepositoryConfig, ReviewChoices, WrittenCandidate, pick, plain_checks, show_rule,
+    Area, AreaId, AssessmentPolicy, Band, Candidate, CandidateCheck, CandidateId, Change,
+    ConnectedCodeLimit, Connections, ConnectionsState, Evidence, ExcludePatterns,
+    QuestionCheckAnswers, QuestionCount, RepositoryConfig, ReviewChoices, Withheld,
+    WrittenCandidate, pick, plain_checks, show_rule,
 };
 
 use crate::columns;
@@ -224,6 +225,28 @@ fn send<T: Send + 'static>(
     waiting.wait_for(job, asking);
 }
 
+/// Logs which checks withheld a candidate, with the band of Jev's answer to
+/// each under `policy`, or none when it went unanswered: names and bands
+/// only, never the candidate's text or Jev's probabilities (rules 43, 44).
+fn log_withheld(withheld: &Withheld, answers: &QuestionCheckAnswers, policy: &AssessmentPolicy) {
+    let failed: Vec<(CandidateCheck, Option<Band>)> = withheld
+        .failed()
+        .iter()
+        .map(|&check| {
+            let band = answers
+                .get(check)
+                .map(|answer| policy.band(check.job(), answer));
+            (check, band)
+        })
+        .collect();
+    tracing::info!(
+        area = %withheld.id().area(),
+        written = withheld.id().written(),
+        failed = ?failed,
+        "withheld a candidate"
+    );
+}
+
 impl Practice {
     /// Practice on the showcase change at `index`, which is `change`, whose
     /// tree is `tree`, about the chosen `areas`, if Practice can ask Jev and
@@ -391,17 +414,14 @@ impl Practice {
         let (passed, withheld): (Vec<_>, Vec<_>) = checks
             .into_iter()
             .filter_map(|(candidate, check)| Some((candidate, check.replied()?)))
-            .map(|(candidate, answers)| show_rule(candidate, answers, policy))
+            .map(|(candidate, answers)| {
+                let shown = show_rule(candidate, answers.clone(), policy);
+                if let Err(withheld) = &shown {
+                    log_withheld(withheld, &answers, policy);
+                }
+                shown
+            })
             .partition(Result::is_ok);
-        for withheld in withheld.iter().filter_map(|result| result.as_ref().err()) {
-            // Which checks failed, by name only: never the candidate's text.
-            tracing::info!(
-                area = %withheld.id().area(),
-                written = withheld.id().written(),
-                failed = ?withheld.failed(),
-                "withheld a candidate"
-            );
-        }
         let passed: Vec<_> = passed.into_iter().filter_map(Result::ok).collect();
         let hints_dropped = passed
             .iter()
