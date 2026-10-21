@@ -1,0 +1,50 @@
+---
+source: crates/whetstone/tests/it/review_withheld.rs
+expression: "fs::read_to_string(&path).expect(\"the labels file\")"
+---
+# Your votes on the checks that withheld questions in Whetstone's Practice.
+# Each is a labelled example the labelled-example tool reads, with
+# `whetstone-labels check --labels` and this file's path. Nothing here is
+# ever sent anywhere. Votes about your own repository hold private code
+# from it.
+
+[[candidate]]
+id = "learner-vote-20261021T101502-1"
+source = "learner vote"
+by = "learner"
+on = 2026-10-21
+note = "The options read alike, so nothing gives it away."
+commit = "Model the payment lifecycle"
+area = "domain"
+stem = "Domain question 1?"
+answer_key = "A"
+why_it_matters = "Why it matters, which stays hidden"
+hint = "The hint, which stays hidden"
+
+[[candidate.options]]
+letter = "A"
+text = "Option A of the question"
+rationale = "The rationale for A, which stays hidden"
+
+[[candidate.options]]
+letter = "B"
+text = "Option B of the question"
+rationale = "The rationale for B, which stays hidden"
+
+[[candidate.options]]
+letter = "C"
+text = "Option C of the question"
+rationale = "The rationale for C, which stays hidden"
+
+[[candidate.rubric]]
+statement = "The rubric's criterion, which stays hidden"
+met = "What meeting it looks like"
+not_met = "What not meeting it looks like"
+
+[[candidate.citations]]
+path = ".gitignore"
+first_line = 1
+last_line = 1
+
+[candidate.labels]
+no_giveaway = "yes"

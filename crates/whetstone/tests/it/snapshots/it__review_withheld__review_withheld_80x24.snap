@@ -1,0 +1,44 @@
+---
+source: crates/whetstone/tests/it/review_withheld.rs
+expression: session.frame()
+---
+Buffer {
+    area: Rect { x: 0, y: 0, width: 80, height: 24 },
+    content: [
+        "                                                                                ",
+        "  Withheld: not shown in Practice                                               ",
+        "  Withheld question 1 of 2 · Domain · Model the payment lifecycle               ",
+        "                                                                                ",
+        "  Domain question 1?                                                            ",
+        "                                                                                ",
+        "  A  Option A of the question                                                   ",
+        "  B  Option B of the question                                                   ",
+        "  C  Option C of the question                                                   ",
+        "                                                                                ",
+        "  Checks that withheld it                                                       ",
+        "  Jev's probability, not a measure of correctness                               ",
+        "  1. The stem and options don't give the answer away                            ",
+        "     Jev: 0.46 · unclear · it needed clear yes                                  ",
+        "     Your vote: Not voted yet                                                   ",
+        "  2. Option B answers the question correctly                                    ",
+        "     Jev: 0.5 · unclear · it needed clear no                                    ",
+        "                                                                                ",
+        "  > Vote on check 1    Vote on check 2                                          ",
+        "    Inspect source                                                              ",
+        "    Next withheld question                                                      ",
+        "    Back                                                                        ",
+        "  ? keys  : actions  Ctrl+d/u scroll  q back                                    ",
+        "                                                                                ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 33, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 26, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 10, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 25, y: 10, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 18, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 19, y: 18, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+    ]
+}

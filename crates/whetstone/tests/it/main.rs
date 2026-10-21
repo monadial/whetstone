@@ -56,6 +56,7 @@ mod relevance_gate;
 mod repo;
 mod repository;
 mod resize;
+mod review_withheld;
 mod send_starts_practice;
 mod session;
 mod settings;
