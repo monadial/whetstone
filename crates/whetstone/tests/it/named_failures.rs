@@ -236,7 +236,7 @@ fn an_invalid_reply_is_a_failure_with_retry_never_needs_review() {
     session.settle();
 
     assert_eq!(
-        session.row_with("Question 1"),
+        session.question().row_with("Question 1"),
         "Question 1 of 1 · Domain",
         "Retry checks the question again, and it shows once it passes"
     );
@@ -291,7 +291,7 @@ fn after_openrouter_refuses_the_generator_model_settings_marks_it_for_the_rest_o
         session.text()
     );
     assert!(
-        !session.row_with("Jev model").contains(REFUSED),
+        !session.question().row_with("Jev model").contains(REFUSED),
         "only the model refused is marked"
     );
 }

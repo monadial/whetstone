@@ -56,13 +56,19 @@ fn a_question_shows_its_place_its_area_its_stem_and_its_options_and_nothing_of_i
     let session = prepared(&ai, 120, 32);
 
     let text = session.text();
-    assert_eq!(session.row_with("Question 1"), "Question 1 of 4 · Domain");
-    assert_eq!(session.row_with("Domain question 1?"), "Domain question 1?");
+    assert_eq!(
+        session.question().row_with("Question 1"),
+        "Question 1 of 4 · Domain"
+    );
+    assert_eq!(
+        session.question().row_with("Domain question 1?"),
+        "Domain question 1?"
+    );
     assert_eq!(
         [
-            session.row_with("Option A"),
-            session.row_with("Option B"),
-            session.row_with("Option C")
+            session.question().row_with("Option A"),
+            session.question().row_with("Option B"),
+            session.question().row_with("Option C")
         ],
         [
             "> ( ) A  Option A of the question",
@@ -74,7 +80,8 @@ fn a_question_shows_its_place_its_area_its_stem_and_its_options_and_nothing_of_i
         "rationale",
         "Why it matters",
         "rubric",
-        "hint",
+        // The hint's text, where the footer names its key, `h hint`.
+        "The hint",
         "answer key",
     ] {
         assert!(!text.contains(hidden), "{hidden} shows:\n{text}");
@@ -104,19 +111,25 @@ fn when_fewer_pass_than_were_asked_for_the_shortfall_heads_the_questions() {
     let mut session = prepared(&ai, 80, 24);
 
     assert_eq!(
-        session.rows()[1].trim(),
+        session.question().row_with("passed checks"),
         "3 passed checks, 4 asked for · see why in actions"
     );
-    assert_eq!(session.row_with("Question 1"), "Question 1 of 3 · Domain");
+    assert_eq!(
+        session.question().row_with("Question 1"),
+        "Question 1 of 3 · Domain"
+    );
     for _ in 0..2 {
         submit(&mut session, "a", "Because.");
         session.press("<Enter>");
     }
     assert_eq!(
-        session.rows()[1].trim(),
+        session.question().row_with("passed checks"),
         "3 passed checks, 4 asked for · see why in actions"
     );
-    assert_eq!(session.row_with("Question 3"), "Question 3 of 3 · Domain");
+    assert_eq!(
+        session.question().row_with("Question 3"),
+        "Question 3 of 3 · Domain"
+    );
 }
 
 #[test]
@@ -257,7 +270,7 @@ fn plain_checks_drop_malformed_candidates_before_jev_sees_them() {
         .collect();
     assert_eq!(checked, ["Well formed?"]);
     assert_eq!(
-        session.rows()[1].trim(),
+        session.question().rows()[1].trim(),
         "1 passed checks, 4 asked for · see why in actions"
     );
     assert!(session.text().contains("Well formed?"));
@@ -323,7 +336,10 @@ fn retry_when_none_pass_writes_and_checks_new_candidates() {
         "the generator writes again: {again:#?}"
     );
     assert_eq!(again.len(), 3, "one write, then a check for each of two");
-    assert_eq!(session.row_with("Question 1"), "Question 1 of 2 · Domain");
+    assert_eq!(
+        session.question().row_with("Question 1"),
+        "Question 1 of 2 · Domain"
+    );
     assert!(session.text().contains("Second try question 1?"));
 }
 

@@ -1,0 +1,38 @@
+---
+source: crates/whetstone/tests/it/question_context.rs
+expression: session.frame()
+---
+Buffer {
+    area: Rect { x: 0, y: 0, width: 80, height: 24 },
+    content: [
+        "                                                                                ",
+        "  > Preserve payment retry identity                                             ",
+        "  src/provider.rs, line 29                                                      ",
+        "  26   impl ChargeRequest {                                                     ",
+        "     -     pub fn new(payment: &Payment, operation_key: OperationKey) -> Self   ",
+        "  {                                                                             ",
+        "  27 +     /// Builds the charge for a payment. It always carries the           ",
+        "  operation key                                                                 ",
+        "  28 +     /// the payment was created with, so every retry is the same         ",
+        "  charge.                                                                       ",
+        "  29 +     pub fn new(payment: &Payment) -> Self {                              ",
+        "  30           Self {                                                           ",
+        "     -             operation_key,                                               ",
+        "  31 +             operation_key: payment.operation_key().clone(),              ",
+        "  32               reference: payment.id().to_string(),                         ",
+        "                                                                                ",
+        "  src/http.rs, lines 60–61 · calls `pay`                                        ",
+        "  57     headers: HeaderMap,                                                    ",
+        "  58     Json(body): Json<CreatePayment>,                                       ",
+        "  59 ) -> Result<Json<PaymentView>, ServiceError> {                             ",
+        "  60     let tenant = TenantId::parse(&tenant)?;                                ",
+        "  61     let key = headers                                                      ",
+        "  ? keys  : actions  PgDn/Up page  z back                                       ",
+        "                                                                                ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 35, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+    ]
+}

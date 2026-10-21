@@ -116,7 +116,10 @@ fn a_question_needing_the_change_at_0_6_is_withheld_under_policy_0_and_shown_und
     let mut defaults = prepared(None, needs_change);
     let mut lowered = prepared(Some(LOWER_QUESTION_CHECK), needs_change);
 
-    assert_eq!(lowered.row_with("Question 1"), "Question 1 of 4 · Domain");
+    assert_eq!(
+        lowered.question().row_with("Question 1"),
+        "Question 1 of 4 · Domain"
+    );
     assert!(!is_shown(&mut defaults), "unclear under 0.80");
     assert!(is_shown(&mut lowered), "clear yes from 0.55");
 }
@@ -380,7 +383,7 @@ fn inspect_shows_the_cut_offs_that_banded_each_answer_and_whose_they_are() {
 
     activate(&mut session, "Inspect Jev's answers");
 
-    let check = session.section("Question check");
+    let check = session.question().section("Question check");
     for line in [
         "Cut-offs for the question check · upper 0.55, lower 0.2 · from your config",
         "Cut-offs for the option rating · upper 0.8, lower 0.2 · policy 0's",
@@ -389,7 +392,7 @@ fn inspect_shows_the_cut_offs_that_banded_each_answer_and_whose_they_are() {
     ] {
         assert!(check.contains(&line.to_owned()), "{line}: {check:#?}");
     }
-    let reasoning = session.section("Reasoning");
+    let reasoning = session.question().section("Reasoning");
     assert!(
         reasoning.contains(
             &"Cut-offs for the reasoning criterion · upper 0.8, lower 0.2 · policy 0's".to_owned()
@@ -435,7 +438,7 @@ fn with_every_job_at_its_default_inspect_names_policy_0_s_cut_offs_and_nothing_e
         }
         activate(&mut session, "Inspect Jev's answers");
         assert!(
-            session.section("Question check").contains(
+            session.question().section("Question check").contains(
                 &"Cut-offs for the question check · upper 0.8, lower 0.2 · policy 0's".to_owned()
             ),
             "{config:?}: {}",

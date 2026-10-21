@@ -188,7 +188,9 @@ fn footer(session: &Session) -> String {
 
 /// The row of option `letter`, trimmed.
 fn option(session: &Session, letter: &str) -> String {
-    session.row_with(&format!("{letter}  Option {letter} of the question"))
+    session
+        .question()
+        .row_with(&format!("{letter}  Option {letter} of the question"))
 }
 
 #[test]
@@ -270,7 +272,9 @@ fn enter_on_the_options_starts_editing_too() {
 #[test]
 fn a_paste_goes_into_the_reasoning_as_one_insertion_keeping_its_line_breaks() {
     let ai = writing_about_the_domain(6, PAYMENT_LIFECYCLE);
-    let mut session = answering(&ai, 80, 24);
+    // Tall enough for the editor to show all four lines pasted, below the
+    // code the question cites.
+    let mut session = answering(&ai, 80, 32);
 
     // Without the editor focused, a paste does nothing (rule 57).
     paste(&mut session, "b\nq");
@@ -295,8 +299,8 @@ fn a_paste_past_the_limit_is_cut_at_4000_characters_with_a_notice() {
     paste(&mut session, &"e\u{301}".repeat(4_000));
 
     assert!(
-        session
-            .text()
+        reasoning(&session)
+            .join(" ")
             .contains("Paste cut at the 4,000-character limit: 2 characters left out."),
         "{}",
         session.text()
@@ -318,13 +322,13 @@ fn submit_stays_disabled_saying_whats_missing_until_an_option_is_chosen() {
     let ai = writing_about_the_domain(6, PAYMENT_LIFECYCLE);
     let mut session = answering(&ai, 80, 24);
     assert_eq!(
-        session.row_with("Submit response"),
+        session.question().row_with("Submit response"),
         "Submit response (choose an option)"
     );
 
     session.press("b");
     assert_eq!(
-        session.row_with("Submit response"),
+        session.question().row_with("Submit response"),
         "Submit response",
         "reasoning is optional"
     );
@@ -340,7 +344,7 @@ fn reasoning_without_a_choice_says_an_option_is_missing() {
     session.press("<Tab>");
 
     assert_eq!(
-        session.row_with("Submit response"),
+        session.question().row_with("Submit response"),
         "> Submit response (choose an option)"
     );
     session.press("<Enter>");
@@ -355,7 +359,10 @@ fn tab_from_the_editor_reaches_submit_and_enter_submits_with_no_dialog() {
     type_text(&mut session, "The key dedupes.");
 
     session.press("<Tab>");
-    assert_eq!(session.row_with("Submit response"), "> Submit response");
+    assert_eq!(
+        session.question().row_with("Submit response"),
+        "> Submit response"
+    );
     session.press("<Enter>");
 
     assert!(
@@ -504,7 +511,7 @@ fn when_the_session_record_cant_start_submit_says_so() {
     session.press("<Tab>");
 
     assert_eq!(
-        session.row_with("Submit response"),
+        session.question().row_with("Submit response"),
         "> Submit response (the session record didn't start)"
     );
     session.press("<Enter>");
@@ -518,7 +525,10 @@ fn inspect_source_reads_the_evidence_as_sent_and_back_returns_to_the_draft() {
     session.press("b i");
     type_text(&mut session, "Draft");
     session.press("<Tab> <Tab>");
-    assert_eq!(session.row_with("Inspect source"), "> Inspect source");
+    assert_eq!(
+        session.question().row_with("Inspect source"),
+        "> Inspect source"
+    );
 
     session.press("<Enter>");
     let text = session.text();
@@ -526,8 +536,8 @@ fn inspect_source_reads_the_evidence_as_sent_and_back_returns_to_the_draft() {
         text.contains("Evidence: Model the payment lifecycle"),
         "{text}"
     );
-    assert!(text.contains("Message, as it is sent"), "{text}");
-    assert!(text.contains(": diff"), "{text}");
+    // It opens at the line the question cites.
+    assert!(text.contains(".gitignore: full content"), "{text}");
 
     session.press("q");
     assert_eq!(option(&session, "B"), "(x) B  Option B of the question");

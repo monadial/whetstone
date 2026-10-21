@@ -29,11 +29,13 @@ fn choosing_the_answer_key_is_supported_at_once_with_its_rationale_why_it_matter
     let session = submitted("a", 120, 32);
 
     assert_eq!(
-        session.section("Choice · Supported"),
+        session.question().section("Choice · Supported"),
         ["Jev supports A, the option you chose."]
     );
     assert_eq!(
-        session.section("You chose A: Option A of the question"),
+        session
+            .question()
+            .section("You chose A: Option A of the question"),
         ["The rationale for A, which stays hidden"]
     );
     assert!(
@@ -42,11 +44,11 @@ fn choosing_the_answer_key_is_supported_at_once_with_its_rationale_why_it_matter
         session.text()
     );
     assert_eq!(
-        session.section("Why it matters"),
+        session.question().section("Why it matters"),
         ["Why it matters, which stays hidden"]
     );
     assert_eq!(
-        session.section("Cited"),
+        session.question().section("Cited"),
         [format!("{}, line 1", touched_path(PAYMENT_LIFECYCLE))]
     );
 }
@@ -56,23 +58,27 @@ fn choosing_another_option_is_not_supported_with_its_rationale_and_the_answer_ke
     let session = submitted("c", 120, 32);
 
     assert_eq!(
-        session.section("Choice · Not supported"),
-        ["Jev doesn't support C, the option you chose. It supports A, the answer key."]
+        session.question().section_text("Choice · Not supported"),
+        "Jev doesn't support C, the option you chose. It supports A, the answer key."
     );
     assert_eq!(
-        session.section("You chose C: Option C of the question"),
+        session
+            .question()
+            .section("You chose C: Option C of the question"),
         ["The rationale for C, which stays hidden"]
     );
     assert_eq!(
-        session.section("The answer key is A: Option A of the question"),
+        session
+            .question()
+            .section("The answer key is A: Option A of the question"),
         ["The rationale for A, which stays hidden"]
     );
     assert_eq!(
-        session.section("Why it matters"),
+        session.question().section("Why it matters"),
         ["Why it matters, which stays hidden"]
     );
     assert_eq!(
-        session.section("Cited"),
+        session.question().section("Cited"),
         [format!("{}, line 1", touched_path(PAYMENT_LIFECYCLE))]
     );
 }
@@ -95,8 +101,8 @@ fn the_reasoning_section_shows_it_as_submitted() {
     let session = submitted("a", 120, 32);
 
     assert_eq!(
-        session.section("Your reasoning"),
-        ["Retries reuse the key, so the provider dedupes them."]
+        session.question().section_text("Your reasoning"),
+        "Retries reuse the key, so the provider dedupes them."
     );
     assert!(
         !session.text().contains("Saved"),
@@ -115,7 +121,7 @@ fn saved_shows_only_once_a_durable_store_has_saved_the_response() {
     // Saved is the feedback's last line.
     session.press("G");
 
-    assert_eq!(session.row_with("Saved"), "Saved");
+    assert_eq!(session.question().row_with("Saved"), "Saved");
 }
 
 #[test]
@@ -137,19 +143,25 @@ fn a_submitted_response_is_final() {
 #[test]
 fn next_question_shows_the_next_one_with_a_fresh_draft() {
     let mut session = submitted("c", 80, 24);
-    assert_eq!(session.row_with("Next question"), "> Next question");
+    assert_eq!(
+        session.question().row_with("Next question"),
+        "> Next question"
+    );
 
     session.press("<Enter>");
 
-    assert_eq!(session.row_with("Question 2"), "Question 2 of 4 · Domain");
+    assert_eq!(
+        session.question().row_with("Question 2"),
+        "Question 2 of 4 · Domain"
+    );
     assert!(session.text().contains("Domain question 2?"));
     assert_eq!(
-        session.row_with("Option A"),
+        session.question().row_with("Option A"),
         "> ( ) A  Option A of the question"
     );
     assert_eq!(reasoning(&session)[..2], EMPTY_EDITOR);
     assert_eq!(
-        session.row_with("Submit response"),
+        session.question().row_with("Submit response"),
         "Submit response (choose an option)"
     );
 }
@@ -165,12 +177,15 @@ fn after_the_last_question_next_question_is_disabled_and_finish_has_focus() {
     submit(&mut session, "a", "Because.");
 
     assert_eq!(
-        session.row_with("Next question"),
+        session.question().row_with("Next question"),
         "Next question (this is the last)"
     );
-    assert_eq!(session.row_with("Finish"), "> Finish");
+    assert_eq!(session.question().row_with("Finish"), "> Finish");
     session.press("k k k k <Enter>");
-    assert_eq!(session.row_with("Question 3"), "Question 3 of 3 · Domain");
+    assert_eq!(
+        session.question().row_with("Question 3"),
+        "Question 3 of 3 · Domain"
+    );
 }
 
 #[test]
@@ -211,7 +226,7 @@ fn inspect_source_from_feedback_reads_the_evidence_and_back_returns_to_it() {
     );
 
     session.press("q");
-    assert_eq!(session.row_with("Choice"), "Choice · Supported");
+    assert_eq!(session.question().row_with("Choice"), "Choice · Supported");
 }
 
 #[test]
@@ -221,12 +236,20 @@ fn feedback_too_long_for_the_screen_scrolls_above_its_controls() {
     let scrolled = "Reasoning · Awaiting evaluation";
     assert!(!session.text().contains(scrolled), "{}", session.text());
 
-    session.press("<C-d> <C-d>");
+    // Below the code the question cites, half a page is a few rows.
+    session.press("<C-d> <C-d> <C-d> <C-d>");
     assert!(session.text().contains(scrolled), "{}", session.text());
-    assert_eq!(session.row_with("Next question"), "> Next question");
+    assert_eq!(
+        session.question().row_with("Next question"),
+        "> Next question"
+    );
 
     session.press("g g");
-    assert_eq!(session.rows()[3].trim(), "Domain question 1?");
+    assert!(
+        session.text().contains("Domain question 1?"),
+        "{}",
+        session.text()
+    );
     session.press("G");
     assert!(session.text().contains(assessed), "{}", session.text());
 }

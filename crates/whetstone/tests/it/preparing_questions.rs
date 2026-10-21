@@ -283,7 +283,7 @@ fn one_generator_call_per_chosen_area_goes_out_at_once_then_one_check_per_candid
     session.settle_once();
     let mut areas = Vec::new();
     for _ in 0..4 {
-        areas.push(session.row_with("Question "));
+        areas.push(session.question().row_with("Question "));
         submit(&mut session, "a", "Because.");
         session.press("<Enter>");
     }
@@ -604,7 +604,10 @@ fn generate_questions_again_after_cancel_prepares_afresh() {
     session.press("<Enter>");
     session.settle();
 
-    assert_eq!(session.row_with("Question 1"), "Question 1 of 4 · Domain");
+    assert_eq!(
+        session.question().row_with("Question 1"),
+        "Question 1 of 4 · Domain"
+    );
     assert_eq!(
         asked_for(&ai)
             .iter()
@@ -702,7 +705,7 @@ fn retry_after_a_failed_write_asks_again_only_for_the_area_that_failed() {
     submit(&mut session, "a", "Because.");
     session.press("<Enter>");
     assert_eq!(
-        session.row_with("Question 2"),
+        session.question().row_with("Question 2"),
         "Question 2 of 4 · Infrastructure"
     );
 }
@@ -747,7 +750,10 @@ fn retry_after_a_failed_check_asks_again_only_for_the_check_that_failed() {
     session.settle();
 
     assert_eq!(asked_for(&ai)[asked..], ["check Domain question 3?"]);
-    assert_eq!(session.row_with("Question 1"), "Question 1 of 4 · Domain");
+    assert_eq!(
+        session.question().row_with("Question 1"),
+        "Question 1 of 4 · Domain"
+    );
 }
 
 #[test]
@@ -764,7 +770,7 @@ fn with_an_ai_generate_questions_needs_a_change_and_an_area() {
     );
     session.press("<Enter>");
     assert_eq!(
-        session.row_with("Generate questions"),
+        session.question().row_with("Generate questions"),
         "Generate questions (choose a change)"
     );
     session.press("<S-Tab> <Enter>");
@@ -775,12 +781,12 @@ fn with_an_ai_generate_questions_needs_a_change_and_an_area() {
 
     session.press("<Tab> <Space> <Tab> <Space> <Tab> <Space> <Tab> <Space> <Tab> <Space>");
     assert_eq!(
-        session.row_with("Generate questions"),
+        session.question().row_with("Generate questions"),
         "Generate questions (choose a change and an area)"
     );
     session.press("<Tab> <Space>");
     assert_eq!(
-        session.row_with("Generate questions"),
+        session.question().row_with("Generate questions"),
         "Generate questions (choose an area)"
     );
     assert_eq!(ai.asked().len(), 0, "nothing is asked");
