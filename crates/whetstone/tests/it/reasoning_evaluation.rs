@@ -30,17 +30,16 @@ const REASONING: &str = "Retries reuse the key, so the provider dedupes them.";
 
 /// A terminal height that fits all of the feedback, for the tests that
 /// read the outcomes whole.
-const TALL: u16 = 40;
+const TALL: u16 = 48;
 
 /// What shows under a criterion not met or needing review while the
 /// generator writes its explanation, which these tests never deliver.
 const EXPLAINING: &str = "The generator is explaining this. Jev checks it before it shows.";
 
 /// The first question's rubric, in order.
-const CRITERIA: [&str; 3] = [
+const CRITERIA: [&str; 2] = [
     "Names the key the retry reuses",
     "Says why the retry can't charge twice",
-    "Says what the timed-out charge may already have done",
 ];
 
 type Assessing = Result<Vec<Probability>, RequestFailure>;
@@ -92,7 +91,7 @@ fn submitted(ai: &Arc<ScriptedAi>, choice: &str, width: u16, height: u16) -> Ses
     session
 }
 
-/// The same as [`submitted`], with Jev's assessment of the three
+/// The same as [`submitted`], with Jev's assessment of the two
 /// [`CRITERIA`] scripted as `answers` and delivered. The explanation it
 /// asks for, if it asks for one, is being written.
 fn assessed(answers: &[f64], width: u16, height: u16) -> Session {
@@ -164,39 +163,59 @@ fn after_submit_the_reasoning_awaits_evaluation_and_the_choice_outcome_already_s
 
 #[test]
 fn each_criterion_shows_met_not_met_or_needs_review_in_words_only() {
-    let session = assessed(&[0.9, 0.1, 0.5], 120, TALL);
+    let met_and_not_met = assessed(&[0.9, 0.1], 120, TALL);
+    let needs_review = assessed(&[0.5, 0.9], 120, TALL);
 
     assert_eq!(
-        session.question().section_text("Reasoning"),
+        met_and_not_met.question().section_text("Reasoning"),
         [
             "Met · Names the key the retry reuses",
             "Not met · Says why the retry can't charge twice",
             EXPLAINING,
-            "Needs review · Says what the timed-out charge may already have done",
-            "Jev couldn't tell whether your reasoning covers this.",
-            EXPLAINING,
         ]
         .join(" ")
     );
-    let text = session.text();
-    assert!(!text.contains("Awaiting evaluation"), "{text}");
-    assert!(!text.contains("Cancel evaluation"), "{text}");
-    for number in ["0.9", "0.1", "0.5", "%"] {
-        assert!(!text.contains(number), "{number} shows:\n{text}");
+    assert_eq!(
+        needs_review.question().section_text("Reasoning"),
+        [
+            "Needs review · Names the key the retry reuses",
+            "Jev couldn't tell whether your reasoning covers this.",
+            EXPLAINING,
+            "Met · Says why the retry can't charge twice",
+        ]
+        .join(" ")
+    );
+    for session in [met_and_not_met, needs_review] {
+        let text = session.text();
+        assert!(!text.contains("Awaiting evaluation"), "{text}");
+        assert!(!text.contains("Cancel evaluation"), "{text}");
+        for number in ["0.9", "0.1", "0.5", "%"] {
+            assert!(!text.contains(number), "{number} shows:\n{text}");
+        }
     }
 }
 
 #[test]
 fn the_cut_offs_decide_met_and_not_met_and_anything_between_needs_review() {
-    let session = assessed(&[0.80, 0.20, 0.79], 120, TALL);
+    let at_the_cut_offs = assessed(&[0.80, 0.20], 120, TALL);
+    let between = assessed(&[0.79, 0.21], 120, TALL);
 
     assert_eq!(
-        session.question().section_text("Reasoning"),
+        at_the_cut_offs.question().section_text("Reasoning"),
         [
             "Met · Names the key the retry reuses",
             "Not met · Says why the retry can't charge twice",
             EXPLAINING,
-            "Needs review · Says what the timed-out charge may already have done",
+        ]
+        .join(" ")
+    );
+    assert_eq!(
+        between.question().section_text("Reasoning"),
+        [
+            "Needs review · Names the key the retry reuses",
+            "Jev couldn't tell whether your reasoning covers this.",
+            EXPLAINING,
+            "Needs review · Says why the retry can't charge twice",
             "Jev couldn't tell whether your reasoning covers this.",
             EXPLAINING,
         ]
@@ -206,7 +225,7 @@ fn the_cut_offs_decide_met_and_not_met_and_anything_between_needs_review() {
 
 #[test]
 fn jev_is_asked_with_the_saved_response_and_never_the_chosen_option_or_the_answer_key() {
-    let ai = writing(&CRITERIA, vec![Ok(probabilities(&[0.9, 0.9, 0.9]))]);
+    let ai = writing(&CRITERIA, vec![Ok(probabilities(&[0.9, 0.9]))]);
     let session = submitted(&ai, "c", 120, 32);
 
     let asked = ai.asked();
@@ -289,7 +308,7 @@ fn a_response_the_store_did_not_save_is_never_evaluated() {
 
 #[test]
 fn every_criterion_outcome_is_saved_to_the_session_record_after_the_choice_outcome() {
-    let session = assessed(&[0.9, 0.1, 0.5], 120, 32);
+    let session = assessed(&[0.1, 0.5], 120, 32);
 
     let log = session.store().log();
     let [saved] = &saved_responses(&log)[..] else {
@@ -312,16 +331,15 @@ fn every_criterion_outcome_is_saved_to_the_session_record_after_the_choice_outco
     assert_eq!(
         criterion_outcomes(&log),
         [
-            (saved.clone(), 0, CriterionOutcome::Met),
-            (saved.clone(), 1, CriterionOutcome::NotMet),
-            (saved.clone(), 2, CriterionOutcome::NeedsReview),
+            (saved.clone(), 0, CriterionOutcome::NotMet),
+            (saved.clone(), 1, CriterionOutcome::NeedsReview),
         ]
     );
     assert!(
         matches!(
             log.last(),
             Some(StoreEntry::Assessment {
-                assessment: Assessment::Criterion { criterion: 2, .. },
+                assessment: Assessment::Criterion { criterion: 1, .. },
                 ..
             })
         ),
@@ -331,7 +349,7 @@ fn every_criterion_outcome_is_saved_to_the_session_record_after_the_choice_outco
 
 #[test]
 fn cancel_stops_the_evaluation_and_keeps_the_response_submitted() {
-    let ai = writing(&CRITERIA, vec![Ok(probabilities(&[0.9, 0.9, 0.9]))]);
+    let ai = writing(&CRITERIA, vec![Ok(probabilities(&[0.9, 0.9]))]);
     let mut session = submitted(&ai, "a", 120, TALL);
 
     activate_the_evaluations_control(&mut session);
@@ -374,7 +392,7 @@ fn a_failure_shows_evaluation_unavailable_and_retry_asks_jev_again() {
         &CRITERIA,
         vec![
             Err(RequestFailure::RateLimited),
-            Ok(probabilities(&[0.9, 0.9, 0.9])),
+            Ok(probabilities(&[0.9, 0.9])),
         ],
     );
     let mut session = submitted(&ai, "a", 120, TALL);
@@ -413,7 +431,7 @@ fn a_failure_shows_evaluation_unavailable_and_retry_asks_jev_again() {
     assert_eq!(asked[0], asked[1], "the same request again");
     let log = session.store().log();
     assert_eq!(saved_responses(&log).len(), 1, "nothing else is submitted");
-    assert_eq!(criterion_outcomes(&log).len(), 3);
+    assert_eq!(criterion_outcomes(&log).len(), 2);
 }
 
 #[test]
@@ -441,8 +459,8 @@ fn a_result_from_a_cancelled_request_is_ignored_once_retry_asks_again() {
     let ai = writing(
         &CRITERIA,
         vec![
-            Ok(probabilities(&[0.9, 0.9, 0.9])),
-            Ok(probabilities(&[0.1, 0.1, 0.1])),
+            Ok(probabilities(&[0.9, 0.9])),
+            Ok(probabilities(&[0.1, 0.1])),
         ],
     );
     let mut session = submitted(&ai, "a", 120, TALL);
@@ -463,12 +481,12 @@ fn a_result_from_a_cancelled_request_is_ignored_once_retry_asks_again() {
         .into_iter()
         .map(|(_, _, outcome)| outcome)
         .collect();
-    assert_eq!(outcomes, [CriterionOutcome::NotMet; 3]);
+    assert_eq!(outcomes, [CriterionOutcome::NotMet; 2]);
 }
 
 #[test]
 fn a_result_after_leaving_the_practice_changes_nothing() {
-    let ai = writing(&CRITERIA, vec![Ok(probabilities(&[0.9, 0.9, 0.9]))]);
+    let ai = writing(&CRITERIA, vec![Ok(probabilities(&[0.9, 0.9]))]);
     let mut session = submitted(&ai, "a", 120, 32);
 
     session.press("q");
@@ -513,7 +531,7 @@ fn each_result_applies_to_its_own_response_even_once_another_question_shows() {
 
 #[test]
 fn reasoning_awaiting_evaluation_at_80x24() {
-    let ai = writing(&CRITERIA, vec![Ok(probabilities(&[0.9, 0.1, 0.5]))]);
+    let ai = writing(&CRITERIA, vec![Ok(probabilities(&[0.1, 0.5]))]);
     let mut session = submitted(&ai, "a", 80, 24);
     session.press("G");
 
@@ -522,23 +540,24 @@ fn reasoning_awaiting_evaluation_at_80x24() {
 
 #[test]
 fn reasoning_awaiting_evaluation_at_120x32() {
-    let ai = writing(&CRITERIA, vec![Ok(probabilities(&[0.9, 0.1, 0.5]))]);
+    let ai = writing(&CRITERIA, vec![Ok(probabilities(&[0.1, 0.5]))]);
     let session = submitted(&ai, "a", 120, 32);
 
     insta::assert_debug_snapshot!("reasoning_awaiting_evaluation_120x32", session.frame());
 }
 
 #[test]
-fn reasoning_met_not_met_and_needs_review_at_80x24() {
-    let mut session = assessed(&[0.9, 0.1, 0.5], 80, 24);
+fn reasoning_not_met_and_needs_review_at_80x24() {
+    let mut session = assessed(&[0.1, 0.5], 80, 24);
     session.press("G");
 
     insta::assert_debug_snapshot!("reasoning_assessed_80x24", session.frame());
 }
 
 #[test]
-fn reasoning_met_not_met_and_needs_review_at_120x32() {
-    let session = assessed(&[0.9, 0.1, 0.5], 120, 32);
+fn reasoning_not_met_and_needs_review_at_120x32() {
+    let mut session = assessed(&[0.1, 0.5], 120, 32);
+    session.press("G");
 
     insta::assert_debug_snapshot!("reasoning_assessed_120x32", session.frame());
 }

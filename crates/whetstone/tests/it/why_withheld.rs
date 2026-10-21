@@ -128,6 +128,10 @@ fn each_check_that_withholds_a_candidate_has_one_sentence_for_jev_saying_no_and_
         (NoGiveaway, 0.5),
         (Criterion(0), 0.1),
         (Criterion(0), 0.5),
+        // The only criterion asks for more than the question needs, so none
+        // is left.
+        (CriterionMinimum(0), 0.1),
+        (CriterionMinimum(0), 0.5),
         // The answer key is A: Jev clearly says no to it, or can't tell.
         (Option(OptionLetter::A), 0.1),
         (Option(OptionLetter::A), 0.5),
@@ -153,6 +157,7 @@ fn each_check_that_withholds_a_candidate_has_one_sentence_for_jev_saying_no_and_
         AboutArea,
         NeedsChange,
         Criterion(0),
+        CriterionMinimum(0),
         Option(OptionLetter::A),
         Option(OptionLetter::B),
         Option(OptionLetter::C),
@@ -176,7 +181,7 @@ fn each_check_that_withholds_a_candidate_has_one_sentence_for_jev_saying_no_and_
     assert_eq!(
         reasons(&session),
         [
-            "19 written · 19 withheld, using policy 0's cut-offs",
+            "21 written · 21 withheld, using policy 0's cut-offs",
             "1: Jev said the question can't be answered from the evidence",
             "1: Jev couldn't tell whether the question can be answered from the evidence",
             "1: Jev said the question isn't about its area",
@@ -190,6 +195,8 @@ fn each_check_that_withholds_a_candidate_has_one_sentence_for_jev_saying_no_and_
              from written reasoning",
             "1: Jev couldn't tell whether a rubric criterion follows from the evidence and can be \
              judged from written reasoning",
+            "1: Jev said every rubric criterion asks for more than the question needs",
+            "1: Jev couldn't tell whether any rubric criterion asks only what the question needs",
             "1: Jev said the answer key doesn't answer the question",
             "1: Jev couldn't tell whether the answer key answers the question",
             "1: Jev said an option besides the answer key answers the question",
@@ -198,6 +205,35 @@ fn each_check_that_withholds_a_candidate_has_one_sentence_for_jev_saying_no_and_
             "1: Jev couldn't tell whether an option's rationale is supported by the evidence",
             "1: Jev said \"why it matters\" isn't supported by the evidence",
             "1: Jev couldn't tell whether \"why it matters\" is supported by the evidence",
+        ],
+        "{}",
+        session.text()
+    );
+}
+
+#[test]
+fn a_candidate_with_no_criterion_left_gives_one_reason_as_unclear_as_its_least_clear_answer() {
+    use CandidateCheck::*;
+
+    let mut two_criteria = candidate("Two criteria?", "A", PAYMENT_LIFECYCLE);
+    two_criteria.rubric.push(two_criteria.rubric[0].clone());
+    let ai = Arc::new(ScriptedAi::new());
+    ai.on_write(&area_id(DOMAIN), Ok(vec![two_criteria]));
+    ai.on_check_passing_except(
+        "Two criteria?",
+        [
+            answer(CriterionMinimum(0), 0.1),
+            answer(CriterionMinimum(1), 0.5),
+        ],
+    );
+
+    let session = prepared(&ai, 120, 32);
+
+    assert_eq!(
+        reasons(&session),
+        [
+            "1 written · 1 withheld, using policy 0's cut-offs",
+            "1: Jev couldn't tell whether any rubric criterion asks only what the question needs",
         ],
         "{}",
         session.text()
