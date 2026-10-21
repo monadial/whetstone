@@ -81,6 +81,7 @@ pub(crate) const DEPTH: &str = "depth";
 /// The name a check's question goes under, such as `criterion_1` or
 /// `option_a`: Jev's name for it, which a labelled example's label for it
 /// goes under too.
+#[must_use]
 pub fn name(check: CandidateCheck) -> String {
     match check {
         CandidateCheck::Answerable => "answerable".to_owned(),

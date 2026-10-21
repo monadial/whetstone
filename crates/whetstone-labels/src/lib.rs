@@ -398,6 +398,40 @@ mod tests {
         );
     }
 
+    /// A learner's labels file as Whetstone's review of withheld questions
+    /// writes it: the snapshot its app-seam test keeps.
+    const VOTES: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../whetstone/tests/it/snapshots/it__review_withheld__labels_file.snap"
+    );
+
+    #[test]
+    fn a_learner_s_labels_file_as_whetstone_writes_it_is_read_and_measured() {
+        let snapshot = fs::read_to_string(VOTES).unwrap();
+        let (_, written) = snapshot
+            .split_once("\n---\n")
+            .expect("the snapshot's header ends");
+
+        let prepared = Labels::parse([("labels.toml", written)])
+            .unwrap()
+            .prepare(
+                &whetstone::embedded_showcase(),
+                &ModelId::new(DEFAULT_JEV_MODEL.to_owned()),
+            )
+            .unwrap();
+
+        let names: Vec<&str> = prepared.items().map(Item::name).collect();
+        assert_eq!(names, ["learner-vote-20261021T101502-1/no_giveaway"]);
+        assert_eq!(prepared.skipped(), []);
+        assert_eq!(
+            prepared
+                .items()
+                .next()
+                .map(|item| item.label().by().to_string()),
+            Some("learner".to_owned())
+        );
+    }
+
     #[test]
     fn a_folder_without_examples_says_so() {
         let error = load(Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/src"))).unwrap_err();
