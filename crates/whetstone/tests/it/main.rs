@@ -56,6 +56,7 @@ mod session;
 mod settings;
 mod showcase;
 mod stage_row;
+mod summary;
 mod support;
 mod suspend;
 mod terminal_guard;
