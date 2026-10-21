@@ -12,7 +12,7 @@ use whetstone_ai::ScriptedAi;
 use whetstone_core::{CandidateCheck, OptionLetter, Probability, WrittenCandidate};
 
 use crate::preparing_questions::{
-    DOMAIN, PAYMENT_LIFECYCLE, answer, area_id, candidate, generate, stems,
+    DOMAIN, PAYMENT_LIFECYCLE, answer, area_id, candidate, generate, reasoning_met, stems,
 };
 use crate::questions_screen::every_stem_shown;
 use crate::session::Session;
@@ -22,7 +22,8 @@ const TESTED: &str = "Tested question?";
 
 /// A session that prepared the domain area's questions on the payment
 /// lifecycle change from `tested` and three candidates that pass every
-/// check. Jev passes `tested`'s check but for `answers`.
+/// check. Jev passes `tested`'s check but for `answers`, and the reasoning
+/// submitted to each meets its criterion.
 fn prepared(
     tested: WrittenCandidate,
     answers: impl IntoIterator<Item = (CandidateCheck, Probability)>,
@@ -37,8 +38,10 @@ fn prepared(
     );
     ai.on_write(&area_id(DOMAIN), Ok(written));
     ai.on_check_passing_except(TESTED, answers);
+    reasoning_met(&ai, TESTED);
     for stem in &others {
         ai.on_check_passing(stem);
+        reasoning_met(&ai, stem);
     }
     let mut session = generate(&ai, &[DOMAIN], PAYMENT_LIFECYCLE, 120, 32);
     session.settle();

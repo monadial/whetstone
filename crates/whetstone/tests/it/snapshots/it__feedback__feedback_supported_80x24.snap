@@ -22,8 +22,8 @@ Buffer {
         "  Cited                                                                         ",
         "  .gitignore, line 1                                                            ",
         "                                                                                ",
-        "  Your reasoning                                                                ",
         "                                                                                ",
+        "    Cancel evaluation                                                           ",
         "  > Next question                                                               ",
         "    Inspect source                                                              ",
         "    Finish                                                                      ",
@@ -42,8 +42,6 @@ Buffer {
         x: 16, y: 11, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 2, y: 14, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
         x: 7, y: 14, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
-        x: 2, y: 17, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
-        x: 16, y: 17, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 2, y: 19, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
         x: 17, y: 19, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
     ]

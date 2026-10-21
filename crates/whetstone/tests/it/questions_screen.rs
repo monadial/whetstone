@@ -11,8 +11,8 @@ use whetstone_core::{WrittenCandidate, WrittenCitation, WrittenCriterion};
 
 use crate::answering::submit;
 use crate::preparing_questions::{
-    DOMAIN, PAYMENT_LIFECYCLE, area_id, candidate, generate, ratings, stems, touched_path,
-    writing_about_the_domain,
+    DOMAIN, PAYMENT_LIFECYCLE, area_id, candidate, generate, ratings, reasoning_met, stems,
+    touched_path, writing_about_the_domain,
 };
 use crate::session::Session;
 
@@ -139,6 +139,9 @@ fn among_three_that_pass(stem: &str, rated: [f64; 3]) -> (Arc<ScriptedAi>, Vec<S
     ai.on_check_passing_except(stem, ratings(a, b, c));
     for passing in &written[1..] {
         ai.on_check_passing(passing);
+    }
+    for stem in &written {
+        reasoning_met(&ai, stem);
     }
     (ai, written)
 }

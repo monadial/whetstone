@@ -1,9 +1,9 @@
 //! Feedback at Submit: the choice outcome shows at once, from the option
 //! ratings, as Supported or Not supported, never Needs review, with its
 //! citations, the chosen option's rationale, the answer key's rationale and
-//! "why it matters". The reasoning isn't assessed yet in this version. A
-//! submitted response is final, and feedback offers Next question, Inspect
-//! source and Finish.
+//! "why it matters". The reasoning shows as it was submitted, then its
+//! outcome (`reasoning_evaluation.rs`). A submitted response is final, and
+//! feedback offers Next question, Inspect source and Finish.
 
 use whetstone::Durability;
 
@@ -91,15 +91,12 @@ fn a_choice_outcome_is_never_needs_review_and_shows_no_numbers() {
 }
 
 #[test]
-fn the_reasoning_section_shows_it_and_says_it_isnt_assessed_yet_in_this_version() {
+fn the_reasoning_section_shows_it_as_submitted() {
     let session = submitted("a", 120, 32);
 
     assert_eq!(
         session.section("Your reasoning"),
-        [
-            "Retries reuse the key, so the provider dedupes them.",
-            "Your reasoning isn't assessed yet in this version.",
-        ]
+        ["Retries reuse the key, so the provider dedupes them."]
     );
     assert!(
         !session.text().contains("Saved"),
@@ -216,11 +213,12 @@ fn inspect_source_from_feedback_reads_the_evidence_and_back_returns_to_it() {
 #[test]
 fn feedback_too_long_for_the_screen_scrolls_above_its_controls() {
     let mut session = submitted("c", 80, 24);
-    let assessed = "Your reasoning isn't assessed yet in this version.";
-    assert!(!session.text().contains(assessed), "{}", session.text());
+    let assessed = "Your response is submitted.";
+    let scrolled = "Reasoning · Awaiting evaluation";
+    assert!(!session.text().contains(scrolled), "{}", session.text());
 
     session.press("<C-d>");
-    assert!(session.text().contains(assessed), "{}", session.text());
+    assert!(session.text().contains(scrolled), "{}", session.text());
     assert_eq!(session.row_with("Next question"), "> Next question");
 
     session.press("g g");

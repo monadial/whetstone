@@ -10,7 +10,7 @@ use whetstone_ai::ScriptedAi;
 use whetstone_core::{Depth, Probability};
 
 use crate::preparing_questions::{
-    DOMAIN, INFRASTRUCTURE, SERVE_OVER_HTTP, area_id, candidate, generate, stems,
+    DOMAIN, INFRASTRUCTURE, SERVE_OVER_HTTP, area_id, candidate, generate, reasoning_met, stems,
 };
 use crate::questions_screen::every_stem_shown;
 use crate::session::Session;
@@ -30,8 +30,8 @@ fn depth(expected: f64) -> Depth {
 
 /// Scripts `ai` to write one candidate about the area at `area` for each of
 /// `depths`, in that order, asking the stems [`stems`] gives for `name`.
-/// Each passes every check, and Jev scores its depth at that expected value.
-/// Returns their stems.
+/// Each passes every check, Jev scores its depth at that expected value, and
+/// its reasoning, once submitted, meets its criterion. Returns their stems.
 fn write_at_depths(ai: &ScriptedAi, area: usize, name: &str, depths: &[f64]) -> Vec<String> {
     let stems = stems(name, depths.len());
     ai.on_write(
@@ -43,6 +43,7 @@ fn write_at_depths(ai: &ScriptedAi, area: usize, name: &str, depths: &[f64]) -> 
     );
     for (stem, &expected) in stems.iter().zip(depths) {
         ai.on_check_passing_at(stem, depth(expected));
+        reasoning_met(ai, stem);
     }
     stems
 }
