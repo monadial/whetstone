@@ -1,0 +1,52 @@
+---
+source: crates/whetstone/tests/it/send_starts_practice.rs
+expression: "checking_areas_on_the_repository(120, 32).frame()"
+---
+Buffer {
+    area: Rect { x: 0, y: 0, width: 120, height: 32 },
+    content: [
+        "                                                                                                                        ",
+        "  ✓ Reading the change → ✓ Finding connected code → ✓ Preparing evidence → ✓ Outbound review →                          ",
+        "  ⠋ Checking areas · Jev → · Writing questions · generator → · Checking questions · Jev                                 ",
+        "                                                                                                                        ",
+        "  Preparing questions                                                                                                   ",
+        "  Double the charge · Domain                                                                                            ",
+        "                                                                                                                        ",
+        "  > Cancel                                                                                                              ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "                                                                                                                        ",
+        "  ? keys  : actions  q cancel                                                                                           ",
+        "                                                                                                                        ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 27, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 58, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 61, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
+        x: 87, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 4, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 21, y: 4, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 7, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 10, y: 7, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+    ]
+}
