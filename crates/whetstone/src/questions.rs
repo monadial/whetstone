@@ -82,12 +82,13 @@ use crate::failures::FailedRequests;
 use crate::feedback::{self, AttemptKind, Feedback, Place, Step};
 use crate::finish::{self, ConfirmFinish, Drafts, Finishing};
 use crate::focus::Position;
+use crate::jev_answers;
 use crate::keymap::{self, Binding, Command, Input, Keymap, Press};
 use crate::palette::Action;
 use crate::reader::{Reader, Section};
 use crate::reasoning_editor::{self, Caret, Editing, ReasoningEditor};
 use crate::report::{self, ReportForm, Reporting};
-use crate::sent_requests::SentRequests;
+use crate::sent_requests::{SentRequest, SentRequests};
 use crate::session_record::{
     Assessment, NewRecord, SavedResponse, SessionId, SessionStore, Signal, StoreError,
 };
@@ -876,6 +877,7 @@ impl Questions {
                 None
             }
             Step::InspectSource => Some(INSPECT_SOURCE.command),
+            Step::InspectJevAnswers => Some(Command::Go(Route::Read(Reading::JevAnswers))),
             Step::Finish => self.finish(),
             Step::Report => {
                 self.reporting = Some(Box::default());
@@ -1095,6 +1097,23 @@ impl Questions {
             ),
             sections,
         )
+    }
+
+    /// The reader Inspect Jev's answers opens on the question that shows, if
+    /// its feedback does: each of Jev's answers about it, with the models of
+    /// the `requests` that asked them.
+    pub(crate) fn jev_answers(&self, requests: &[SentRequest]) -> Option<Reader> {
+        let entry = self.current();
+        let Attempt::Submitted(feedback) = &entry.attempt else {
+            return None;
+        };
+        let place = format!("question {} of {}", self.at + 1, self.picked.len());
+        Some(jev_answers::reader(
+            &place,
+            &entry.question,
+            feedback,
+            requests,
+        ))
     }
 
     /// The lines that head every question: the shortfall, if there is one,

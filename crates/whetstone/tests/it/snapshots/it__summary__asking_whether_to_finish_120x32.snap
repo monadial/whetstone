@@ -30,9 +30,9 @@ Buffer {
         "                                                                                                                        ",
         "    Next question                                                                                                       ",
         "    Inspect source                                                                                                      ",
+        "    Inspect Jev's answers                                                                                               ",
         "    Report                                                                                                              ",
         "  > Finish                                                                                                              ",
-        "                                                                                                                        ",
         "                                                                                                                        ",
         "                                                                                                                        ",
         "  ? keys  : actions  Enter answer  Esc keep answering                                                                   ",
@@ -60,7 +60,7 @@ Buffer {
         x: 11, y: 20, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 2, y: 21, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
         x: 5, y: 21, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
-        x: 2, y: 26, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
-        x: 10, y: 26, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 27, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 10, y: 27, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
     ]
 }

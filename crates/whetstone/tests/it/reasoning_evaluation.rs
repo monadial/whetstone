@@ -367,7 +367,7 @@ fn a_failure_shows_evaluation_unavailable_and_retry_asks_jev_again() {
             Ok(probabilities(&[0.9, 0.9, 0.9])),
         ],
     );
-    let mut session = submitted(&ai, "a", 120, 32);
+    let mut session = submitted(&ai, "a", 120, TALL);
     session.settle();
     assert_eq!(
         session.section("Reasoning · Evaluation unavailable"),
@@ -402,7 +402,7 @@ fn a_failure_shows_evaluation_unavailable_and_retry_asks_jev_again() {
 #[test]
 fn a_reply_that_doesnt_answer_each_criterion_is_unavailable_never_needs_review() {
     let ai = writing(&CRITERIA, vec![Ok(probabilities(&[0.9]))]);
-    let mut session = submitted(&ai, "a", 120, 32);
+    let mut session = submitted(&ai, "a", 120, TALL);
     session.settle();
 
     assert_eq!(

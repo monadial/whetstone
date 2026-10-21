@@ -217,6 +217,11 @@ impl SentRequests {
         });
     }
 
+    /// Every request that ended, in the order they ended.
+    pub(crate) fn requests(&self) -> &[SentRequest] {
+        &self.ended
+    }
+
     /// The requests that ended since the session record last took them, in
     /// the order they ended, for the record to save.
     pub(crate) fn take_unrecorded(&mut self) -> Vec<SentRequest> {

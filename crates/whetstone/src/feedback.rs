@@ -22,8 +22,10 @@
 //! A submitted response is final, so feedback offers no way back to it. Its
 //! controls are the evaluation's, while it awaits or failed, and the
 //! explanation's, once Retry explanation is offered, then Next question,
-//! Inspect source, Report and Finish. An assisted attempt's outcomes are
-//! each marked Assisted.
+//! Inspect source, Inspect Jev's answers, Report and Finish. An assisted
+//! attempt's outcomes are each marked Assisted. Feedback shows no number:
+//! Jev's answers, with their probabilities, are under Inspect Jev's answers
+//! (see [`crate::jev_answers`]), which keeps them as they came.
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -32,7 +34,7 @@ use ratatui::widgets::{List, Paragraph};
 use whetstone_ai::{ParagraphCheck, RequestFailure, WrittenParagraph};
 use whetstone_core::{
     Assessed, AssessmentPolicy, ChoiceOutcome, CriterionOutcome, Evidence, Extent, OptionLetter,
-    Probability, Question, Role,
+    PolicyVersion, Probability, Question, Role,
 };
 
 use crate::columns;
@@ -40,7 +42,9 @@ use crate::explanation::Explanation;
 use crate::failures::FailedRequests;
 use crate::focus::Position;
 use crate::keymap::{self, Binding, Command, Keymap};
-use crate::session_record::{Assessment, Durability, SavedResponse, SessionStore};
+use crate::session_record::{
+    Assessment, Durability, ExplanationCheck, SavedResponse, SessionStore,
+};
 use crate::theme::{ColorSupport, ControlState, Theme};
 
 /// Feedback's own keys.
@@ -71,6 +75,8 @@ enum Control {
     RetryExplanation,
     NextQuestion,
     InspectSource,
+    /// Shows each of Jev's answers about the question, with its number.
+    InspectJevAnswers,
     /// Reports the question, which changes no outcome.
     Report,
     Finish,
@@ -79,9 +85,10 @@ enum Control {
 impl Control {
     /// The controls feedback always has, in focus order, after the
     /// evaluation's.
-    const ALWAYS: [Self; 4] = [
+    const ALWAYS: [Self; 5] = [
         Self::NextQuestion,
         Self::InspectSource,
+        Self::InspectJevAnswers,
         Self::Report,
         Self::Finish,
     ];
@@ -93,6 +100,7 @@ impl Control {
             Self::RetryExplanation => "Retry explanation",
             Self::NextQuestion => "Next question",
             Self::InspectSource => "Inspect source",
+            Self::InspectJevAnswers => "Inspect Jev's answers",
             Self::Report => "Report",
             Self::Finish => "Finish",
         }
@@ -119,6 +127,8 @@ pub(crate) enum Step {
     NextQuestion,
     /// Read the evidence the question rests on.
     InspectSource,
+    /// Read each of Jev's answers about the question.
+    InspectJevAnswers,
     /// Report the question.
     Report,
     /// End the Practice.
@@ -175,6 +185,10 @@ pub(crate) struct Feedback {
     /// The criterion outcomes and explanation paragraphs known but not yet
     /// saved to the session record.
     unrecorded: Vec<Assessment>,
+    /// Each of Jev's checks of a paragraph of the explanation, in the order
+    /// they came: the place in the rubric of the criterion it explains,
+    /// counting from 0, Jev's answers, and the policy that banded them.
+    explanation_checks: Vec<(usize, ParagraphCheck, PolicyVersion)>,
     /// The control with focus. If it is gone, as Cancel evaluation goes once
     /// the outcomes come, focus is where it started.
     focus: Control,
@@ -208,6 +222,7 @@ impl Feedback {
             evaluation: Evaluation::Unsent,
             explanation: Explanation::default(),
             unrecorded: Vec::new(),
+            explanation_checks: Vec::new(),
             focus: start,
             start,
             top: Position::default(),
@@ -227,6 +242,13 @@ impl Feedback {
     /// Where Jev's evaluation of the reasoning stands.
     pub(crate) fn evaluation(&self) -> &Evaluation {
         &self.evaluation
+    }
+
+    /// Each of Jev's checks of a paragraph of the explanation, in the order
+    /// they came: the place in the rubric of the criterion it explains,
+    /// counting from 0, Jev's answers, and the policy that banded them.
+    pub(crate) fn explanation_checks(&self) -> &[(usize, ParagraphCheck, PolicyVersion)] {
+        &self.explanation_checks
     }
 
     /// The saved response whose reasoning to ask Jev about, if its
@@ -339,6 +361,18 @@ impl Feedback {
         reply: Result<Vec<ParagraphCheck>, RequestFailure>,
     ) {
         let checked = self.explanation.checked(&self.saved, reply);
+        self.explanation_checks
+            .extend(checked.iter().filter_map(|assessment| match assessment {
+                Assessment::Explanation {
+                    paragraph,
+                    check:
+                        ExplanationCheck::Passed { answers, policy }
+                        | ExplanationCheck::Failed { answers, policy },
+                } => Some((paragraph.criterion, *answers, *policy)),
+                Assessment::Choice(_)
+                | Assessment::Criterion { .. }
+                | Assessment::Explanation { .. } => None,
+            }));
         self.unrecorded.extend(checked);
     }
 
@@ -423,6 +457,7 @@ impl Feedback {
                     }
                     Control::NextQuestion => Some(Step::NextQuestion),
                     Control::InspectSource => Some(Step::InspectSource),
+                    Control::InspectJevAnswers => Some(Step::InspectJevAnswers),
                     Control::Report => Some(Step::Report),
                     Control::Finish => Some(Step::Finish),
                 };
