@@ -53,8 +53,8 @@
 //! first. Then the
 //! choice outcome shows at once on the question's feedback, the response is
 //! final, and, if its reasoning is written, Jev is asked about it with the
-//! store's acknowledgement (rule 39). Its result applies to the response it names,
-//! even once another question shows, and its outcomes are saved to the
+//! store's acknowledgement (rule 39). Its result applies to the response it
+//! names, even once another question shows, and its outcomes are saved to the
 //! record. So are the generator's explanation of what the reasoning missed
 //! and Jev's check of it, asked with the same acknowledgement.
 //!
@@ -289,7 +289,7 @@ const NO_CHOICE: &str = "choose an option";
 
 /// What the empty reasoning editor says first: writing reasoning is
 /// optional.
-const OPTIONAL: &str = "Optional: explain why, to have your reasoning assessed.";
+const OPTIONAL_NOTE: &str = "Optional: explain why, to have your reasoning assessed.";
 
 /// The learner's draft response to one question, kept in memory until it
 /// is submitted.
@@ -723,9 +723,9 @@ impl Questions {
     pub(crate) fn evaluate(&mut self, mut evaluate: impl FnMut(SavedReasoning<'_>, &Question)) {
         for entry in &mut self.picked {
             if let Attempt::Submitted(feedback) = &mut entry.attempt
-                && let Some(saved) = feedback.take_evaluation()
+                && let Some(reasoning) = feedback.take_evaluation()
             {
-                evaluate(saved, &entry.question);
+                evaluate(reasoning, &entry.question);
             }
         }
     }
@@ -759,9 +759,9 @@ impl Questions {
     ) {
         for entry in &mut self.picked {
             if let Attempt::Submitted(feedback) = &mut entry.attempt
-                && let Some((saved, criteria)) = feedback.take_explanation()
+                && let Some((reasoning, criteria)) = feedback.take_explanation()
             {
-                explain(saved, &entry.question, &criteria);
+                explain(reasoning, &entry.question, &criteria);
             }
         }
     }
@@ -775,9 +775,9 @@ impl Questions {
     ) {
         for entry in &mut self.picked {
             if let Attempt::Submitted(feedback) = &mut entry.attempt
-                && let Some((saved, paragraphs)) = feedback.take_explanation_check()
+                && let Some((reasoning, paragraphs)) = feedback.take_explanation_check()
             {
-                check(saved, &entry.question, &paragraphs);
+                check(reasoning, &entry.question, &paragraphs);
             }
         }
     }
@@ -1360,7 +1360,7 @@ impl Questions {
         if draft.mode == Mode::Moving && draft.reasoning.text().is_empty() {
             frame.render_widget(
                 Paragraph::new(vec![
-                    Line::styled(OPTIONAL, theme.muted),
+                    Line::styled(OPTIONAL_NOTE, theme.muted),
                     Line::styled("Press i to write your reasoning.", theme.muted),
                 ]),
                 inside,
