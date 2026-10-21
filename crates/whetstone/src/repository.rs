@@ -15,7 +15,8 @@ use std::io::{self, Read as _};
 use std::path::{Path, PathBuf};
 
 use whetstone_core::{
-    Area, Change, CommitId, InvalidAreaFile, RepositoryConfig, RepositoryConfigError,
+    Area, AreaFileVersion, AreaSource, Change, CommitId, InvalidAreaFile, RepositoryConfig,
+    RepositoryConfigError,
 };
 
 mod history;
@@ -42,6 +43,8 @@ pub struct Repository {
     /// The areas the repository offers, in file-name order, with the
     /// invalid area files among them.
     areas: Vec<Result<Area, InvalidAreaFile>>,
+    /// The version of each area file read, for provenance.
+    area_files: Vec<AreaFileVersion>,
     /// The repository's Whetstone config.
     config: RepositoryConfig,
     /// The repository, opened read-only.
@@ -255,10 +258,18 @@ impl Repository {
                 file.contents.as_deref().map_err(Clone::clone),
             )
         }));
+        let area_files = area_files
+            .iter()
+            .filter_map(|file| {
+                let contents = file.contents.as_deref().ok()?;
+                crate::area_files::version(&file.file_name, contents, AreaSource::Repository)
+            })
+            .collect();
         Ok(Self {
             root,
             name,
             areas,
+            area_files,
             config,
             git,
             head,
@@ -274,6 +285,12 @@ impl Repository {
     /// the reason its file is not.
     pub(crate) fn areas(&self) -> &[Result<Area, InvalidAreaFile>] {
         &self.areas
+    }
+
+    /// The version of each area file it read, for provenance: none when
+    /// it offers Whetstone's defaults.
+    pub(crate) fn area_files(&self) -> &[AreaFileVersion] {
+        &self.area_files
     }
 
     /// The repository's Whetstone config.
