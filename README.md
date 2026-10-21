@@ -19,6 +19,8 @@ On your repository, **Review what will be sent** opens the outbound review: exac
 
 On the showcase project, **Generate questions** prepares questions once `OPENROUTER_API_KEY` is set, and is disabled until then. It sends showcase excerpts to OpenRouter, paid with your credits: Jev first decides which chosen areas the change is worth asking about, the generator writes candidate questions about those, and Jev checks each one, so only questions that pass are shown. When no chosen area is worth asking about, **Ask anyway** writes about them all the same, and their questions are still checked.
 
+A request that fails stops its stage, which says plainly what went wrong and what you can do: no key, a refused key, no credits left, rate limited, OpenRouter or the model's provider unavailable, no zero-retention endpoint for the model, no reply in time (30 seconds for Jev, 120 for the generator), a request OpenRouter refuses as invalid, or a reply that couldn't be read, which is never shown as a judgement. **Retry** asks again only what failed, and nothing is retried until you choose to.
+
 ## Run it
 
 Whetstone builds with the Rust toolchain pinned in `rust-toolchain.toml`, on Linux and macOS:
@@ -86,6 +88,8 @@ model = "typesafe/jev-1.14"
 [generator]
 model = "anthropic/claude-sonnet-5.5"
 ```
+
+Settings also says how far to trust the outcomes: the assessment policy's version, whether its cut-offs have been validated against labelled examples, and a note when `[jev] model` isn't `typesafe/jev-1.14`, the model the policy was checked against. A model OpenRouter refuses for having no zero-retention endpoint is marked there until Whetstone quits.
 
 The OpenRouter key never goes in the file. Set `OPENROUTER_API_KEY` in your shell; Settings shows only whether it is set. Whetstone writes nothing to disk except its log, in `$XDG_STATE_HOME/whetstone/` (by default `~/.local/state/whetstone/`), and the area files `whetstone areas init` copies.
 
