@@ -32,12 +32,12 @@ Whetstone builds on Linux and macOS. You need:
 cargo run
 ```
 
-Before you push, run what CI runs. [`CODING_STANDARDS.md`](CODING_STANDARDS.md#ci) gives each job's command, and the versions of `cargo-nextest`, `cargo-deny` and `cargo-shear` it uses:
+Before you push, run what CI runs. [`CODING_STANDARDS.md`](CODING_STANDARDS.md#ci) gives each job's command, and the version of each tool it uses:
 
 ```sh
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-cargo nextest run --workspace --all-features --locked
+cargo nextest run --workspace --all-features --locked --profile ci
 cargo test --workspace --all-features --locked --doc
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps --locked
 cargo deny --locked check

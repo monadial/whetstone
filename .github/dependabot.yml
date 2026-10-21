@@ -1,8 +1,9 @@
 # Keeps the workflows' actions current. Each action is pinned to a full
 # commit SHA with its version in a comment (CODING_STANDARDS.md rule 45), and
-# Dependabot updates both. Crates are upgraded on purpose, in PRs of their own
-# (rule 10), so Cargo isn't listed here; Dependabot's security updates still
-# cover it.
+# Dependabot updates both. Cargo isn't listed: several crates are pinned and
+# upgraded on purpose (Rig under rule 10; cgg and gix, as
+# crates/whetstone/Cargo.toml says), and Dependabot's security updates still
+# cover every crate.
 version: 2
 updates:
   - package-ecosystem: github-actions

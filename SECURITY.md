@@ -15,13 +15,13 @@ Only the latest release gets security fixes. Whetstone is before 1.0, so a fix s
 Whetstone handles three things worth protecting.
 
 - **Your OpenRouter key.** Whetstone reads it from `OPENROUTER_API_KEY` and sends it only to OpenRouter. It never writes the key to disk or to its log.
-- **What Practice sends.** Nothing from your repository leaves your machine before you press **Send** in the outbound review. After that, only the evidence the review showed you goes, and only to OpenRouter. Anything sent before Send, or anything the review didn't show, is a vulnerability.
+- **What Practice sends.** Nothing from your repository leaves your machine before you press **Send** in the outbound review. After that, two things go, and only to OpenRouter: the evidence the review showed you, and your answers in that Practice. Anything sent before Send, anything else from your repository, or anything sent anywhere else is a vulnerability.
 - **The files it writes.** These are:
   - its log;
   - your votes on withheld questions (`labels.toml`), which can hold code from your repository and are readable only by you;
   - its cache of each commit's connected code;
-  - the area files `whetstone areas init` copies.
+  - the area files `whetstone areas init` copies into `.whetstone/areas/`.
 
-  Whetstone reads your repository without changing it.
+  `whetstone areas init` is the only time Whetstone writes into your repository. Otherwise it reads the repository without changing it.
 
 A judgement from a model that is wrong is not a vulnerability. Open an ordinary issue for it.
