@@ -85,14 +85,14 @@ pub fn reasoning_request(
 ) -> JevRequest {
     let options: Map<String, Value> = OptionLetter::ALL
         .into_iter()
-        .zip(question.options)
+        .zip(question.options())
         .map(|(letter, text)| (letter.to_string(), json!(text)))
         .collect();
     JevRequest {
         model: model.as_str().to_owned(),
         state: json!({
             "evidence": evidence_as_sent(evidence),
-            "question": { "stem": question.stem, "options": options },
+            "question": { "stem": question.stem(), "options": options },
             "reasoning": reasoning,
         }),
         questions: question
