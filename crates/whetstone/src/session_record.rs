@@ -1,5 +1,6 @@
 //! The session record: a Practice's questions, the evidence they cite, the
-//! learner's responses and every outcome, kept through one port,
+//! learner's responses and every outcome, with every request sent to Jev
+//! and the generator and what produced its result, kept through one port,
 //! [`SessionStore`], which the app holds.
 //!
 //! A response is saved before anything else is done with it, and the store
@@ -17,9 +18,11 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use whetstone_ai::{ParagraphCheck, WrittenParagraph};
 use whetstone_core::{
-    Assessed, CandidateId, ChoiceOutcome, CriterionOutcome, Evidence, PolicyVersion, Provenance,
-    Question, Response,
+    Assessed, CandidateId, ChoiceOutcome, CriterionOutcome, Evidence, PolicyVersion, Question,
+    Response,
 };
+
+use crate::sent_requests::SentRequest;
 
 /// Where the app keeps session records. Each save either returns once the
 /// store holds what it saved, or fails and holds nothing new.
@@ -58,6 +61,10 @@ pub trait SessionStore: fmt::Debug {
         question: &CandidateId,
         signal: Signal,
     ) -> Result<(), StoreError>;
+
+    /// Saves `request`, a request to Jev or the generator that ended after
+    /// the record of `session` started, with what produced its result.
+    fn save_request(&mut self, session: SessionId, request: SentRequest) -> Result<(), StoreError>;
 }
 
 /// Whether what a store saves outlives Whetstone, so the UI can tell
@@ -79,8 +86,10 @@ pub struct NewRecord {
     pub questions: Vec<Question>,
     /// The evidence the questions cite, exactly as it was sent.
     pub evidence: Evidence,
-    /// The provenance of every request so far.
-    pub provenance: Vec<Provenance>,
+    /// Every request that ended so far, in the order they ended: the
+    /// relevance gate, writing and each question check, with what produced
+    /// each result.
+    pub requests: Vec<SentRequest>,
 }
 
 /// A session record's identity, which the store gives it when it starts.
@@ -253,6 +262,11 @@ pub enum StoreEntry {
         question: CandidateId,
         signal: Signal,
     },
+    /// A request that ended after the record started was saved.
+    Request {
+        session: SessionId,
+        request: SentRequest,
+    },
 }
 
 /// A store that keeps records in memory, for as long as Whetstone runs. It
@@ -385,6 +399,17 @@ impl SessionStore for InMemoryStore {
             question: question.clone(),
             signal,
         });
+        Ok(())
+    }
+
+    fn save_request(&mut self, session: SessionId, request: SentRequest) -> Result<(), StoreError> {
+        let mut log = self.entries();
+        if !log.iter().any(
+            |entry| matches!(entry, StoreEntry::Started { session: started, .. } if *started == session),
+        ) {
+            return Err(StoreError::UnknownSession(session));
+        }
+        log.push(StoreEntry::Request { session, request });
         Ok(())
     }
 }
@@ -576,7 +601,7 @@ mod tests {
         NewRecord {
             questions,
             evidence: evidence(),
-            provenance: Vec::new(),
+            requests: Vec::new(),
         }
     }
 

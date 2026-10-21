@@ -58,6 +58,7 @@ pub use crate::job::{
     Cancelled, Finished, Job, JobId, JobOutcome, JobOutput, Jobs, TimeLimit, Waiting, Workers,
 };
 pub use crate::repository::{Repository, Unavailable};
+pub use crate::sent_requests::{Asking, RequestEnded, SentRequest};
 pub use crate::session_record::{
     Assessment, AttemptId, Durability, ExplanationCheck, InMemoryStore, NewRecord, Report,
     ReportKind, SavedResponse, SessionId, SessionStore, Signal, StoreEntry, StoreError,

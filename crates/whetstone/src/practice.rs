@@ -34,12 +34,14 @@
 //! connected code runs on instead, as it does for the outbound review, so
 //! its graph is cached.
 //!
-//! Every request is kept as it ends, with its reply's provenance, or, when
-//! it failed or the learner cancelled it, with provenance that reports no
-//! cost. The session record starts with them, and the summary adds up the
-//! session's cost from them (see [`crate::summary`]). Once the learner
-//! finishes, Practice asks for nothing more: the requests still running run
-//! on, and their results still apply.
+//! Every request is stamped as it is sent with its own identity and the
+//! versions behind it, and kept as it ends, with its reply's provenance,
+//! or, when it failed or the learner cancelled it, with provenance that
+//! reports no cost, and how it ended. The session record starts with them,
+//! each request that ends later is saved to it as it ends, and the summary
+//! adds up the session's cost from them (see [`crate::summary`]). Once the
+//! learner finishes, Practice asks for nothing more: the requests still
+//! running run on, and their results still apply.
 
 use std::convert::Infallible;
 use std::mem;
@@ -1141,7 +1143,7 @@ impl View for Practice {
 
     fn keep_record(&mut self, store: &mut dyn SessionStore) {
         if let (Some(questions), Some(evidence)) = (self.stage.questions_mut(), &self.evidence) {
-            questions.keep_record(store, evidence, self.sent.provenance());
+            questions.keep_record(store, evidence, &mut self.sent);
         }
     }
 
