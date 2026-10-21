@@ -2,27 +2,23 @@
 //! the real Jev and generator, at the app seam. It calls `OpenRouter` with a
 //! real key, so it is ignored and runs only when asked, costing a few cents:
 //! in the keyed end-to-end job (`.github/workflows/live.yml`), with the live
-//! tests of each kind of request in whetstone-ai's `live.rs`, or locally:
-//!
-//! ```sh
-//! OPENROUTER_API_KEY=… cargo nextest run --workspace --all-features --locked --no-fail-fast --run-ignored only live_
-//! ```
-//!
-//! Per-PR tests never call `OpenRouter` (rule 48); the job is one of its
-//! stated exceptions.
+//! tests of each kind of request in whetstone-ai's `live.rs`, or locally, as
+//! `CODING_STANDARDS.md` says under "The keyed end-to-end job". Per-PR tests
+//! never call `OpenRouter` (rule 48); the job is one of its stated
+//! exceptions.
 
 use crate::preparing_questions::{DOMAIN, PAYMENT_LIFECYCLE, generate_in};
 use crate::session::Setup;
 
-/// The maintainer's key, the one thing a test reads from the process's
-/// environment, and only here: the app gets it as every test's variables
-/// are given (rule 55).
+/// The real key: the maintainer's, or the keyed end-to-end job's. It is the
+/// one thing the app-seam tests read from the process's environment, and
+/// only here: the app gets it as every test's variables are given (rule 55).
 fn live_key() -> String {
     std::env::var("OPENROUTER_API_KEY").expect("set OPENROUTER_API_KEY to run the live tests")
 }
 
 #[test]
-#[ignore = "calls OpenRouter with the maintainer's key"]
+#[ignore = "calls OpenRouter with a real key"]
 fn live_generate_questions_on_the_showcase_shows_checked_questions_or_a_named_shortfall() {
     let key = live_key();
     // Each reply's models, tokens and cost, and nothing sent or written, go

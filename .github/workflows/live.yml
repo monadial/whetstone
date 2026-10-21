@@ -5,12 +5,12 @@
 # locally with your own key.
 #
 # It runs the ignored tests whose names start with `live_`:
-# - on pull requests that change the AI crate or this workflow, or that
-#   change a Rig crate's version in Cargo.lock (another change to Cargo.lock
-#   isn't enough);
+# - on pull requests that change the AI crate, the app-seam live test or
+#   this workflow, or that change a Rig crate's version in Cargo.lock
+#   (another change to Cargo.lock isn't enough);
 # - on manual dispatch;
-# - as a release gate: a release workflow calls it (`workflow_call`) and
-#   makes its release job need it.
+# - as a release gate: a release workflow calls it (`workflow_call`), passes
+#   it the key with `secrets: inherit`, and makes its release job need it.
 #
 # Its key is the OPENROUTER_API_KEY repository secret (#96), and only the
 # step that runs the live tests gets it. Where the secret isn't available,
@@ -22,6 +22,7 @@ on:
   pull_request:
     paths:
       - "crates/whetstone-ai/**"
+      - "crates/whetstone/tests/it/live_practice.rs"
       - "Cargo.lock"
       - ".github/workflows/live.yml"
   workflow_dispatch:
@@ -89,7 +90,8 @@ jobs:
           fi
 
           # HEAD is the pull request merged into its base branch, HEAD^1.
-          if ! git diff --quiet HEAD^1 HEAD -- crates/whetstone-ai .github/workflows/live.yml; then
+          if ! git diff --quiet HEAD^1 HEAD -- crates/whetstone-ai \
+            crates/whetstone/tests/it/live_practice.rs .github/workflows/live.yml; then
             answer true
             exit 0
           fi
@@ -122,13 +124,14 @@ jobs:
       - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
         with:
           tool: cargo-nextest@0.9.148
-      # Everything is built before any step has the key, so no build script
-      # can read it.
+      # The tests are built into an archive before any step has the key, and
+      # run from it without building anything, so no build script can read
+      # the key.
       - name: Build the tests
-        run: cargo nextest run --workspace --all-features --locked --no-run
+        run: cargo nextest archive --workspace --all-features --locked --archive-file "$RUNNER_TEMP/tests.tar.zst"
       # Every live test runs, even after one fails, and none is retried: each
       # call is paid for (rule 23).
       - name: Live tests (calls OpenRouter, paid)
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-        run: cargo nextest run --workspace --all-features --locked --no-fail-fast --run-ignored only live_
+        run: cargo nextest run --archive-file "$RUNNER_TEMP/tests.tar.zst" --no-fail-fast --run-ignored only -E 'test(/::live_\w+$/)'

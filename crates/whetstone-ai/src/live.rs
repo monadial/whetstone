@@ -1,16 +1,11 @@
 //! Live tests: each kind of request the AI port makes, sent through the real
 //! [`OpenRouterAi`] to Jev and the generator, so the recorded replies the
 //! contract tests replay stay true. They call `OpenRouter` with a real key,
-//! so they are ignored and run only when asked for: in the keyed end-to-end
-//! job (`.github/workflows/live.yml`), or locally with the maintainer's own
-//! key, for a few cents:
-//!
-//! ```sh
-//! OPENROUTER_API_KEY=… cargo nextest run --workspace --all-features --locked --no-fail-fast --run-ignored only live_
-//! ```
-//!
-//! Per-PR tests never call `OpenRouter` (rule 48); these are one of its
-//! stated exceptions.
+//! so they are ignored and run only when asked for, for a few cents: in the
+//! keyed end-to-end job (`.github/workflows/live.yml`), or locally with the
+//! maintainer's own key, as `CODING_STANDARDS.md` says under "The keyed
+//! end-to-end job". Per-PR tests never call `OpenRouter` (rule 48); these are
+//! one of its stated exceptions.
 //!
 //! # One test for each kind of request
 //!
@@ -32,15 +27,14 @@
 
 use whetstone_core::{ModelId, Provenance, QuestionCount};
 
-use crate::record::live_key;
+use crate::replay::live_key;
 use crate::samples::{area, candidate, evidence, generator_model, jev_model};
-use crate::{Ai, CandidateCount, Models, OpenRouter, OpenRouterAi, SecretString};
+use crate::{Ai, CandidateCount, Models, OpenRouter, OpenRouterAi};
 
 /// The real AI on `OpenRouter`, with the key from `OPENROUTER_API_KEY`, the
 /// models the fixtures were recorded with, and the app's time limits.
 fn live_ai() -> OpenRouterAi {
-    let connection =
-        OpenRouter::new(Some(SecretString::from(live_key()))).expect("the key isn't blank");
+    let connection = OpenRouter::new(Some(live_key())).expect("the key isn't blank");
     OpenRouterAi::new(
         connection,
         Models {
