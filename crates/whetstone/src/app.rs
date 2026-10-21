@@ -22,7 +22,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use ratatui::Frame;
 use ratatui::crossterm::event::{Event, KeyEvent, KeyEventKind};
@@ -99,6 +99,11 @@ pub struct App {
     /// Where the learner's votes on withheld questions are kept, with the
     /// votes cast during this run, shared with the jobs that save them.
     labels: Arc<LabelsFile>,
+    /// Tells the time, so commit dates are worded from it.
+    clock: fn() -> SystemTime,
+    /// What the clock told as the app applied the last message, which
+    /// commit dates are drawn from, so drawing never reads the clock.
+    now: SystemTime,
 }
 
 /// Something for the app to apply: a terminal event the UI loop read, a
@@ -255,7 +260,8 @@ impl App {
     /// system temporary directory, and the graphs it is found in are cached
     /// in `cache_dir`, the learner's cache directory, which it creates if it
     /// can. The outbound review waits for connected code for Whetstone's
-    /// time limit.
+    /// time limit. Commit dates are worded from the time `clock` tells,
+    /// which the app asks as it applies each message.
     #[must_use]
     pub fn new(
         theme: Theme,
@@ -264,6 +270,7 @@ impl App {
         repository: Result<Repository, Unavailable>,
         temp_dir: PathBuf,
         cache_dir: &Path,
+        clock: fn() -> SystemTime,
     ) -> Self {
         let home = Home::new(repository.as_ref());
         let analysis = AnalysisDirs::new(temp_dir);
@@ -290,6 +297,8 @@ impl App {
             request_ids: Arc::default(),
             store: Box::new(InMemoryStore::new()),
             labels: Arc::new(LabelsFile::none()),
+            clock,
+            now: clock(),
         }
     }
 
@@ -333,6 +342,7 @@ impl App {
     /// out. A job's result is applied only if the app still waits for that
     /// job.
     pub fn handle(&mut self, message: Message) -> Flow {
+        self.now = (self.clock)();
         match message {
             Message::Terminal(Event::Key(key)) if key.kind == KeyEventKind::Press => {
                 self.press(&key)
@@ -528,6 +538,7 @@ impl App {
                     refused_models: &self.refused_models,
                     request_ids: &self.request_ids,
                     labels: &self.labels,
+                    now: self.now,
                 };
                 if let Command::Replace(_) = command {
                     self.screens
@@ -595,6 +606,7 @@ impl App {
             refused_models: &self.refused_models,
             request_ids: &self.request_ids,
             labels: &self.labels,
+            now: self.now,
         };
         screen.render(&context, frame, body);
         // While a text entry has focus, the keys that work everywhere type.

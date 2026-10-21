@@ -15,8 +15,8 @@ use std::io::{self, Read as _};
 use std::path::{Path, PathBuf};
 
 use whetstone_core::{
-    Area, AreaFileVersion, AreaSource, Change, CommitId, InvalidAreaFile, RepositoryConfig,
-    RepositoryConfigError,
+    Area, AreaFileVersion, AreaSource, Change, ChangeSize, CommitId, InvalidAreaFile,
+    RepositoryConfig, RepositoryConfigError,
 };
 
 mod history;
@@ -116,7 +116,7 @@ pub struct OpenError(#[source] gix::Error);
 /// A commit could not be read from the repository.
 #[derive(Debug, thiserror::Error)]
 #[error("cannot read the commit")]
-pub(crate) struct LoadError(#[from] gix::Error);
+pub struct LoadError(#[from] gix::Error);
 
 /// The commits could not be read from the repository.
 #[derive(Debug, thiserror::Error)]
@@ -346,6 +346,19 @@ impl RepositoryHandle {
             .and_then(|git| tree::open(&git, id).map(|tree| read(&tree)));
         opened.inspect_err(|error| {
             tracing::warn!(commit = id.full(), error = %error.0, "cannot read a commit's tree");
+        })
+    }
+
+    /// Opens the repository on this thread and finds the size of the
+    /// commit `id`'s change, as [`Repository::load`] reads it: the files it
+    /// touches, and the lines its diff adds and removes.
+    pub(crate) fn size(&self, id: CommitId) -> Result<ChangeSize, LoadError> {
+        let sized = gix::open_opts(&self.git_dir, isolated(self.trust))
+            .map_err(LoadError)
+            .and_then(|git| load::load(&git, id))
+            .map(|change| change.size());
+        sized.inspect_err(|error| {
+            tracing::warn!(commit = id.full(), error = %error.0, "cannot size a commit");
         })
     }
 }

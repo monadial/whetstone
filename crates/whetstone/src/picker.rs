@@ -15,6 +15,7 @@ use ratatui::widgets::{List, ListState, Paragraph};
 use whetstone_core::{Area, CommitId, InvalidAreaFile, ReviewChoices, ShowcaseProject};
 
 use crate::columns;
+use crate::commit_rows::{self, Row, Sizes};
 use crate::connected_code::{Request, ShowcaseTree};
 use crate::entry::TextEntry;
 use crate::job::{JobId, JobOutput, Jobs};
@@ -26,9 +27,7 @@ use crate::reasoning_editor::grouped;
 use crate::repository::{Availability, Commit, History, HistoryEnd, HistoryError, Repository};
 use crate::search::Query;
 use crate::theme::{ColorSupport, ControlKind, ControlState, Theme};
-use crate::view::{
-    ChangeIndex, ChangeRef, Context, NEEDS_KEY, Project, Route, View, comparison_label,
-};
+use crate::view::{ChangeIndex, ChangeRef, Context, NEEDS_KEY, Project, Route, View};
 use crate::viewer::Unreadable;
 
 /// Space on the picker: it makes a choice.
@@ -89,7 +88,7 @@ const REPOSITORY_KEYMAP: Keymap = &[
         ..keymap::ENDS
     },
     Binding {
-        does: "Filter the commits by message or ID",
+        does: "Filter the commits by message, author or ID",
         ..keymap::SEARCH
     },
     keymap::BACK,
@@ -166,7 +165,7 @@ const REPOSITORY_ACTIONS: &[Action] = &[
     ACTIONS[0],
     Action {
         label: "Search",
-        does: "Filter the commits by message or ID",
+        does: "Filter the commits by message, author or ID",
         command: Command::Search,
     },
 ];
@@ -298,6 +297,9 @@ pub(crate) struct Picker {
     /// The background read of older commits for the filter, while one
     /// runs.
     reading: Option<JobId>,
+    /// The sizes of the commits on screen, found in the background, on the
+    /// learner's repository.
+    sizes: Option<Sizes>,
     /// The learner's choices on the outbound review of the chosen commit,
     /// kept while it stays chosen, and shared with the review while it is
     /// open.
@@ -322,6 +324,7 @@ impl Picker {
             search_box: None,
             filter: None,
             reading: None,
+            sizes: None,
             review_choices: None,
         }
     }
@@ -350,6 +353,7 @@ impl Picker {
             search_box: None,
             filter: None,
             reading: None,
+            sizes: Some(Sizes::new(repository.handle())),
             review_choices: None,
         }
     }
@@ -493,6 +497,42 @@ impl Picker {
         (index < self.changes()).then_some(Control::Change(index))
     }
 
+    /// The commits the change list lists at the positions in `window`, by
+    /// index.
+    fn in_window(&self, window: Range<usize>) -> impl Iterator<Item = (usize, &Commit)> {
+        let listed = self.listed();
+        (window.start.min(listed)..window.end.min(listed)).filter_map(|position| {
+            match self.listed_at(position)? {
+                Control::Change(index) => Some((index, self.commits().get(index)?)),
+                _ => None,
+            }
+        })
+    }
+
+    /// Wants the sizes of the commits on screen while the change list shows
+    /// `rows` rows, for [`View::start_jobs`] to find.
+    fn want_sizes(&mut self, rows: usize) {
+        let top = self.top_in_view(rows);
+        let Some(mut sizes) = self.sizes.take() else {
+            return;
+        };
+        sizes.want(self.in_window(top..top + rows).map(|(_, commit)| commit));
+        self.sizes = Some(sizes);
+    }
+
+    /// Whether the change list lists the commit `id`: every commit read, or
+    /// while a filter is on, those it matches.
+    fn lists(&self, id: CommitId) -> bool {
+        self.commits()
+            .iter()
+            .position(|commit| commit.id() == id)
+            .is_some_and(|index| {
+                self.filter
+                    .as_ref()
+                    .is_none_or(|filter| filter.position_of(index).is_some())
+            })
+    }
+
     /// Where the focused change is in the change list, if a change has focus
     /// and the list lists it.
     fn focused_position(&self) -> Option<usize> {
@@ -548,17 +588,23 @@ impl Picker {
             Source::Repository {
                 history: Ok(history),
             } => {
-                let commits = history.commits();
                 let listed = self.listed();
-                let mut items: Vec<Text<'a>> = (window.start.min(listed)..window.end.min(listed))
-                    .filter_map(|position| match self.listed_at(position)? {
-                        Control::Change(index) => Some((commits.get(index)?, index)),
-                        _ => None,
-                    })
-                    .map(|(commit, index)| {
-                        Text::from(commit_row(context.theme, commit, state(index), width))
+                let rows = self
+                    .in_window(window.clone())
+                    .map(|(index, commit)| Row {
+                        commit,
+                        state: state(index),
+                        size: self
+                            .sizes
+                            .as_ref()
+                            .map_or(commit_rows::Size::Finding, |sizes| sizes.of(commit.id())),
                     })
                     .collect();
+                let mut items: Vec<Text<'a>> =
+                    commit_rows::lines(context.theme, rows, context.now, width)
+                        .into_iter()
+                        .map(Text::from)
+                        .collect();
                 if let Some(filter) = &self.filter
                     && self.matches_nothing()
                 {
@@ -1157,44 +1203,11 @@ impl Picker {
     }
 }
 
-/// A commit's row `width` cells wide: a choice in `state`, showing its
-/// short ID and summary, then what it is compared with if that is not
-/// simply its parent. A commit that cannot be opened is disabled, saying
-/// why. The summary is cut to fit.
-fn commit_row<'a>(theme: &Theme, commit: &Commit, state: ControlState<'a>, width: u16) -> Line<'a> {
-    let (state, label) = match commit.availability() {
-        Availability::Compared(comparison) => (state, comparison_label(comparison)),
-        Availability::ParentMissing => (
-            ControlState {
-                disabled: Some(PARENT_MISSING),
-                ..state
-            },
-            None,
-        ),
-    };
-    let label_width = label.map_or(0, |label| columns::GAP + Line::raw(label).width());
-    // Past the focus and choice markers, and why it is disabled.
-    let room = usize::from(width)
-        .saturating_sub(Theme::control_width("", state.kind))
-        .saturating_sub(
-            state
-                .disabled
-                .map_or(0, |reason| Line::raw(format!(" ({reason})")).width()),
-        )
-        .saturating_sub(label_width);
-    let text = format!("{}  {}", commit.id().short(), commit.summary());
-    let mut line = theme.control(columns::truncate(&text, room), state);
-    if let Some(label) = label {
-        line.push_span(" ".repeat(columns::GAP));
-        line.push_span(Span::styled(label, theme.muted));
-    }
-    line
-}
-
-/// Whether `query` matches `commit`: its whole message, or the start of its
-/// ID.
+/// Whether `query` matches `commit`: its whole message, its author's name,
+/// or the start of its ID.
 fn is_match(query: &Query, commit: &Commit) -> bool {
     query.is_in(commit.message())
+        || query.is_in(commit.author())
         || commit
             .id()
             .full()
@@ -1268,10 +1281,6 @@ const CHANGE_HEADING: &str = "Change to practice on";
 
 /// Why Practice cannot start where every area file is invalid.
 const NO_VALID_AREA: &str = "no area file is valid";
-
-/// Why a commit whose parent is missing, as at a shallow clone's boundary,
-/// cannot be chosen.
-const PARENT_MISSING: &str = "parent not in this clone";
 
 /// Why Previous page is disabled on the first page.
 const FIRST_PAGE: &str = "first page";
@@ -1435,6 +1444,9 @@ impl View for Picker {
     }
 
     fn start_jobs(&mut self, jobs: &mut Jobs<JobOutput>) {
+        if let Some(sizes) = &mut self.sizes {
+            sizes.start_jobs(jobs);
+        }
         let (Some(filter), None) = (&self.filter, self.reading) else {
             return;
         };
@@ -1467,9 +1479,23 @@ impl View for Picker {
 
     fn waits_for(&self, job: JobId) -> bool {
         self.reading == Some(job)
+            || self
+                .sizes
+                .as_ref()
+                .is_some_and(|sizes| sizes.waits_for(job))
     }
 
     fn finish_job(&mut self, job: JobId, output: JobOutput) {
+        let output = match output {
+            JobOutput::ChangeSized { commit, size } => {
+                let listed = self.lists(commit);
+                if let Some(sizes) = &mut self.sizes {
+                    sizes.finish(job, commit, size, listed);
+                }
+                return;
+            }
+            output => output,
+        };
         if self.reading != Some(job) {
             return;
         }
@@ -1539,6 +1565,7 @@ impl View for Picker {
 
     fn fit(&mut self, area: Rect) {
         self.read_ahead(self.room(area));
+        self.want_sizes(self.page_size(area, self.change_rows()));
     }
 
     fn apply(&mut self, command: Command, area: Rect) -> Option<Command> {
@@ -1551,6 +1578,7 @@ impl View for Picker {
         if command != Command::Bottom {
             self.read_ahead(self.room(area));
         }
+        self.want_sizes(self.page_size(area, self.change_rows()));
         next
     }
 

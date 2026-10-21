@@ -27,12 +27,13 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use whetstone_ai::{ParagraphCheck, Reply, RequestFailure, WrittenParagraph};
 use whetstone_core::{
-    AreaId, CandidateId, CommitId, Connections, Probability, QuestionCheckAnswers, WrittenCandidate,
+    AreaId, CandidateId, ChangeSize, CommitId, Connections, Probability, QuestionCheckAnswers,
+    WrittenCandidate,
 };
 
 use crate::connected_code::GraphOrigin;
 use crate::labels_file::SavedVote;
-use crate::repository::Batch;
+use crate::repository::{Batch, LoadError};
 use crate::session_record::SavedResponse;
 
 /// A job's identity, unique among the jobs one [`Jobs`] starts.
@@ -118,6 +119,15 @@ pub enum JobOutput {
     /// the picker's filter, boxed, as it holds what reads on, to keep the
     /// app's messages small.
     CommitsRead(Box<Batch>),
+    /// The size of a commit's change, for its row in the picker, or why the
+    /// commit can't be read.
+    ChangeSized {
+        /// The commit sized.
+        commit: CommitId,
+        /// The files it touches and the lines it adds and removes, or why
+        /// they can't be found.
+        size: Result<ChangeSize, LoadError>,
+    },
     /// Whether a vote on a withheld question was appended to the labels
     /// file, boxed, as it holds why it wasn't, to keep the app's messages
     /// small. The app applies it to the labels file, whichever screen shows.
@@ -458,6 +468,15 @@ impl<K> Waiting<K> {
     #[must_use]
     pub fn waits_for(&self, job: JobId) -> bool {
         self.keys.iter().any(|(waiting, _)| *waiting == job)
+    }
+
+    /// Whether it waits for a job whose result must carry `key`.
+    #[must_use]
+    pub fn waits_with(&self, key: &K) -> bool
+    where
+        K: PartialEq,
+    {
+        self.keys.iter().any(|(_, waited)| waited == key)
     }
 
     /// Whether it waits for no job, as when every result has come.

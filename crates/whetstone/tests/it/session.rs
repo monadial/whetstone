@@ -153,7 +153,8 @@ impl SessionStore for TestStore {
 /// attributes, so they stay short.
 pub(crate) const NO_COLOR: &[(&str, &str)] = &[("NO_COLOR", "1")];
 
-/// When every vote a session casts is cast: 2026-10-21 at 10:15:02 UTC.
+/// When every vote a session casts is cast, and what the app's clock tells,
+/// so commit dates are worded from it: 2026-10-21 at 10:15:02 UTC.
 pub(crate) fn voted_at() -> SystemTime {
     UNIX_EPOCH + Duration::from_secs(1_792_577_702)
 }
@@ -235,6 +236,7 @@ impl Session {
             repository,
             environment.temp_dir(),
             &dirs.cache,
+            voted_at,
         );
         let app = match setup.time_limit {
             Some(time_limit) => app.with_time_limit(time_limit),

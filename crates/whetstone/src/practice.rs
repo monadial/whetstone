@@ -1344,7 +1344,8 @@ impl View for Practice {
             }
             JobOutput::ConnectedCode { .. }
             | JobOutput::VoteSaved(_)
-            | JobOutput::CommitsRead(_) => {}
+            | JobOutput::CommitsRead(_)
+            | JobOutput::ChangeSized { .. } => {}
         }
     }
 

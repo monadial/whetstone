@@ -6,9 +6,11 @@
 mod app;
 mod area_files;
 mod areas;
+mod author_date;
 mod cannot_answer;
 mod cli;
 mod columns;
+mod commit_rows;
 mod config;
 mod connected_code;
 mod entry;
@@ -133,6 +135,7 @@ fn launch(environment: &Environment) -> anyhow::Result<ExitCode> {
         repository,
         temp_dir,
         &dirs.cache,
+        SystemTime::now,
     )
     .with_labels_file(LabelsFile::in_state_dir(
         &dirs.state,

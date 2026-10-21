@@ -4,7 +4,7 @@
 
 use std::fmt;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -155,6 +155,9 @@ pub(crate) struct Context<'a> {
     /// Where the learner's votes on withheld questions are kept, with the
     /// votes cast during this run.
     pub(crate) labels: &'a Arc<LabelsFile>,
+    /// When it is, as the app's clock last told, which commit dates are
+    /// worded from.
+    pub(crate) now: SystemTime,
 }
 
 /// What Practice runs on.
