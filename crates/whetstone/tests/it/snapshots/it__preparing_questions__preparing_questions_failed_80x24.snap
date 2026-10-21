@@ -1,6 +1,5 @@
 ---
 source: crates/whetstone/tests/it/preparing_questions.rs
-assertion_line: 371
 expression: "writing_rate_limited(80, 24).frame()"
 ---
 Buffer {

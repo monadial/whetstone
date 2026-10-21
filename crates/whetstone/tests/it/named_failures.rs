@@ -8,7 +8,7 @@ use std::io::Read as _;
 use std::net::TcpListener;
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use whetstone_ai::{RequestFailure, ScriptedAi, Timeouts};
 use whetstone_core::Role;
@@ -117,6 +117,7 @@ fn controls(session: &Session) -> Vec<String> {
 const STEM: &str = "Why does the payment move on?";
 
 /// A stage a request fails in.
+#[derive(Debug)]
 struct Failing {
     /// How the stage names itself.
     stage: &'static str,
@@ -332,8 +333,14 @@ fn practice_asks_with_the_time_limits_it_is_given_and_names_a_request_that_runs_
         32,
     );
 
+    let started = Instant::now();
     session.settle();
 
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "the limit given, not Jev's own 30 s, ran out: {:?}",
+        started.elapsed()
+    );
     let text = words(&session);
     assert!(
         text.contains("Checking areas failed: timed out."),

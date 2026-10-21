@@ -8,34 +8,34 @@
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use whetstone_ai::RequestFailure;
-use whetstone_core::Role;
+use whetstone_ai::{Models, RequestFailure};
+use whetstone_core::{ModelId, Role};
 
-use crate::config::{OPENROUTER_KEY_VARIABLE, Settings};
+use crate::config::OPENROUTER_KEY_VARIABLE;
 
 /// What Settings shows against a model `OpenRouter` refused for having no
 /// zero-retention endpoint.
-pub(crate) const REFUSED: &str = "no zero-retention endpoint (refused by OpenRouter)";
+pub(crate) const REFUSED_MARK: &str = "no zero-retention endpoint (refused by OpenRouter)";
 
 /// The models `OpenRouter` refused during this run because none of their
 /// endpoints keeps no prompts, which Settings marks until Whetstone quits.
 /// The app keeps one for the whole run, shared with the screens that ask
 /// Jev and the generator.
 #[derive(Debug, Default)]
-pub(crate) struct RefusedModels(Mutex<BTreeSet<String>>);
+pub(crate) struct RefusedModels(Mutex<BTreeSet<ModelId>>);
 
 impl RefusedModels {
     /// Remembers that `OpenRouter` refused `model`.
-    pub(crate) fn refuse(&self, model: &str) {
-        self.models().insert(model.to_owned());
+    fn refuse(&self, model: &ModelId) {
+        self.models().insert(model.clone());
     }
 
     /// Whether `OpenRouter` refused `model` during this run.
-    pub(crate) fn refused(&self, model: &str) -> bool {
+    pub(crate) fn refused(&self, model: &ModelId) -> bool {
         self.models().contains(model)
     }
 
-    fn models(&self) -> MutexGuard<'_, BTreeSet<String>> {
+    fn models(&self) -> MutexGuard<'_, BTreeSet<ModelId>> {
         // Only the UI loop's thread locks it, and never across a wait, so a
         // poisoned lock can only follow a panic that is already ending the
         // app; the set is still whole.
@@ -43,38 +43,38 @@ impl RefusedModels {
     }
 }
 
-/// How a screen that asks Jev and the generator names its failed requests:
-/// the models it asks, from the config, and the run's refused models.
+/// The failed requests of a screen that asks Jev and the generator: what
+/// the learner can do about each, and the models `OpenRouter` refused, which
+/// the run remembers.
 #[derive(Debug, Clone)]
-pub(crate) struct Failures {
-    jev_model: String,
-    generator_model: String,
+pub(crate) struct FailedRequests {
+    /// The models the screen asks, as the config names them.
+    models: Models,
     refused: Arc<RefusedModels>,
 }
 
-impl Failures {
-    /// Failures of requests to the models `settings` names, remembering
-    /// refused ones in `refused`.
-    pub(crate) fn new(settings: &Settings, refused: &Arc<RefusedModels>) -> Self {
+impl FailedRequests {
+    /// Failed requests to `models`, remembering refused ones in `refused`.
+    pub(crate) fn new(models: Models, refused: &Arc<RefusedModels>) -> Self {
         Self {
-            jev_model: settings.jev_model.value.clone(),
-            generator_model: settings.generator_model.value.clone(),
+            models,
             refused: Arc::clone(refused),
         }
     }
 
     /// The model a request to `role` asks.
-    fn model(&self, role: Role) -> &str {
+    fn model(&self, role: Role) -> &ModelId {
         match role {
-            Role::Jev => &self.jev_model,
-            Role::Generator => &self.generator_model,
+            Role::Jev => &self.models.jev,
+            Role::Generator => &self.models.generator,
         }
     }
 
-    /// Takes note of `failure` of a request to `role`: when `OpenRouter`
-    /// refused its model for having no zero-retention endpoint, Settings
-    /// marks the model for the rest of the run.
-    pub(crate) fn note(&self, role: Role, failure: RequestFailure) {
+    /// Remembers the model a request to `role` asked when `failure` is
+    /// `OpenRouter` refusing it for having no zero-retention endpoint, so that
+    /// Settings marks it for the rest of the run. Until Jev's requests ask
+    /// for zero retention (#69), only the generator's model can be.
+    pub(crate) fn note_refusal(&self, role: Role, failure: RequestFailure) {
         if failure == RequestFailure::NoZeroRetentionEndpoint {
             let model = self.model(role);
             tracing::info!(%model, "OpenRouter refused a model: no zero-retention endpoint");

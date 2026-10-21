@@ -214,16 +214,21 @@ impl Settings {
         let KeyStatus::Set(key) = &self.openrouter_key else {
             return None;
         };
-        let models = Models {
-            jev: ModelId::new(self.jev_model.value.clone()),
-            generator: ModelId::new(self.generator_model.value.clone()),
-        };
         match OpenRouter::with_settings(Some(key.clone()), base_url, timeouts) {
-            Ok(connection) => Some(OpenRouterAi::new(connection, models)),
+            Ok(connection) => Some(OpenRouterAi::new(connection, self.models())),
             Err(failure) => {
                 tracing::warn!(%failure, "Practice can't reach OpenRouter");
                 None
             }
+        }
+    }
+
+    /// The models Practice asks: Jev's and the generator's, as this config
+    /// names them.
+    pub(crate) fn models(&self) -> Models {
+        Models {
+            jev: ModelId::new(self.jev_model.value.clone()),
+            generator: ModelId::new(self.generator_model.value.clone()),
         }
     }
 

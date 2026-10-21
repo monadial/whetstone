@@ -14,14 +14,14 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{List, Paragraph, Wrap};
-use whetstone_core::{AssessmentPolicy, ConnectedCodeLimitKb, QuestionCount, Validation};
+use whetstone_core::{AssessmentPolicy, ConnectedCodeLimitKb, ModelId, QuestionCount, Validation};
 
 use crate::columns;
 use crate::config::{
     ConfigFile, DEFAULT_GENERATOR_MODEL, DEFAULT_JEV_MODEL, KeyStatus, OPENROUTER_KEY_VARIABLE,
     Origin, Setting, Settings,
 };
-use crate::failures::{REFUSED, RefusedModels};
+use crate::failures::{REFUSED_MARK, RefusedModels};
 use crate::focus::Position;
 use crate::keymap::{self, Command, Keymap};
 use crate::palette::Action;
@@ -130,16 +130,16 @@ impl Control {
     /// model `OpenRouter` refused during this run, in `refused`, and the note
     /// when the policy wasn't checked against the Jev model in use.
     fn notes(self, settings: &Settings, refused: &RefusedModels) -> Vec<String> {
-        let refused_mark = |model: &Setting<String>| {
+        let refused_mark = |model: &ModelId| {
             refused
-                .refused(&model.value)
-                .then(|| REFUSED.to_owned())
+                .refused(model)
+                .then(|| REFUSED_MARK.to_owned())
                 .into_iter()
                 .collect()
         };
         match self {
-            Self::JevModel => refused_mark(&settings.jev_model),
-            Self::GeneratorModel => refused_mark(&settings.generator_model),
+            Self::JevModel => refused_mark(&settings.models().jev),
+            Self::GeneratorModel => refused_mark(&settings.models().generator),
             Self::AssessmentPolicy if settings.jev_model.value != DEFAULT_JEV_MODEL => {
                 vec![format!(
                     "Assessment policy checked against {DEFAULT_JEV_MODEL}; you're using {}",
