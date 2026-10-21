@@ -82,7 +82,9 @@ pub use crate::jev::{JevAnswer, JevQuestion, JevReply, JevRequest, YesNoMeanings
 pub use crate::openrouter_ai::{Models, OpenRouterAi};
 pub use crate::port::{Ai, CandidateCount, Pending, Reply, RequestFailure, Saved, Stamp};
 pub use crate::prompts::{base_prompts_hash, base_prompts_version};
-pub use crate::question_check::{question_check_answers, question_check_request};
+pub use crate::question_check::{
+    name as question_check_name, question_check_answers, question_check_request,
+};
 pub use crate::reasoning::{QuestionWithoutKey, reasoning_answers, reasoning_request};
 #[cfg(any(test, feature = "scripted"))]
 pub use crate::scripted::{Asked, ScriptedAi};

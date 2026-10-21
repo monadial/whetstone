@@ -112,6 +112,9 @@ pub enum JobOutput {
         /// why the request failed.
         reply: Result<Reply<Vec<ParagraphCheck>>, RequestFailure>,
     },
+    /// A vote on a withheld question was appended to the labels file, or
+    /// couldn't be, which the labels file itself keeps.
+    VoteSaved,
 }
 
 /// How a job ended.

@@ -434,7 +434,7 @@ fn number(value: &toml::Value) -> Option<f64> {
 }
 
 /// `path` as Settings shows it: under the home directory it starts `~/`.
-fn shown_path(path: &Path, environment: &Environment) -> String {
+pub(crate) fn shown_path(path: &Path, environment: &Environment) -> String {
     environment
         .get("HOME")
         .map(Path::new)

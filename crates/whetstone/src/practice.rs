@@ -25,7 +25,10 @@
 //! When the gate drops every chosen area, Nothing to practice in this change
 //! gives each its verdict and offers Ask anyway, which writes about every
 //! chosen area without the gate; their questions are still checked. Retry on
-//! No questions passed checks keeps the gate's decision.
+//! No questions passed checks keeps the gate's decision. While any candidate
+//! was withheld, Review withheld questions opens there, and from the palette
+//! on the questions, to vote on each check that withheld one (see
+//! [`crate::review_withheld`]).
 //!
 //! No questions passed checks says why in words, and so does the
 //! shortfall's See why fewer passed: Practice keeps, for the candidates
@@ -73,9 +76,11 @@ use crate::failures::FailedRequests;
 use crate::focus::Position;
 use crate::job::{JobId, JobOutput, Jobs, Waiting};
 use crate::keymap::{self, Binding, Command, Input, Keymap};
+use crate::labels_file::VotedChange;
 use crate::palette::Action;
 use crate::questions::Questions;
 use crate::reader::{Reader, Section};
+use crate::review_withheld::{self, ReviewWithheld};
 use crate::sent_requests::{Asking, SentRequests, Spending};
 use crate::session_record::SessionStore;
 use crate::stage_row::{PracticeStage, Stage as RowStage, StageRow, StageState};
@@ -293,6 +298,7 @@ enum Control {
     PickAnotherChange,
     PickOtherAreas,
     AskAnyway,
+    ReviewWithheld,
 }
 
 impl Control {
@@ -304,6 +310,7 @@ impl Control {
             Self::PickAnotherChange => "Pick another change",
             Self::PickOtherAreas => "Pick other areas",
             Self::AskAnyway => "Ask anyway",
+            Self::ReviewWithheld => "Review withheld questions",
         }
     }
 }
@@ -760,7 +767,9 @@ impl Practice {
         );
         self.stage = match Questions::new(picked, &self.areas, self.failed_requests.clone()) {
             Some(questions) => Stage::Shown(Box::new(
-                questions.not_asking_about(self.gate.dropped(&self.areas)),
+                questions
+                    .not_asking_about(self.gate.dropped(&self.areas))
+                    .withholding(self.withheld.len()),
             )),
             None => Stage::NonePassed,
         };
@@ -828,6 +837,11 @@ impl Practice {
                 Control::PickAnotherChange,
                 Control::PickOtherAreas,
                 Control::AskAnyway,
+            ],
+            Stage::NonePassed if !self.withheld.is_empty() => &[
+                Control::Retry,
+                Control::PickAnotherChange,
+                Control::ReviewWithheld,
             ],
             Stage::NonePassed => &[Control::Retry, Control::PickAnotherChange],
             _ if self.failure().is_some() => &[Control::Retry, Control::Back],
@@ -1041,6 +1055,34 @@ impl Practice {
             sections,
         ))
     }
+
+    /// The review of the candidates withheld when questions were last
+    /// picked, saving votes in `context`'s labels file, if any was withheld.
+    fn review_withheld(&self, context: &Context<'_>) -> Option<ReviewWithheld> {
+        let candidates = self
+            .withheld
+            .iter()
+            .map(|withheld| review_withheld::Entry {
+                area_name: self
+                    .areas
+                    .iter()
+                    .find(|area| area.id() == withheld.id().area())
+                    .map_or_else(
+                        || withheld.id().area().to_string(),
+                        |area| area.name().to_owned(),
+                    ),
+                withheld: withheld.clone(),
+            })
+            .collect();
+        let change = VotedChange {
+            subject: self.change.summary().into_owned(),
+            commit_id: match self.change_ref {
+                ChangeRef::Showcase(_) => None,
+                ChangeRef::Commit(id) => Some(id.full().to_owned()),
+            },
+        };
+        ReviewWithheld::new(candidates, change, self.evidence_reader()?, context.labels)
+    }
 }
 
 impl View for Practice {
@@ -1192,13 +1234,19 @@ impl View for Practice {
         matches!(&self.stage, Stage::Shown(questions) if questions.holds_draft())
     }
 
-    fn open(&self, route: Route, _context: &Context<'_>) -> Option<Box<dyn View>> {
+    fn open(&self, route: Route, context: &Context<'_>) -> Option<Box<dyn View>> {
         match route {
             Route::Read(Reading::Evidence) => self
                 .evidence_reader()
                 .map(|reader| Box::new(reader) as Box<dyn View>),
             Route::Read(Reading::Answer) => match &self.stage {
                 Stage::Shown(questions) => Some(Box::new(questions.answer_reader())),
+                _ => None,
+            },
+            Route::Read(Reading::Withheld) => match &self.stage {
+                Stage::NonePassed | Stage::Shown(_) => self
+                    .review_withheld(context)
+                    .map(|review| Box::new(review) as Box<dyn View>),
                 _ => None,
             },
             Route::Read(Reading::JevAnswers) => match &self.stage {
@@ -1294,7 +1342,7 @@ impl View for Practice {
                     }
                 }
             }
-            JobOutput::ConnectedCode { .. } => {}
+            JobOutput::ConnectedCode { .. } | JobOutput::VoteSaved => {}
         }
     }
 
@@ -1360,6 +1408,7 @@ impl View for Practice {
                 self.retry();
                 None
             }
+            Control::ReviewWithheld => Some(Command::Go(Route::Read(Reading::Withheld))),
         }
     }
 

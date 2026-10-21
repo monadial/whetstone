@@ -61,7 +61,9 @@
 //! passed checks, *N* asked for" heads them, so the learner knows nothing
 //! unchecked filled the gap, and offers See why fewer passed in the
 //! palette, which reads the reasons No questions passed checks gives
-//! (see [`crate::withheld`]). Below the first question, one line names any
+//! (see [`crate::withheld`]), and, while any candidate was withheld, Review
+//! withheld questions (see [`crate::review_withheld`]). Below the first
+//! question, one line names any
 //! chosen area that wasn't asked about, because the relevance gate found it
 //! not worth asking about in this change.
 
@@ -143,6 +145,10 @@ const ACTIONS: &[Action] = &[INSPECT_SOURCE, FINISH, BACK];
 /// passed their checks than were asked for.
 const SHORTFALL_ACTIONS: &[Action] = &[INSPECT_SOURCE, SEE_WHY, FINISH, BACK];
 
+/// The same, when the question check withheld any of the candidates.
+const SHORTFALL_WITHHELD_ACTIONS: &[Action] =
+    &[INSPECT_SOURCE, SEE_WHY, REVIEW_WITHHELD, FINISH, BACK];
+
 /// The actions in the palette on feedback.
 const FEEDBACK_ACTIONS: &[Action] = &[INSPECT_SOURCE, FINISH];
 
@@ -150,12 +156,24 @@ const FEEDBACK_ACTIONS: &[Action] = &[INSPECT_SOURCE, FINISH];
 /// than were asked for.
 const SHORTFALL_FEEDBACK_ACTIONS: &[Action] = &[INSPECT_SOURCE, SEE_WHY, FINISH];
 
+/// The same, when the question check withheld any of the candidates.
+const SHORTFALL_WITHHELD_FEEDBACK_ACTIONS: &[Action] =
+    &[INSPECT_SOURCE, SEE_WHY, REVIEW_WITHHELD, FINISH];
+
 /// See why fewer passed, in the palette when fewer passed their checks
 /// than were asked for.
 const SEE_WHY: Action = Action {
     label: "See why fewer passed",
     does: "Read why the other questions written didn't pass their checks",
     command: Command::Go(Route::Read(Reading::WhyWithheld)),
+};
+
+/// Review withheld questions, in the palette beside See why fewer passed,
+/// when the question check withheld any of the candidates.
+const REVIEW_WITHHELD: Action = Action {
+    label: "Review withheld questions",
+    does: "Vote on each check that withheld a question, saved as a label on this machine",
+    command: Command::Go(Route::Read(Reading::Withheld)),
 };
 
 /// Back, in the palette.
@@ -401,6 +419,8 @@ pub(crate) struct Questions {
     shortfall: Option<QuestionCount>,
     /// The names of the chosen areas not asked about, in order.
     not_asked_about: Vec<String>,
+    /// How many candidates the question check withheld.
+    withheld: usize,
     /// The place of the question that shows.
     at: usize,
     record: Record,
@@ -467,6 +487,7 @@ impl Questions {
                 .collect(),
             shortfall,
             not_asked_about: Vec::new(),
+            withheld: 0,
             at: 0,
             record: Record::ToStart,
             submitted: None,
@@ -495,6 +516,13 @@ impl Questions {
     /// How many questions there are.
     pub(crate) fn len(&self) -> usize {
         self.picked.len()
+    }
+
+    /// The same questions, offering Review withheld questions in the
+    /// palette beside See why fewer passed when the question check withheld
+    /// any of the `withheld` candidates.
+    pub(crate) fn withholding(self, withheld: usize) -> Self {
+        Self { withheld, ..self }
     }
 
     /// The question that shows.
@@ -585,12 +613,16 @@ impl Questions {
         if self.reporting.is_some() {
             return report::ACTIONS;
         }
-        match (&self.current().attempt, self.shortfall) {
-            (Attempt::Draft(_), None) => ACTIONS,
-            (Attempt::Draft(_), Some(_)) => SHORTFALL_ACTIONS,
-            (Attempt::Submitted(_) | Attempt::CannotAnswer(_), None) => FEEDBACK_ACTIONS,
-            (Attempt::Submitted(_) | Attempt::CannotAnswer(_), Some(_)) => {
+        match (&self.current().attempt, self.shortfall, self.withheld) {
+            (Attempt::Draft(_), None, _) => ACTIONS,
+            (Attempt::Draft(_), Some(_), 0) => SHORTFALL_ACTIONS,
+            (Attempt::Draft(_), Some(_), _) => SHORTFALL_WITHHELD_ACTIONS,
+            (Attempt::Submitted(_) | Attempt::CannotAnswer(_), None, _) => FEEDBACK_ACTIONS,
+            (Attempt::Submitted(_) | Attempt::CannotAnswer(_), Some(_), 0) => {
                 SHORTFALL_FEEDBACK_ACTIONS
+            }
+            (Attempt::Submitted(_) | Attempt::CannotAnswer(_), Some(_), _) => {
+                SHORTFALL_WITHHELD_FEEDBACK_ACTIONS
             }
         }
     }

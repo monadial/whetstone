@@ -38,6 +38,7 @@ use crate::help::KeyHelp;
 use crate::home::Home;
 use crate::job::{Finished, Job, JobId, JobOutcome, JobOutput, Jobs, TimeLimit};
 use crate::keymap::{self, Command, Input};
+use crate::labels_file::LabelsFile;
 use crate::leave::{Leave, Leaving};
 use crate::overlay::{Outcome, Overlay};
 use crate::palette::Palette;
@@ -94,6 +95,9 @@ pub struct App {
     /// Where session records are kept: in memory until the durable store
     /// arrives.
     store: Box<dyn SessionStore>,
+    /// Where the learner's votes on withheld questions are kept, with the
+    /// votes cast during this run, shared with the jobs that save them.
+    labels: Arc<LabelsFile>,
 }
 
 /// Something for the app to apply: a terminal event the UI loop read, a
@@ -284,6 +288,7 @@ impl App {
             refused_models: Arc::default(),
             request_ids: Arc::default(),
             store: Box::new(InMemoryStore::new()),
+            labels: Arc::new(LabelsFile::none()),
         }
     }
 
@@ -310,6 +315,16 @@ impl App {
     #[must_use]
     pub fn with_store(self, store: Box<dyn SessionStore>) -> Self {
         Self { store, ..self }
+    }
+
+    /// The same app, saving the learner's votes on withheld questions in
+    /// `labels`. Without it, votes can't be saved.
+    #[must_use]
+    pub fn with_labels_file(self, labels: LabelsFile) -> Self {
+        Self {
+            labels: Arc::new(labels),
+            ..self
+        }
     }
 
     /// Applies one message. Key presses act, a paste goes into the focused
@@ -505,6 +520,7 @@ impl App {
                     ai: self.ai.as_ref(),
                     refused_models: &self.refused_models,
                     request_ids: &self.request_ids,
+                    labels: &self.labels,
                 };
                 if let Command::Replace(_) = command {
                     self.screens
@@ -553,6 +569,7 @@ impl App {
             ai: self.ai.as_ref(),
             refused_models: &self.refused_models,
             request_ids: &self.request_ids,
+            labels: &self.labels,
         };
         screen.render(&context, frame, body);
         // While a text entry has focus, the keys that work everywhere type.

@@ -88,7 +88,9 @@ tokio = { version = "1.53", features = ["macros", "rt", "signal", "sync", "time"
 # Owns background jobs (`TaskTracker`, from `rt`) and cancels them
 # (`CancellationToken`).
 tokio-util = { version = "0.7", features = ["rt"] }
-toml = { version = "1.1", default-features = false, features = ["parse", "serde", "std"] }
+# Reads config and area files. `display` writes each vote to the labels file
+# as a labelled example; its writer is already in the tree through toml.
+toml = { version = "1.1", default-features = false, features = ["display", "parse", "serde", "std"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std"] }
 # Typed text is edited by grapheme (CODING_STANDARDS.md rule 31). Ratatui

@@ -1109,7 +1109,11 @@ impl OutboundReview {
                 )
             }
             // Only Practice's questions show it.
-            Reading::Evidence | Reading::Answer | Reading::JevAnswers | Reading::WhyWithheld => {
+            Reading::Evidence
+            | Reading::Answer
+            | Reading::JevAnswers
+            | Reading::WhyWithheld
+            | Reading::Withheld => {
                 return None;
             }
         })
@@ -1223,7 +1227,8 @@ impl View for OutboundReview {
             | JobOutput::Checked { .. }
             | JobOutput::Evaluated { .. }
             | JobOutput::Explained { .. }
-            | JobOutput::ExplanationChecked { .. } => {}
+            | JobOutput::ExplanationChecked { .. }
+            | JobOutput::VoteSaved => {}
         }
     }
 
