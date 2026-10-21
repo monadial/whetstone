@@ -10,7 +10,8 @@
 //! Each request is stamped as it is sent with Whetstone's own identity for
 //! it, counting from 1 in the order sent across the whole run
 //! ([`RequestIds`]), and the versions behind it: Whetstone's, the base
-//! prompts', the assessment policy's, and the file of each area it is about.
+//! prompts', the assessment policy's, with the cut-offs in effect, and the
+//! file of each area it is about.
 //! A question's requests after its check (its reasoning's evaluation, the
 //! explanation and its check) carry its area's file too, as the question
 //! they are about was written from it.
@@ -119,6 +120,9 @@ pub(crate) struct SentRequests {
     models: Models,
     /// The base prompts' version, which every request goes out with.
     base_prompts: ContentHash,
+    /// The assessment policy in effect, with the cut-offs that band the
+    /// answers, which every request goes out with.
+    policy: AssessmentPolicy,
     /// The chosen areas' files.
     area_files: Vec<AreaFileVersion>,
     /// Where each request's identity comes from.
@@ -131,16 +135,19 @@ pub(crate) struct SentRequests {
 }
 
 impl SentRequests {
-    /// No request yet, to `models`, about the chosen areas, whose files
-    /// are `area_files`, each request's identity from `ids`.
+    /// No request yet, to `models`, under the assessment `policy` in
+    /// effect, about the chosen areas, whose files are `area_files`, each
+    /// request's identity from `ids`.
     pub(crate) fn new(
         models: Models,
+        policy: AssessmentPolicy,
         area_files: Vec<AreaFileVersion>,
         ids: &Arc<RequestIds>,
     ) -> Self {
         Self {
             models,
             base_prompts: base_prompts_hash(),
+            policy,
             area_files,
             ids: Arc::clone(ids),
             sending: Vec::new(),
@@ -172,7 +179,7 @@ impl SentRequests {
             versions: Versions::new(
                 env!("CARGO_PKG_VERSION").to_owned(),
                 self.base_prompts.clone(),
-                AssessmentPolicy::current().version(),
+                self.policy.clone(),
                 area_files,
             ),
         }

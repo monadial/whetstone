@@ -2,7 +2,8 @@
 //! the question, from its question check, its reasoning's evaluation and
 //! its explanation's check, with its probability as returned, or the depth's
 //! distribution, its band under the assessment policy, the policy's
-//! version and the models asked and answering. It is labelled "Jev's
+//! version, the cut-offs that banded it and the models asked and
+//! answering. It is labelled "Jev's
 //! probability, not a measure of correctness". Feedback itself shows no
 //! numbers, and Jev's probabilities never reach the log.
 
@@ -185,6 +186,9 @@ fn inspect_shows_each_of_jevs_answers_with_its_band_the_policy_version_and_the_m
         session.section("Question check"),
         [
             models,
+            "Cut-offs for the question check · upper 0.8, lower 0.2 · policy 0's",
+            "Cut-offs for option ratings · upper 0.8, lower 0.2 · policy 0's",
+            "Cut-offs for rationale and hint checks · upper 0.8, lower 0.2 · policy 0's",
             "Answerable from the evidence sent · 0.9731 · clear yes",
             "About its area · 0.9 · clear yes",
             "Needs this change, not general knowledge · 0.8462 · clear yes",
@@ -207,6 +211,7 @@ fn inspect_shows_each_of_jevs_answers_with_its_band_the_policy_version_and_the_m
         session.section("Reasoning"),
         [
             models,
+            "Cut-offs for reasoning criteria · upper 0.8, lower 0.2 · policy 0's",
             "Meets criterion 1: The rubric's criterion, which stays hidden · 0.6214 · unclear",
         ]
     );
@@ -214,6 +219,7 @@ fn inspect_shows_each_of_jevs_answers_with_its_band_the_policy_version_and_the_m
         session.section("Explanation check"),
         [
             models,
+            "Cut-offs for explanation checks · upper 0.8, lower 0.2 · policy 0's",
             "Criterion 1's explanation is supported by the evidence · 0.9317 · clear yes",
             "Criterion 1's explanation agrees with its outcome · 0.8829 · clear yes",
         ]
@@ -334,7 +340,7 @@ fn a_paragraph_checked_again_after_retry_explanation_names_each_check() {
     activate(&mut session, "Inspect Jev's answers");
 
     assert_eq!(
-        session.section("Explanation check")[1..],
+        session.section("Explanation check")[2..],
         [
             "Criterion 1's explanation, check 1 of 2, is supported by the evidence · 0.41 · unclear",
             "Criterion 1's explanation, check 1 of 2, agrees with its outcome · 0.9 · clear yes",

@@ -241,7 +241,7 @@ impl Explanation {
 
     /// Applies Jev's `reply` to the paragraphs being checked for the
     /// response `saved` acknowledges: its answers about each, in rubric
-    /// order, which the assessment policy bands, or why the request failed.
+    /// order, which the assessment `policy` bands, or why the request failed.
     /// A paragraph shows only when both answers are clear yes. A reply that
     /// doesn't answer each paragraph once is a reply that could not be read
     /// (rule 37).
@@ -251,6 +251,7 @@ impl Explanation {
     pub(crate) fn checked(
         &mut self,
         saved: &SavedResponse,
+        policy: &AssessmentPolicy,
         reply: Result<Vec<ParagraphCheck>, RequestFailure>,
     ) -> Vec<Assessment> {
         let checking = self
@@ -283,7 +284,7 @@ impl Explanation {
                 return Vec::new();
             }
         };
-        let policy = AssessmentPolicy::current();
+        let cut_offs = policy.cut_offs(Job::ExplanationCheck);
         let mut checked = Vec::new();
         let paragraphs = self
             .criteria
@@ -297,15 +298,9 @@ impl Explanation {
             };
             let clear = |answer| policy.band(Job::ExplanationCheck, answer) == Band::ClearYes;
             let check = if clear(answers.supported) && clear(answers.agrees) {
-                ExplanationCheck::Passed {
-                    answers,
-                    policy: policy.version(),
-                }
+                ExplanationCheck::Passed { answers, cut_offs }
             } else {
-                ExplanationCheck::Failed {
-                    answers,
-                    policy: policy.version(),
-                }
+                ExplanationCheck::Failed { answers, cut_offs }
             };
             checked.push(Assessment::Explanation {
                 paragraph: written.paragraph.clone(),

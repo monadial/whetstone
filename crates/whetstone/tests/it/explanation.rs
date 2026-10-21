@@ -14,7 +14,7 @@ use std::sync::Arc;
 use whetstone::{Assessment, ExplanationCheck, SavedResponse, StoreEntry};
 use whetstone_ai::{Asked, ParagraphCheck, RequestFailure, ScriptedAi, WrittenParagraph};
 use whetstone_core::{
-    AssessmentPolicy, CriterionOutcome, Probability, WrittenCandidate, WrittenCitation,
+    AssessmentPolicy, CriterionOutcome, Job, Probability, WrittenCandidate, WrittenCitation,
     WrittenCriterion,
 };
 
@@ -466,7 +466,7 @@ fn every_paragraph_checked_is_saved_to_the_session_record_shown_or_withheld() {
             _ => None,
         })
         .expect("the response is saved");
-    let policy = AssessmentPolicy::current().version();
+    let cut_offs = AssessmentPolicy::current().cut_offs(Job::ExplanationCheck);
     assert_eq!(
         saved_explanations(&log),
         [
@@ -476,7 +476,7 @@ fn every_paragraph_checked_is_saved_to_the_session_record_shown_or_withheld() {
                 shown,
                 ExplanationCheck::Passed {
                     answers: check(0.9, 0.85),
-                    policy,
+                    cut_offs,
                 },
             ),
             (
@@ -484,7 +484,7 @@ fn every_paragraph_checked_is_saved_to_the_session_record_shown_or_withheld() {
                 withheld,
                 ExplanationCheck::Failed {
                     answers: check(0.6, 0.9),
-                    policy,
+                    cut_offs,
                 },
             ),
         ]

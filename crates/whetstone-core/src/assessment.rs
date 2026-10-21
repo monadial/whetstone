@@ -4,23 +4,25 @@
 //! A response is assessed twice, separately, with no combined grade: its
 //! choice from the question's option ratings, at once, and its reasoning
 //! criterion by criterion from Jev's answers. Every outcome carries the Jev
-//! answer it came from and the version of the policy that banded it. An
-//! outcome is always one of its enum's states, never a `bool`.
+//! answer it came from and the cut-offs that banded it: the policy's
+//! version, the job's cut-offs, and whether they are the policy's defaults
+//! or the learner's own. An outcome is always one of its enum's states,
+//! never a `bool`.
 
 use std::fmt;
 
-use crate::assessment_policy::{AssessmentPolicy, Band, Job, PolicyVersion};
+use crate::assessment_policy::{AppliedCutOffs, AssessmentPolicy, Band, Job, PolicyVersion};
 use crate::jev::Probability;
 use crate::question::OptionLetter;
 use crate::question_check::{CandidateCheck, Question};
 
-/// An outcome, with the Jev answer it came from and the version of the
-/// policy that banded that answer.
+/// An outcome, with the Jev answer it came from and the cut-offs that
+/// banded that answer.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Assessed<T> {
     outcome: T,
     answer: Probability,
-    policy: PolicyVersion,
+    cut_offs: AppliedCutOffs,
 }
 
 /// One option's rating, decided in its question's check before the learner
@@ -87,7 +89,14 @@ impl<T: Copy> Assessed<T> {
     /// The version of the policy that banded the answer.
     #[must_use]
     pub fn policy(&self) -> PolicyVersion {
-        self.policy
+        self.cut_offs.policy()
+    }
+
+    /// The cut-offs that banded the answer, and whether they are the
+    /// policy's defaults or the learner's own.
+    #[must_use]
+    pub fn cut_offs(&self) -> AppliedCutOffs {
+        self.cut_offs
     }
 }
 
@@ -102,7 +111,7 @@ impl AssessmentPolicy {
             Band::ClearNo => OptionRating::NotSupported,
             Band::Unclear => OptionRating::NeedsReview,
         };
-        self.assessed(outcome, answer)
+        self.assessed(Job::OptionRating, outcome, answer)
     }
 
     /// A criterion's outcome from Jev's `answer` to whether the learner's
@@ -115,15 +124,16 @@ impl AssessmentPolicy {
             Band::ClearNo => CriterionOutcome::NotMet,
             Band::Unclear => CriterionOutcome::NeedsReview,
         };
-        self.assessed(outcome, answer)
+        self.assessed(Job::ReasoningCriterion, outcome, answer)
     }
 
-    /// `outcome`, which this policy banded from `answer`.
-    fn assessed<T>(&self, outcome: T, answer: Probability) -> Assessed<T> {
+    /// `outcome`, which this policy banded from `answer` with `job`'s
+    /// cut-offs.
+    fn assessed<T>(&self, job: Job, outcome: T, answer: Probability) -> Assessed<T> {
         Assessed {
             outcome,
             answer,
-            policy: self.version(),
+            cut_offs: self.cut_offs(job),
         }
     }
 }
@@ -145,7 +155,7 @@ impl Question {
                 .answers()
                 .get(CandidateCheck::Option(letter))
                 .expect("the show rule shows only a question with every option rated"),
-            policy: self.policy(),
+            cut_offs: self.policy().cut_offs(Job::OptionRating),
         }
     }
 
@@ -165,7 +175,7 @@ impl Question {
         Assessed {
             outcome,
             answer: rating.answer,
-            policy: rating.policy,
+            cut_offs: rating.cut_offs,
         }
     }
 }
@@ -206,6 +216,7 @@ impl fmt::Debug for Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::assessment_policy::{CutOffs, CutOffsOrigin};
     use crate::question_check::tests::{candidate, depth, passing, probability};
     use crate::question_check::{QuestionCheckAnswers, show_rule};
 
@@ -299,6 +310,53 @@ mod tests {
             assert_eq!(assessed.answer(), probability(answer));
             assert_eq!(assessed.policy(), policy.version());
         }
+    }
+
+    #[test]
+    fn an_outcome_records_the_cut_offs_that_banded_it_and_whose_they_are() {
+        let cut_offs = CutOffs::new(0.7, 0.3).expect("valid");
+        let policy = AssessmentPolicy::with_cut_offs([
+            (Job::ReasoningCriterion, cut_offs),
+            (Job::OptionRating, cut_offs),
+        ]);
+
+        let criterion = policy.criterion_outcome(probability(0.75));
+        let rating = policy.option_rating(probability(0.25));
+
+        assert_eq!(criterion.outcome(), CriterionOutcome::Met);
+        assert_eq!(rating.outcome(), OptionRating::NotSupported);
+        for applied in [criterion.cut_offs(), rating.cut_offs()] {
+            assert_eq!(applied.cut_offs(), cut_offs);
+            assert_eq!(applied.origin(), CutOffsOrigin::Learner);
+            assert_eq!(applied.policy().get(), 0);
+        }
+        let default = AssessmentPolicy::current().criterion_outcome(probability(0.75));
+        assert_eq!(default.outcome(), CriterionOutcome::NeedsReview);
+        assert_eq!(
+            default.cut_offs(),
+            AssessmentPolicy::current().cut_offs(Job::ReasoningCriterion)
+        );
+    }
+
+    #[test]
+    fn a_shown_question_s_option_ratings_and_choice_carry_the_cut_offs_it_was_checked_with() {
+        let candidate = candidate("domain", 0, OptionLetter::A);
+        let answers = passing(&candidate);
+        let policy = AssessmentPolicy::with_cut_offs([(
+            Job::OptionRating,
+            CutOffs::new(0.85, 0.15).expect("valid"),
+        )]);
+        let question = show_rule(
+            candidate,
+            QuestionCheckAnswers::new(answers, depth(1.0)),
+            &policy,
+        )
+        .expect("shown");
+
+        let applied = policy.cut_offs(Job::OptionRating);
+        assert_eq!(question.option_rating(OptionLetter::B).cut_offs(), applied);
+        assert_eq!(question.choice_outcome(OptionLetter::A).cut_offs(), applied);
+        assert_eq!(applied.origin(), CutOffsOrigin::Learner);
     }
 
     #[test]

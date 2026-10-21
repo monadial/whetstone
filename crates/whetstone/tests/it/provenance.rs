@@ -78,7 +78,7 @@ fn assert_versions(request: &SentRequest) {
     let versions = request.provenance.versions();
     assert_eq!(versions.whetstone(), env!("CARGO_PKG_VERSION"));
     assert_eq!(versions.base_prompts(), &base_prompts_hash());
-    assert_eq!(versions.policy(), AssessmentPolicy::current().version());
+    assert_eq!(versions.policy(), AssessmentPolicy::current());
     assert_eq!(
         versions.area_files(),
         [domain_file()],

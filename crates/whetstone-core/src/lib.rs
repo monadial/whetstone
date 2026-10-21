@@ -29,7 +29,10 @@ pub use crate::area::{Area, AreaFileError, AreaId, AreaSource, InvalidAreaFile, 
 pub use crate::assessment::{
     Assessed, ChoiceOutcome, CriterionOutcome, MissingReasoning, OptionRating, Response,
 };
-pub use crate::assessment_policy::{AssessmentPolicy, Band, Job, PolicyVersion, Validation};
+pub use crate::assessment_policy::{
+    AppliedCutOffs, AssessmentPolicy, Band, CutOffs, CutOffsOrigin, InvalidCutOffs, Job,
+    PolicyVersion, Validation,
+};
 pub use crate::change::{
     Change, CommitId, Comparison, FileContent, InvalidCommitId, Origin, TouchedFile,
 };

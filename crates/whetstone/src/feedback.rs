@@ -33,8 +33,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{List, Paragraph};
 use whetstone_ai::{ParagraphCheck, RequestFailure, WrittenParagraph};
 use whetstone_core::{
-    Assessed, AssessmentPolicy, ChoiceOutcome, CriterionOutcome, Evidence, Extent, OptionLetter,
-    PolicyVersion, Probability, Question, Role,
+    AppliedCutOffs, Assessed, ChoiceOutcome, CriterionOutcome, Evidence, Extent, OptionLetter,
+    Probability, Question, Role,
 };
 
 use crate::columns;
@@ -171,8 +171,9 @@ pub(crate) struct CheckedParagraph {
     pub(crate) criterion: usize,
     /// Jev's answers, as returned.
     pub(crate) answers: ParagraphCheck,
-    /// The version of the policy that banded them.
-    pub(crate) policy: PolicyVersion,
+    /// The cut-offs that banded them, with their policy's version and
+    /// whether they are its defaults or the learner's own.
+    pub(crate) cut_offs: AppliedCutOffs,
 }
 
 /// Feedback on one submitted response.
@@ -273,7 +274,8 @@ impl Feedback {
 
     /// Applies Jev's `reply` about the reasoning written for `question`: a
     /// probability for each criterion, in rubric order, which the assessment
-    /// policy turns into its outcome, or why the request failed. A reply
+    /// policy the question was checked with turns into its outcome, or why
+    /// the request failed. A reply
     /// that doesn't answer each criterion once is a reply that could not be
     /// read (rule 37).
     pub(crate) fn evaluated(
@@ -289,7 +291,7 @@ impl Feedback {
         };
         self.evaluation = match reply {
             Ok(answers) if answers.len() == question.rubric().len() => {
-                let policy = AssessmentPolicy::current();
+                let policy = question.policy();
                 let outcomes: Vec<_> = answers
                     .into_iter()
                     .map(|answer| policy.criterion_outcome(answer))
@@ -364,24 +366,28 @@ impl Feedback {
         self.unrecorded.extend(withheld);
     }
 
-    /// Applies Jev's `reply` checking the explanation: its answers about
-    /// each paragraph, or why the request failed.
+    /// Applies Jev's `reply` checking the explanation of the reasoning
+    /// written for `question`: its answers about each paragraph, which the
+    /// policy `question` was checked with bands, or why the request failed.
     pub(crate) fn explanation_checked(
         &mut self,
+        question: &Question,
         reply: Result<Vec<ParagraphCheck>, RequestFailure>,
     ) {
-        let checked = self.explanation.checked(&self.saved, reply);
+        let checked = self
+            .explanation
+            .checked(&self.saved, question.policy(), reply);
         self.explanation_checks
             .extend(checked.iter().filter_map(|assessment| match assessment {
                 Assessment::Explanation {
                     paragraph,
                     check:
-                        ExplanationCheck::Passed { answers, policy }
-                        | ExplanationCheck::Failed { answers, policy },
+                        ExplanationCheck::Passed { answers, cut_offs }
+                        | ExplanationCheck::Failed { answers, cut_offs },
                 } => Some(CheckedParagraph {
                     criterion: paragraph.criterion,
                     answers: *answers,
-                    policy: *policy,
+                    cut_offs: *cut_offs,
                 }),
                 Assessment::Choice(_)
                 | Assessment::Criterion { .. }

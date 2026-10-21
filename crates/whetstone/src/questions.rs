@@ -763,8 +763,8 @@ impl Questions {
         saved: &SavedResponse,
         reply: Result<Vec<ParagraphCheck>, RequestFailure>,
     ) {
-        if let Some((_, feedback)) = self.feedback_on(saved) {
-            feedback.explanation_checked(reply);
+        if let Some((question, feedback)) = self.feedback_on(saved) {
+            feedback.explanation_checked(question, reply);
         }
     }
 
