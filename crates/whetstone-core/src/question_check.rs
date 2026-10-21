@@ -100,11 +100,14 @@ pub struct Question {
     hint: Option<Hint>,
 }
 
-/// A candidate the show rule withheld, and the checks that were not as the
-/// rule needs them. It is never shown.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A candidate the show rule withheld, with Jev's answers to its question
+/// check and the checks that were not as the rule needs them. It is never
+/// shown.
+#[derive(Debug, Clone, PartialEq)]
 pub struct Withheld {
-    id: CandidateId,
+    /// Boxed, so the show rule's `Err` stays small.
+    candidate: Box<Candidate>,
+    answers: QuestionCheckAnswers,
     failed: Vec<CandidateCheck>,
 }
 
@@ -248,8 +251,8 @@ impl DepthLevel {
 /// The hint's checks never withhold a question. A hint that isn't clear yes
 /// on both is dropped, and the question has no hint.
 ///
-/// The withheld candidate names every check that failed, in
-/// [`Candidate::checks`] order.
+/// The withheld candidate keeps itself and Jev's answers, and names every
+/// check that failed, in [`Candidate::checks`] order.
 pub fn show_rule(
     candidate: Candidate,
     answers: QuestionCheckAnswers,
@@ -282,7 +285,8 @@ pub fn show_rule(
         })
     } else {
         Err(Withheld {
-            id: candidate.id().clone(),
+            candidate: Box::new(candidate),
+            answers,
             failed,
         })
     }
@@ -405,10 +409,22 @@ impl fmt::Debug for Question {
 }
 
 impl Withheld {
-    /// The candidate withheld.
+    /// What identifies the candidate withheld.
     #[must_use]
     pub fn id(&self) -> &CandidateId {
-        &self.id
+        self.candidate.id()
+    }
+
+    /// The candidate withheld.
+    #[must_use]
+    pub fn candidate(&self) -> &Candidate {
+        &self.candidate
+    }
+
+    /// Jev's answers to its question check, as returned.
+    #[must_use]
+    pub fn answers(&self) -> &QuestionCheckAnswers {
+        &self.answers
     }
 
     /// The checks that were not as the show rule needs them, in
@@ -803,6 +819,26 @@ pub(crate) mod tests {
 
         assert_eq!(withheld.id().area(), &area("observability"));
         assert_eq!(withheld.id().written(), 2);
+    }
+
+    #[test]
+    fn a_withheld_candidate_keeps_itself_and_jev_s_answers() {
+        let candidate = candidate("domain", 0, OptionLetter::C);
+        let mut answers = passing(&candidate);
+        answers.push((CandidateCheck::NoGiveaway, probability(0.5)));
+        let answers = QuestionCheckAnswers::new(answers, depth(1.3));
+
+        let withheld = show_rule(
+            candidate.clone(),
+            answers.clone(),
+            AssessmentPolicy::current(),
+        )
+        .expect_err("withheld");
+
+        assert_eq!(withheld.candidate(), &candidate);
+        assert_eq!(withheld.candidate().answer_key(), OptionLetter::C);
+        assert_eq!(withheld.answers(), &answers);
+        assert_eq!(withheld.failed(), [CandidateCheck::NoGiveaway]);
     }
 
     #[test]
