@@ -103,6 +103,10 @@ Jev's decision, for each chosen area, whether a change is worth asking about.
 Jev's check of a generated question before it is shown, including its option ratings; only questions that pass are shown.
 _Avoid_: question review, which clashes with **Needs review** and **Outbound review**.
 
+**Withheld question**:
+A candidate question the question check didn't pass. It is never shown in Practice, answered or assessed. The learner can review it and vote on each check that withheld it, and each vote is saved as a labelled example in a local labels file.
+_Avoid_: rejected question, failed question.
+
 **Option rating**:
 Supported, Not supported or Needs review for one option of a question, decided in its question check before the learner sees it.
 
