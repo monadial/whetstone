@@ -760,6 +760,10 @@ impl Practice {
             .iter()
             .filter(|question| question.hint().is_none())
             .count();
+        let criteria_dropped: usize = passed
+            .iter()
+            .map(|question| question.dropped_criteria().count())
+            .sum();
         let areas: Vec<AreaId> = self
             .gate
             .asked_about(&self.areas)
@@ -771,6 +775,7 @@ impl Practice {
             checked,
             withheld = checked - passing,
             hints_dropped,
+            criteria_dropped,
             picked = picked.questions().len(),
             asked_for = self.count.get(),
             "picked the questions that passed their checks"

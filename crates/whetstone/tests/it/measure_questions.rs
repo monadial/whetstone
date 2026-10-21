@@ -11,7 +11,9 @@
 //!   measured after Ask anyway;
 //! - the candidates written, and how many the plain checks dropped;
 //! - for each check, how many candidates it withheld, by band;
-//! - the questions shown, the generator's tokens, and what the run cost.
+//! - the questions shown, and how many criteria the show rule dropped from
+//!   the questions that passed, as asking for more than they need;
+//! - the generator's tokens, and what the run cost.
 //!
 //! Each pair calls `OpenRouter` with a real key, about 0.12 to 0.15 USD a
 //! run with the base prompts of #119, so every test that does is ignored and
@@ -193,8 +195,9 @@ fn measure(subject: &str, area: &str) -> String {
 /// One Markdown row from the log `lines` of Generate questions about `area`
 /// on the change `subject`: the change, the area, the `gate`, the
 /// candidates written, the plain-check drops, the candidates withheld, each
-/// check's withheld count by band, the questions shown, the generator's
-/// input and output tokens, and the cost of every request in USD.
+/// check's withheld count by band, the questions shown, the criteria dropped
+/// from the questions that passed, the generator's input and output tokens,
+/// and the cost of every request in USD.
 fn row(subject: &str, area: &str, gate: &str, lines: &[String]) -> String {
     let lines_with = |message: &str| -> Vec<&String> {
         lines.iter().filter(|line| line.contains(message)).collect()
@@ -218,10 +221,9 @@ fn row(subject: &str, area: &str, gate: &str, lines: &[String]) -> String {
             .collect();
         checks.push(format!("{check} {total} ({})", bands.join(", ")));
     }
-    let shown = lines_with("picked the questions")
-        .last()
-        .map(|line| count(line, "picked"))
-        .expect("the app picked questions, or none");
+    let picked = lines_with("picked the questions");
+    let picked = picked.last().expect("the app picked questions, or none");
+    let (shown, criteria_dropped) = (count(picked, "picked"), count(picked, "criteria_dropped"));
     let replies = lines_with("OpenRouter replied");
     let generator = replies
         .iter()
@@ -238,7 +240,7 @@ fn row(subject: &str, area: &str, gate: &str, lines: &[String]) -> String {
         .filter_map(|line| number::<f64>(line, "cost_usd"))
         .fold(0.0, |total, cost| total + cost);
     format!(
-        "| {subject} | {area} | {gate} | {written} | {dropped} | {} | {} | {shown} | {} / {} | {cost:.4} |",
+        "| {subject} | {area} | {gate} | {written} | {dropped} | {} | {} | {shown} | {criteria_dropped} | {} / {} | {cost:.4} |",
         withheld.len(),
         checks.join("; "),
         tokens("input_tokens"),
@@ -294,8 +296,15 @@ fn a_row_reads_what_the_app_logs_about_each_candidate() {
         .map(|stem| candidate(stem, "A", PAYMENT_LIFECYCLE))
         .collect();
     written.push(candidate("Malformed?", "D", PAYMENT_LIFECYCLE));
+    // The first passes, but its first criterion asks for more than it
+    // needs, so the question keeps its second.
+    let criterion = written[0].rubric[0].clone();
+    written[0].rubric.push(criterion);
     ai.on_write(&area_id(DOMAIN), Ok(written));
-    ai.on_check_passing(&stems[0]);
+    ai.on_check_passing_except(
+        &stems[0],
+        [answer(CandidateCheck::CriterionMinimum(0), 0.3)],
+    );
     ai.on_check_passing_except(
         &stems[1],
         [
@@ -313,6 +322,6 @@ fn a_row_reads_what_the_app_logs_about_each_candidate() {
     assert_eq!(
         row("Model the payment lifecycle", "domain", "passed", &lines),
         "| Model the payment lifecycle | domain | passed | 4 | 1 | 2 | NeedsChange 1 (ClearNo 1); \
-         NoGiveaway 2 (Unclear 2) | 1 | 0 / 0 | 0.0000 |"
+         NoGiveaway 2 (Unclear 2) | 1 | 1 | 0 / 0 | 0.0000 |"
     );
 }
