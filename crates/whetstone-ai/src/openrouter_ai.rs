@@ -175,21 +175,28 @@ impl Ai for OpenRouterAi {
         question: &Question,
         criteria: &[(usize, CriterionOutcome)],
     ) -> Pending<Vec<WrittenParagraph>> {
-        // The request explains each criterion that isn't met, so the
-        // criteria not asked about count as met here; they aren't sent.
+        // The request explains each criterion of the rubric that isn't
+        // met, so a criterion not asked about counts as met here: nothing
+        // about it is sent. One outside the rubric makes the request
+        // invalid.
         let mut outcomes = vec![CriterionOutcome::Met; question.rubric().len()];
-        for &(criterion, outcome) in criteria {
-            if let Some(slot) = outcomes.get_mut(criterion) {
-                *slot = outcome;
-            }
-        }
-        let request = explanation_request(
-            &self.models.generator,
-            evidence,
-            question,
-            saved.reasoning(),
-            &outcomes,
-        );
+        let in_rubric = criteria.iter().all(|&(criterion, outcome)| {
+            outcomes
+                .get_mut(criterion)
+                .map(|slot| *slot = outcome)
+                .is_some()
+        });
+        let request = in_rubric
+            .then(|| {
+                explanation_request(
+                    &self.models.generator,
+                    evidence,
+                    question,
+                    saved.reasoning(),
+                    &outcomes,
+                )
+            })
+            .flatten();
         let connection = self.connection.clone();
         let model = self.models.generator.clone();
         Box::pin(async move {
@@ -213,6 +220,7 @@ impl Ai for OpenRouterAi {
 
     fn check_explanation(
         &self,
+        _saved: &dyn Saved,
         evidence: &Evidence,
         question: &Question,
         paragraphs: &[WrittenParagraph],
@@ -699,15 +707,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn nothing_to_explain_is_an_invalid_request_that_sends_nothing() {
+    async fn nothing_to_explain_or_a_criterion_outside_the_rubric_is_an_invalid_request_that_sends_nothing()
+     {
         let (server, ai) = ai("/chat/completions", 200, EXPLANATION).await;
 
-        assert_eq!(
-            ai.explain(&Acknowledged(REASONING), &evidence(), &question(), &[])
-                .await
-                .err(),
-            Some(RequestFailure::InvalidRequest)
-        );
+        for criteria in [&[][..], &[(2, CriterionOutcome::NotMet)]] {
+            assert_eq!(
+                ai.explain(&Acknowledged(REASONING), &evidence(), &question(), criteria)
+                    .await
+                    .err(),
+                Some(RequestFailure::InvalidRequest),
+                "{criteria:?}"
+            );
+        }
         assert_eq!(
             server
                 .received_requests()
@@ -722,7 +734,12 @@ mod tests {
         let (server, ai) = ai("/systemone", 200, EXPLANATION_CHECK).await;
 
         let reply = ai
-            .check_explanation(&evidence(), &question(), &paragraphs())
+            .check_explanation(
+                &Acknowledged(REASONING),
+                &evidence(),
+                &question(),
+                &paragraphs(),
+            )
             .await
             .expect("the recorded reply decodes");
 
@@ -775,9 +792,14 @@ mod tests {
         let (_server, ai) = ai("/systemone", 200, REASONING_REPLY).await;
 
         assert_eq!(
-            ai.check_explanation(&evidence(), &question(), &paragraphs())
-                .await
-                .err(),
+            ai.check_explanation(
+                &Acknowledged(REASONING),
+                &evidence(),
+                &question(),
+                &paragraphs(),
+            )
+            .await
+            .err(),
             Some(RequestFailure::InvalidReply)
         );
     }
@@ -1048,6 +1070,30 @@ mod tests {
         gate.check_areas(&evidence(), &[area(), observability()])
             .await
             .expect("the recorded reply decodes");
+        let explained = paragraphs();
+        let (_explaining, explaining) = ai("/chat/completions", 200, EXPLANATION).await;
+        explaining
+            .explain(
+                &Acknowledged(REASONING),
+                &evidence(),
+                &question(),
+                &[
+                    (0, CriterionOutcome::NotMet),
+                    (1, CriterionOutcome::NeedsReview),
+                ],
+            )
+            .await
+            .expect("the recorded reply decodes");
+        let (_checking, checking) = ai("/systemone", 200, EXPLANATION_CHECK).await;
+        checking
+            .check_explanation(
+                &Acknowledged(REASONING),
+                &evidence(),
+                &question(),
+                &explained,
+            )
+            .await
+            .expect("the recorded reply decodes");
 
         let log = log.text();
         assert!(log.contains("OpenRouter replied"), "{log}");
@@ -1071,6 +1117,10 @@ mod tests {
             // A candidate sent to Jev, and one the generator wrote.
             "Why does the retry in `charge_with_retry`",
             "Before this change, the retry after a `Timeout`",
+            // The learner's reasoning, and the explanation of it.
+            REASONING,
+            &explained[0].text,
+            &explained[1].text,
         ] {
             assert!(!log.contains(never), "{never:?} reached the log:\n{log}");
         }

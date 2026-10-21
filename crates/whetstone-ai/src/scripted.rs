@@ -137,6 +137,9 @@ pub enum Asked {
     },
     /// Jev was asked to check an explanation's paragraphs.
     CheckExplanation {
+        /// The session store's acknowledgement it was asked with, as its
+        /// `Debug` output shows it.
+        saved: String,
         /// The evidence it was given.
         evidence: Evidence,
         /// The question's stem.
@@ -422,12 +425,14 @@ impl Ai for ScriptedAi {
     )]
     fn check_explanation(
         &self,
+        saved: &dyn Saved,
         evidence: &Evidence,
         question: &Question,
         paragraphs: &[WrittenParagraph],
     ) -> Pending<Vec<ParagraphCheck>> {
         let mut script = self.script();
         script.asked.push(Asked::CheckExplanation {
+            saved: format!("{saved:?}"),
             evidence: evidence.clone(),
             stem: question.stem().to_owned(),
             paragraphs: paragraphs.to_vec(),
@@ -937,8 +942,12 @@ mod tests {
 
         let explained =
             at_once(ai.explain(&Acknowledged("It retries."), &evidence(), &asked, &criteria));
-        let checked =
-            at_once(ai.check_explanation(&evidence(), &asked, std::slice::from_ref(&paragraph)));
+        let checked = at_once(ai.check_explanation(
+            &Acknowledged("It retries."),
+            &evidence(),
+            &asked,
+            std::slice::from_ref(&paragraph),
+        ));
         let again =
             at_once(ai.explain(&Acknowledged("It retries."), &evidence(), &asked, &criteria));
 
@@ -965,6 +974,7 @@ mod tests {
             [
                 explain.clone(),
                 Asked::CheckExplanation {
+                    saved: "Acknowledged(\"It retries.\")".to_owned(),
                     evidence: evidence(),
                     stem: "Why retry?".to_owned(),
                     paragraphs: vec![paragraph],

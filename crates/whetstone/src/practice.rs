@@ -400,7 +400,7 @@ fn ask_about_responses(
             jobs,
             waiting,
             Asking::CheckExplanation(saved.clone()),
-            ai.check_explanation(evidence, question, paragraphs),
+            ai.check_explanation(saved, evidence, question, paragraphs),
             |reply| JobOutput::ExplanationChecked {
                 saved: Box::new(key),
                 reply,
