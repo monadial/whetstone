@@ -2,7 +2,7 @@
 //! will send and where, opened from the picker's "Review what will be sent".
 
 use crate::repo::TestRepo;
-use crate::repository::started_in;
+use crate::repository::{started_in, started_with_a_key_in};
 use crate::session::{Session, columns};
 
 /// From home: open the repository's picker, choose the newest commit, and
@@ -325,7 +325,7 @@ fn send(session: &Session) -> String {
 #[test]
 fn the_commit_message_and_every_included_file_are_checked_for_secrets() {
     let repo = with_secrets();
-    let mut session = started_in(repo.root(), 120, 60);
+    let mut session = started_with_a_key_in(repo.root(), 120, 60);
 
     session.press(REVIEW_NEWEST);
 
@@ -346,8 +346,9 @@ fn the_commit_message_and_every_included_file_are_checked_for_secrets() {
 #[test]
 fn leaving_out_the_file_or_marking_the_match_as_not_a_secret_resolves_a_finding() {
     let repo = with_secrets();
-    let mut session = started_in(repo.root(), 120, 60);
+    let mut session = started_with_a_key_in(repo.root(), 120, 60);
     session.press(REVIEW_NEWEST);
+    session.settle();
 
     // From the change round to Back, then up to the file's first action.
     session.press("<S-Tab> k k k");
@@ -370,7 +371,7 @@ fn leaving_out_the_file_or_marking_the_match_as_not_a_secret_resolves_a_finding(
 
     session.press("k <Space>");
     assert_eq!(session.section("Secret check")[1], "> (x) Not a secret");
-    assert_eq!(send(&session), "Send (needs OPENROUTER_API_KEY)");
+    assert_eq!(send(&session), "Send");
 
     session.press("<Space>");
     assert_eq!(session.section("Secret check")[1], "> ( ) Not a secret");
@@ -380,7 +381,7 @@ fn leaving_out_the_file_or_marking_the_match_as_not_a_secret_resolves_a_finding(
 #[test]
 fn not_a_secret_dismisses_only_the_match_it_marks() {
     let repo = with_secrets();
-    let mut session = started_in(repo.root(), 120, 60);
+    let mut session = started_with_a_key_in(repo.root(), 120, 60);
     session.press(REVIEW_NEWEST);
 
     // From the change round to Back, then up to the commit message's
@@ -412,7 +413,7 @@ fn two_matches_of_one_rule_on_one_line_are_marked_as_not_secrets_apart() {
         format!("KEYS = [\"{AWS_KEY}\", \"{other_key}\"]\n"),
     );
     repo.commit("Configure the payments client");
-    let mut session = started_in(repo.root(), 120, 60);
+    let mut session = started_with_a_key_in(repo.root(), 120, 60);
     session.press(REVIEW_NEWEST);
     let finding = "Possible secret in src/settings.py, line 1: AWS access key ID, AKIA********";
 
@@ -569,9 +570,9 @@ fn a_file_brought_back_counts_towards_the_size() {
 }
 
 #[test]
-fn send_says_why_it_is_disabled_secrets_first_then_size_then_nothing_to_send_then_jev() {
+fn send_says_why_it_is_disabled_secrets_first_then_size_then_nothing_to_send_then_connected_code() {
     let repo = with_a_large_file_and_a_secret();
-    let mut session = started_in(repo.root(), 120, 60);
+    let mut session = started_with_a_key_in(repo.root(), 120, 60);
     session.press(REVIEW_NEWEST);
     assert_eq!(send(&session), "Send (resolve the possible secrets)");
 
@@ -586,7 +587,10 @@ fn send_says_why_it_is_disabled_secrets_first_then_size_then_nothing_to_send_the
     assert_eq!(send(&session), "Send (nothing left to send)");
 
     session.press("<Space>");
-    assert_eq!(send(&session), "Send (needs OPENROUTER_API_KEY)");
+    assert_eq!(send(&session), "Send (finding connected code)");
+
+    session.settle();
+    assert_eq!(send(&session), "Send");
 }
 
 /// The rows of the reader's text, trimmed, under its title.
@@ -1024,7 +1028,7 @@ fn at_80x24_the_review_scrolls_to_keep_the_focused_control_and_its_heading_in_vi
     assert_eq!(
         rows[20..23],
         [
-            "Send (resolve the possible secrets)",
+            "Send (needs OPENROUTER_API_KEY)",
             "> Back",
             "? keys  : actions  Space toggle  Enter read  q back"
         ]

@@ -5,7 +5,7 @@
 
 use crate::connected_code::{AWS_KEY, REVIEW_NEWEST, connected_code, connected_rows, reader, send};
 use crate::repo::TestRepo;
-use crate::repository::started_in;
+use crate::repository::{started_in, started_with_a_key_in};
 use crate::session::{Session, Setup, columns};
 
 /// The Related tests and configuration section: its summary, then its
@@ -441,7 +441,9 @@ fn a_secret_in_a_related_test_blocks_send_until_the_test_is_left_out() {
     repo.commit("Start the shop");
     repo.write("store.go", placeholder("store.go", 2));
     repo.commit("Change the store");
-    let mut session = reviewed(&repo);
+    let mut session = started_with_a_key_in(repo.root(), 200, 60);
+    session.press(REVIEW_NEWEST);
+    session.settle();
 
     assert_eq!(
         session.section("Secret check"),
@@ -458,7 +460,7 @@ fn a_secret_in_a_related_test_blocks_send_until_the_test_is_left_out() {
     session.press("<S-Tab> k k k <Space>");
 
     assert_eq!(statuses(&session), [["store_test.go", "left out by you"]]);
-    assert_eq!(send(&session), "Send (needs OPENROUTER_API_KEY)");
+    assert_eq!(send(&session), "Send");
 }
 
 /// A Python shop whose `store.save` is called by `cart.checkout` and by

@@ -5,10 +5,10 @@
 //! finds a commit's, and prepares the evidence from it. On the learner's
 //! repository, Send on the outbound review opens it in the review's place
 //! with the evidence the learner approved there, and every request carries
-//! exactly that evidence: a Retry or an Ask anyway needs no new review. Then
-//! Jev's
-//! relevance gate decides, in one call, which chosen areas the change is
-//! worth asking about: an unclear verdict lets an area through, and only a
+//! exactly that evidence: a Retry or an Ask anyway needs no new review.
+//!
+//! Then Jev's relevance gate decides, in one call, which chosen areas the
+//! change is worth asking about: an unclear verdict lets an area through, and only a
 //! clear no drops it. The generator writes candidates, one request per area
 //! that passed, all at once; plain checks drop the malformed ones; Jev
 //! checks each candidate left, all at once; the show rule keeps the
@@ -677,21 +677,17 @@ impl Practice {
             .unwrap_or(Control::Cancel)
     }
 
-    /// Where finding connected code stands. Evidence still finding it was
-    /// sent from the outbound review before it was found, so it is passed
-    /// over, as when it isn't available.
+    /// Where finding connected code stands.
     fn finding_connected_code(&self) -> StageState {
         if let Stage::FindingConnectedCode(_) = self.stage {
             return StageState::Current;
         }
         match self.evidence.as_ref().map(Evidence::connections_state) {
-            None => StageState::Current,
+            None | Some(ConnectionsState::Finding) => StageState::Current,
             Some(ConnectionsState::Found | ConnectionsState::NoneFound) => StageState::Done,
-            Some(
-                ConnectionsState::Finding
-                | ConnectionsState::TookTooLong
-                | ConnectionsState::AnalysisFailed,
-            ) => StageState::Skipped,
+            Some(ConnectionsState::TookTooLong | ConnectionsState::AnalysisFailed) => {
+                StageState::Skipped
+            }
         }
     }
 
