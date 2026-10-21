@@ -790,6 +790,7 @@ mod tests {
                 .map(Item::job)
         };
         assert_eq!(job("answerable"), Some(Job::QuestionCheck));
+        assert_eq!(job("no_giveaway"), Some(Job::GiveawayCheck));
         assert_eq!(job("criterion_2"), Some(Job::QuestionCheck));
         assert_eq!(job("option_b"), Some(Job::OptionRating));
         assert_eq!(job("rationale_c"), Some(Job::RationaleAndHintChecks));

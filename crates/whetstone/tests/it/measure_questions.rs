@@ -299,7 +299,7 @@ fn a_row_reads_what_the_app_logs_about_each_candidate() {
     ai.on_check_passing_except(
         &stems[1],
         [
-            answer(CandidateCheck::NoGiveaway, 0.5),
+            answer(CandidateCheck::NoGiveaway, 0.45),
             answer(CandidateCheck::NeedsChange, 0.1),
         ],
     );

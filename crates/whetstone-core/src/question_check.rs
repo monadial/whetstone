@@ -141,11 +141,10 @@ impl CandidateCheck {
     #[must_use]
     pub fn job(self) -> Job {
         match self {
-            Self::Answerable
-            | Self::AboutArea
-            | Self::NeedsChange
-            | Self::NoGiveaway
-            | Self::Criterion(_) => Job::QuestionCheck,
+            Self::Answerable | Self::AboutArea | Self::NeedsChange | Self::Criterion(_) => {
+                Job::QuestionCheck
+            }
+            Self::NoGiveaway => Job::GiveawayCheck,
             Self::Option(_) => Job::OptionRating,
             Self::Rationale(_)
             | Self::WhyItMatters
@@ -535,7 +534,7 @@ pub(crate) mod tests {
             (Answerable, Job::QuestionCheck),
             (AboutArea, Job::QuestionCheck),
             (NeedsChange, Job::QuestionCheck),
-            (NoGiveaway, Job::QuestionCheck),
+            (NoGiveaway, Job::GiveawayCheck),
             (Criterion(2), Job::QuestionCheck),
             (Option(OptionLetter::B), Job::OptionRating),
             (Rationale(OptionLetter::C), Job::RationaleAndHintChecks),
@@ -716,7 +715,8 @@ pub(crate) mod tests {
             Rationale(OptionLetter::C),
             WhyItMatters,
         ] {
-            for answer in [0.79, 0.5, 0.2, 0.0] {
+            let below_upper = if check == NoGiveaway { 0.49 } else { 0.79 };
+            for answer in [below_upper, 0.3, 0.2, 0.0] {
                 assert_eq!(
                     failed(show(OptionLetter::A, vec![(check, probability(answer))])),
                     [check],
@@ -724,6 +724,39 @@ pub(crate) mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn no_giveaway_at_0_55_withholds_the_candidate_under_policy_0_and_not_under_policy_1() {
+        let candidate = candidate("domain", 0, OptionLetter::A);
+        let passing = passing(&candidate);
+        let answers = |check| {
+            let mut answers = passing.clone();
+            answers.push((check, probability(0.55)));
+            QuestionCheckAnswers::new(answers, depth(1.0))
+        };
+        let policy_0 = &AssessmentPolicy::released()[0];
+
+        let shown = show_rule(
+            candidate.clone(),
+            answers(CandidateCheck::NoGiveaway),
+            AssessmentPolicy::current(),
+        );
+        let under_policy_0 = show_rule(
+            candidate.clone(),
+            answers(CandidateCheck::NoGiveaway),
+            policy_0,
+        );
+        let needs_change = show_rule(
+            candidate,
+            answers(CandidateCheck::NeedsChange),
+            AssessmentPolicy::current(),
+        );
+
+        let question = shown.expect("clear yes from 0.50");
+        assert_eq!(question.policy().version().get(), 1);
+        assert_eq!(failed(under_policy_0), [CandidateCheck::NoGiveaway]);
+        assert_eq!(failed(needs_change), [CandidateCheck::NeedsChange]);
     }
 
     #[test]

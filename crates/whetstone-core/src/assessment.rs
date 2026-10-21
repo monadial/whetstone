@@ -328,7 +328,7 @@ mod tests {
         for applied in [criterion.cut_offs(), rating.cut_offs()] {
             assert_eq!(applied.cut_offs(), cut_offs);
             assert_eq!(applied.origin(), CutOffsOrigin::Learner);
-            assert_eq!(applied.policy().get(), 0);
+            assert_eq!(applied.policy().get(), 1);
         }
         let default = AssessmentPolicy::current().criterion_outcome(probability(0.75));
         assert_eq!(default.outcome(), CriterionOutcome::NeedsReview);

@@ -2,7 +2,10 @@
 //! probabilities into clear yes, unclear or clear no, for each kind of check.
 //!
 //! The default cut-offs are built in. Changing one is a recorded decision
-//! that bumps the version (`CODING_STANDARDS.md` rule 38). A learner may
+//! that bumps the version (`CODING_STANDARDS.md` rule 38), and
+//! `docs/assessment-policy.md` records each version's reason and evidence.
+//! Every released policy stays built in, so an outcome recorded under an
+//! older one is still identified by its version and cut-offs. A learner may
 //! override any job's cut-offs in their own config, and every outcome
 //! records the cut-offs that banded it and whether they are the policy's
 //! defaults or the learner's own, so it can be traced to them.
@@ -27,7 +30,7 @@ pub struct AssessmentPolicy {
 /// ```
 /// use whetstone_core::AssessmentPolicy;
 ///
-/// assert_eq!(AssessmentPolicy::current().version().to_string(), "0");
+/// assert_eq!(AssessmentPolicy::current().version().to_string(), "1");
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PolicyVersion(u32);
@@ -46,10 +49,13 @@ pub enum Validation {
 pub enum Job {
     /// Whether a change is worth asking about for an area.
     RelevanceGate,
-    /// A candidate's checks 1–5: answerable from the evidence, about its
-    /// area, needs this change, doesn't give the answer away, and each
-    /// criterion.
+    /// A candidate's checks 1–5 but the giveaway check: answerable from the
+    /// evidence, about its area, needs this change, and each criterion.
     QuestionCheck,
+    /// A candidate's check 4: its stem and options don't give the answer
+    /// away. Jev scores it on a scale of its own, so it has its own
+    /// cut-offs.
+    GiveawayCheck,
     /// Whether an option correctly answers its question.
     OptionRating,
     /// Whether a rationale, the "why it matters" line or a hint holds up.
@@ -117,27 +123,67 @@ pub struct AppliedCutOffs {
     origin: CutOffsOrigin,
 }
 
+/// Every policy released, oldest first. The last is the one this release
+/// applies by default.
+static RELEASED: [AssessmentPolicy; 2] = [POLICY_0, POLICY_1];
+
 /// Policy 0: unvalidated, with every job at 0.80 and 0.20.
-static POLICY_0: AssessmentPolicy = AssessmentPolicy {
+const POLICY_0: AssessmentPolicy = AssessmentPolicy {
     version: PolicyVersion(0),
     validation: Validation::Unvalidated,
     cut_offs: [(CutOffs::POLICY_0, CutOffsOrigin::Default); Job::ALL.len()],
 };
 
+/// Policy 1: unvalidated, with the giveaway check at 0.50 and 0.20, and
+/// every other job at policy 0's 0.80 and 0.20.
+const POLICY_1: AssessmentPolicy = {
+    let mut cut_offs = POLICY_0.cut_offs;
+    cut_offs[Job::GiveawayCheck.index()] = (
+        CutOffs {
+            upper: 0.50,
+            lower: 0.20,
+        },
+        CutOffsOrigin::Default,
+    );
+    AssessmentPolicy {
+        version: PolicyVersion(1),
+        validation: Validation::Unvalidated,
+        cut_offs,
+    }
+};
+
 impl AssessmentPolicy {
-    /// The policy this release applies by default: version 0, unvalidated,
-    /// with every job's upper cut-off at 0.80 and its lower at 0.20.
-    /// Practice applies [`AssessmentPolicy::with_cut_offs`] instead, with
-    /// the cut-offs the learner's config sets.
+    /// The policy this release applies by default: version 1, unvalidated,
+    /// with the giveaway check's upper cut-off at 0.50 and every other
+    /// job's at 0.80, and every job's lower at 0.20. Practice applies
+    /// [`AssessmentPolicy::with_cut_offs`] instead, with the cut-offs the
+    /// learner's config sets.
     #[must_use]
     pub fn current() -> &'static Self {
-        &POLICY_0
+        &RELEASED[RELEASED.len() - 1]
     }
 
-    /// Policy 0 with the `learner`'s own cut-offs for the jobs they list.
-    /// Every other job keeps policy 0's, and so does a job listed at its
-    /// policy 0 values, so the policy is the learner's exactly where a
-    /// cut-off differs. A job listed twice takes the last.
+    /// Every policy Whetstone has released, oldest first, each with its
+    /// own defaults. The last is [`AssessmentPolicy::current`].
+    ///
+    /// ```
+    /// use whetstone_core::{AssessmentPolicy, Job};
+    ///
+    /// let [policy_0, policy_1] = AssessmentPolicy::released() else {
+    ///     unreachable!("policies 0 and 1 are released");
+    /// };
+    /// assert_eq!(policy_0.cut_offs(Job::GiveawayCheck).cut_offs().upper(), 0.80);
+    /// assert_eq!(policy_1.cut_offs(Job::GiveawayCheck).cut_offs().upper(), 0.50);
+    /// ```
+    #[must_use]
+    pub fn released() -> &'static [Self] {
+        &RELEASED
+    }
+
+    /// The current policy with the `learner`'s own cut-offs for the jobs
+    /// they list. Every other job keeps the policy's, and so does a job
+    /// listed at the policy's values, so the policy is the learner's
+    /// exactly where a cut-off differs. A job listed twice takes the last.
     ///
     /// ```
     /// use whetstone_core::{AssessmentPolicy, Band, CutOffs, CutOffsOrigin, Job, Probability};
@@ -149,13 +195,14 @@ impl AssessmentPolicy {
     /// assert_eq!(policy.band(Job::QuestionCheck, answer), Band::ClearYes);
     /// assert_eq!(policy.band(Job::OptionRating, answer), Band::Unclear);
     /// assert_eq!(policy.origin(), CutOffsOrigin::Learner);
-    /// assert_eq!(policy.version().get(), 0);
+    /// assert_eq!(policy.version().get(), 1);
     /// ```
     #[must_use]
     pub fn with_cut_offs(learner: impl IntoIterator<Item = (Job, CutOffs)>) -> Self {
-        let mut policy = POLICY_0.clone();
+        let current = Self::current();
+        let mut policy = current.clone();
         for (job, cut_offs) in learner {
-            let (default, _) = POLICY_0.cut_offs[job.index()];
+            let (default, _) = current.cut_offs[job.index()];
             let origin = if cut_offs == default {
                 CutOffsOrigin::Default
             } else {
@@ -231,7 +278,8 @@ impl AssessmentPolicy {
 
 impl CutOffs {
     /// The example cut-offs in Jev's documentation, 0.80 and 0.20, which
-    /// policy 0 applies to every job.
+    /// policy 0 applies to every job, and policy 1 to every job but the
+    /// giveaway check.
     pub const POLICY_0: Self = Self {
         upper: 0.80,
         lower: 0.20,
@@ -328,6 +376,7 @@ impl fmt::Display for Job {
         f.write_str(match self {
             Self::RelevanceGate => "relevance gate",
             Self::QuestionCheck => "question check",
+            Self::GiveawayCheck => "giveaway check",
             Self::OptionRating => "option rating",
             Self::RationaleAndHintChecks => "rationale and hint checks",
             Self::ReasoningCriterion => "reasoning criterion",
@@ -344,9 +393,10 @@ impl fmt::Display for PolicyVersion {
 
 impl Job {
     /// Every job, in the order the policy lists them.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::RelevanceGate,
         Self::QuestionCheck,
+        Self::GiveawayCheck,
         Self::OptionRating,
         Self::RationaleAndHintChecks,
         Self::ReasoningCriterion,
@@ -354,14 +404,15 @@ impl Job {
     ];
 
     /// Its place in [`Job::ALL`].
-    fn index(self) -> usize {
+    const fn index(self) -> usize {
         match self {
             Self::RelevanceGate => 0,
             Self::QuestionCheck => 1,
-            Self::OptionRating => 2,
-            Self::RationaleAndHintChecks => 3,
-            Self::ReasoningCriterion => 4,
-            Self::ExplanationCheck => 5,
+            Self::GiveawayCheck => 2,
+            Self::OptionRating => 3,
+            Self::RationaleAndHintChecks => 4,
+            Self::ReasoningCriterion => 5,
+            Self::ExplanationCheck => 6,
         }
     }
 }
@@ -375,35 +426,98 @@ mod tests {
     }
 
     #[test]
-    fn policy_0_is_unvalidated() {
+    fn the_current_policy_is_policy_1_unvalidated() {
         let policy = AssessmentPolicy::current();
 
-        assert_eq!(policy.version().get(), 0);
+        assert_eq!(policy.version().get(), 1);
         assert_eq!(policy.validation(), Validation::Unvalidated);
     }
 
-    #[test]
-    fn every_job_is_clear_yes_from_0_80_and_clear_no_to_0_20_under_policy_0() {
-        let policy = AssessmentPolicy::current();
-        for job in Job::ALL {
-            for (value, band) in [
-                (1.0, Band::ClearYes),
-                (0.81, Band::ClearYes),
-                (0.80, Band::ClearYes),
-                (0.79, Band::Unclear),
-                (0.5, Band::Unclear),
-                (0.21, Band::Unclear),
-                (0.20, Band::ClearNo),
-                (0.19, Band::ClearNo),
-                (0.0, Band::ClearNo),
-            ] {
-                assert_eq!(
-                    policy.band(job, probability(value)),
-                    band,
-                    "{job:?} {value}"
-                );
-            }
+    /// Each band `job`'s answers fall in under `policy`, at and around
+    /// `upper` and 0.20.
+    fn assert_bands(policy: &AssessmentPolicy, job: Job, upper: f64) {
+        for (value, band) in [
+            (1.0, Band::ClearYes),
+            (upper + 0.01, Band::ClearYes),
+            (upper, Band::ClearYes),
+            (upper - 0.01, Band::Unclear),
+            (0.21, Band::Unclear),
+            (0.20, Band::ClearNo),
+            (0.19, Band::ClearNo),
+            (0.0, Band::ClearNo),
+        ] {
+            assert_eq!(
+                policy.band(job, probability(value)),
+                band,
+                "{job:?} {value}"
+            );
         }
+    }
+
+    #[test]
+    fn the_giveaway_check_is_clear_yes_from_0_50_and_clear_no_to_0_20_under_policy_1() {
+        let policy = AssessmentPolicy::current();
+
+        assert_bands(policy, Job::GiveawayCheck, 0.50);
+        assert_eq!(
+            policy.band(Job::GiveawayCheck, probability(0.55)),
+            Band::ClearYes
+        );
+        assert_eq!(
+            policy.cut_offs(Job::GiveawayCheck).cut_offs(),
+            cut_offs(0.50, 0.20)
+        );
+    }
+
+    #[test]
+    fn every_other_job_is_clear_yes_from_0_80_and_clear_no_to_0_20_under_policy_1() {
+        let policy = AssessmentPolicy::current();
+        for job in Job::ALL
+            .into_iter()
+            .filter(|&job| job != Job::GiveawayCheck)
+        {
+            assert_bands(policy, job, 0.80);
+            assert_eq!(
+                policy.band(job, probability(0.55)),
+                Band::Unclear,
+                "{job:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn policy_0_stays_on_record_with_every_job_at_0_80_and_0_20() {
+        let [policy_0, policy_1] = AssessmentPolicy::released() else {
+            panic!("two policies released: {:?}", AssessmentPolicy::released());
+        };
+
+        assert_eq!(policy_0.version().get(), 0);
+        assert_eq!(policy_0.validation(), Validation::Unvalidated);
+        for job in Job::ALL {
+            assert_bands(policy_0, job, 0.80);
+            assert_eq!(policy_0.cut_offs(job).policy().get(), 0, "{job:?}");
+        }
+        assert_eq!(policy_1, AssessmentPolicy::current());
+    }
+
+    #[test]
+    fn an_outcome_banded_under_policy_0_keeps_policy_0_s_version_and_cut_offs() {
+        let policy_0 = &AssessmentPolicy::released()[0];
+
+        let giveaway = policy_0.cut_offs(Job::GiveawayCheck);
+        let outcome = policy_0.criterion_outcome(probability(0.55));
+
+        assert_eq!(
+            (giveaway.policy().get(), giveaway.cut_offs()),
+            (0, cut_offs(0.80, 0.20))
+        );
+        assert_eq!(giveaway.band(probability(0.55)), Band::Unclear);
+        assert_eq!(outcome.policy().get(), 0);
+        assert_eq!(outcome.cut_offs().cut_offs(), cut_offs(0.80, 0.20));
+        assert_ne!(
+            outcome.cut_offs(),
+            AssessmentPolicy::current().cut_offs(Job::ReasoningCriterion)
+        );
     }
 
     fn cut_offs(upper: f64, lower: f64) -> CutOffs {
@@ -436,7 +550,7 @@ mod tests {
     }
 
     #[test]
-    fn without_the_learner_s_cut_offs_the_policy_is_policy_0() {
+    fn without_the_learner_s_cut_offs_the_policy_is_policy_1() {
         let policy = AssessmentPolicy::with_cut_offs([]);
 
         assert_eq!(&policy, AssessmentPolicy::current());
@@ -444,17 +558,22 @@ mod tests {
         assert_eq!(policy.learner_jobs().count(), 0);
         for job in Job::ALL {
             let applied = policy.cut_offs(job);
-            assert_eq!(applied.cut_offs(), cut_offs(0.80, 0.20), "{job:?}");
+            let upper = if job == Job::GiveawayCheck {
+                0.50
+            } else {
+                0.80
+            };
+            assert_eq!(applied.cut_offs(), cut_offs(upper, 0.20), "{job:?}");
             assert_eq!(applied.origin(), CutOffsOrigin::Default, "{job:?}");
-            assert_eq!(applied.policy().get(), 0, "{job:?}");
+            assert_eq!(applied.policy().get(), 1, "{job:?}");
         }
     }
 
     #[test]
-    fn the_learner_s_cut_offs_band_their_job_and_every_other_job_keeps_policy_0_s() {
+    fn the_learner_s_cut_offs_band_their_job_and_every_other_job_keeps_policy_1_s() {
         let policy = AssessmentPolicy::with_cut_offs([(Job::QuestionCheck, cut_offs(0.55, 0.20))]);
 
-        assert_eq!(policy.version().get(), 0);
+        assert_eq!(policy.version().get(), 1);
         assert_eq!(policy.validation(), Validation::Unvalidated);
         assert_eq!(policy.origin(), CutOffsOrigin::Learner);
         assert_eq!(
@@ -476,13 +595,52 @@ mod tests {
             .into_iter()
             .filter(|&job| job != Job::QuestionCheck)
         {
-            assert_eq!(policy.band(job, probability(0.6)), Band::Unclear, "{job:?}");
             assert_eq!(
                 policy.cut_offs(job),
                 AssessmentPolicy::current().cut_offs(job),
                 "{job:?}"
             );
         }
+    }
+
+    #[test]
+    fn the_learner_s_question_check_leaves_the_giveaway_check_at_policy_1_s() {
+        let raised = AssessmentPolicy::with_cut_offs([(Job::QuestionCheck, cut_offs(0.95, 0.20))]);
+        let lowered = AssessmentPolicy::with_cut_offs([(Job::QuestionCheck, cut_offs(0.30, 0.10))]);
+
+        for policy in [raised, lowered] {
+            let giveaway = policy.cut_offs(Job::GiveawayCheck);
+            assert_eq!(giveaway.cut_offs(), cut_offs(0.50, 0.20));
+            assert_eq!(giveaway.origin(), CutOffsOrigin::Default);
+            assert_eq!(
+                policy.band(Job::GiveawayCheck, probability(0.4)),
+                Band::Unclear
+            );
+            assert_eq!(
+                policy.band(Job::GiveawayCheck, probability(0.55)),
+                Band::ClearYes
+            );
+            assert_eq!(
+                policy.learner_jobs().collect::<Vec<_>>(),
+                [Job::QuestionCheck]
+            );
+        }
+    }
+
+    #[test]
+    fn the_learner_s_giveaway_check_bands_no_giveaway_and_policy_0_s_values_are_their_own() {
+        let policy = AssessmentPolicy::with_cut_offs([(Job::GiveawayCheck, cut_offs(0.80, 0.20))]);
+
+        assert_eq!(
+            policy.band(Job::GiveawayCheck, probability(0.55)),
+            Band::Unclear
+        );
+        assert_eq!(policy.origin(), CutOffsOrigin::Learner);
+        assert_eq!(
+            policy.learner_jobs().collect::<Vec<_>>(),
+            [Job::GiveawayCheck]
+        );
+        assert_eq!(policy.version().get(), 1);
     }
 
     #[test]
@@ -501,8 +659,11 @@ mod tests {
     }
 
     #[test]
-    fn the_learner_s_cut_offs_at_policy_0_s_values_are_policy_0_s() {
-        let policy = AssessmentPolicy::with_cut_offs([(Job::OptionRating, cut_offs(0.80, 0.20))]);
+    fn the_learner_s_cut_offs_at_policy_1_s_values_are_policy_1_s() {
+        let policy = AssessmentPolicy::with_cut_offs([
+            (Job::OptionRating, cut_offs(0.80, 0.20)),
+            (Job::GiveawayCheck, cut_offs(0.50, 0.20)),
+        ]);
 
         assert_eq!(&policy, AssessmentPolicy::current());
         assert_eq!(policy.origin(), CutOffsOrigin::Default);
@@ -513,6 +674,7 @@ mod tests {
         let policy = AssessmentPolicy::current();
         let just_under = f64::from_bits(0.80_f64.to_bits() - 1);
         let just_over = f64::from_bits(0.20_f64.to_bits() + 1);
+        let giveaway_just_under = f64::from_bits(0.50_f64.to_bits() - 1);
 
         assert_eq!(
             policy.band(Job::QuestionCheck, probability(just_under)),
@@ -520,6 +682,10 @@ mod tests {
         );
         assert_eq!(
             policy.band(Job::QuestionCheck, probability(just_over)),
+            Band::Unclear
+        );
+        assert_eq!(
+            policy.band(Job::GiveawayCheck, probability(giveaway_just_under)),
             Band::Unclear
         );
     }
