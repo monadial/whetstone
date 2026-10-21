@@ -34,7 +34,7 @@ number of examples of any kind. The seeds are split by kind:
 | File | Kind of example | Jobs it measures |
 | --- | --- | --- |
 | `gate.toml` | `[[gate]]` | Relevance gate |
-| `candidates.toml` | `[[candidate]]` | Question check, option rating, rationale and hint checks |
+| `candidates.toml` | `[[candidate]]` | Question check, giveaway check, option rating, rationale and hint checks |
 | `responses.toml` | `[[response]]` | Reasoning criterion |
 | `explanations.toml` | `[[explanation]]` | Explanation check |
 
@@ -106,7 +106,7 @@ Jev sees it. `check` names what fails. The keys that need labels are these:
 | `answerable` | Question check | The evidence holds everything needed to answer |
 | `about_area` | Question check | It asks about its area |
 | `needs_change` | Question check | General knowledge alone can't pick the right option |
-| `no_giveaway` | Question check | Nothing in the stem or options' wording points to the answer |
+| `no_giveaway` | Giveaway check | Nothing in the stem or options' wording points to the answer |
 | `criterion_1` and on | Question check | The criterion follows from the evidence and the answer key, and reasoning can show it |
 | `option_a`, `option_b`, `option_c` | Option rating | The evidence shows this option answers the stem |
 | `rationale_a`, `rationale_b`, `rationale_c` | Rationale and hint checks | The evidence supports the rationale |
