@@ -26,6 +26,7 @@ mod outbound_review;
 mod overlays;
 mod paste;
 mod picker;
+mod picking;
 mod preparing_questions;
 mod pty;
 mod pty_colours;
