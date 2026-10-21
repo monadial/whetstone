@@ -44,8 +44,8 @@ overflow-checks = true
 # The terminal guard restores the terminal from `Drop` and its panic hook.
 panic = "unwind"
 
-# dist builds the released binaries with this profile (ADR 0003): the release
-# profile, with thin LTO across crates.
+# dist builds the released binaries with this profile: the release profile,
+# with thin LTO across crates, as `dist init` sets it up.
 [profile.dist]
 inherits = "release"
 lto = "thin"

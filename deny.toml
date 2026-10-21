@@ -7,6 +7,8 @@
 [graph]
 # Check only the platforms Whetstone supports: Linux and macOS, x86_64 and
 # arm64. Windows-only crates never ship, so they are left out of every check.
+# about.toml and dist-workspace.toml list the same platforms: change all three
+# together.
 targets = [
     "x86_64-unknown-linux-gnu",
     "aarch64-unknown-linux-gnu",
@@ -29,6 +31,7 @@ ignore = []
 [licenses]
 # Permissive licenses compatible with Whetstone's Apache-2.0. Anything else
 # needs a per-crate entry in `exceptions`, with a reason in the PR that adds it.
+# about.toml accepts the same list, to write their notices into releases.
 allow = [
     "Apache-2.0",
     "Apache-2.0 WITH LLVM-exception",

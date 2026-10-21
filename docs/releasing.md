@@ -24,7 +24,7 @@ On a branch off `main`:
 
 ## 3. Tag it
 
-Tag the commit the PR landed as on `main`. Only admins can push `v*` tags (the `release tags` ruleset).
+Tag the commit the PR landed as on `main`. Only admins can push `v*` tags (the `release tags` ruleset). The Release workflow starts on any tag that holds a version, with or without the `v`, so push only `v` tags.
 
 ```sh
 git switch main
@@ -61,6 +61,14 @@ On Linux and on macOS:
 2. Check that `whetstone --version` names the version and the tagged commit.
 3. Download one archive, and check it with `gh attestation verify <archive> --repo monadial/whetstone`.
 
+## Keep the release's pins current
+
+Dependabot keeps the actions in `ci.yml` and `live.yml` current, but it can't see the release's own pins. Those are the actions under `[dist.github-action-commits]` in `dist-workspace.toml`, and the `taiki-e/install-action` pin and cargo-about version in `.github/build-setup.yml`. Before each release, and with every dist upgrade, bring them up to date:
+
+1. Set each pin to a recent release's full commit SHA, with its version in the comment.
+2. Run `dist generate`.
+3. Check that CI's Release config job passes.
+
 ## Upgrade dist
 
 dist generates `.github/workflows/release.yml`, so never edit that file by hand. To move to a new dist version:
@@ -68,4 +76,4 @@ dist generates `.github/workflows/release.yml`, so never edit that file by hand.
 1. Install it, and set `cargo-dist-version` in `dist-workspace.toml`.
 2. Run `dist generate`.
 3. Pin any action the new workflow uses to a full commit SHA under `[dist.github-action-commits]`, then run `dist generate` again.
-4. Update the dist version in `ci.yml`'s "Release config" job.
+4. Check that CI's Release config job passes. It reads the dist version from `dist-workspace.toml`, so nothing else needs changing.

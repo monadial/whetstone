@@ -2,8 +2,9 @@
 # which of its rules these jobs enforce.
 #
 # Platform-independent checks (format, docs, cargo-deny, cargo-shear and the
-# release config) run once on Linux x86_64. Clippy, nextest (including the pseudo-terminal smoke test)
-# and doc tests run on Linux and macOS, each on x86_64 and arm64.
+# release config) run once on Linux x86_64. Clippy, nextest (including the
+# pseudo-terminal smoke test) and doc tests run on Linux and macOS, each on
+# x86_64 and arm64.
 #
 # macOS runners are the slowest to start and to build on, so macOS runs only
 # the platform matrix, reuses a dependency cache, and is cancelled when a
@@ -101,19 +102,31 @@ jobs:
           persist-credentials: false
       - name: Install the pinned toolchain (rust-toolchain.toml)
         run: rustup toolchain install --no-self-update
-      # dist's own installer, at the version dist-workspace.toml pins, as
-      # release.yml installs it. There is no install-action manifest for dist.
+      # The versions a release uses, read from where the release reads them,
+      # so this job can't drift from it: dist's from dist-workspace.toml, and
+      # cargo-about's from .github/build-setup.yml.
+      - name: Read the release's tool versions
+        id: versions
+        run: |
+          dist=$(sed -n 's/^cargo-dist-version = "\(.*\)"$/\1/p' dist-workspace.toml)
+          about=$(sed -n 's/^ *tool: cargo-about@\(.*\)$/\1/p' .github/build-setup.yml)
+          test -n "$dist" && test -n "$about"
+          echo "dist=$dist" >> "$GITHUB_OUTPUT"
+          echo "about=$about" >> "$GITHUB_OUTPUT"
+      # dist's own installer, as release.yml installs it. There is no
+      # install-action manifest for dist.
       - name: Install dist
         shell: bash
-        run: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/cargo-dist/releases/download/v0.33.0/cargo-dist-installer.sh | sh
-      # The version .github/build-setup.yml installs for a release.
+        env:
+          DIST_VERSION: ${{ steps.versions.outputs.dist }}
+        run: curl --proto '=https' --tlsv1.2 -LsSf "https://github.com/axodotdev/cargo-dist/releases/download/v$DIST_VERSION/cargo-dist-installer.sh" | sh
       - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
         with:
-          tool: cargo-about@0.9.2
+          tool: cargo-about@${{ steps.versions.outputs.about }}
       - name: release.yml is what dist generates
         run: dist generate --check
       - name: The third-party licenses can be written
-        run: cargo about generate --locked --fail -o "$RUNNER_TEMP/THIRD-PARTY-LICENSES.md" about.hbs
+        run: cargo about generate --locked --fail -o /dev/null about.hbs
 
   test:
     name: Clippy and tests (${{ matrix.platform }})

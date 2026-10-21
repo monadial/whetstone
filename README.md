@@ -34,7 +34,7 @@ A request that fails stops its stage, which says plainly what went wrong and wha
 
 Whetstone runs on Linux and macOS, on x86_64 and arm64. Each [release](https://github.com/monadial/whetstone/releases) has an installer, an archive for each platform, their checksums, and its notes.
 
-The installer picks the archive for your machine and checks its checksum. It puts `whetstone` in `$XDG_BIN_HOME`, or else in `~/.local/bin`, and adds that folder to your `PATH` in your shell's startup files, unless `WHETSTONE_NO_MODIFY_PATH=1` is set:
+The installer picks the archive for your machine and checks its checksum. It puts `whetstone` in the first of `$XDG_BIN_HOME`, `$XDG_DATA_HOME/../bin` and `~/.local/bin` that applies. Unless `WHETSTONE_NO_MODIFY_PATH=1` is set, it also adds that folder to your `PATH` in your shell's startup files:
 
 ```sh
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/monadial/whetstone/releases/latest/download/whetstone-installer.sh | sh
@@ -51,7 +51,7 @@ tar -xJf whetstone-aarch64-apple-darwin.tar.xz
 
 Each archive holds `whetstone`, this README, the license, the changelog and the licenses of the crates Whetstone is built with.
 
-On another platform, or to build from source, you need Rust 1.99.1 or newer from [rustup](https://rustup.rs), and a C compiler. Then run:
+To build from source instead, such as for a Linux the archives don't cover, you need Rust 1.99.1 or newer from [rustup](https://rustup.rs), and a C compiler. Whetstone builds only for Unix: on Windows, use WSL. Then run:
 
 ```sh
 cargo install --locked --git https://github.com/monadial/whetstone whetstone
