@@ -4,9 +4,10 @@
 //!
 //! It also says how far to trust the outcomes and the models: the
 //! assessment policy's version and whether it is validated, a note when
-//! `[jev] model` isn't the model the policy was checked against, and a mark
-//! against a model `OpenRouter` refused during this run for having no
-//! zero-retention endpoint.
+//! `[jev] model` isn't the model the policy was checked against, each job's
+//! cut-offs, marked default or from the config, with a note when any isn't
+//! the policy's, and a mark against a model `OpenRouter` refused during this
+//! run for having no zero-retention endpoint.
 
 use std::fmt;
 
@@ -14,12 +15,15 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{List, Paragraph, Wrap};
-use whetstone_core::{AssessmentPolicy, ConnectedCodeLimitKb, ModelId, QuestionCount, Validation};
+use whetstone_core::{
+    AppliedCutOffs, ConnectedCodeLimitKb, CutOffs, CutOffsOrigin, Job, ModelId, QuestionCount,
+    Validation,
+};
 
 use crate::columns;
 use crate::config::{
     ConfigFile, DEFAULT_GENERATOR_MODEL, DEFAULT_JEV_MODEL, KeyStatus, OPENROUTER_KEY_VARIABLE,
-    Origin, Setting, Settings,
+    Origin, Setting, Settings, cut_offs_key,
 };
 use crate::failures::{REFUSED_MARK, RefusedModels};
 use crate::focus::Position;
@@ -49,11 +53,12 @@ enum Control {
     ConnectedCodeLimit,
     Questions,
     AssessmentPolicy,
+    CutOffs,
     Back,
 }
 
 impl Control {
-    const ALL: [Self; 9] = [
+    const ALL: [Self; 10] = [
         Self::Provider,
         Self::JevModel,
         Self::GeneratorModel,
@@ -62,9 +67,10 @@ impl Control {
         Self::ConnectedCodeLimit,
         Self::Questions,
         Self::AssessmentPolicy,
+        Self::CutOffs,
         Self::Back,
     ];
-    const ROWS: [Self; 8] = [
+    const ROWS: [Self; 9] = [
         Self::Provider,
         Self::JevModel,
         Self::GeneratorModel,
@@ -73,6 +79,7 @@ impl Control {
         Self::ConnectedCodeLimit,
         Self::Questions,
         Self::AssessmentPolicy,
+        Self::CutOffs,
     ];
 
     fn label(self) -> &'static str {
@@ -85,6 +92,7 @@ impl Control {
             Self::ConnectedCodeLimit => "Connected code limit",
             Self::Questions => "Questions",
             Self::AssessmentPolicy => "Assessment policy",
+            Self::CutOffs => "Cut-offs",
             Self::Back => "Back",
         }
     }
@@ -115,20 +123,43 @@ impl Control {
             Self::ConnectedCodeLimit => shown(&settings.connected_code_limit),
             Self::Questions => shown(&settings.questions),
             Self::AssessmentPolicy => {
-                let policy = AssessmentPolicy::current();
+                let policy = &settings.assessment_policy;
                 let validated = match policy.validation() {
                     Validation::Validated => "validated",
                     Validation::Unvalidated => "not validated",
                 };
                 (format!("version {}, {validated}", policy.version()), None)
             }
+            Self::CutOffs => {
+                let policy = &settings.assessment_policy;
+                let defaults: Vec<CutOffs> = Job::ALL
+                    .into_iter()
+                    .map(|job| policy.cut_offs(job))
+                    .filter(|applied| applied.origin() == CutOffsOrigin::Default)
+                    .map(AppliedCutOffs::cut_offs)
+                    .collect();
+                // Policy 0 gives every job the same cut-offs.
+                match defaults.first() {
+                    Some(&cut_offs) if defaults.len() == Job::ALL.len() => (
+                        format!("{} for every job", shown_cut_offs(cut_offs)),
+                        Some(" (default)"),
+                    ),
+                    Some(&cut_offs) => (
+                        format!("{} for every other job", shown_cut_offs(cut_offs)),
+                        Some(" (default)"),
+                    ),
+                    None => ("from your config for every job".to_owned(), None),
+                }
+            }
             Self::Back => (String::new(), None),
         }
     }
 
     /// What Settings adds under the setting's value: the mark against a
-    /// model `OpenRouter` refused during this run, in `refused`, and the note
-    /// when the policy wasn't checked against the Jev model in use.
+    /// model `OpenRouter` refused during this run, in `refused`, the note
+    /// when the policy wasn't checked against the Jev model in use, and the
+    /// cut-offs of each job the config sets, with the note that outcomes
+    /// then aren't comparable with the policy's.
     fn notes(self, settings: &Settings, refused: &RefusedModels) -> Vec<String> {
         let refused_mark = |model: &ModelId| {
             refused
@@ -145,6 +176,28 @@ impl Control {
                     "Assessment policy checked against {DEFAULT_JEV_MODEL}; you're using {}",
                     settings.jev_model.value
                 )]
+            }
+            Self::CutOffs => {
+                let policy = &settings.assessment_policy;
+                let mut notes: Vec<String> = Job::ALL
+                    .into_iter()
+                    .filter(|&job| policy.cut_offs(job).origin() == CutOffsOrigin::Learner)
+                    .map(|job| {
+                        format!(
+                            "{}: {} (from your config)",
+                            job_name(job),
+                            shown_cut_offs(policy.cut_offs(job).cut_offs())
+                        )
+                    })
+                    .collect();
+                if policy.origin() == CutOffsOrigin::Learner {
+                    notes.push(format!(
+                        "Cut-offs changed in your config: outcomes aren't comparable with \
+                         policy {}",
+                        policy.version()
+                    ));
+                }
+                notes
             }
             _ => Vec::new(),
         }
@@ -202,8 +255,17 @@ impl Control {
                 "The versioned cut-offs that turn Jev's probabilities into clear yes, unclear or \
                  clear no for each kind of check. A policy is validated once its cut-offs have \
                  been checked against labelled examples on {DEFAULT_JEV_MODEL}; until then, \
-                 take its outcomes as provisional. It is built into Whetstone and can't be \
-                 configured."
+                 take its outcomes as provisional. Its default cut-offs are built into Whetstone, \
+                 and your config can override any job's under [cut_offs]."
+            ),
+            Self::CutOffs => format!(
+                "For each kind of Jev check, an answer at or above upper is clear yes, at or below \
+                 lower is clear no, and unclear in between. Policy {version}'s are {} for every \
+                 job; with your own, outcomes aren't comparable with policy {version}'s. The jobs \
+                 are {}. A repository's config can't set them.",
+                shown_cut_offs(CutOffs::POLICY_0),
+                Job::ALL.map(cut_offs_key).join(", "),
+                version = settings.assessment_policy.version(),
             ),
             Self::Back => "Back to home.".to_owned(),
         }
@@ -236,6 +298,20 @@ impl Control {
                 "In config.toml: questions = {}",
                 settings.questions.value
             )),
+            Self::CutOffs => {
+                let policy = &settings.assessment_policy;
+                let job = Job::ALL
+                    .into_iter()
+                    .find(|&job| policy.cut_offs(job).origin() == CutOffsOrigin::Learner)
+                    .unwrap_or(Job::QuestionCheck);
+                let cut_offs = policy.cut_offs(job).cut_offs();
+                Some(format!(
+                    "In config.toml, under [cut_offs]: {} = {{ upper = {}, lower = {} }}",
+                    cut_offs_key(job),
+                    cut_offs.upper(),
+                    cut_offs.lower()
+                ))
+            }
             Self::AssessmentPolicy | Self::Back => None,
         }
     }
@@ -315,17 +391,39 @@ impl View for SettingsScreen {
                 }));
             }
         }
-        let [title, note_area, rows, back, about] =
-            layout(area, note.line_count(area.width), lines.len());
+        let focused = self.focused();
+        let mut explanation = vec![Line::styled(focused.about(settings), theme.muted)];
+        explanation.extend(focused.how_to_change(settings).map(Line::raw));
+        let explanation = Paragraph::new(explanation).wrap(Wrap { trim: true });
+        let [title, note_area, rows, back, about] = layout(
+            area,
+            note.line_count(area.width),
+            lines.len(),
+            explanation.line_count(area.width),
+        );
         frame.render_widget(Paragraph::new(Span::styled("Settings", theme.title)), title);
         frame.render_widget(note, note_area);
         frame.render_widget(List::new(lines), rows);
         frame.render_widget(self.control(theme, Control::Back), back);
-        let focused = self.focused();
-        let mut explanation = vec![Line::styled(focused.about(settings), theme.muted)];
-        explanation.extend(focused.how_to_change(settings).map(Line::raw));
-        frame.render_widget(Paragraph::new(explanation).wrap(Wrap { trim: true }), about);
+        frame.render_widget(explanation, about);
     }
+}
+
+/// A job's name, as Settings lists the cut-offs the config sets for it.
+fn job_name(job: Job) -> &'static str {
+    match job {
+        Job::RelevanceGate => "Relevance gate",
+        Job::QuestionCheck => "Question check",
+        Job::OptionRating => "Option ratings",
+        Job::RationaleAndHintChecks => "Rationale and hint checks",
+        Job::ReasoningCriterion => "Reasoning criteria",
+        Job::ExplanationCheck => "Explanation checks",
+    }
+}
+
+/// A job's `cut_offs` as Settings shows them.
+fn shown_cut_offs(cut_offs: CutOffs) -> String {
+    format!("upper {}, lower {}", cut_offs.upper(), cut_offs.lower())
 }
 
 /// A setting's value as Settings shows it, and a note if it is the default.
@@ -338,11 +436,12 @@ fn shown<T: fmt::Display>(setting: &Setting<T>) -> (String, Option<&'static str>
 
 /// Where the title, the note on the config file, the setting rows, Back and
 /// the focused control's explanation go in `area`, when the note takes
-/// `note_rows` rows and the settings, with their notes, `setting_rows`. The
-/// controls always get their rows; the note, the gaps and the explanation
-/// share what is left, in that order, so no control is ever pushed out of a
-/// short terminal.
-fn layout(area: Rect, note_rows: usize, setting_rows: usize) -> [Rect; 5] {
+/// `note_rows` rows, the settings, with their notes, `setting_rows` and the
+/// explanation `about_rows`. The controls always get their rows; the note,
+/// the explanation and the gaps share what is left, in that order, so no
+/// control is ever pushed out of a short terminal, and a gap goes before
+/// any of the explanation does.
+fn layout(area: Rect, note_rows: usize, setting_rows: usize, about_rows: usize) -> [Rect; 5] {
     const TITLE: u16 = 1;
     const BACK: u16 = 1;
     let rows = u16::try_from(setting_rows).unwrap_or(u16::MAX);
@@ -353,6 +452,9 @@ fn layout(area: Rect, note_rows: usize, setting_rows: usize) -> [Rect; 5] {
         taken
     };
     let note = take(u16::try_from(note_rows).unwrap_or(u16::MAX));
+    // The explanation fills what is left, so this only keeps its rows from
+    // the gaps.
+    take(u16::try_from(about_rows).unwrap_or(u16::MAX));
     let gaps = [take(1), take(1), take(1)];
     let [title, note, _, rows, _, back, _, about] = Layout::vertical([
         Constraint::Length(TITLE),
