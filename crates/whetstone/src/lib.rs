@@ -36,6 +36,7 @@ mod palette;
 mod paste;
 mod picker;
 mod practice;
+mod question_context;
 mod questions;
 mod reader;
 mod reasoning_editor;

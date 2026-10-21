@@ -94,6 +94,11 @@ pub(crate) enum Command {
     /// End the Practice, and show its summary: Practice asks first while a
     /// question is still unattempted.
     Finish,
+    /// Show the code a question cites on the whole screen, or beside the
+    /// question again.
+    Zoom,
+    /// Show the question's hint.
+    ShowHint,
 }
 
 /// What key presses are for on a screen.

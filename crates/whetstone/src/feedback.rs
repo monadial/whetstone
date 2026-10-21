@@ -47,6 +47,7 @@ use crate::explanation::Explanation;
 use crate::failures::FailedRequests;
 use crate::focus::Position;
 use crate::keymap::{self, Binding, Command, Keymap};
+use crate::question_context;
 use crate::session_record::{
     Assessment, Durability, ExplanationCheck, SavedReasoning, SavedResponse, SessionStore,
 };
@@ -65,6 +66,7 @@ pub(crate) const KEYMAP: Keymap = &[
         does: "Scroll to the top or bottom of the feedback",
         ..keymap::ENDS
     },
+    question_context::ZOOM,
     keymap::BACK,
 ];
 
@@ -452,6 +454,36 @@ impl Feedback {
         }
     }
 
+    /// How many rows its controls take.
+    pub(crate) fn control_rows(&self) -> usize {
+        self.controls().len()
+    }
+
+    /// Whether `command` moves focus out of the controls, round past the
+    /// last or the first, as Tab does to the code beside the feedback.
+    pub(crate) fn wraps(&self, command: Command) -> bool {
+        let controls = self.controls();
+        let focused = self.focused();
+        match command {
+            Command::NextControl => controls.last() == Some(&focused),
+            Command::PreviousControl => controls.first() == Some(&focused),
+            _ => false,
+        }
+    }
+
+    /// Gives focus back to the controls as `command` moves it from outside
+    /// them: to the first on Tab, and to the last on Shift+Tab.
+    pub(crate) fn enter(&mut self, command: Command) {
+        let controls = self.controls();
+        let control = match command {
+            Command::PreviousControl => controls.last(),
+            _ => controls.first(),
+        };
+        if let Some(&control) = control {
+            self.focus = control;
+        }
+    }
+
     /// Why the control `control` is disabled at `place`, if it is.
     fn disabled(control: Control, place: Place) -> Option<&'static str> {
         match (control, place) {
@@ -728,7 +760,13 @@ impl Feedback {
     }
 
     /// Draws the feedback on `question`, at `place`, in `area` with `theme`,
-    /// with a failed request worded by `failed`.
+    /// with a failed request worded by `failed`. Its focused control shows
+    /// focus only while the feedback `has_focus`, rather than the code
+    /// beside it.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "what to draw, where, and whether it has focus, as the other screens' render takes"
+    )]
     pub(crate) fn render(
         &self,
         theme: &Theme,
@@ -737,6 +775,7 @@ impl Feedback {
         question: &Question,
         place: Place,
         failed: &FailedRequests,
+        has_focus: bool,
     ) {
         let lines = self.lines(question, theme, area.width, failed);
         let controls = self.controls();
@@ -752,7 +791,7 @@ impl Feedback {
                 theme.control(
                     control.label(),
                     ControlState {
-                        focused: self.focused() == control,
+                        focused: has_focus && self.focused() == control,
                         disabled: Self::disabled(control, place),
                         ..ControlState::default()
                     },
