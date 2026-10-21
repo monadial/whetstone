@@ -83,7 +83,10 @@ fn the_focused_policy_row_says_what_the_policy_is_and_what_validated_means() {
         "{text}"
     );
     assert!(text.contains("checked against labelled examples"), "{text}");
-    assert!(text.contains("can't be configured"), "{text}");
+    assert!(
+        text.contains("your config can override any job's under [cut_offs]"),
+        "{text}"
+    );
 }
 
 #[test]
