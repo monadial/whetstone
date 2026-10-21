@@ -158,6 +158,10 @@ counting from 1, with that criterion's outcome: `"not_met"` or
   what was missed. For `needs_review` it describes what meeting the
   criterion looks like, without claiming the learner missed it.
 
+Each paragraph must pass the plain checks, as a generated one must before
+Jev sees it: it has text, it cites the evidence, and every citation names
+lines the evidence sends. `check` names what fails.
+
 ```toml
 [[explanation]]
 id = "retry-key-explained"
