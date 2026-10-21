@@ -16,7 +16,8 @@ use std::fmt;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use whetstone_core::{
-    Assessed, CandidateId, ChoiceOutcome, Evidence, Provenance, Question, Response,
+    Assessed, CandidateId, ChoiceOutcome, CriterionOutcome, Evidence, Provenance, Question,
+    Response,
 };
 
 /// Where the app keeps session records. Each save either returns once the
@@ -117,11 +118,18 @@ pub struct SavedResponse {
 }
 
 /// An outcome of a saved response. Each kind of outcome a later slice
-/// saves, such as each criterion's, is a variant of its own.
+/// saves is a variant of its own.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Assessment {
     /// The choice's outcome, at once at Submit, from the option ratings.
     Choice(Assessed<ChoiceOutcome>),
+    /// One criterion's outcome, from Jev's assessment of the reasoning.
+    Criterion {
+        /// The criterion's place in the question's rubric, counting from 0.
+        criterion: usize,
+        /// Met, not met or needs review, with Jev's answer.
+        outcome: Assessed<CriterionOutcome>,
+    },
 }
 
 /// What the learner signalled about a question. None is held against them.
@@ -334,6 +342,9 @@ impl SessionStore for InMemoryStore {
         Ok(())
     }
 }
+
+/// The acknowledgement a reasoning evaluation is asked with (rule 39).
+impl whetstone_ai::Saved for SavedResponse {}
 
 impl SavedResponse {
     /// The session record the response is saved in.

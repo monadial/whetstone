@@ -1214,11 +1214,12 @@ impl View for OutboundReview {
                 connections,
                 origin,
             } => self.apply_connections(commit, connections, origin),
-            // Only Preparing questions waits for these.
+            // Only Practice waits for these.
             JobOutput::ShowcaseConnectedCode { .. }
             | JobOutput::AreasChecked { .. }
             | JobOutput::Written { .. }
-            | JobOutput::Checked { .. } => {}
+            | JobOutput::Checked { .. }
+            | JobOutput::Evaluated { .. } => {}
         }
     }
 

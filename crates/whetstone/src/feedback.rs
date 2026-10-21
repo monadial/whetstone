@@ -1,23 +1,35 @@
 //! Feedback on a submitted response: the choice outcome at once, from the
 //! option ratings, with the chosen option's rationale, the answer key's
-//! rationale, "why it matters" and the citations, then the reasoning, which
-//! this version doesn't assess yet. The outcome is Supported or Not
-//! supported, never Needs review, and in words only: Jev's probabilities
-//! stay out of it.
+//! rationale, "why it matters" and the citations, then the reasoning and its
+//! outcome. The choice outcome is Supported or Not supported, never Needs
+//! review. Outcomes are in words only: Jev's probabilities stay out of
+//! them.
+//!
+//! The reasoning awaits evaluation until Jev's answers come, and then each
+//! criterion of the rubric shows met, not met or needs review. Cancel
+//! evaluation stops the request, and the response stays submitted. A
+//! failure or a cancellation shows Evaluation unavailable, with Retry
+//! evaluation, which asks Jev again. Each outcome is saved to the session
+//! record once it is known.
 //!
 //! A submitted response is final, so feedback offers no way back to it. Its
-//! controls are Next question, Inspect source and Finish.
+//! controls are the evaluation's, while it awaits or failed, then Next
+//! question, Inspect source and Finish.
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{List, Paragraph};
-use whetstone_core::{Assessed, ChoiceOutcome, Extent, OptionLetter, Question, Response};
+use whetstone_ai::RequestFailure;
+use whetstone_core::{
+    Assessed, AssessmentPolicy, ChoiceOutcome, CriterionOutcome, Extent, OptionLetter, Probability,
+    Question, Response,
+};
 
 use crate::columns;
 use crate::focus::Position;
 use crate::keymap::{self, Binding, Command, Keymap};
-use crate::session_record::{Durability, SavedResponse};
+use crate::session_record::{Assessment, Durability, SavedResponse, SessionStore};
 use crate::theme::{ColorSupport, ControlState, Theme};
 
 /// Feedback's own keys.
@@ -36,24 +48,45 @@ pub(crate) const KEYMAP: Keymap = &[
     keymap::BACK,
 ];
 
-/// Feedback's controls, in focus order.
+/// Feedback's controls.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Control {
+    /// Stops the evaluation while it awaits.
+    CancelEvaluation,
+    /// Asks Jev again once the evaluation failed or was cancelled.
+    RetryEvaluation,
     NextQuestion,
     InspectSource,
     Finish,
 }
 
 impl Control {
-    const ALL: [Self; 3] = [Self::NextQuestion, Self::InspectSource, Self::Finish];
+    /// The controls feedback always has, in focus order, after the
+    /// evaluation's.
+    const ALWAYS: [Self; 3] = [Self::NextQuestion, Self::InspectSource, Self::Finish];
 
     fn label(self) -> &'static str {
         match self {
+            Self::CancelEvaluation => "Cancel evaluation",
+            Self::RetryEvaluation => "Retry evaluation",
             Self::NextQuestion => "Next question",
             Self::InspectSource => "Inspect source",
             Self::Finish => "Finish",
         }
     }
+}
+
+/// Where Jev's evaluation of the reasoning stands.
+#[derive(Debug)]
+enum Evaluation {
+    /// To ask for, as soon as the screen starts its jobs.
+    Unsent,
+    /// Asked for: the reasoning awaits evaluation.
+    Awaiting,
+    /// It failed, or the learner cancelled it, and waits for their Retry.
+    Unavailable(RequestFailure),
+    /// Each criterion's outcome, in rubric order.
+    Assessed(Vec<Assessed<CriterionOutcome>>),
 }
 
 /// What the learner does next from feedback.
@@ -65,6 +98,8 @@ pub(crate) enum Step {
     InspectSource,
     /// End the Practice.
     Finish,
+    /// Stop the evaluation of the reasoning, which awaits.
+    CancelEvaluation,
 }
 
 /// Where the question is among the questions shown, which decides whether
@@ -83,16 +118,21 @@ pub(crate) struct Feedback {
     response: Response,
     outcome: Assessed<ChoiceOutcome>,
     /// The store's acknowledgement of the response, which names its
-    /// session, question and attempt.
-    #[expect(
-        dead_code,
-        reason = "#91 asks Jev about the reasoning with it, and waits for the result by it"
-    )]
+    /// session, question and attempt: Jev is asked about the reasoning with
+    /// it, and its result is waited for by it (rules 24 and 39).
     saved: SavedResponse,
     /// Whether the store that saved the response keeps it after Whetstone
     /// closes: only then does "Saved" show.
     durability: Durability,
-    focus: Position,
+    reasoning: Evaluation,
+    /// The criterion outcomes known but not yet saved to the session
+    /// record.
+    unrecorded: Vec<Assessment>,
+    /// The control with focus. If it is gone, as Cancel evaluation goes once
+    /// the outcomes come, focus is where it started.
+    focus: Control,
+    /// The control focus starts on.
+    start: Control,
     /// The row at the top of the feedback.
     top: Position,
 }
@@ -108,7 +148,7 @@ impl Feedback {
         durability: Durability,
         place: Place,
     ) -> Self {
-        let first = match place {
+        let start = match place {
             Place::BeforeTheLast => Control::NextQuestion,
             Place::Last => Control::Finish,
         };
@@ -117,18 +157,114 @@ impl Feedback {
             outcome,
             saved,
             durability,
-            focus: Position::at(
-                Control::ALL
-                    .iter()
-                    .position(|&control| control == first)
-                    .unwrap_or_default(),
-            ),
+            reasoning: Evaluation::Unsent,
+            unrecorded: Vec::new(),
+            focus: start,
+            start,
             top: Position::default(),
         }
     }
 
+    /// The store's acknowledgement of the response.
+    pub(crate) fn saved(&self) -> &SavedResponse {
+        &self.saved
+    }
+
+    /// The evaluation to ask Jev for, if it waits to be asked for: the
+    /// saved response and its reasoning. It then awaits.
+    pub(crate) fn take_evaluation(&mut self) -> Option<(&SavedResponse, &str)> {
+        let Evaluation::Unsent = self.reasoning else {
+            return None;
+        };
+        self.reasoning = Evaluation::Awaiting;
+        Some((&self.saved, self.response.reasoning()))
+    }
+
+    /// Applies Jev's `reply` about the reasoning written for `question`: a
+    /// probability for each criterion, in rubric order, which the assessment
+    /// policy turns into its outcome, or why the request failed. A reply
+    /// that doesn't answer each criterion once is a reply that could not be
+    /// read (rule 37).
+    pub(crate) fn evaluated(
+        &mut self,
+        question: &Question,
+        reply: Result<Vec<Probability>, RequestFailure>,
+    ) {
+        let session = self.saved.session();
+        let attempt = self.saved.attempt().get();
+        self.reasoning = match reply {
+            Ok(answers) if answers.len() == question.rubric().len() => {
+                let policy = AssessmentPolicy::current();
+                let outcomes: Vec<_> = answers
+                    .into_iter()
+                    .map(|answer| policy.criterion_outcome(answer))
+                    .collect();
+                let count = |outcome| {
+                    outcomes
+                        .iter()
+                        .filter(|assessed| assessed.outcome() == outcome)
+                        .count()
+                };
+                tracing::info!(
+                    %session,
+                    attempt,
+                    met = count(CriterionOutcome::Met),
+                    not_met = count(CriterionOutcome::NotMet),
+                    needs_review = count(CriterionOutcome::NeedsReview),
+                    "Jev assessed the reasoning"
+                );
+                self.unrecorded = outcomes
+                    .iter()
+                    .enumerate()
+                    .map(|(criterion, &outcome)| Assessment::Criterion { criterion, outcome })
+                    .collect();
+                Evaluation::Assessed(outcomes)
+            }
+            Ok(answers) => {
+                tracing::warn!(
+                    %session,
+                    attempt,
+                    answered = answers.len(),
+                    criteria = question.rubric().len(),
+                    "Jev's assessment of the reasoning didn't answer each criterion once"
+                );
+                Evaluation::Unavailable(RequestFailure::InvalidReply)
+            }
+            Err(failure) => {
+                tracing::info!(%session, attempt, %failure, "assessing the reasoning failed");
+                Evaluation::Unavailable(failure)
+            }
+        };
+    }
+
+    /// Saves to `store` each criterion outcome known since the last save.
+    /// A save that fails loses nothing the learner wrote, and the outcome
+    /// still shows.
+    pub(crate) fn keep_record(&mut self, store: &mut dyn SessionStore) {
+        for assessment in self.unrecorded.drain(..) {
+            if let Err(error) = store.save_assessment(&self.saved, assessment) {
+                tracing::warn!(%error, "a criterion outcome wasn't saved");
+            }
+        }
+    }
+
+    /// The controls, in focus order: the evaluation's, while it awaits or
+    /// is unavailable, then the rest.
+    fn controls(&self) -> Vec<Control> {
+        let evaluation = match self.reasoning {
+            Evaluation::Unsent | Evaluation::Awaiting => Some(Control::CancelEvaluation),
+            Evaluation::Unavailable(_) => Some(Control::RetryEvaluation),
+            Evaluation::Assessed(_) => None,
+        };
+        evaluation.into_iter().chain(Control::ALWAYS).collect()
+    }
+
     fn focused(&self) -> Control {
-        Control::ALL[self.focus.index()]
+        if self.controls().contains(&self.focus) {
+            self.focus
+        } else {
+            self.start
+        }
     }
 
     /// Why the control `control` is disabled at `place`, if it is.
@@ -154,20 +290,38 @@ impl Feedback {
                 if Self::disabled(control, place).is_some() {
                     return None;
                 }
-                return Some(match control {
-                    Control::NextQuestion => Step::NextQuestion,
-                    Control::InspectSource => Step::InspectSource,
-                    Control::Finish => Step::Finish,
-                });
+                return match control {
+                    Control::CancelEvaluation => {
+                        self.reasoning = Evaluation::Unavailable(RequestFailure::Cancelled);
+                        self.focus = Control::RetryEvaluation;
+                        Some(Step::CancelEvaluation)
+                    }
+                    Control::RetryEvaluation => {
+                        self.reasoning = Evaluation::Unsent;
+                        self.focus = Control::CancelEvaluation;
+                        None
+                    }
+                    Control::NextQuestion => Some(Step::NextQuestion),
+                    Control::InspectSource => Some(Step::InspectSource),
+                    Control::Finish => Some(Step::Finish),
+                };
             }
             Command::HalfPageDown | Command::HalfPageUp | Command::Top | Command::Bottom => {
                 // Styles do not change how the text wraps.
                 let lines = self.lines(question, &Theme::new(ColorSupport::NoColor), area.width);
-                let [body, ..] = layout(lines.len(), area);
+                let [body, ..] = layout(lines.len(), self.controls().len(), area);
                 let last = lines.len().saturating_sub(usize::from(body.height));
                 self.top = self.top.scrolled(command, last, usize::from(body.height));
             }
-            command => self.focus = self.focus.after(command, Control::ALL.len()),
+            command => {
+                let controls = self.controls();
+                let focused = self.focused();
+                let at = controls
+                    .iter()
+                    .position(|&control| control == focused)
+                    .unwrap_or_default();
+                self.focus = controls[Position::at(at).after(command, controls.len()).index()];
+            }
         }
         None
     }
@@ -239,15 +393,87 @@ impl Feedback {
                 wrapped(&mut lines, line);
             }
         }
-        lines.push(Line::styled(
-            "Your reasoning isn't assessed yet in this version.",
-            theme.muted,
-        ));
+        lines.push(Line::default());
+        self.reasoning_outcome(&mut lines, question, theme, width);
         if self.durability == Durability::Durable {
             lines.push(Line::default());
             lines.push(Line::styled("Saved", theme.muted));
         }
         lines
+    }
+
+    /// Adds the reasoning's outcome to `lines`, `width` cells wide, drawn
+    /// with `theme`: awaiting evaluation, unavailable and why, or each
+    /// criterion of `question`'s rubric with its outcome.
+    fn reasoning_outcome(
+        &self,
+        lines: &mut Vec<Line<'static>>,
+        question: &Question,
+        theme: &Theme,
+        width: usize,
+    ) {
+        let wrapped = |lines: &mut Vec<Line<'static>>, text: &str| {
+            lines.extend(columns::wrap(text, width).into_iter().map(Line::raw));
+        };
+        match &self.reasoning {
+            Evaluation::Unsent | Evaluation::Awaiting => {
+                lines.push(Line::styled("Reasoning · Awaiting evaluation", theme.title));
+                wrapped(
+                    lines,
+                    "Jev is assessing it against each criterion. Your response is submitted.",
+                );
+            }
+            Evaluation::Unavailable(failure) => {
+                lines.push(Line::styled(
+                    "Reasoning · Evaluation unavailable",
+                    theme.title,
+                ));
+                wrapped(
+                    lines,
+                    &match failure {
+                        RequestFailure::Cancelled => "You cancelled the evaluation.".to_owned(),
+                        failure => format!("Jev's evaluation failed: {failure}."),
+                    },
+                );
+                wrapped(
+                    lines,
+                    "Your response stays submitted. Retry evaluation asks Jev again.",
+                );
+            }
+            Evaluation::Assessed(outcomes) => {
+                lines.push(Line::styled("Reasoning", theme.title));
+                for (criterion, assessed) in question.rubric().iter().zip(outcomes) {
+                    let outcome = match assessed.outcome() {
+                        CriterionOutcome::Met => "Met",
+                        CriterionOutcome::NotMet => "Not met",
+                        CriterionOutcome::NeedsReview => "Needs review",
+                    };
+                    for (index, text) in
+                        columns::wrap(&format!("{outcome} · {}", criterion.statement()), width)
+                            .into_iter()
+                            .enumerate()
+                    {
+                        lines.push(match text.strip_prefix(outcome) {
+                            Some(rest) if index == 0 => Line::from(vec![
+                                Span::styled(outcome, theme.title),
+                                Span::raw(rest.to_owned()),
+                            ]),
+                            _ => Line::raw(text),
+                        });
+                    }
+                    if assessed.outcome() == CriterionOutcome::NeedsReview {
+                        lines.extend(
+                            columns::wrap(
+                                "Jev couldn't tell whether your reasoning covers this.",
+                                width.saturating_sub(2),
+                            )
+                            .into_iter()
+                            .map(|text| Line::styled(format!("  {text}"), theme.muted)),
+                        );
+                    }
+                }
+            }
+        }
     }
 
     /// Draws the feedback on `question`, at `place`, in `area` with `theme`.
@@ -260,7 +486,8 @@ impl Feedback {
         place: Place,
     ) {
         let lines = self.lines(question, theme, area.width);
-        let [body, _, controls] = layout(lines.len(), area);
+        let controls = self.controls();
+        let [body, _, buttons] = layout(lines.len(), controls.len(), area);
         let last = lines.len().saturating_sub(usize::from(body.height));
         let top = self.top.index().min(last);
         frame.render_widget(
@@ -268,7 +495,7 @@ impl Feedback {
             body,
         );
         frame.render_widget(
-            List::new(Control::ALL.map(|control| {
+            List::new(controls.into_iter().map(|control| {
                 theme.control(
                     control.label(),
                     ControlState {
@@ -278,16 +505,16 @@ impl Feedback {
                     },
                 )
             })),
-            controls,
+            buttons,
         );
     }
 }
 
-/// Where the feedback's text of `lines` rows, a blank row and its controls
-/// go in `area`. The controls keep their rows on a short screen, and the
-/// text scrolls above them.
-fn layout(lines: usize, area: Rect) -> [Rect; 3] {
-    let rows = u16::try_from(Control::ALL.len()).unwrap_or(u16::MAX);
+/// Where the feedback's text of `lines` rows, a blank row and its
+/// `controls` go in `area`. The controls keep their rows on a short screen,
+/// and the text scrolls above them.
+fn layout(lines: usize, controls: usize, area: Rect) -> [Rect; 3] {
+    let rows = u16::try_from(controls).unwrap_or(u16::MAX);
     Layout::vertical([
         Constraint::Max(u16::try_from(lines).unwrap_or(u16::MAX)),
         Constraint::Length(1),
