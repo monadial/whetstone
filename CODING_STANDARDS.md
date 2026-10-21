@@ -96,7 +96,7 @@ These rules apply from the Practice spec, when the AI crate and the session reco
 | --- | --- | --- |
 | 46 | `main.rs` stays thin: it passes the process's arguments and environment to `whetstone::run`. Logic lives in the library, where tests can reach it. | **Review**. |
 | 47 | TUI snapshots are fixed-size and committed: every screen at 120×32 and 80×24. CI runs with `CI=true`, so insta fails on a changed snapshot instead of writing one. | **Lint/CI**: insta in CI. |
-| 48 | Tests make no real network calls. Each HTTP test owns its mock server. | **Lint/CI**: CI has no API key. **Review**. |
+| 48 | Per-PR tests make no network calls. Each HTTP test owns its mock server. The stated exceptions call `OpenRouter` with a real key, and only when asked for: the keyed end-to-end job's live tests, the recorder that re-records the offline replies, and the labelled-example tool (see [The keyed end-to-end job](#the-keyed-end-to-end-job)). | **Lint/CI**: `ci.yml` has no API key, and the tests that need one are ignored. **Review**. |
 | 49 | CI runs `cargo nextest` and `cargo test --doc` (nextest skips doc tests). `proptest-regressions` files are committed. Time-dependent async tests use a paused clock. | **Lint/CI**: the test job. **Review**: regressions and clocks. |
 
 ## Types, naming and docs
@@ -151,6 +151,25 @@ The root `clippy.toml` allows `unwrap`, `expect`, `panic!` and printing in tests
 | Clippy and tests | `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`, then `cargo nextest run --workspace --all-features --locked --profile ci`, then `cargo test --workspace --all-features --locked --doc` | Linux and macOS, each on x86_64 and arm64 |
 
 Run the same commands locally before pushing. The tools are `cargo-nextest`, `cargo-deny` and `cargo-shear`, at the versions the workflow pins.
+
+### The keyed end-to-end job
+
+`.github/workflows/live.yml` calls Jev and the generator live, so the recorded replies the per-PR contract tests replay stay true (rule 48's exception). It runs the ignored tests whose names start with `live_`: one for each kind of request the AI port makes (`crates/whetstone-ai/src/live.rs`, whose docs give the pattern for adding one), and Generate questions on the showcase project at the app seam (`crates/whetstone/tests/it/live_practice.rs`). It runs on Linux x86_64:
+
+- on pull requests that change `crates/whetstone-ai`, or a Rig crate's version in `Cargo.lock`;
+- on manual dispatch;
+- as a release gate, when a release workflow calls it (`workflow_call`). Called that way, a missing key fails it.
+
+Its key is the `OPENROUTER_API_KEY` repository secret ([#96](https://github.com/monadial/whetstone/issues/96)), and only the step that runs the live tests gets it. Where the secret isn't available, such as on a pull request from a fork, the job is skipped.
+
+With your own key, you can run the same live tests, or re-record the offline replies. Each run costs a few cents:
+
+| What | Command |
+| --- | --- |
+| Live tests | `OPENROUTER_API_KEY=… cargo nextest run --workspace --all-features --locked --no-fail-fast --run-ignored only live_` |
+| Re-record the offline replies | `OPENROUTER_API_KEY=… cargo test -p whetstone-ai --locked record:: -- --ignored --test-threads 1` |
+
+The recorder saves each reply's body under `crates/whetstone-ai/fixtures/`, never its headers, and a per-PR test fails if a fixture holds a key or an auth header. A re-recorded reply changes values the contract tests assert, so update them in the same PR.
 
 ## Differences from the research note
 
