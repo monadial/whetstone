@@ -4,7 +4,7 @@ Write exactly {count} candidate questions about the change in the evidence, each
 
 ## What each candidate holds
 
-- `stem`: the question. It asks about this change, and someone who understands the change can answer it from the evidence alone, without general knowledge the evidence doesn't support.
+- `stem`: the question. It asks about this change, and someone who understands the change can answer it from the evidence alone, without general knowledge the evidence doesn't support. Where it helps the learner find the code, it names the function, type or file it asks about.
 - `options`: exactly three, with the letters `A`, `B` and `C`, each once. Each has its `text` and its `rationale`.
 - `answer_key`: the letter of the correct option.
 - `rationale`, for each option: why that option is correct or wrong, from the evidence. The learner reads it only after answering.
@@ -14,7 +14,7 @@ Write exactly {count} candidate questions about the change in the evidence, each
   - `met`: what reasoning that meets it looks like;
   - `not_met`: what reasoning that doesn't meet it looks like.
 - `hint`: one hint that names where in the evidence to look, such as a file, a function or a test, without saying what is there. It doesn't describe the code's behaviour, restate an option or rule an option out.
-- `citations`: the lines of the evidence the question rests on, at least one.
+- `citations`: the lines of the evidence the question rests on, at least one. The learner reads them beside the question, with a few lines around each, before answering, so together they cover every line needed to answer it.
 
 Whetstone shows the options in an order of its own, so never refer to an option by its letter or its place, in any part.
 
