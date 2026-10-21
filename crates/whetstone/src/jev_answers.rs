@@ -97,6 +97,15 @@ fn question_check(question: &Question, requests: &[SentRequest]) -> Section {
     lines.extend(question.answers().iter().map(|(check, answer)| {
         answered(&statement(check), answer, policy.band(check.job(), answer))
     }));
+    // The answers number the criteria as the generator wrote them, and the
+    // reasoning only those the show rule kept.
+    lines.extend(question.dropped_criteria().map(|(place, _)| {
+        format!(
+            "Criterion {} dropped: it asks for more than the question needs, so reasoning \
+             isn't assessed against it",
+            place + 1
+        )
+    }));
     let depth = question.answers().depth();
     let levels: Vec<String> = DepthLevel::ALL
         .into_iter()
@@ -251,6 +260,9 @@ pub(crate) fn statement(check: CandidateCheck) -> String {
             "Criterion {} follows from the evidence and the answer key",
             index + 1
         ),
+        CandidateCheck::CriterionMinimum(index) => {
+            format!("Criterion {} asks only what the question needs", index + 1)
+        }
         CandidateCheck::Option(letter) => format!("Option {letter} answers the question correctly"),
         CandidateCheck::Rationale(letter) => {
             format!("The rationale for {letter} is supported by the evidence")

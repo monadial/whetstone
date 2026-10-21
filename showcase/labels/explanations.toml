@@ -3,41 +3,43 @@
 # evidence supports it, and whether it agrees with its criterion's outcome.
 # See README.md.
 #
-# Seeds by an agent, for the maintainer to review (#99). Both explain
-# `seed-retry-key`'s criteria.
+# Seeds by an agent, for the maintainer to review (#99, #135). All three
+# explain `seed-retry-key`'s criterion 1, the one criterion its question
+# keeps: its criterion 2 asks for more than the stem needs, so the show rule
+# drops it, and it is never explained.
 
 [[explanation]]
 id = "seed-retry-key-explained"
 candidate = "seed-retry-key"
 by = "agent"
 on = 2026-10-21
-note = "A sound paragraph for criterion 2, not met, as for `seed-retry-key-partial`."
+note = """
+A sound paragraph for criterion 1, not met, as for \
+`seed-retry-key-injection`: it names the idea that is missing, never a word \
+(#135).\
+"""
 
 [[explanation.paragraphs]]
-criterion = 2
+criterion = 1
 outcome = "not_met"
 text = """
-Your reasoning says where the key comes from, but not why that matters. The \
-provider deduplicates charges on the operation key, so every attempt that \
-carries the payment's own key is the same charge, and the provider applies \
-it at most once, even when an earlier attempt went through before it timed \
-out.\
+Your reasoning doesn't say where the key on a charge request comes from. \
+The request is now built from the payment alone, and copies the operation \
+key the payment was created with, so whoever charges the payment can't pass \
+a key of its own, and every attempt carries the same one.\
 """
-citations = [{ path = "src/provider.rs", first_line = 1, last_line = 5 }]
+citations = [{ path = "src/provider.rs", first_line = 26, last_line = 37 }]
 
 [explanation.labels]
-criterion_2_supported = "yes"
-criterion_2_agrees = "yes"
+criterion_1_supported = "yes"
+criterion_1_agrees = "yes"
 
 [[explanation]]
 id = "seed-retry-key-misexplained"
 candidate = "seed-retry-key"
 by = "agent"
 on = 2026-10-21
-note = """
-Hand-made broken: the first paragraph claims the learner missed a criterion \
-that needs review; the second says something the evidence contradicts.\
-"""
+note = "Hand-made broken: it claims the learner missed a criterion that needs review."
 
 [[explanation.paragraphs]]
 criterion = 1
@@ -45,18 +47,30 @@ outcome = "needs_review"
 text = "You missed that the key now comes from the payment itself, so no caller can choose it."
 citations = [{ path = "src/provider.rs", first_line = 26, last_line = 37 }]
 
-[[explanation.paragraphs]]
-criterion = 2
-outcome = "not_met"
-text = """
-The provider deduplicates charges on the payment's reference, not its \
-operation key, so the key a retry carries makes no difference to how often \
-the customer is charged.\
-"""
-citations = [{ path = "src/provider.rs", first_line = 16, last_line = 24 }]
-
 [explanation.labels]
 criterion_1_supported = "yes"
 criterion_1_agrees = "no"
-criterion_2_supported = "no"
-criterion_2_agrees = "no"
+
+[[explanation]]
+id = "seed-retry-key-contradicted"
+candidate = "seed-retry-key"
+by = "agent"
+on = 2026-10-21
+note = """
+Hand-made broken: it says something the evidence contradicts, and so \
+contradicts the criterion it explains. Before #135 dropped criterion 2, this \
+was `seed-retry-key-misexplained`'s second paragraph, about that criterion.\
+"""
+
+[[explanation.paragraphs]]
+criterion = 1
+outcome = "not_met"
+text = """
+Your reasoning misses that the provider client now chooses the key: it \
+keeps the key of a charge that timed out, and sends it again with the retry.\
+"""
+citations = [{ path = "src/provider.rs", first_line = 26, last_line = 37 }]
+
+[explanation.labels]
+criterion_1_supported = "no"
+criterion_1_agrees = "no"

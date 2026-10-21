@@ -117,12 +117,28 @@ expression: pretty(&body)
         "true": "The criterion follows from the evidence and the answer key, and written reasoning can show whether it is met."
       }
     },
+    "criterion_1_minimum": {
+      "type": "noul",
+      "instructions": "Rubric criterion criterion_1 of the candidate asks only for what a sufficient answer to the candidate's stem needs: the idea that explains why the correct option is right, or something the stem itself asks for, such as a boundary. A learner who understands the change could meet it in their own words, without naming the code's identifiers, quoting its conditions, giving exact values, or covering details the stem doesn't ask about.",
+      "criteria": {
+        "false": "The criterion asks for more than a sufficient answer to the stem needs: particular names or wording, a quoted condition, an exact value, or something the stem doesn't ask about.",
+        "true": "The criterion asks only for an idea a sufficient answer to the stem needs, which a learner could give in their own words."
+      }
+    },
     "criterion_2": {
       "type": "noul",
       "instructions": "Rubric criterion criterion_2 of the candidate follows from the evidence and the answer key, and whether a learner's written reasoning meets it can be judged from the reasoning alone.",
       "criteria": {
         "false": "The criterion doesn't follow from the evidence and the answer key, or written reasoning can't show whether it is met.",
         "true": "The criterion follows from the evidence and the answer key, and written reasoning can show whether it is met."
+      }
+    },
+    "criterion_2_minimum": {
+      "type": "noul",
+      "instructions": "Rubric criterion criterion_2 of the candidate asks only for what a sufficient answer to the candidate's stem needs: the idea that explains why the correct option is right, or something the stem itself asks for, such as a boundary. A learner who understands the change could meet it in their own words, without naming the code's identifiers, quoting its conditions, giving exact values, or covering details the stem doesn't ask about.",
+      "criteria": {
+        "false": "The criterion asks for more than a sufficient answer to the stem needs: particular names or wording, a quoted condition, an exact value, or something the stem doesn't ask about.",
+        "true": "The criterion asks only for an idea a sufficient answer to the stem needs, which a learner could give in their own words."
       }
     },
     "depth": {

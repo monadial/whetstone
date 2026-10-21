@@ -811,6 +811,7 @@ fn check_key(check: CandidateCheck) -> String {
         CandidateCheck::NeedsChange => "needs_change".to_owned(),
         CandidateCheck::NoGiveaway => "no_giveaway".to_owned(),
         CandidateCheck::Criterion(index) => criterion_key(index),
+        CandidateCheck::CriterionMinimum(index) => format!("{}_minimum", criterion_key(index)),
         CandidateCheck::Option(option) => format!("option_{}", letter(option)),
         CandidateCheck::Rationale(option) => format!("rationale_{}", letter(option)),
         CandidateCheck::WhyItMatters => "why_it_matters".to_owned(),
@@ -895,6 +896,7 @@ mod tests {
         };
         assert_eq!(job("answerable"), Some(Job::QuestionCheck));
         assert_eq!(job("criterion_2"), Some(Job::QuestionCheck));
+        assert_eq!(job("criterion_1_minimum"), Some(Job::QuestionCheck));
         assert_eq!(job("option_b"), Some(Job::OptionRating));
         assert_eq!(job("rationale_c"), Some(Job::RationaleAndHintChecks));
         assert_eq!(
@@ -919,8 +921,9 @@ mod tests {
             prepared(&extra).unwrap_err().to_string(),
             "seeds.toml, line 2: `retry-key` labels `criterion_3`, which its call doesn't ask: it \
              asks answerable, about_area, needs_change, no_giveaway, criterion_1, criterion_2, \
-             option_a, option_b, option_c, rationale_a, rationale_b, rationale_c, \
-             why_it_matters, hint_points_to_evidence, hint_hides_answer_key"
+             criterion_1_minimum, criterion_2_minimum, option_a, option_b, option_c, \
+             rationale_a, rationale_b, rationale_c, why_it_matters, hint_points_to_evidence, \
+             hint_hides_answer_key"
         );
     }
 
@@ -1039,6 +1042,52 @@ mod tests {
     }
 
     #[test]
+    fn a_response_labels_only_the_criteria_its_candidate_s_labels_keep() {
+        let asks_too_much = CANDIDATE.replace(
+            "criterion_2_minimum = \"yes\"",
+            "criterion_2_minimum = \"no\"",
+        );
+
+        assert_eq!(
+            prepared(&format!("{asks_too_much}{RESPONSE}"))
+                .unwrap_err()
+                .to_string(),
+            "seeds.toml, line 42: `retry-key-injection` labels `criterion_2`, which its call \
+             doesn't ask: it asks criterion_1"
+        );
+        let kept = RESPONSE.replace(", criterion_2 = \"no\"", "");
+        let prepared = prepared(&format!("{asks_too_much}{kept}")).unwrap();
+        let call = &prepared.calls()[1];
+        assert_eq!(names(call), ["retry-key-injection/criterion_1"]);
+        assert_eq!(
+            call.request().questions.keys().collect::<Vec<_>>(),
+            ["criterion_1"]
+        );
+    }
+
+    #[test]
+    fn a_candidate_whose_every_criterion_asks_too_much_is_withheld_from_learners() {
+        let none_left = CANDIDATE
+            .replace(
+                "criterion_1_minimum = \"yes\"",
+                "criterion_1_minimum = \"no\"",
+            )
+            .replace(
+                "criterion_2_minimum = \"yes\"",
+                "criterion_2_minimum = \"no\"",
+            );
+
+        assert_eq!(
+            prepared(&format!("{none_left}{RESPONSE}"))
+                .unwrap_err()
+                .to_string(),
+            "seeds.toml, line 42: `retry-key-injection` is about the candidate `retry-key`, \
+             whose labels would withhold it from learners"
+        );
+        assert!(prepared(&none_left).is_ok(), "it is still measured");
+    }
+
+    #[test]
     fn a_response_is_no_longer_than_a_learner_can_write() {
         let reasoning = |graphemes: usize| {
             // Each "é" is written as two characters, one grapheme.
@@ -1052,7 +1101,7 @@ mod tests {
         assert!(reasoning(4_000).is_ok());
         assert_eq!(
             reasoning(4_001).unwrap_err().to_string(),
-            "seeds.toml, line 40: `retry-key-injection` has reasoning 4001 characters long, but \
+            "seeds.toml, line 42: `retry-key-injection` has reasoning 4001 characters long, but \
              a learner can write at most 4,000, so Jev would never see it"
         );
     }
@@ -1070,7 +1119,7 @@ mod tests {
             prepared(&format!("{two_right}{RESPONSE}"))
                 .unwrap_err()
                 .to_string(),
-            "seeds.toml, line 40: `retry-key-injection` is about the candidate `retry-key`, \
+            "seeds.toml, line 42: `retry-key-injection` is about the candidate `retry-key`, \
              whose labels would withhold it from learners"
         );
     }
@@ -1122,7 +1171,7 @@ mod tests {
             prepared(&format!("{CANDIDATE}{beyond}"))
                 .unwrap_err()
                 .to_string(),
-            "seeds.toml, line 40: `retry-key-explained` explains criterion 3, but its question \
+            "seeds.toml, line 42: `retry-key-explained` explains criterion 3, but its question \
              has 2 criteria"
         );
 
@@ -1134,7 +1183,7 @@ mod tests {
             prepared(&format!("{CANDIDATE}{twice}"))
                 .unwrap_err()
                 .to_string(),
-            "seeds.toml, line 40: `retry-key-explained` explains criterion 2 twice"
+            "seeds.toml, line 42: `retry-key-explained` explains criterion 2 twice"
         );
     }
 
@@ -1145,7 +1194,7 @@ mod tests {
                 .unwrap_err()
                 .to_string()
         };
-        let prefix = "seeds.toml, line 40: `retry-key-explained` explains criterion 2 in a \
+        let prefix = "seeds.toml, line 42: `retry-key-explained` explains criterion 2 in a \
                       paragraph that fails the plain checks, so Jev would never see it:";
 
         assert_eq!(

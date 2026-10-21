@@ -308,7 +308,7 @@ fn summary(prepared: &Prepared) -> String {
 pub(crate) fn job_name(job: Job) -> &'static str {
     match job {
         Job::RelevanceGate => "Relevance gate",
-        Job::QuestionCheck => "Question check (checks 1 to 5)",
+        Job::QuestionCheck => "Question check (checks 1 to 6)",
         Job::OptionRating => "Option rating",
         Job::RationaleAndHintChecks => "Rationale and hint checks",
         Job::ReasoningCriterion => "Reasoning criterion",

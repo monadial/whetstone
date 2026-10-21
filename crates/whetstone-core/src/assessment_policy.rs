@@ -46,9 +46,10 @@ pub enum Validation {
 pub enum Job {
     /// Whether a change is worth asking about for an area.
     RelevanceGate,
-    /// A candidate's checks 1–5: answerable from the evidence, about its
-    /// area, needs this change, doesn't give the answer away, and each
-    /// criterion.
+    /// A candidate's checks 1–6: answerable from the evidence, about its
+    /// area, needs this change, doesn't give the answer away, each
+    /// criterion, and whether each criterion asks only what the question
+    /// needs.
     QuestionCheck,
     /// Whether an option correctly answers its question.
     OptionRating,

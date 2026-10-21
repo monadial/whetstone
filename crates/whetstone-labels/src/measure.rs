@@ -216,6 +216,7 @@ mod tests {
             answers: |name| match name {
                 "observability" => Some(0.1),
                 "option_b" => Some(0.15),
+                "criterion_2_minimum" => Some(0.3),
                 _ => Some(0.9),
             },
         })
@@ -231,11 +232,15 @@ mod tests {
         assert_eq!(answers(&measurements, "gate-retry/domain"), [0.9; 3]);
         assert_eq!(answers(&measurements, "retry-key/option_b"), [0.15; 3]);
         assert_eq!(
+            answers(&measurements, "retry-key/criterion_2_minimum"),
+            [0.3; 3]
+        );
+        assert_eq!(
             answers(&measurements, "retry-key/hint_hides_answer_key"),
             [0.9; 3]
         );
-        assert_eq!(measurements.labels.len(), 2 + 15);
-        assert_eq!(measurements.by_agent, 2 + 15);
+        assert_eq!(measurements.labels.len(), 2 + 17);
+        assert_eq!(measurements.by_agent, 2 + 17);
         assert!((measurements.cost - 0.0006).abs() < 1e-12);
         assert_eq!(measurements.cost_not_reported, 0);
         assert_eq!(

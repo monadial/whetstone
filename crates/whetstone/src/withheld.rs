@@ -9,9 +9,12 @@
 //! sentence for each way Jev can answer it against the show rule: "Jev
 //! said …" for a clear answer, "Jev couldn't tell whether …" for an
 //! unclear one. The hint's checks never withhold a candidate, so they are
-//! never a reason. The reasons say whose cut-offs decided, policy 0's or
-//! the learner's own from config, and never a probability or a cut-off:
-//! Settings and Inspect hold the numbers.
+//! never a reason. A criterion that asks for more than the question needs
+//! is dropped, and withholds the candidate only when none is left, so those
+//! checks give one reason, as unclear as the least clear of them. The
+//! reasons say whose cut-offs decided, policy 0's or the learner's own from
+//! config, and never a probability or a cut-off: Settings and Inspect hold
+//! the numbers.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -90,7 +93,7 @@ fn count(passed: usize, written: usize, withheld: &[Withheld]) -> String {
 /// Each reason `withheld` was withheld, once, in order.
 fn each_reason(withheld: &Withheld) -> BTreeSet<Reason> {
     let answer_key = withheld.candidate().answer_key();
-    withheld
+    let mut reasons: BTreeSet<Reason> = withheld
         .failed()
         .iter()
         .filter_map(|&check| {
@@ -99,7 +102,15 @@ fn each_reason(withheld: &Withheld) -> BTreeSet<Reason> {
                 answered: Answered::of(withheld.band(check)),
             })
         })
-        .collect()
+        .collect();
+    // No criterion left is one reason, as unclear as its least clear answer:
+    // the last, as reasons order.
+    let none_left = |reason: &Reason| reason.asks == Asks::CriterionMinimum;
+    if let Some(&least_clear) = reasons.iter().rfind(|reason| none_left(reason)) {
+        reasons.retain(|reason| !none_left(reason));
+        reasons.insert(least_clear);
+    }
+    reasons
 }
 
 /// One reason a candidate was withheld: what a check it failed asks, and
@@ -120,6 +131,7 @@ enum Asks {
     NeedsChange,
     NoGiveaway,
     Criterion,
+    CriterionMinimum,
     AnswerKey,
     OtherOption,
     Rationale,
@@ -160,6 +172,7 @@ impl Asks {
             CandidateCheck::NeedsChange => Self::NeedsChange,
             CandidateCheck::NoGiveaway => Self::NoGiveaway,
             CandidateCheck::Criterion(_) => Self::Criterion,
+            CandidateCheck::CriterionMinimum(_) => Self::CriterionMinimum,
             CandidateCheck::Option(letter) if letter == answer_key => Self::AnswerKey,
             CandidateCheck::Option(_) => Self::OtherOption,
             CandidateCheck::Rationale(_) => Self::Rationale,
@@ -195,6 +208,10 @@ impl Asks {
                  reasoning",
                 "a rubric criterion doesn't follow from the evidence, or can't be judged from \
                  written reasoning",
+            ),
+            Self::CriterionMinimum => (
+                "any rubric criterion asks only what the question needs",
+                "every rubric criterion asks for more than the question needs",
             ),
             Self::AnswerKey => (
                 "the answer key answers the question",
@@ -238,7 +255,7 @@ fn words_dropped(reason: DropReason, subject: &str) -> String {
         DropReason::AnswerKey => {
             format!("{subject} had an answer key that isn't one of its options")
         }
-        DropReason::RubricSize => format!("{subject} had a rubric without 1 to 3 criteria"),
+        DropReason::RubricSize => format!("{subject} had a rubric without 1 or 2 criteria"),
         DropReason::Citation => format!("{subject} cited lines that aren't in the evidence"),
         DropReason::Missing(part) => format!("{subject} was missing {}", missing(part)),
     }

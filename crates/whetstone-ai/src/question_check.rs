@@ -21,7 +21,9 @@ use crate::prompts::QUESTION_CHECK;
 /// per check in [`Candidate::checks`], each named after its check, with its
 /// instructions from the base prompts. They are `answerable`, `about_area`,
 /// `needs_change` and `no_giveaway`; `criterion_1` and on, one per criterion;
-/// `option_a` to `option_c`, the option ratings; `rationale_a` to
+/// `criterion_1_minimum` and on, one per criterion again, whether it asks
+/// only for what the stem needs; `option_a` to `option_c`, the option
+/// ratings; `rationale_a` to
 /// `rationale_c` and `why_it_matters`; and `hint_points_to_evidence` and
 /// `hint_hides_answer_key`. It also scores the candidate's `depth` over
 /// three levels: answerable by reading one line, needs reading the change,
@@ -78,9 +80,9 @@ pub fn question_check_answers(
 /// The name the depth score goes under.
 pub(crate) const DEPTH: &str = "depth";
 
-/// The name a check's question goes under, such as `criterion_1` or
-/// `option_a`: Jev's name for it, which a labelled example's label for it
-/// goes under too.
+/// The name a check's question goes under, such as `criterion_1`,
+/// `criterion_1_minimum` or `option_a`: Jev's name for it, which a labelled
+/// example's label for it goes under too.
 #[must_use]
 pub fn name(check: CandidateCheck) -> String {
     match check {
@@ -89,6 +91,7 @@ pub fn name(check: CandidateCheck) -> String {
         CandidateCheck::NeedsChange => "needs_change".to_owned(),
         CandidateCheck::NoGiveaway => "no_giveaway".to_owned(),
         CandidateCheck::Criterion(index) => criterion_name(index),
+        CandidateCheck::CriterionMinimum(index) => format!("{}_minimum", criterion_name(index)),
         CandidateCheck::Option(letter) => format!("option_{}", lowercase(letter)),
         CandidateCheck::Rationale(letter) => format!("rationale_{}", lowercase(letter)),
         CandidateCheck::WhyItMatters => "why_it_matters".to_owned(),
@@ -107,6 +110,9 @@ fn question(check: CandidateCheck) -> JevQuestion {
         CandidateCheck::NoGiveaway => prompts.no_giveaway.question(&[]),
         CandidateCheck::Criterion(index) => prompts
             .criterion
+            .question(&[("criterion", &criterion_name(index))]),
+        CandidateCheck::CriterionMinimum(index) => prompts
+            .criterion_minimum
             .question(&[("criterion", &criterion_name(index))]),
         CandidateCheck::Option(letter) => {
             prompts.option.question(&[("letter", &letter.to_string())])
