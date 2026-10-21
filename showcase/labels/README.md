@@ -132,7 +132,8 @@ A response example is a learner's reasoning for a candidate example's
 question. It has one label per criterion of that question's rubric:
 `"yes"` when the reasoning meets it. The question must be one the
 candidate's labels would show to a learner. Jev gets the reasoning with the
-question's stem and options, never the answer key, as in Practice.
+question's stem and options, never the answer key, as in Practice. The
+reasoning can be at most 4,000 characters long, as in Practice's editor.
 
 ```toml
 [[response]]
@@ -186,8 +187,9 @@ Each example's evidence is its commit's change: the message, the diff and
 every touched file's full content after the change, numbered from line 1,
 as the outbound review sends by default. It has **no connected code**: the
 app finds the showcase's connected code internally, and doesn't make it
-available to this tool yet. So label against the change alone, and cite
-only touched files.
+available to this tool yet. This is what Practice sends when finding a
+change's connected code takes too long. So label against the change alone,
+and cite only touched files.
 
 To read a file as it is just after a commit, with its line numbers, replay
 the history and check the commit out:

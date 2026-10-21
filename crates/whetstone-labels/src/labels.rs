@@ -16,14 +16,15 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::str::FromStr as _;
 
 use serde::Deserialize;
 use serde::de::{self, Deserializer, IntoDeserializer, MapAccess, Visitor};
 use toml::Spanned;
 use toml::value::Datetime;
 use whetstone_core::{
-    CriterionOutcome, QuestionType, WrittenCandidate, WrittenCitation, WrittenCriterion,
-    WrittenOption,
+    AreaId, CriterionOutcome, InvalidAreaId, QuestionType, WrittenCandidate, WrittenCitation,
+    WrittenCriterion, WrittenOption,
 };
 
 /// What a label says Jev should answer.
@@ -119,12 +120,37 @@ impl fmt::Display for Place {
     }
 }
 
+/// An example's ID: unique across all the files, and how a response or
+/// explanation example names the candidate example it is about.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ExampleId(String);
+
+impl ExampleId {
+    /// The ID `id`.
+    #[must_use]
+    pub fn new(id: impl Into<String>) -> Self {
+        Self(id.into())
+    }
+
+    /// The ID as text.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for ExampleId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 /// What every example has: where it is, its ID, its note and its labels,
 /// by key, in key order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Example {
     place: Place,
-    id: String,
+    id: ExampleId,
     note: Option<String>,
     labels: Vec<(String, Label)>,
 }
@@ -138,7 +164,7 @@ impl Example {
 
     /// Its ID, unique across all the files.
     #[must_use]
-    pub fn id(&self) -> &str {
+    pub fn id(&self) -> &ExampleId {
         &self.id
     }
 
@@ -184,7 +210,7 @@ impl GateExample {
 pub struct CandidateExample {
     example: Example,
     commit: String,
-    area: String,
+    area: AreaId,
     written: WrittenCandidate,
 }
 
@@ -203,7 +229,7 @@ impl CandidateExample {
 
     /// The ID of the area it is about.
     #[must_use]
-    pub fn area(&self) -> &str {
+    pub fn area(&self) -> &AreaId {
         &self.area
     }
 
@@ -219,7 +245,7 @@ impl CandidateExample {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResponseExample {
     example: Example,
-    candidate: String,
+    candidate: ExampleId,
     reasoning: String,
 }
 
@@ -232,7 +258,7 @@ impl ResponseExample {
 
     /// The ID of the candidate example whose question it answers.
     #[must_use]
-    pub fn candidate(&self) -> &str {
+    pub fn candidate(&self) -> &ExampleId {
         &self.candidate
     }
 
@@ -264,7 +290,7 @@ pub struct ExampleParagraph {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExplanationExample {
     example: Example,
-    candidate: String,
+    candidate: ExampleId,
     paragraphs: Vec<ExampleParagraph>,
 }
 
@@ -277,7 +303,7 @@ impl ExplanationExample {
 
     /// The ID of the candidate example whose question it explains.
     #[must_use]
-    pub fn candidate(&self) -> &str {
+    pub fn candidate(&self) -> &ExampleId {
         &self.candidate
     }
 
@@ -315,13 +341,20 @@ pub enum LabelError {
     NotADate { place: Place },
     /// An example has no labels.
     #[error("{place}: `{id}` has no labels")]
-    NoLabels { place: Place, id: String },
+    NoLabels { place: Place, id: ExampleId },
     /// Two examples have the same ID.
     #[error("{second}: `{id}` is already the ID of the example at {first}")]
     Duplicate {
-        id: String,
+        id: ExampleId,
         first: Place,
         second: Place,
+    },
+    /// A candidate example's `area` isn't an area ID.
+    #[error("{place}: the candidate's `area` is not valid")]
+    NotAnAreaId {
+        place: Place,
+        #[source]
+        source: InvalidAreaId,
     },
 }
 
@@ -401,7 +434,7 @@ impl Labels {
     /// Fails on the first example, by kind and then in file order, whose ID
     /// an earlier one has.
     fn check_ids(&self) -> Result<(), LabelError> {
-        let mut ids: BTreeMap<&str, &Place> = BTreeMap::new();
+        let mut ids: BTreeMap<&ExampleId, &Place> = BTreeMap::new();
         let examples = (self.gate.iter().map(GateExample::example))
             .chain(self.candidates.iter().map(CandidateExample::example))
             .chain(self.responses.iter().map(ResponseExample::example))
@@ -457,7 +490,7 @@ fn date(on: Datetime, place: &Place) -> Result<LabelDate, LabelError> {
 }
 
 /// One file, as TOML.
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawFile {
     #[serde(default)]
@@ -471,6 +504,7 @@ struct RawFile {
 }
 
 /// The keys every example has, which each kind's table repeats.
+#[derive(Debug)]
 struct RawCommon {
     id: String,
     by: String,
@@ -497,7 +531,7 @@ impl RawCommon {
     }
 
     fn into_example(self, place: &Place) -> Result<Example, LabelError> {
-        let id = non_empty(self.id, place, "id")?;
+        let id = ExampleId(non_empty(self.id, place, "id")?);
         let by = labeller(self.by, place)?;
         let on = date(self.on, place)?;
         if self.labels.is_empty() {
@@ -543,7 +577,7 @@ fn labeller(by: String, place: &Place) -> Result<Labeller, LabelError> {
     })
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawGate {
     id: String,
@@ -554,7 +588,7 @@ struct RawGate {
     commit: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawCandidate {
     id: String,
@@ -574,6 +608,7 @@ struct RawCandidate {
 }
 
 /// A candidate's parts, as the generator writes them.
+#[derive(Debug)]
 struct RawQuestion {
     stem: String,
     options: Vec<RawOption>,
@@ -666,13 +701,16 @@ impl RawCandidate {
         Ok(CandidateExample {
             example: RawCommon::new(id, by, on, note, labels).into_example(place)?,
             commit: non_empty(commit, place, "commit")?,
-            area: non_empty(area, place, "area")?,
+            area: AreaId::from_str(&area).map_err(|source| LabelError::NotAnAreaId {
+                place: place.clone(),
+                source,
+            })?,
             written: question.into_written(),
         })
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawOption {
     letter: String,
@@ -680,7 +718,7 @@ struct RawOption {
     rationale: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawCriterion {
     statement: String,
@@ -688,7 +726,7 @@ struct RawCriterion {
     not_met: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawCitation {
     path: String,
@@ -706,7 +744,7 @@ impl RawCitation {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawResponse {
     id: String,
@@ -718,7 +756,7 @@ struct RawResponse {
     reasoning: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawExplanation {
     id: String,
@@ -743,7 +781,7 @@ impl RawResponse {
         } = self;
         Ok(ResponseExample {
             example: RawCommon::new(id, by, on, note, labels).into_example(place)?,
-            candidate: non_empty(candidate, place, "candidate")?,
+            candidate: ExampleId(non_empty(candidate, place, "candidate")?),
             reasoning: non_empty(reasoning, place, "reasoning")?,
         })
     }
@@ -762,7 +800,7 @@ impl RawExplanation {
         } = self;
         Ok(ExplanationExample {
             example: RawCommon::new(id, by, on, note, labels).into_example(place)?,
-            candidate: non_empty(candidate, place, "candidate")?,
+            candidate: ExampleId(non_empty(candidate, place, "candidate")?),
             paragraphs: paragraphs
                 .into_iter()
                 .map(RawParagraph::into_paragraph)
@@ -771,7 +809,7 @@ impl RawExplanation {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawParagraph {
     criterion: usize,
@@ -800,7 +838,7 @@ impl RawParagraph {
 }
 
 /// The outcomes an explanation is written for.
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum RawOutcome {
     NotMet,
@@ -809,12 +847,13 @@ enum RawOutcome {
 
 /// A label as written: `"yes"` or `"no"`, or a table that also names who
 /// set it and when.
+#[derive(Debug)]
 enum RawLabel {
     Plain(Expected),
     Own(OwnLabel),
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct OwnLabel {
     label: Expected,
@@ -878,7 +917,7 @@ observability = "no"
         let [gate] = labels.gate() else {
             panic!("expected one gate example: {labels:?}");
         };
-        assert_eq!(gate.example().id(), "gate-retry-identity");
+        assert_eq!(gate.example().id().as_str(), "gate-retry-identity");
         assert_eq!(gate.commit(), "Preserve payment retry identity");
         assert_eq!(
             gate.example().note(),
@@ -954,6 +993,25 @@ labels = { domain = "no", scalability = { label = "no", by = "Tomas", on = 2026-
     }
 
     #[test]
+    fn a_candidate_s_area_is_an_area_id() {
+        let error =
+            parse(&crate::samples::CANDIDATE.replace("area = \"domain\"", "area = \"Data model\""))
+                .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "seeds.toml, line 2: the candidate's `area` is not valid"
+        );
+        assert_eq!(
+            std::error::Error::source(&error).map(ToString::to_string),
+            Some(
+                "\"Data model\" is not an area ID: use lowercase letters, digits and hyphens"
+                    .to_owned()
+            )
+        );
+    }
+
+    #[test]
     fn on_must_be_a_date() {
         let error =
             parse(&GATE.replace("on = 2026-10-22", "on = 2026-10-22T10:00:00")).unwrap_err();
@@ -1019,7 +1077,7 @@ labels = { option_a = "yes" }
         let [candidate] = labels.candidates() else {
             panic!("expected one candidate: {labels:?}");
         };
-        assert_eq!(candidate.area(), "domain");
+        assert_eq!(candidate.area().as_str(), "domain");
         let written = candidate.written();
         assert_eq!(written.question_type, QuestionType::SingleChoice);
         assert_eq!(written.options[1].letter, "B");

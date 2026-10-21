@@ -4,14 +4,13 @@
 use whetstone::embedded_showcase;
 use whetstone_core::ModelId;
 
-use crate::{Labels, PrepareError, Prepared};
-
-pub(crate) const JEV_MODEL: &str = "typesafe/jev-1.14";
+use crate::{DEFAULT_JEV_MODEL, Labels, PrepareError, Prepared};
 
 pub(crate) fn prepared(text: &str) -> Result<Prepared, PrepareError> {
-    Labels::parse([("seeds.toml", text)])
-        .unwrap()
-        .prepare(&embedded_showcase(), &ModelId::new(JEV_MODEL.to_owned()))
+    Labels::parse([("seeds.toml", text)]).unwrap().prepare(
+        &embedded_showcase(),
+        &ModelId::new(DEFAULT_JEV_MODEL.to_owned()),
+    )
 }
 
 /// A candidate about showcase change 5, with a label for every question
