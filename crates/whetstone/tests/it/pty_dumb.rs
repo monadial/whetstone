@@ -188,7 +188,7 @@ fn with_term_dumb_version_prints_the_version() {
     transcript.assert_exit_code(0);
     assert_eq!(
         transcript.written(),
-        format!("whetstone {}\r\n", crate::cli::built_version())
+        format!("whetstone {}\r\n", crate::version::built_version())
     );
 }
 

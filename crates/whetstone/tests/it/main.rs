@@ -79,6 +79,7 @@ mod suspend;
 mod terminal_guard;
 mod theme;
 mod time_limit;
+mod version;
 mod viewer;
 mod why_withheld;
 mod wide_characters;

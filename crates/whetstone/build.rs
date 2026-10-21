@@ -123,7 +123,7 @@ fn embed() -> Result<(), EmbedError> {
 /// Sets `WHETSTONE_LONG_VERSION` for the crate, and asks Cargo to run this
 /// script again when HEAD moves to another commit.
 fn set_long_version() {
-    let git_log = git(&["log", "-1", version::GIT_LOG_FORMAT]);
+    let git_log = git(&["log", "-1", "--format=%H %cs"]);
     let long_version = version::long_version(env!("CARGO_PKG_VERSION"), git_log.as_deref());
     println!("cargo::rustc-env=WHETSTONE_LONG_VERSION={long_version}");
     for path in head_files() {
