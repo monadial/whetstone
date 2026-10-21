@@ -473,8 +473,47 @@ impl Hint {
 }
 
 impl Citation {
-    /// `written`, if it names lines `evidence` sends.
-    fn in_evidence(written: WrittenCitation, evidence: &Evidence) -> Option<Self> {
+    /// `written`, if it names lines `evidence` sends: from an included
+    /// touched file's full content, or from included connections' lines.
+    /// It is the plain check on every citation the generator writes, a
+    /// candidate's or an explanation's.
+    ///
+    /// ```
+    /// use whetstone_core::{
+    ///     Change, Citation, ConnectedCodeLimit, Connections, Evidence, ExcludePatterns,
+    ///     ReviewChoices, TouchedFile, WrittenCitation,
+    /// };
+    ///
+    /// let change = Change::new(
+    ///     "Retry failed payments".to_owned(),
+    ///     Vec::new(),
+    ///     "diff --git a/src/pay.rs b/src/pay.rs\n+retry\n".to_owned(),
+    ///     vec![TouchedFile::modified(
+    ///         "src/pay.rs".to_owned(),
+    ///         "pay\n".to_owned(),
+    ///         "pay\nretry\n".to_owned(),
+    ///     )],
+    /// );
+    /// let evidence = Evidence::build(
+    ///     &change,
+    ///     &ExcludePatterns::default(),
+    ///     &[],
+    ///     &Connections::NoneFound,
+    ///     ConnectedCodeLimit::effective(None, None),
+    ///     &ReviewChoices::default(),
+    /// );
+    /// let cite = |first_line, last_line| WrittenCitation {
+    ///     path: "src/pay.rs".to_owned(),
+    ///     first_line,
+    ///     last_line,
+    /// };
+    ///
+    /// let sent = Citation::in_evidence(cite(1, 2), &evidence).expect("lines 1–2 are sent");
+    /// assert_eq!((sent.path(), sent.lines().first(), sent.lines().last()), ("src/pay.rs", 1, 2));
+    /// assert_eq!(Citation::in_evidence(cite(2, 3), &evidence), None);
+    /// ```
+    #[must_use]
+    pub fn in_evidence(written: WrittenCitation, evidence: &Evidence) -> Option<Self> {
         let lines = LineRange::new(written.first_line, written.last_line).ok()?;
         sends(evidence, &written.path, lines).then_some(Self {
             path: written.path,
