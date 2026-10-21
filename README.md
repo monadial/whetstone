@@ -30,13 +30,38 @@ OPENROUTER_API_KEY=… cargo run -p whetstone-labels -- measure --labels ~/.loca
 
 A request that fails stops its stage, which says plainly what went wrong and what you can do: no key, a refused key, no credits left, rate limited, OpenRouter or the model's provider unavailable, no zero-retention endpoint for the model, no reply in time (30 seconds for Jev, 120 for the generator), a request OpenRouter refuses as invalid, or a reply that couldn't be read, which is never shown as a judgement. **Retry** asks again only what failed, and nothing is retried until you choose to.
 
-## Run it
+## Install
 
-Whetstone builds with the Rust toolchain pinned in `rust-toolchain.toml`, on Linux and macOS:
+Whetstone runs on Linux and macOS, on x86_64 and arm64. Each [release](https://github.com/monadial/whetstone/releases) has an installer, an archive for each platform, their checksums, and its notes.
+
+The installer picks the archive for your machine and checks its checksum. It puts `whetstone` in `$XDG_BIN_HOME`, or else in `~/.local/bin`, and adds that folder to your `PATH` in your shell's startup files, unless `WHETSTONE_NO_MODIFY_PATH=1` is set:
 
 ```sh
-cargo run
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/monadial/whetstone/releases/latest/download/whetstone-installer.sh | sh
 ```
+
+`releases/latest` is the newest release that isn't a prerelease. A prerelease's page gives its own command.
+
+To install by hand, download your platform's archive from the release. Check that GitHub built it from this repository, then unpack it:
+
+```sh
+gh attestation verify whetstone-aarch64-apple-darwin.tar.xz --repo monadial/whetstone
+tar -xJf whetstone-aarch64-apple-darwin.tar.xz
+```
+
+Each archive holds `whetstone`, this README, the license, the changelog and the licenses of the crates Whetstone is built with.
+
+On another platform, or to build from source, you need Rust 1.99.1 or newer from [rustup](https://rustup.rs), and a C compiler. Then run:
+
+```sh
+cargo install --locked --git https://github.com/monadial/whetstone whetstone
+```
+
+`whetstone --version` names the version, and the commit it was built from.
+
+## Run it
+
+Run `whetstone` in a terminal. From a clone of this repository, `cargo run` builds and runs it with the toolchain pinned in `rust-toolchain.toml`.
 
 It needs an interactive terminal: [Terminal support](#terminal-support) says which ones. `whetstone --help` lists the options. Set `NO_COLOR` to turn colour off: focus and selection stay visible through markers and bold text.
 
