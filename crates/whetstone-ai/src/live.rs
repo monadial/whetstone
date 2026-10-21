@@ -25,7 +25,7 @@
 //! The job runs every ignored test whose name starts with `live_`, so the
 //! new test needs nothing else.
 
-use whetstone_core::{ModelId, Provenance, QuestionCount};
+use whetstone_core::{DepthLevel, ModelId, Provenance, QuestionCount};
 
 use crate::replay::live_key;
 use crate::samples::{area, candidate, evidence, generator_model, jev_model};
@@ -112,5 +112,19 @@ async fn live_check_question() {
             "Jev didn't answer {check:?}"
         );
     }
+    // Depth is kept as returned, so its expected value must be what Depth
+    // takes it for: the levels' places, counting from 0, weighted by their
+    // probabilities, each rounded to hundredths.
+    let depth = reply.content.depth();
+    let weighted: f64 = DepthLevel::ALL
+        .into_iter()
+        .zip(0..)
+        .map(|(level, place)| f64::from(place) * depth.probability(level).get())
+        .sum();
+    assert!(
+        (weighted - depth.expected()).abs() <= 0.05,
+        "the depth's expected value, {}, isn't its levels' places from 0, weighted: {weighted}",
+        depth.expected()
+    );
     assert_reported(&reply.provenance);
 }
