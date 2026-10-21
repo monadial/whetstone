@@ -64,7 +64,7 @@ pub struct SessionCost {
 }
 
 /// What produced one request's result: Whetstone's own identity for the
-/// request; who it went to; the model asked for and the model that
+/// request, and `OpenRouter`'s where the reply carries one; who it went to; the model asked for and the model that
 /// answered; the versions behind it; for Jev, the exact questions sent and
 /// the answers as returned; and its usage and cost where the reply reports
 /// them.
@@ -73,6 +73,7 @@ pub struct SessionCost {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Provenance {
     request: RequestId,
+    generation: Option<GenerationId>,
     role: Role,
     requested_model: ModelId,
     reported_model: Option<ModelId>,
@@ -83,9 +84,15 @@ pub struct Provenance {
 }
 
 /// Whetstone's own identity for a request, unique within a run.
-/// `OpenRouter`'s generation ID joins it once Rig exposes that.
+/// `OpenRouter`'s [`GenerationId`] sits beside it where Rig exposes one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RequestId(u64);
+
+/// `OpenRouter`'s identity for the generation a reply came from, such as
+/// `gen-1792537070-YoyTT3rXqgdB9TwPdG1K`, as the reply gives it. Rig gives
+/// it for the generator's replies; it doesn't for Jev's yet.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct GenerationId(String);
 
 /// The versions behind a request: Whetstone's own, its base prompts', the
 /// assessment policy's, and each area file's that went into it.
@@ -255,6 +262,26 @@ impl fmt::Display for RequestId {
     }
 }
 
+impl GenerationId {
+    /// The generation `id`, as `OpenRouter` gives it.
+    #[must_use]
+    pub fn new(id: String) -> Self {
+        Self(id)
+    }
+
+    /// The ID as text.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for GenerationId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 impl Versions {
     /// The versions behind a request: Whetstone's own `whetstone` version,
     /// such as `0.1.0`; the hash of its `base_prompts`; the assessment
@@ -407,8 +434,8 @@ impl fmt::Debug for JevExchange {
 
 impl Provenance {
     /// The `request` to `role`, asking for `requested_model`, behind which
-    /// are `versions`. Until the reply says otherwise, it reports no model,
-    /// answers, usage or cost.
+    /// are `versions`. Until the reply says otherwise, it reports no
+    /// generation, model, answers, usage or cost.
     #[must_use]
     pub fn new(
         request: RequestId,
@@ -418,6 +445,7 @@ impl Provenance {
     ) -> Self {
         Self {
             request,
+            generation: None,
             role,
             requested_model,
             reported_model: None,
@@ -433,6 +461,16 @@ impl Provenance {
     #[must_use]
     pub fn with_exchanges(self, exchanges: Vec<JevExchange>) -> Self {
         Self { exchanges, ..self }
+    }
+
+    /// The same, with `OpenRouter`'s identity for the generation the reply
+    /// came from.
+    #[must_use]
+    pub fn with_generation(self, generation: GenerationId) -> Self {
+        Self {
+            generation: Some(generation),
+            ..self
+        }
     }
 
     /// The same, with the model the reply says answered.
@@ -463,6 +501,13 @@ impl Provenance {
     #[must_use]
     pub fn request(&self) -> RequestId {
         self.request
+    }
+
+    /// `OpenRouter`'s identity for the generation the reply came from, if
+    /// the reply gave one.
+    #[must_use]
+    pub fn generation(&self) -> Option<&GenerationId> {
+        self.generation.as_ref()
     }
 
     /// Who the request went to.
@@ -663,6 +708,30 @@ mod tests {
         );
         assert_eq!(provenance.usage(), usage);
         assert_eq!(provenance.cost(), Some(cost));
+    }
+
+    #[test]
+    fn a_generator_request_keeps_openrouters_generation_id_beside_whetstones_identity() {
+        let provenance = Provenance::new(
+            RequestId::new(4),
+            Role::Generator,
+            model("anthropic/claude"),
+            versions(),
+        );
+        assert_eq!(provenance.generation(), None);
+
+        let provenance =
+            provenance.with_generation(GenerationId::new("gen-1792537070-YoyTT3rX".to_owned()));
+
+        assert_eq!(provenance.request(), RequestId::new(4));
+        assert_eq!(
+            provenance.generation().map(GenerationId::as_str),
+            Some("gen-1792537070-YoyTT3rX")
+        );
+        assert_eq!(
+            provenance.generation().map(ToString::to_string).as_deref(),
+            Some("gen-1792537070-YoyTT3rX")
+        );
     }
 
     fn request(role: Role, usd: Option<f64>) -> Provenance {

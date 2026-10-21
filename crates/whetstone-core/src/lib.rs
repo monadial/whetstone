@@ -51,8 +51,8 @@ pub use crate::exclusion::{
 pub use crate::jev::{InvalidProbability, Probability};
 pub use crate::picking::{Picked, QuestionCount, QuestionCountError, pick};
 pub use crate::provenance::{
-    AreaFileVersion, ContentHash, Cost, InvalidContentHash, InvalidCost, JevExchange, ModelId,
-    Provenance, RequestId, Role, SessionCost, Usage, Versions,
+    AreaFileVersion, ContentHash, Cost, GenerationId, InvalidContentHash, InvalidCost, JevExchange,
+    ModelId, Provenance, RequestId, Role, SessionCost, Usage, Versions,
 };
 pub use crate::question::{
     Candidate, CandidateId, Citation, Criterion, DropReason, Hint, OptionLetter, Part, PlainChecks,

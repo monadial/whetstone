@@ -16,20 +16,26 @@
 //! nothing was scripted for is a mistake in the test, which panics as the
 //! request is made.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::future;
 use std::sync::{Mutex, MutexGuard};
 
 use whetstone_core::{
-    Area, AreaId, Candidate, CandidateCheck, Cost, Criterion, CriterionOutcome, Depth, Evidence,
-    ModelId, Probability, Provenance, Question, QuestionCheckAnswers, Role, WrittenCandidate,
+    Area, AreaId, Candidate, CandidateCheck, Cost, Criterion, CriterionOutcome, Depth, DepthLevel,
+    Evidence, GenerationId, JevExchange, ModelId, Probability, Provenance, Question,
+    QuestionCheckAnswers, Role, WrittenCandidate,
 };
 
-use crate::explanation::{ParagraphCheck, WrittenParagraph};
+use crate::exchanges::jev_exchanges;
+use crate::explanation::{
+    ParagraphCheck, WrittenParagraph, explanation_check_request, paragraph_check_names,
+};
 use crate::gate::gate_request;
-use crate::jev::JevRequest;
+use crate::jev::{JevAnswer, JevReply, JevRequest};
 use crate::port::{Ai, CandidateCount, Pending, Reply, RequestFailure, Saved, Stamp};
-use crate::reasoning::QuestionWithoutKey;
+use crate::question_check::{self, DEPTH, question_check_request};
+use crate::reasoning::{QuestionWithoutKey, reasoning_request};
+use crate::usage::Usage;
 
 /// An [`Ai`] whose replies a test chooses, and which logs what it was asked.
 #[derive(Debug, Default)]
@@ -311,10 +317,11 @@ impl Ai for ScriptedAi {
         areas: &[Area],
     ) -> Pending<Vec<(AreaId, Probability)>> {
         let mut script = self.script();
+        let sent = gate_request(&jev_model(), evidence, areas);
         script.asked.push(Asked::CheckAreas {
             evidence: evidence.clone(),
             areas: areas.to_vec(),
-            sent: gate_request(&ModelId::new(JEV_MODEL.to_owned()), evidence, areas),
+            sent: sent.clone(),
         });
         let reply = match script.gate_failures.pop_front() {
             Some(failure) => Err(failure),
@@ -330,7 +337,14 @@ impl Ai for ScriptedAi {
                 })
                 .collect()),
         };
-        reply_at_once(stamp, reply, Role::Jev, JEV_MODEL, &script)
+        reply_at_once(stamp, reply, Role::Jev, &script, |answers| {
+            kept(
+                &sent,
+                answers
+                    .iter()
+                    .map(|(area, answer)| (area.as_str().to_owned(), yes_no(*answer))),
+            )
+        })
     }
 
     #[expect(
@@ -355,7 +369,7 @@ impl Ai for ScriptedAi {
             .get_mut(area.id())
             .and_then(VecDeque::pop_front)
             .unwrap_or_else(|| panic!("no write scripted for the area {}", area.id()));
-        reply_at_once(stamp, reply, Role::Generator, GENERATOR_MODEL, &script)
+        reply_at_once(stamp, reply, Role::Generator, &script, |_| Vec::new())
     }
 
     #[expect(
@@ -378,12 +392,28 @@ impl Ai for ScriptedAi {
             .get_mut(candidate.stem())
             .and_then(VecDeque::pop_front)
             .unwrap_or_else(|| panic!("no check scripted for {:?}", candidate.stem()));
+        let sent = question_check_request(&jev_model(), evidence, candidate);
         reply_at_once(
             stamp,
             reply.into_reply(candidate),
             Role::Jev,
-            JEV_MODEL,
             &script,
+            |answers| {
+                let depth = answers.depth();
+                let depth = JevAnswer::Score {
+                    probabilities: DepthLevel::ALL
+                        .map(|level| depth.probability(level).get())
+                        .into(),
+                    expected: depth.expected(),
+                };
+                kept(
+                    &sent,
+                    answers
+                        .iter()
+                        .map(|(check, answer)| (question_check::name(check), yes_no(answer)))
+                        .chain([(DEPTH.to_owned(), depth)]),
+                )
+            },
         )
     }
 
@@ -412,7 +442,15 @@ impl Ai for ScriptedAi {
             .get_mut(question.stem())
             .and_then(VecDeque::pop_front)
             .unwrap_or_else(|| panic!("no assessment scripted for {:?}", question.stem()));
-        reply_at_once(stamp, reply, Role::Jev, JEV_MODEL, &script)
+        let sent = reasoning_request(&jev_model(), evidence, question, saved.reasoning());
+        reply_at_once(stamp, reply, Role::Jev, &script, |answers| {
+            kept(
+                &sent,
+                answers.iter().enumerate().map(|(index, answer)| {
+                    (question_check::criterion_name(index), yes_no(*answer))
+                }),
+            )
+        })
     }
 
     #[expect(
@@ -440,7 +478,7 @@ impl Ai for ScriptedAi {
             .get_mut(question.stem())
             .and_then(VecDeque::pop_front)
             .unwrap_or_else(|| panic!("no explanation scripted for {:?}", question.stem()));
-        reply_at_once(stamp, reply, Role::Generator, GENERATOR_MODEL, &script)
+        reply_at_once(stamp, reply, Role::Generator, &script, |_| Vec::new())
     }
 
     #[expect(
@@ -467,7 +505,23 @@ impl Ai for ScriptedAi {
             .get_mut(question.stem())
             .and_then(VecDeque::pop_front)
             .unwrap_or_else(|| panic!("no explanation check scripted for {:?}", question.stem()));
-        reply_at_once(stamp, reply, Role::Jev, JEV_MODEL, &script)
+        let sent = explanation_check_request(&jev_model(), evidence, question, paragraphs);
+        let paragraphs = paragraphs.to_vec();
+        reply_at_once(stamp, reply, Role::Jev, &script, |checks| {
+            kept(
+                &sent,
+                paragraphs
+                    .iter()
+                    .zip(checks)
+                    .flat_map(|(paragraph, check)| {
+                        let [supported, agrees] = paragraph_check_names(paragraph.criterion);
+                        [
+                            (supported, yes_no(check.supported)),
+                            (agrees, yes_no(check.agrees)),
+                        ]
+                    }),
+            )
+        })
     }
 }
 
@@ -507,20 +561,66 @@ fn default_depth() -> Depth {
         .expect("1 is an expected depth")
 }
 
-/// `reply` as a request stamped `stamp` that has it at once, from `model` in
-/// `role`, reporting the cost `script` scripts for `role`, if it scripts one.
+/// The model the scripted Jev is asked for, as the real AI would be.
+fn jev_model() -> ModelId {
+    ModelId::new(JEV_MODEL.to_owned())
+}
+
+/// Jev's scripted `answer` to a yes/no question, as Jev returns it.
+fn yes_no(answer: Probability) -> JevAnswer {
+    JevAnswer::YesNo { yes: answer.get() }
+}
+
+/// What the real AI keeps of a Jev call that sent `request`: each question
+/// it sends that `answers` answers, exactly as sent, with that answer, by
+/// the name it goes under.
+fn kept(
+    request: &JevRequest,
+    answers: impl IntoIterator<Item = (String, JevAnswer)>,
+) -> Vec<JevExchange> {
+    let answers: BTreeMap<String, JevAnswer> = answers.into_iter().collect();
+    // A test may script fewer answers than the request has questions, as
+    // Jev never would: only those answered are kept.
+    let mut answered = request.clone();
+    answered
+        .questions
+        .retain(|name, _| answers.contains_key(name));
+    let reply = JevReply {
+        answers,
+        model: JEV_MODEL.to_owned(),
+        usage: Usage::default(),
+    };
+    jev_exchanges(&answered, &reply).expect("each scripted answer is of its question's kind")
+}
+
+/// `reply` as a request stamped `stamp` that has it at once, from the
+/// scripted model in `role`, keeping what `exchanges` makes of its content,
+/// and reporting the cost `script` scripts for `role`, if it scripts one. A
+/// reply from the generator carries a generation ID made from the stamp.
 fn reply_at_once<T: Send + 'static>(
     stamp: Stamp,
     reply: Result<T, RequestFailure>,
     role: Role,
-    model: &str,
     script: &Script,
+    exchanges: impl FnOnce(&T) -> Vec<JevExchange>,
 ) -> Pending<T> {
-    let model = ModelId::new(model.to_owned());
+    let model = ModelId::new(
+        match role {
+            Role::Jev => JEV_MODEL,
+            Role::Generator => GENERATOR_MODEL,
+        }
+        .to_owned(),
+    );
     let cost = script.costs.get(&role).copied();
     let reply = reply.map(|content| {
+        let generation = GenerationId::new(format!("scripted-generation-{}", stamp.request));
         let provenance = Provenance::new(stamp.request, role, model.clone(), stamp.versions)
-            .with_reported_model(model);
+            .with_reported_model(model)
+            .with_exchanges(exchanges(&content));
+        let provenance = match role {
+            Role::Jev => provenance,
+            Role::Generator => provenance.with_generation(generation),
+        };
         Reply {
             content,
             provenance: Box::new(match cost {
@@ -545,8 +645,14 @@ mod tests {
         WrittenCitation, WrittenCriterion, WrittenOption, plain_checks, show_rule,
     };
 
+    use whetstone_core::{GenerationId, JevExchange, RequestId};
+
     use super::*;
+    use crate::explanation::explanation_check_request;
+    use crate::jev::JevQuestion;
     use crate::port::{Ai, CandidateCount, RequestFailure};
+    use crate::question_check::question_check_request;
+    use crate::reasoning::reasoning_request;
     use crate::samples::{Acknowledged, stamp};
 
     /// `request`'s outcome, which the scripted AI has at once.
@@ -1060,6 +1166,181 @@ mod tests {
         assert_eq!(reported(gate), Some(cost(0.25)));
         assert_eq!(reported(write), Some(cost(1.5)));
         assert_eq!(reported(unreported), None);
+    }
+
+    /// `stamp()` as request `id`.
+    fn stamped(id: u64) -> Stamp {
+        Stamp {
+            request: RequestId::new(id),
+            ..stamp()
+        }
+    }
+
+    /// Each question `exchanges` keep, by name, with its instructions, and
+    /// each yes/no answer.
+    fn kept(exchanges: &[JevExchange]) -> Vec<(&str, &str, Option<f64>)> {
+        exchanges
+            .iter()
+            .map(|exchange| match exchange {
+                JevExchange::YesNo {
+                    name,
+                    instructions,
+                    answer,
+                    ..
+                } => (name.as_str(), instructions.as_str(), Some(answer.get())),
+                JevExchange::Score {
+                    name, instructions, ..
+                } => (name.as_str(), instructions.as_str(), None),
+            })
+            .collect()
+    }
+
+    /// Each question `request` sends, by name, with its instructions.
+    fn sent(request: &JevRequest) -> Vec<(&str, &str)> {
+        request
+            .questions
+            .iter()
+            .map(|(name, question)| match question {
+                JevQuestion::YesNo { instructions, .. }
+                | JevQuestion::Score { instructions, .. } => (name.as_str(), instructions.as_str()),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn each_reply_carries_its_stamp_and_the_generators_a_generation_id() {
+        let ai = ScriptedAi::new();
+        ai.on_write(area(0).id(), Ok(Vec::new()));
+
+        let gate =
+            at_once(ai.check_areas(stamped(7), &evidence(), &[area(0)])).expect("let through");
+        let write = at_once(ai.write_candidates(stamped(8), &evidence(), &area(0), count()))
+            .expect("scripted to write");
+
+        assert_eq!(gate.provenance.request(), RequestId::new(7));
+        assert_eq!(gate.provenance.versions(), &stamp().versions);
+        assert_eq!(gate.provenance.generation(), None, "Rig gives Jev's none");
+        assert_eq!(write.provenance.request(), RequestId::new(8));
+        assert_eq!(
+            write.provenance.generation().map(GenerationId::as_str),
+            Some("scripted-generation-8")
+        );
+        assert_eq!(
+            write.provenance.exchanges(),
+            [],
+            "the generator answers no question"
+        );
+    }
+
+    #[test]
+    fn the_gate_and_the_question_check_keep_every_question_the_real_ai_sends_with_its_answer() {
+        let ai = ScriptedAi::new();
+        let model = ModelId::new(JEV_MODEL.to_owned());
+        let areas = [area(0), area(1)];
+        ai.on_gate(area(0).id(), probability(0.31));
+        let candidate = candidate_with("Why?", "A", 2);
+        ai.on_check_passing_at("Why?", depth(0.1, 0.2, 0.7, 1.6));
+
+        let gate = at_once(ai.check_areas(stamp(), &evidence(), &areas)).expect("scripted");
+        let check = at_once(ai.check_question(stamp(), &evidence(), &candidate)).expect("scripted");
+
+        let gate_request = gate_request(&model, &evidence(), &areas);
+        let gate_sent = sent(&gate_request);
+        assert_eq!(
+            kept(gate.provenance.exchanges()),
+            [
+                (gate_sent[0].0, gate_sent[0].1, Some(0.31)),
+                (gate_sent[1].0, gate_sent[1].1, Some(0.9)),
+            ]
+        );
+        let check_request = question_check_request(&model, &evidence(), &candidate);
+        let exchanges = kept(check.provenance.exchanges());
+        assert_eq!(
+            exchanges
+                .iter()
+                .map(|&(name, instructions, _)| (name, instructions))
+                .collect::<Vec<_>>(),
+            sent(&check_request),
+            "every question the check sends"
+        );
+        let answer = |asked: &str| {
+            exchanges
+                .iter()
+                .find_map(|&(name, _, answer)| (name == asked).then_some(answer))
+                .flatten()
+        };
+        assert_eq!(
+            [
+                answer("option_a"),
+                answer("option_b"),
+                answer("criterion_2")
+            ],
+            [Some(0.9), Some(0.1), Some(0.9)]
+        );
+        assert_eq!(
+            check
+                .provenance
+                .exchanges()
+                .iter()
+                .find_map(|exchange| match exchange {
+                    JevExchange::Score { answer, .. } => Some(*answer),
+                    JevExchange::YesNo { .. } => None,
+                }),
+            Some(depth(0.1, 0.2, 0.7, 1.6))
+        );
+    }
+
+    #[test]
+    fn the_reasoning_and_the_explanation_check_keep_every_question_sent_with_its_answer() {
+        let ai = ScriptedAi::new();
+        let model = ModelId::new(JEV_MODEL.to_owned());
+        let question = question("What?");
+        ai.on_assess("What?", Ok(probabilities(&[0.62])));
+        let paragraphs = vec![WrittenParagraph {
+            criterion: 0,
+            outcome: CriterionOutcome::NotMet,
+            text: "It retries.".to_owned(),
+            citations: Vec::new(),
+        }];
+        ai.on_check_explanation(
+            "What?",
+            Ok(vec![ParagraphCheck {
+                supported: probability(0.84),
+                agrees: probability(0.45),
+            }]),
+        );
+        let saved = Acknowledged("It dedupes.");
+
+        let assessed = at_once(ai.assess_reasoning(
+            stamp(),
+            &saved,
+            &evidence(),
+            QuestionWithoutKey::from(&question),
+        ))
+        .expect("scripted");
+        let checked =
+            at_once(ai.check_explanation(stamp(), &saved, &evidence(), &question, &paragraphs))
+                .expect("scripted");
+
+        let reasoning_request = reasoning_request(
+            &model,
+            &evidence(),
+            QuestionWithoutKey::from(&question),
+            "It dedupes.",
+        );
+        assert_eq!(
+            kept(assessed.provenance.exchanges()),
+            [("criterion_1", sent(&reasoning_request)[0].1, Some(0.62))]
+        );
+        let check_request = explanation_check_request(&model, &evidence(), &question, &paragraphs);
+        let check_sent = sent(&check_request);
+        assert_eq!(
+            kept(checked.provenance.exchanges()),
+            [
+                ("criterion_1_agrees", check_sent[0].1, Some(0.45)),
+                ("criterion_1_supported", check_sent[1].1, Some(0.84)),
+            ]
+        );
     }
 
     #[test]
