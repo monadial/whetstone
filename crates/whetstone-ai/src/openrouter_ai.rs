@@ -221,11 +221,14 @@ mod tests {
     async fn jev_checks_a_candidate_with_the_model_it_was_asked_and_what_it_cost() {
         let (server, ai) = ai("/systemone", 200, QUESTION_CHECK).await;
 
+        let candidate = candidate();
         let reply = ai
-            .check_question(&evidence(), &candidate())
+            .check_question(&evidence(), &candidate)
             .await
             .expect("the recorded reply decodes");
 
+        let answered: Vec<CandidateCheck> = reply.content.iter().map(|(check, _)| check).collect();
+        assert_eq!(answered, candidate.checks(), "an answer to every check");
         let rating = |letter| {
             reply
                 .content
@@ -241,14 +244,21 @@ mod tests {
             [Some(0.98), Some(0.01), Some(0.01)]
         );
         assert_eq!(
+            reply
+                .content
+                .get(CandidateCheck::NoGiveaway)
+                .map(Probability::get),
+            Some(0.11)
+        );
+        assert_eq!(
             reply.provenance,
             Provenance::new(Role::Jev, jev_model())
                 .with_reported_model(ModelId::new("typesafe/jev-1.14-20261014".to_owned()))
                 .with_usage(Usage {
-                    input_tokens: Some(1907),
-                    output_tokens: Some(55),
+                    input_tokens: Some(3012),
+                    output_tokens: Some(283),
                 })
-                .with_cost(Cost::new(0.000_080_094).expect("0.000080094 is a cost"))
+                .with_cost(Cost::new(0.000_126_504).expect("0.000126504 is a cost"))
         );
         let (_, body) = received(&server).await;
         assert_eq!(body["model"], jev_model().as_str());
@@ -266,7 +276,27 @@ mod tests {
             .keys()
             .map(String::as_str)
             .collect();
-        assert_eq!(questions, ["option_a", "option_b", "option_c"]);
+        assert_eq!(
+            questions,
+            [
+                "about_area",
+                "answerable",
+                "criterion_1",
+                "criterion_2",
+                "hint_hides_answer_key",
+                "hint_points_to_evidence",
+                "needs_change",
+                "no_giveaway",
+                "option_a",
+                "option_b",
+                "option_c",
+                "rationale_a",
+                "rationale_b",
+                "rationale_c",
+                "why_it_matters",
+            ],
+            "every check, in the same call, named per criterion and per rationale"
+        );
     }
 
     #[tokio::test]
@@ -403,7 +433,7 @@ mod tests {
             log.contains("cost_usd=0.022528"),
             "the generator's cost: {log}"
         );
-        assert!(log.contains("cost_usd=8.0094e-5"), "Jev's cost: {log}");
+        assert!(log.contains("cost_usd=0.000126504"), "Jev's cost: {log}");
         for never in [
             // The key.
             crate::replay::TEST_KEY,
