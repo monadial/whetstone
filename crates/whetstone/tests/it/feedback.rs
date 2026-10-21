@@ -112,6 +112,8 @@ fn saved_shows_only_once_a_durable_store_has_saved_the_response() {
     assert!(!session.text().contains("Saved"), "{}", session.text());
 
     submit(&mut session, "a", "Because.");
+    // Saved is the feedback's last line.
+    session.press("G");
 
     assert_eq!(session.row_with("Saved"), "Saved");
 }
@@ -167,7 +169,7 @@ fn after_the_last_question_next_question_is_disabled_and_finish_has_focus() {
         "Next question (this is the last)"
     );
     assert_eq!(session.row_with("Finish"), "> Finish");
-    session.press("k k k <Enter>");
+    session.press("k k k k <Enter>");
     assert_eq!(session.row_with("Question 3"), "Question 3 of 3 · Domain");
 }
 
@@ -177,7 +179,7 @@ fn finish_returns_home() {
 
     // Finish asks first, as three questions are unattempted, then the
     // summary leads home.
-    session.press("j j j <Enter> j <Enter> <Enter>");
+    session.press("j j j j <Enter> j <Enter> <Enter>");
 
     assert!(
         session.text().contains("Practice on the showcase project"),

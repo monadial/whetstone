@@ -190,6 +190,9 @@ pub(crate) enum Reading {
     /// The answer key, the rationales, "why it matters" and the rubric of
     /// the question Practice shows, which Show answer reveals.
     Answer,
+    /// Each of Jev's answers about the question whose feedback shows, with
+    /// its number, which Inspect Jev's answers opens.
+    JevAnswers,
 }
 
 /// A change the viewer can show.

@@ -28,11 +28,11 @@ Buffer {
         "  Reasoning · Evaluation unavailable                                                                                    ",
         "  Jev's evaluation failed: timed out.                                                                                   ",
         "  Jev didn't reply in time. Retry, or try again later.                                                                  ",
-        "  Your response stays submitted. Retry evaluation asks Jev again.                                                       ",
         "                                                                                                                        ",
         "    Retry evaluation                                                                                                    ",
         "  > Next question                                                                                                       ",
         "    Inspect source                                                                                                      ",
+        "    Inspect Jev's answers                                                                                               ",
         "    Report                                                                                                              ",
         "    Finish                                                                                                              ",
         "  ? keys  : actions  Ctrl+d/u scroll  q back                                                                            ",
@@ -54,7 +54,7 @@ Buffer {
         x: 16, y: 17, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 2, y: 20, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
         x: 36, y: 20, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
-        x: 2, y: 26, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
-        x: 17, y: 26, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 25, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 17, y: 25, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
     ]
 }

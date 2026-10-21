@@ -1160,6 +1160,12 @@ impl View for Practice {
                 Stage::Shown(questions) => Some(Box::new(questions.answer_reader())),
                 _ => None,
             },
+            Route::Read(Reading::JevAnswers) => match &self.stage {
+                Stage::Shown(questions) => questions
+                    .jev_answers(self.sent.requests())
+                    .map(|reader| Box::new(reader) as Box<dyn View>),
+                _ => None,
+            },
             _ => None,
         }
     }
