@@ -34,6 +34,7 @@ mod paste;
 mod picker;
 mod picking;
 mod preparing_questions;
+mod provenance;
 mod pty;
 mod pty_colours;
 mod pty_connected_code;

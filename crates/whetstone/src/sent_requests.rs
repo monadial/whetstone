@@ -1,10 +1,11 @@
 //! Every request a Practice sends to Jev and the generator, from the stamp
-//! it goes out with to how it ends: the provenance of its reply, or, for a
-//! request that failed or that the learner cancelled, provenance that
-//! reports no usage or cost. The session record starts with what it holds,
-//! and the summary adds up the session's cost from it, for each role and in
-//! all, counting each request that reported no cost instead of estimating
-//! it.
+//! it goes out with to how it ends: what it asked, the provenance of its
+//! reply, or, for a request that failed or that the learner cancelled,
+//! provenance that reports no usage or cost, and how it ended. The session
+//! record starts with what it holds, and each request that ends after is
+//! saved to the record as it ends. The summary adds up the session's cost
+//! from it, for each role and in all, counting each request that reported
+//! no cost instead of estimating it.
 //!
 //! Each request is stamped as it is sent with Whetstone's own identity for
 //! it, counting from 1 in the order sent, and the versions behind it:
@@ -19,9 +20,10 @@ use whetstone_core::{
 
 use crate::session_record::SavedResponse;
 
-/// What a request asked, which its result must carry (rule 24).
+/// What a request asked, which its result must carry (rule 24), and which
+/// the session record keeps it with.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Asking {
+pub enum Asking {
     /// Jev, to decide which chosen areas are worth asking about.
     Gate,
     /// The generator, to write candidates about this area.
@@ -37,6 +39,29 @@ pub(crate) enum Asking {
     /// Jev, to check the explanation of the reasoning of the response this
     /// acknowledges.
     CheckExplanation(SavedResponse),
+}
+
+/// A request a Practice sent, as it ended: what it asked, what produced its
+/// result, and whether a reply came.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SentRequest {
+    /// What it asked.
+    pub asking: Asking,
+    /// Its identity, the models asked and answering, the versions behind
+    /// it, for Jev the questions sent with their answers, and its usage and
+    /// cost where the reply reported them.
+    pub provenance: Provenance,
+    /// Whether its reply came.
+    pub ended: RequestEnded,
+}
+
+/// How a request ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RequestEnded {
+    /// Its reply came.
+    Replied,
+    /// It failed, or the learner cancelled it, before a reply came.
+    Failed(RequestFailure),
 }
 
 impl Asking {
@@ -64,8 +89,8 @@ impl Asking {
     }
 }
 
-/// The requests a Practice sent, each with its provenance, in the order
-/// they ended, and those still on their way, each with its stamp.
+/// The requests a Practice sent, in the order they ended, and those still
+/// on their way, each with its stamp.
 #[derive(Debug, Clone)]
 pub(crate) struct SentRequests {
     /// The models the requests ask, as the config names them, for the
@@ -79,7 +104,9 @@ pub(crate) struct SentRequests {
     last: u64,
     /// Each request on its way, with what it asked and its stamp.
     sending: Vec<(Asking, Stamp)>,
-    provenance: Vec<Provenance>,
+    ended: Vec<SentRequest>,
+    /// How many of `ended` the session record holds: those before it.
+    recorded: usize,
 }
 
 impl SentRequests {
@@ -92,7 +119,8 @@ impl SentRequests {
             area_files,
             last: 0,
             sending: Vec::new(),
-            provenance: Vec::new(),
+            ended: Vec::new(),
+            recorded: 0,
         }
     }
 
@@ -126,9 +154,9 @@ impl SentRequests {
         }
     }
 
-    /// Keeps what produced `reply`, to the request that asked `asking`: its
-    /// provenance, or, when it failed, provenance that reports no usage or
-    /// cost. Returns its content, or why it failed.
+    /// Keeps the request that asked `asking` as `reply` ended it: with its
+    /// reply's provenance, or, when it failed, provenance that reports no
+    /// usage or cost. Returns its content, or why it failed.
     pub(crate) fn ended<T>(
         &mut self,
         asking: &Asking,
@@ -137,11 +165,15 @@ impl SentRequests {
         let stamp = self.take_stamp(asking);
         match reply {
             Ok(reply) => {
-                self.provenance.push(*reply.provenance);
+                self.ended.push(SentRequest {
+                    asking: asking.clone(),
+                    provenance: *reply.provenance,
+                    ended: RequestEnded::Replied,
+                });
                 Ok(reply.content)
             }
             Err(failure) => {
-                self.unanswered(asking, stamp);
+                self.unanswered(asking, stamp, failure);
                 Err(failure)
             }
         }
@@ -151,7 +183,7 @@ impl SentRequests {
     /// before its reply came: it reports no usage or cost.
     pub(crate) fn cancelled(&mut self, asking: &Asking) {
         let stamp = self.take_stamp(asking);
-        self.unanswered(asking, stamp);
+        self.unanswered(asking, stamp, RequestFailure::Cancelled);
     }
 
     /// The stamp of the request on its way that asked `asking`, which no
@@ -165,40 +197,43 @@ impl SentRequests {
     }
 
     /// Keeps the request stamped `stamp`, which asked `asking` and ended
-    /// with no reply: it reports no usage or cost.
-    fn unanswered(&mut self, asking: &Asking, stamp: Stamp) {
+    /// with `failure` before any reply: it reports no usage or cost.
+    fn unanswered(&mut self, asking: &Asking, stamp: Stamp, failure: RequestFailure) {
         let role = asking.role();
         let model = match role {
             Role::Jev => &self.models.jev,
             Role::Generator => &self.models.generator,
         };
-        self.provenance.push(Provenance::new(
-            stamp.request,
-            role,
-            model.clone(),
-            stamp.versions,
-        ));
+        tracing::info!(
+            request = %stamp.request,
+            ?role,
+            %failure,
+            "a request ended without a reply"
+        );
+        self.ended.push(SentRequest {
+            asking: asking.clone(),
+            provenance: Provenance::new(stamp.request, role, model.clone(), stamp.versions),
+            ended: RequestEnded::Failed(failure),
+        });
     }
 
-    /// Each request's provenance, in the order they ended.
-    pub(crate) fn provenance(&self) -> &[Provenance] {
-        &self.provenance
+    /// The requests that ended since the session record last took them, in
+    /// the order they ended, for the record to save.
+    pub(crate) fn take_unrecorded(&mut self) -> Vec<SentRequest> {
+        let unrecorded = self.ended[self.recorded..].to_vec();
+        self.recorded = self.ended.len();
+        unrecorded
     }
 
     /// What the requests cost so far, as their replies reported it, while
     /// `running` more still run.
     pub(crate) fn spending(&self, running: usize) -> Spending {
-        let of = |role| {
-            SessionCost::of(
-                self.provenance
-                    .iter()
-                    .filter(|provenance| provenance.role() == role),
-            )
-        };
+        let provenance = || self.ended.iter().map(|sent| &sent.provenance);
+        let of = |role| SessionCost::of(provenance().filter(|sent| sent.role() == role));
         Spending {
             jev: of(Role::Jev),
             generator: of(Role::Generator),
-            total: SessionCost::of(&self.provenance),
+            total: SessionCost::of(provenance()),
             running,
         }
     }

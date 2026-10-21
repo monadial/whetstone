@@ -45,8 +45,11 @@
 //! given: the hint used, Show answer, each skip, cannot answer and each
 //! report.
 //!
-//! The session record starts as the questions show, holding them and the
-//! evidence they cite. Submit saves the response to it first. Then the
+//! The session record starts as the questions show, holding them, the
+//! evidence they cite and every request sent so far, each with what
+//! produced its result. Each request that ends later is saved to it as it
+//! ends, before the outcomes it gives. Submit saves the response to it
+//! first. Then the
 //! choice outcome shows at once on the question's feedback, the response is
 //! final, and Jev is asked about its reasoning with the store's
 //! acknowledgement (rule 39). Its result applies to the response it names,
@@ -69,8 +72,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, List, Padding, Paragraph};
 use whetstone_ai::{ParagraphCheck, RequestFailure, WrittenParagraph};
 use whetstone_core::{
-    Area, CandidateId, CriterionOutcome, Evidence, OptionLetter, Picked, Probability, Provenance,
-    Question, QuestionCount, Response,
+    Area, CandidateId, CriterionOutcome, Evidence, OptionLetter, Picked, Probability, Question,
+    QuestionCount, Response,
 };
 
 use crate::cannot_answer::{self, CannotAnswer};
@@ -84,6 +87,7 @@ use crate::palette::Action;
 use crate::reader::{Reader, Section};
 use crate::reasoning_editor::{self, Caret, Editing, ReasoningEditor};
 use crate::report::{self, ReportForm, Reporting};
+use crate::sent_requests::SentRequests;
 use crate::session_record::{
     Assessment, NewRecord, SavedResponse, SessionId, SessionStore, Signal, StoreError,
 };
@@ -603,15 +607,16 @@ impl Questions {
     }
 
     /// Starts the session record in `store`, with the questions,
-    /// `evidence`, the evidence exactly as sent, and the `provenance` of
-    /// every request so far, unless it started. Then saves a response the
-    /// learner just submitted, before anything else is done with it, and
-    /// shows its choice outcome at once.
+    /// `evidence`, the evidence exactly as sent, and every request in
+    /// `sent` so far, unless it started. Then saves each request that ended
+    /// since, then a response the learner just submitted, before anything
+    /// else is done with it, showing its choice outcome at once, then the
+    /// outcomes known since.
     pub(crate) fn keep_record(
         &mut self,
         store: &mut dyn SessionStore,
         evidence: &Evidence,
-        provenance: &[Provenance],
+        sent: &mut SentRequests,
     ) {
         if let Record::ToStart = self.record {
             let record = NewRecord {
@@ -621,7 +626,7 @@ impl Questions {
                     .map(|entry| entry.question.clone())
                     .collect(),
                 evidence: evidence.clone(),
-                provenance: provenance.to_vec(),
+                requests: sent.take_unrecorded(),
             };
             self.record = match store.start(record) {
                 Ok(session) => {
@@ -637,6 +642,15 @@ impl Questions {
                     Record::NotStarted
                 }
             };
+        }
+        if let Record::Started(session) = self.record {
+            for request in sent.take_unrecorded() {
+                let id = request.provenance.request();
+                match store.save_request(session, request) {
+                    Ok(()) => tracing::info!(%session, request = %id, "saved a request"),
+                    Err(error) => tracing::warn!(%error, request = %id, "a request wasn't saved"),
+                }
+            }
         }
         for (question, signal) in mem::take(&mut self.signals) {
             let Record::Started(session) = self.record else {

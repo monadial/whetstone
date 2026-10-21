@@ -266,6 +266,7 @@ fn an_assisted_attempt_is_still_submitted_and_assessed_with_both_outcomes_marked
                     assessment: Assessment::Choice(_),
                     ..
                 },
+                StoreEntry::Request { .. },
                 StoreEntry::Assessment {
                     assessment: Assessment::Criterion { .. },
                     ..

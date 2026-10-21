@@ -17,8 +17,8 @@ use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use tempfile::TempDir;
 use whetstone::{
     App, Assessment, Dirs, Durability, Environment, Finished, Flow, InMemoryStore, JobId,
-    JobOutput, Message, NewRecord, Repository, SavedResponse, SessionId, SessionStore, Settings,
-    Signal, StoreError, Theme,
+    JobOutput, Message, NewRecord, Repository, SavedResponse, SentRequest, SessionId, SessionStore,
+    Settings, Signal, StoreError, Theme,
 };
 use whetstone_ai::{Ai, ScriptedAi, Timeouts};
 use whetstone_core::{CandidateId, Response, ShowcaseProject};
@@ -142,6 +142,10 @@ impl SessionStore for TestStore {
         signal: Signal,
     ) -> Result<(), StoreError> {
         self.store.save_signal(session, question, signal)
+    }
+
+    fn save_request(&mut self, session: SessionId, request: SentRequest) -> Result<(), StoreError> {
+        self.store.save_request(session, request)
     }
 }
 
