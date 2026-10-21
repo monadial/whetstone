@@ -1,0 +1,46 @@
+---
+source: crates/whetstone/tests/it/summary.rs
+expression: session.frame()
+---
+Buffer {
+    area: Rect { x: 0, y: 0, width: 80, height: 24 },
+    content: [
+        "                                                                                ",
+        "    Met · Assisted · The rubric's criterion, which stays hidden                 ",
+        "                                                                                ",
+        "  Question 2 · Domain · Reported                                                ",
+        "    Domain question 2?                                                          ",
+        "    Skipped                                                                     ",
+        "                                                                                ",
+        "  Question 3 · Domain                                                           ",
+        "    Domain question 3?                                                          ",
+        "    Cannot answer from this context                                             ",
+        "                                                                                ",
+        "  Question 4 · Domain                                                           ",
+        "    Domain question 4?                                                          ",
+        "    Choice · Not supported                                                      ",
+        "    Reasoning · Awaiting evaluation                                             ",
+        "                                                                                ",
+        "  Cost, as each reply reported it                                               ",
+        "  Jev        $0.000096                                                          ",
+        "  Generator  $0.0774                                                            ",
+        "  Total      $0.077496                                                          ",
+        "                                                                                ",
+        "  > Home                                                                        ",
+        "  ? keys  : actions  Ctrl+d/u scroll  Enter home  q back                        ",
+        "                                                                                ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 3, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 32, y: 3, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 7, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 21, y: 7, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 11, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 21, y: 11, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 16, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 33, y: 16, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 21, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 8, y: 21, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+    ]
+}
