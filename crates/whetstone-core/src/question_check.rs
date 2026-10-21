@@ -874,7 +874,18 @@ pub(crate) mod tests {
 
         let question = shown.expect("clear yes from 0.50");
         assert_eq!(question.policy().version().get(), 1);
-        assert_eq!(failed(under_policy_0), [CandidateCheck::NoGiveaway]);
+        let withheld = under_policy_0.expect_err("unclear under 0.80");
+        assert_eq!(withheld.failed(), [CandidateCheck::NoGiveaway]);
+        assert_eq!(withheld.policy().version().get(), 0, "still policy 0's");
+        assert_eq!(
+            withheld.policy().cut_offs(Job::GiveawayCheck).cut_offs(),
+            CutOffs::POLICY_0
+        );
+        assert_eq!(
+            withheld.band(CandidateCheck::NoGiveaway),
+            Some(Band::Unclear),
+            "banded with policy 0's cut-offs, not the current policy's"
+        );
         assert_eq!(failed(needs_change), [CandidateCheck::NeedsChange]);
     }
 
