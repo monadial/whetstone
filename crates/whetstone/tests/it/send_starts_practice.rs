@@ -399,7 +399,9 @@ fn evidence_asked(ai: &ScriptedAi) -> Vec<Evidence> {
             Asked::CheckAreas { evidence, .. }
             | Asked::WriteCandidates { evidence, .. }
             | Asked::CheckQuestion { evidence, .. }
-            | Asked::AssessReasoning { evidence, .. } => evidence,
+            | Asked::AssessReasoning { evidence, .. }
+            | Asked::Explain { evidence, .. }
+            | Asked::CheckExplanation { evidence, .. } => evidence,
         })
         .collect()
 }
@@ -440,7 +442,9 @@ fn requests_sent(ai: &ScriptedAi) -> Vec<(&'static str, Value, String)> {
                     format!("{} {:?}", sent.state, sent.questions),
                 )
             }
-            Asked::AssessReasoning { .. } => {
+            Asked::AssessReasoning { .. }
+            | Asked::Explain { .. }
+            | Asked::CheckExplanation { .. } => {
                 unreachable!("the tests that read what is sent submit no response")
             }
         })

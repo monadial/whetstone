@@ -3,11 +3,12 @@
 //!
 //! Jev's relevance gate is scripted per area, or to fail. The generator's
 //! writing is scripted per area, and Jev's question check and reasoning
-//! evaluation per question, by its stem. A check is scripted as exact
-//! answers, or as answers that pass the show rule for whichever candidate
-//! is asked, with any checks a test answers otherwise, or at a depth a test
-//! chooses. Each reply scripted for one of them answers one request, in the
-//! order scripted, so a test scripts a Retry's reply as a second one.
+//! evaluation, the generator's explanation and Jev's check of it per
+//! question, by its stem. A check is scripted as exact answers, or as
+//! answers that pass the show rule for whichever candidate is asked, with
+//! any checks a test answers otherwise, or at a depth a test chooses. Each
+//! reply scripted for one of them answers one request, in the order
+//! scripted, so a test scripts a Retry's reply as a second one.
 //!
 //! The gate lets through, clear yes, any area nothing was scripted for, so
 //! a test about writing or checking needn't script it. Any other request
@@ -19,10 +20,11 @@ use std::future;
 use std::sync::{Mutex, MutexGuard};
 
 use whetstone_core::{
-    Area, AreaId, Candidate, CandidateCheck, Criterion, Depth, Evidence, ModelId, Probability,
-    Provenance, QuestionCheckAnswers, Role, WrittenCandidate,
+    Area, AreaId, Candidate, CandidateCheck, Criterion, CriterionOutcome, Depth, Evidence, ModelId,
+    Probability, Provenance, Question, QuestionCheckAnswers, Role, WrittenCandidate,
 };
 
+use crate::explanation::{ParagraphCheck, WrittenParagraph};
 use crate::gate::gate_request;
 use crate::jev::JevRequest;
 use crate::port::{Ai, CandidateCount, Pending, Reply, RequestFailure, Saved};
@@ -48,6 +50,11 @@ struct Script {
     /// Jev's next replies to the reasoning written for each question, by
     /// its stem.
     assessments: HashMap<String, VecDeque<Result<Vec<Probability>, RequestFailure>>>,
+    /// The generator's next explanations of the reasoning written for each
+    /// question, by its stem.
+    explanations: HashMap<String, VecDeque<Result<Vec<WrittenParagraph>, RequestFailure>>>,
+    /// Jev's next checks of the explanation of each question, by its stem.
+    explanation_checks: HashMap<String, VecDeque<Result<Vec<ParagraphCheck>, RequestFailure>>>,
     asked: Vec<Asked>,
 }
 
@@ -111,6 +118,31 @@ pub enum Asked {
         rubric: Vec<Criterion>,
         /// The learner's reasoning, as the acknowledgement gives it.
         reasoning: String,
+    },
+    /// The generator was asked to explain what a response's reasoning
+    /// missed.
+    Explain {
+        /// The session store's acknowledgement it was asked with, as its
+        /// `Debug` output shows it.
+        saved: String,
+        /// The evidence it was given.
+        evidence: Evidence,
+        /// The question's stem.
+        stem: String,
+        /// The learner's reasoning, as the acknowledgement gives it.
+        reasoning: String,
+        /// The criteria to explain: each one's place in the rubric and its
+        /// outcome.
+        criteria: Vec<(usize, CriterionOutcome)>,
+    },
+    /// Jev was asked to check an explanation's paragraphs.
+    CheckExplanation {
+        /// The evidence it was given.
+        evidence: Evidence,
+        /// The question's stem.
+        stem: String,
+        /// The paragraphs to check, in order.
+        paragraphs: Vec<WrittenParagraph>,
     },
 }
 
@@ -202,6 +234,32 @@ impl ScriptedAi {
     pub fn on_assess(&self, stem: &str, reply: Result<Vec<Probability>, RequestFailure>) {
         self.script()
             .assessments
+            .entry(stem.to_owned())
+            .or_default()
+            .push_back(reply);
+    }
+
+    /// Scripts the generator's reply to the next request to explain what
+    /// the reasoning written for the question whose stem is `stem` missed:
+    /// these paragraphs, or a failure.
+    pub fn on_explain(&self, stem: &str, reply: Result<Vec<WrittenParagraph>, RequestFailure>) {
+        self.script()
+            .explanations
+            .entry(stem.to_owned())
+            .or_default()
+            .push_back(reply);
+    }
+
+    /// Scripts Jev's reply to the next request to check the explanation of
+    /// the question whose stem is `stem`: an answer for each paragraph, in
+    /// order, or a failure.
+    pub fn on_check_explanation(
+        &self,
+        stem: &str,
+        reply: Result<Vec<ParagraphCheck>, RequestFailure>,
+    ) {
+        self.script()
+            .explanation_checks
             .entry(stem.to_owned())
             .or_default()
             .push_back(reply);
@@ -330,6 +388,57 @@ impl Ai for ScriptedAi {
             .unwrap_or_else(|| panic!("no assessment scripted for {:?}", question.stem()));
         reply_at_once(reply, Role::Jev, JEV_MODEL)
     }
+
+    #[expect(
+        clippy::panic,
+        reason = "a request a test didn't script is a mistake in the test, which fails at once"
+    )]
+    fn explain(
+        &self,
+        saved: &dyn Saved,
+        evidence: &Evidence,
+        question: &Question,
+        criteria: &[(usize, CriterionOutcome)],
+    ) -> Pending<Vec<WrittenParagraph>> {
+        let mut script = self.script();
+        script.asked.push(Asked::Explain {
+            saved: format!("{saved:?}"),
+            evidence: evidence.clone(),
+            stem: question.stem().to_owned(),
+            reasoning: saved.reasoning().to_owned(),
+            criteria: criteria.to_vec(),
+        });
+        let reply = script
+            .explanations
+            .get_mut(question.stem())
+            .and_then(VecDeque::pop_front)
+            .unwrap_or_else(|| panic!("no explanation scripted for {:?}", question.stem()));
+        reply_at_once(reply, Role::Generator, GENERATOR_MODEL)
+    }
+
+    #[expect(
+        clippy::panic,
+        reason = "a request a test didn't script is a mistake in the test, which fails at once"
+    )]
+    fn check_explanation(
+        &self,
+        evidence: &Evidence,
+        question: &Question,
+        paragraphs: &[WrittenParagraph],
+    ) -> Pending<Vec<ParagraphCheck>> {
+        let mut script = self.script();
+        script.asked.push(Asked::CheckExplanation {
+            evidence: evidence.clone(),
+            stem: question.stem().to_owned(),
+            paragraphs: paragraphs.to_vec(),
+        });
+        let reply = script
+            .explanation_checks
+            .get_mut(question.stem())
+            .and_then(VecDeque::pop_front)
+            .unwrap_or_else(|| panic!("no explanation check scripted for {:?}", question.stem()));
+        reply_at_once(reply, Role::Jev, JEV_MODEL)
+    }
 }
 
 impl CheckReply {
@@ -389,10 +498,10 @@ mod tests {
     use std::task::{Context, Poll, Waker};
 
     use whetstone_core::{
-        Area, AssessmentPolicy, CandidateCheck, Change, ConnectedCodeLimit, Connections, Depth,
-        Evidence, ExcludePatterns, OptionLetter, Probability, Question, QuestionCount,
-        QuestionType, ReviewChoices, Role, TouchedFile, WrittenCandidate, WrittenCitation,
-        WrittenCriterion, WrittenOption, plain_checks, show_rule,
+        Area, AssessmentPolicy, CandidateCheck, Change, ConnectedCodeLimit, Connections,
+        CriterionOutcome, Depth, Evidence, ExcludePatterns, OptionLetter, Probability, Question,
+        QuestionCount, QuestionType, ReviewChoices, Role, TouchedFile, WrittenCandidate,
+        WrittenCitation, WrittenCriterion, WrittenOption, plain_checks, show_rule,
     };
 
     use super::*;
@@ -800,6 +909,68 @@ mod tests {
         assert_eq!(
             ai.asked(),
             [logged("It retries."), logged("It retries once.")]
+        );
+    }
+
+    #[test]
+    fn the_explanation_and_its_check_are_what_is_scripted_for_each_question_and_logged() {
+        let ai = ScriptedAi::new();
+        let paragraph = WrittenParagraph {
+            criterion: 0,
+            outcome: CriterionOutcome::NotMet,
+            text: "You didn't name the retry.".to_owned(),
+            citations: vec![WrittenCitation {
+                path: "src/pay.rs".to_owned(),
+                first_line: 2,
+                last_line: 2,
+            }],
+        };
+        let check = ParagraphCheck {
+            supported: Probability::new(0.9).expect("from 0 to 1"),
+            agrees: Probability::new(0.85).expect("from 0 to 1"),
+        };
+        ai.on_explain("Why retry?", Ok(vec![paragraph.clone()]));
+        ai.on_explain("Why retry?", Err(RequestFailure::TimedOut));
+        ai.on_check_explanation("Why retry?", Ok(vec![check]));
+        let asked = question("Why retry?");
+        let criteria = [(0, CriterionOutcome::NotMet)];
+
+        let explained =
+            at_once(ai.explain(&Acknowledged("It retries."), &evidence(), &asked, &criteria));
+        let checked =
+            at_once(ai.check_explanation(&evidence(), &asked, std::slice::from_ref(&paragraph)));
+        let again =
+            at_once(ai.explain(&Acknowledged("It retries."), &evidence(), &asked, &criteria));
+
+        let explained = explained.expect("scripted to explain");
+        assert_eq!(
+            explained.content,
+            std::slice::from_ref(&paragraph),
+            "as scripted"
+        );
+        assert_eq!(explained.provenance.role(), Role::Generator);
+        let checked = checked.expect("scripted to check");
+        assert_eq!(checked.content, [check], "as scripted");
+        assert_eq!(checked.provenance.role(), Role::Jev);
+        assert_eq!(again, Err(RequestFailure::TimedOut));
+        let explain = Asked::Explain {
+            saved: "Acknowledged(\"It retries.\")".to_owned(),
+            evidence: evidence(),
+            stem: "Why retry?".to_owned(),
+            reasoning: "It retries.".to_owned(),
+            criteria: criteria.to_vec(),
+        };
+        assert_eq!(
+            ai.asked(),
+            [
+                explain.clone(),
+                Asked::CheckExplanation {
+                    evidence: evidence(),
+                    stem: "Why retry?".to_owned(),
+                    paragraphs: vec![paragraph],
+                },
+                explain,
+            ]
         );
     }
 

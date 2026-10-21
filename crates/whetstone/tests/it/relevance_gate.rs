@@ -32,6 +32,8 @@ fn asked_for(ai: &ScriptedAi) -> Vec<String> {
             Asked::WriteCandidates { area, .. } => format!("write {}", area.id()),
             Asked::CheckQuestion { candidate, .. } => format!("check {}", candidate.stem()),
             Asked::AssessReasoning { stem, .. } => format!("assess {stem}"),
+            Asked::Explain { stem, .. } => format!("explain {stem}"),
+            Asked::CheckExplanation { stem, .. } => format!("check the explanation of {stem}"),
         })
         .collect()
 }
@@ -61,7 +63,9 @@ fn written_counts(ai: &ScriptedAi) -> Vec<(String, usize)> {
             }
             Asked::CheckAreas { .. }
             | Asked::CheckQuestion { .. }
-            | Asked::AssessReasoning { .. } => None,
+            | Asked::AssessReasoning { .. }
+            | Asked::Explain { .. }
+            | Asked::CheckExplanation { .. } => None,
         })
         .collect()
 }
