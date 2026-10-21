@@ -2,8 +2,8 @@
 //! the provenance of its reply, or, for a request that failed or that the
 //! learner cancelled, one that reports no usage or cost. The session record
 //! starts with what it holds, and the summary adds up the session's cost
-//! from it, counting each request that reported no cost instead of
-//! estimating it.
+//! from it, for each role and in all, counting each request that reported
+//! no cost instead of estimating it.
 
 use whetstone_ai::{Models, Reply, RequestFailure};
 use whetstone_core::{Provenance, Role, SessionCost};
@@ -62,8 +62,36 @@ impl SentRequests {
         &self.provenance
     }
 
-    /// What the requests cost, as their replies reported it.
-    pub(crate) fn cost(&self) -> SessionCost {
-        SessionCost::of(&self.provenance)
+    /// What the requests cost so far, as their replies reported it, while
+    /// `running` more still run.
+    pub(crate) fn spending(&self, running: usize) -> Spending {
+        let of = |role| {
+            SessionCost::of(
+                self.provenance
+                    .iter()
+                    .filter(|provenance| provenance.role() == role),
+            )
+        };
+        Spending {
+            jev: of(Role::Jev),
+            generator: of(Role::Generator),
+            total: SessionCost::of(&self.provenance),
+            running,
+        }
     }
+}
+
+/// What the requests a Practice sent cost so far, as their replies reported
+/// it, each cost with how many of its requests reported none, and how many
+/// requests still run, whose cost isn't known until they reply.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Spending {
+    /// Jev's requests' cost.
+    pub(crate) jev: SessionCost,
+    /// The generator's requests' cost.
+    pub(crate) generator: SessionCost,
+    /// Every request's cost: Jev's and the generator's together.
+    pub(crate) total: SessionCost,
+    /// How many requests still run.
+    pub(crate) running: usize,
 }

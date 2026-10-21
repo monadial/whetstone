@@ -67,7 +67,7 @@ use crate::keymap::{self, Binding, Command, Input, Keymap};
 use crate::palette::Action;
 use crate::questions::Questions;
 use crate::reader::{Reader, Section};
-use crate::sent_requests::SentRequests;
+use crate::sent_requests::{SentRequests, Spending};
 use crate::session_record::{SavedResponse, SessionStore};
 use crate::stage_row::{PracticeStage, Stage as RowStage, StageRow, StageState};
 use crate::summary::{self, Summary};
@@ -744,13 +744,17 @@ impl Practice {
     fn finish(&mut self) {
         let subject = self.subject();
         self.stage = match mem::replace(&mut self.stage, Stage::NonePassed) {
-            Stage::Shown(questions) => Stage::Finished(Box::new(Summary::new(
-                *questions,
-                subject,
-                self.sent.cost(),
-            ))),
+            Stage::Shown(questions) => {
+                Stage::Finished(Box::new(Summary::new(*questions, subject, self.spending())))
+            }
             stage => stage,
         };
+    }
+
+    /// What the requests sent cost so far, while those it waits for still
+    /// run.
+    fn spending(&self) -> Spending {
+        self.sent.spending(self.waiting.len())
     }
 
     /// The failure that stopped the current stage, if one did: the first,
@@ -1272,7 +1276,10 @@ impl View for Practice {
                     next => next,
                 };
             }
-            Stage::Finished(summary) => return summary.apply(command, area, self.sent.cost()),
+            Stage::Finished(summary) => {
+                let spending = self.sent.spending(self.waiting.len());
+                return summary.apply(command, area, spending);
+            }
             _ => {}
         }
         if command != Command::Activate {
@@ -1300,7 +1307,7 @@ impl View for Practice {
         match &self.stage {
             Stage::Shown(questions) => return questions.render(theme, frame, area),
             Stage::Finished(summary) => {
-                return summary.render(theme, frame, area, self.sent.cost());
+                return summary.render(theme, frame, area, self.spending());
             }
             _ => {}
         }

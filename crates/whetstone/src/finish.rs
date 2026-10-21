@@ -77,13 +77,13 @@ pub(crate) enum Finishing {
 
 /// Asking whether to finish.
 #[derive(Debug)]
-pub(crate) struct FinishCheck {
+pub(crate) struct ConfirmFinish {
     /// What is still unattempted, as the box says it.
     says: String,
     focus: Position,
 }
 
-impl FinishCheck {
+impl ConfirmFinish {
     /// Asks whether to finish while `unattempted` of the `questions` are
     /// still unattempted, saying so, and that a draft is lost, when `drafts`
     /// says one is.
@@ -149,7 +149,7 @@ impl FinishCheck {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Drafts {
     /// None was started.
-    None,
+    NotStarted,
     /// At least one was.
     Started,
 }
