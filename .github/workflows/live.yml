@@ -1,0 +1,134 @@
+# The keyed end-to-end job: calls Jev and the generator live, through the AI
+# port, so the recorded OpenRouter replies the per-PR contract tests replay
+# stay true. CODING_STANDARDS.md rule 48 names it as an exception to "tests
+# make no network calls", and its CI section gives the same commands to run
+# locally with your own key.
+#
+# It runs the ignored tests whose names start with `live_`:
+# - on pull requests that change the AI crate or this workflow, or that
+#   change a Rig crate's version in Cargo.lock (another change to Cargo.lock
+#   isn't enough);
+# - on manual dispatch;
+# - as a release gate: a release workflow calls it (`workflow_call`) and
+#   makes its release job need it.
+#
+# Its key is the OPENROUTER_API_KEY repository secret (#96), and only the
+# step that runs the live tests gets it. Where the secret isn't available,
+# such as on a pull request from a fork, or before #96 sets it, the live job
+# is skipped. Called as a release gate, a missing key fails it instead.
+name: Live tests
+
+on:
+  pull_request:
+    paths:
+      - "crates/whetstone-ai/**"
+      - "Cargo.lock"
+      - ".github/workflows/live.yml"
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      require-key:
+        description: Fail, rather than skip, when OPENROUTER_API_KEY isn't passed. A release gate leaves it on.
+        type: boolean
+        default: true
+    secrets:
+      OPENROUTER_API_KEY:
+        description: The OpenRouter key the live tests call Jev and the generator with.
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-${{ github.event.pull_request.number || github.ref }}
+  # A newer push to a pull request replaces its running live tests, which
+  # saves paying for both.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  decide:
+    name: Decide whether to call OpenRouter
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      # A pull request is checked out as its merge commit, whose first parent
+      # is the base branch, so two commits are enough to compare them.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: github.event_name == 'pull_request' && !inputs.require-key
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Decide
+        id: decide
+        env:
+          # Whether the secret is set, never the key itself.
+          KEY_SET: ${{ secrets.OPENROUTER_API_KEY != '' }}
+          REQUIRE_KEY: ${{ inputs.require-key == true }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          answer() { echo "run=$1" >> "$GITHUB_OUTPUT"; }
+
+          if [ "$KEY_SET" != true ]; then
+            if [ "$REQUIRE_KEY" = true ]; then
+              echo "::error title=No OpenRouter key::OPENROUTER_API_KEY wasn't passed, so the release gate can't call Jev and the generator."
+              exit 1
+            fi
+            echo "::notice title=Live tests skipped::No OPENROUTER_API_KEY secret is available here: a pull request from a fork, or a repository where #96 hasn't set it yet."
+            answer false
+            exit 0
+          fi
+
+          if [ "$EVENT" != pull_request ] || [ "$REQUIRE_KEY" = true ]; then
+            answer true
+            exit 0
+          fi
+
+          # HEAD is the pull request merged into its base branch, HEAD^1.
+          if ! git diff --quiet HEAD^1 HEAD -- crates/whetstone-ai .github/workflows/live.yml; then
+            answer true
+            exit 0
+          fi
+
+          # Only Cargo.lock matched: run if a Rig crate's locked version moved.
+          rig_versions() {
+            git show "$1:Cargo.lock" |
+              awk '$1 == "name" && $3 ~ /^"rig(-.+)?"$/ { name = $3; getline; print name, $3 }'
+          }
+          if [ "$(rig_versions HEAD^1)" != "$(rig_versions HEAD)" ]; then
+            answer true
+          else
+            echo "::notice title=Live tests skipped::This pull request changes neither the AI crate nor a Rig crate's locked version."
+            answer false
+          fi
+
+  live:
+    name: Live tests (Jev and the generator)
+    needs: decide
+    if: needs.decide.outputs.run == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned toolchain (rust-toolchain.toml)
+        run: rustup toolchain install --no-self-update
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+        with:
+          tool: cargo-nextest@0.9.148
+      # Everything is built before any step has the key, so no build script
+      # can read it.
+      - name: Build the tests
+        run: cargo nextest run --workspace --all-features --locked --no-run
+      # Every live test runs, even after one fails, and none is retried: each
+      # call is paid for (rule 23).
+      - name: Live tests (calls OpenRouter, paid)
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: cargo nextest run --workspace --all-features --locked --no-fail-fast --run-ignored only live_
