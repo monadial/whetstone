@@ -19,17 +19,20 @@
 //!    to every question asked;
 //! 3. checks its provenance with [`assert_reported`].
 //!
-//! A ticket that adds a kind of request to the port (the reasoning
-//! evaluation, the explanation or its check) adds its test here
-//! the same way, next to its recorder in `record.rs` and its contract tests.
+//! A ticket that adds a kind of request to the port (the explanation or its
+//! check) adds its test here the same way, next to its recorder in
+//! `record.rs` and its contract tests.
 //! The job runs every ignored test whose name starts with `live_`, so the
 //! new test needs nothing else.
 
 use whetstone_core::{DepthLevel, ModelId, Provenance, QuestionCount};
 
 use crate::replay::live_key;
-use crate::samples::{area, candidate, evidence, generator_model, jev_model, observability};
-use crate::{Ai, CandidateCount, Models, OpenRouter, OpenRouterAi};
+use crate::samples::{
+    Acknowledged, REASONING, area, candidate, evidence, generator_model, jev_model, observability,
+    question,
+};
+use crate::{Ai, CandidateCount, Models, OpenRouter, OpenRouterAi, QuestionWithoutKey};
 
 /// The real AI on `OpenRouter`, with the key from `OPENROUTER_API_KEY`, the
 /// models the fixtures were recorded with, and the app's time limits.
@@ -161,6 +164,31 @@ async fn live_check_question() {
         (weighted - depth.expected()).abs() <= 0.05,
         "the depth's expected value, {}, isn't its levels' places from 0, weighted: {weighted}",
         depth.expected()
+    );
+    assert_reported(&reply.provenance);
+}
+
+#[tokio::test]
+#[ignore = "calls OpenRouter with a real key"]
+async fn live_assess_reasoning() {
+    let _log = log_replies();
+    // The sample question, with its two criteria, and the reasoning saved
+    // for it, as recorded.
+    let question = question();
+
+    let reply = live_ai()
+        .assess_reasoning(
+            &Acknowledged(REASONING),
+            &evidence(),
+            QuestionWithoutKey::from(&question),
+        )
+        .await
+        .expect("Jev assesses the reasoning");
+
+    assert_eq!(
+        reply.content.len(),
+        question.rubric().len(),
+        "an answer per criterion"
     );
     assert_reported(&reply.provenance);
 }
