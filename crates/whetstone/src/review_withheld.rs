@@ -211,16 +211,15 @@ impl ReviewWithheld {
     fn banded(&self, check: CandidateCheck) -> (String, String) {
         let withheld = &self.current().withheld;
         let needed = band_name(withheld.needed(check));
-        let banded = match withheld.answers().get(check) {
-            Some(answer) => {
-                let band = withheld.policy().band(check.job(), answer);
+        let banded = match (withheld.answers().get(check), withheld.band(check)) {
+            (Some(answer), Some(band)) => {
                 format!(
                     "{} · {} · it needed {needed}",
                     answer.get(),
                     band_name(band)
                 )
             }
-            None => format!("Jev didn't answer it · it needed {needed}"),
+            _ => format!("Jev didn't answer it · it needed {needed}"),
         };
         (jev_answers::statement(check), banded)
     }
@@ -296,44 +295,7 @@ impl ReviewWithheld {
             }
         }
         heading(&mut lines, "Checks that withheld it");
-        lines.extend(
-            columns::wrap(jev_answers::LABEL, width)
-                .into_iter()
-                .map(|line| Line::styled(line, theme.muted)),
-        );
-        for (place, &check) in entry.withheld.failed().iter().enumerate() {
-            let (statement, banded) = self.banded(check);
-            let lead = format!("{}. ", place + 1);
-            let indent = " ".repeat(lead.len());
-            for (index, text) in columns::wrap(&statement, width.saturating_sub(lead.len()))
-                .into_iter()
-                .enumerate()
-            {
-                let lead = if index == 0 {
-                    lead.clone()
-                } else {
-                    indent.clone()
-                };
-                lines.push(Line::raw(format!("{lead}{text}")));
-            }
-            let vote = match self.vote(check) {
-                Some(VoteState::Saving(verdict)) => format!("{} · saving", verdict.label()),
-                Some(VoteState::Saved(verdict)) => format!("{} · saved", verdict.label()),
-                Some(VoteState::Unsaved(verdict, error)) => format!(
-                    "{} · not saved: {error}. Vote again to save it.",
-                    verdict.label()
-                ),
-                None if self.skipped.contains(&(self.at, check)) => "Skipped".to_owned(),
-                None => "Not voted yet".to_owned(),
-            };
-            for text in [format!("Jev: {banded}"), format!("Your vote: {vote}")] {
-                lines.extend(
-                    columns::wrap(&text, width.saturating_sub(indent.len()))
-                        .into_iter()
-                        .map(|text| Line::styled(format!("{indent}{text}"), theme.muted)),
-                );
-            }
-        }
+        lines.extend(self.check_lines(theme, width));
         let key = candidate.answer_key();
         heading(&mut lines, &format!("Answer key: {key}"));
         for letter in OptionLetter::ALL {
@@ -382,6 +344,51 @@ impl ReviewWithheld {
             .into_iter()
             .map(|line| Line::styled(line, theme.muted)),
         );
+        lines
+    }
+
+    /// Each check that withheld the candidate that shows, under the label
+    /// Inspect uses, with Jev's answer and the learner's vote, drawn with
+    /// `theme`, `width` cells wide.
+    fn check_lines(&self, theme: &Theme, width: usize) -> Vec<Line<'static>> {
+        let entry = self.current();
+        let mut lines: Vec<Line<'static>> = columns::wrap(jev_answers::LABEL, width)
+            .into_iter()
+            .map(|line| Line::styled(line, theme.muted))
+            .collect();
+        for (place, &check) in entry.withheld.failed().iter().enumerate() {
+            let (statement, banded) = self.banded(check);
+            let lead = format!("{}. ", place + 1);
+            let indent = " ".repeat(lead.len());
+            for (index, text) in columns::wrap(&statement, width.saturating_sub(lead.len()))
+                .into_iter()
+                .enumerate()
+            {
+                let lead = if index == 0 {
+                    lead.clone()
+                } else {
+                    indent.clone()
+                };
+                lines.push(Line::raw(format!("{lead}{text}")));
+            }
+            let vote = match self.vote(check) {
+                Some(VoteState::Saving(verdict)) => format!("{} · saving", verdict.label()),
+                Some(VoteState::Saved(verdict)) => format!("{} · saved", verdict.label()),
+                Some(VoteState::Unsaved(verdict, error)) => format!(
+                    "{} · not saved: {error}. Vote again to save it.",
+                    verdict.label()
+                ),
+                None if self.skipped.contains(&(self.at, check)) => "Skipped".to_owned(),
+                None => "Not voted yet".to_owned(),
+            };
+            for text in [format!("Jev: {banded}"), format!("Your vote: {vote}")] {
+                lines.extend(
+                    columns::wrap(&text, width.saturating_sub(indent.len()))
+                        .into_iter()
+                        .map(|text| Line::styled(format!("{indent}{text}"), theme.muted)),
+                );
+            }
+        }
         lines
     }
 
@@ -513,7 +520,7 @@ impl View for ReviewWithheld {
             // A vote is saved even if the review closes first: the job runs
             // on, and only its result is ignored.
             let job = jobs.start(move |_token| {
-                labels.save(cast);
+                labels.save(&cast);
                 Ok(JobOutput::VoteSaved)
             });
             self.saving.push(job);

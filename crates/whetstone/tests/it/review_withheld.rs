@@ -511,9 +511,27 @@ fn review_withheld_questions_is_offered_in_the_palette_where_the_shortfall_shows
 
     assert_eq!(
         session.row_with("passed checks"),
-        "2 passed checks, 4 asked for · Review the 1 withheld from the palette (:)"
+        "2 passed checks, 4 asked for · see why in actions"
     );
-    session.press(": j j <Enter>");
+    session.press(":");
+    let actions: Vec<String> = session
+        .overlay_rows()
+        .iter()
+        .filter_map(|row| row.split("  ").next())
+        .map(|action| action.trim_start_matches("> ").to_owned())
+        .skip_while(|action| action != "Inspect source")
+        .take(3)
+        .collect();
+    assert_eq!(
+        actions,
+        [
+            "Inspect source",
+            "See why fewer passed",
+            "Review withheld questions"
+        ],
+        "beside See why fewer passed"
+    );
+    session.press("j j <Enter>");
 
     assert_eq!(
         session.row_with("Withheld question"),

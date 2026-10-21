@@ -223,9 +223,9 @@ impl LabelsFile {
     /// Appends the `cast` vote to the file, creating it owner-only if it
     /// isn't there, and remembers whether it was saved. It blocks, so only
     /// a background job calls it.
-    pub(crate) fn save(&self, cast: Cast) {
+    pub(crate) fn save(&self, cast: &Cast) {
         let saved = match &self.path {
-            Some(path) => self.append(path, &cast),
+            Some(path) => self.append(path, cast),
             None => Err(io::Error::new(
                 io::ErrorKind::NotFound,
                 "Whetstone has no state folder to keep votes in",
@@ -300,7 +300,7 @@ fn example(cast: &Cast) -> Result<String, toml::ser::Error> {
         (Verdict::ShouldHavePassed, Band::ClearYes) | (Verdict::RightlyWithheld, Band::ClearNo) => {
             "yes"
         }
-        (Verdict::ShouldHavePassed, _) | (Verdict::RightlyWithheld, _) => "no",
+        _ => "no",
     };
     let file = ExampleFile {
         candidate: [Example {
