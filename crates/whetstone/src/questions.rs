@@ -492,6 +492,11 @@ impl Questions {
         self
     }
 
+    /// How many questions there are.
+    pub(crate) fn len(&self) -> usize {
+        self.picked.len()
+    }
+
     /// The question that shows.
     fn current(&self) -> &Entry {
         &self.picked[self.at]

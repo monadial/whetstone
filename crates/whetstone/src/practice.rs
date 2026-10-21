@@ -60,10 +60,10 @@ use ratatui::text::Line;
 use ratatui::widgets::{List, Paragraph};
 use whetstone_ai::{Ai, CandidateCount, Pending, QuestionWithoutKey, Reply, RequestFailure, Stamp};
 use whetstone_core::{
-    Area, AreaId, AssessmentPolicy, Band, Candidate, CandidateCheck, CandidateId, Change, CommitId,
-    ConnectedCodeLimit, Connections, ConnectionsState, Evidence, ExcludePatterns, Job, Probability,
-    QuestionCheckAnswers, QuestionCount, RepositoryConfig, ReviewChoices, Role, Side, Withheld,
-    WrittenCandidate, pick, plain_checks, show_rule,
+    Area, AreaId, Band, Candidate, CandidateCheck, CandidateId, Change, CommitId,
+    ConnectedCodeLimit, Connections, ConnectionsState, DropReason, Evidence, ExcludePatterns, Job,
+    Probability, QuestionCheckAnswers, QuestionCount, RepositoryConfig, ReviewChoices, Role, Side,
+    Withheld, WrittenCandidate, pick, plain_checks, show_rule,
 };
 
 use crate::area_files;
@@ -82,7 +82,7 @@ use crate::stage_row::{PracticeStage, Stage as RowStage, StageRow, StageState};
 use crate::summary::{self, Summary};
 use crate::theme::{ControlState, Theme};
 use crate::view::{ChangeIndex, ChangeRef, Context, Reading, Route, View};
-use crate::withheld::WhyWithheld;
+use crate::withheld;
 
 /// Preparing questions' own keys: `q` and Esc cancel.
 const KEYMAP: Keymap = &[
@@ -143,10 +143,12 @@ pub(crate) struct Practice {
     evidence: Option<Evidence>,
     /// What the relevance gate decided about the chosen areas.
     gate: Gate,
-    /// Why the candidates written last weren't shown: the plain checks'
-    /// drops, and each candidate the question check withheld, with Jev's
-    /// answers.
-    why_withheld: WhyWithheld,
+    /// Each candidate the question check withheld, of those written last,
+    /// with Jev's answers and the policy that banded them.
+    withheld: Vec<Withheld>,
+    /// Why the plain checks dropped each candidate they dropped, of those
+    /// written last, in the order written.
+    dropped: Vec<DropReason>,
     stage: Stage,
     /// The requests to Jev and the generator it waits for, each with what
     /// it asked (rule 24).
@@ -353,9 +355,10 @@ fn send<T: Send + 'static>(
 }
 
 /// Logs which checks withheld a candidate, with the band of Jev's answer to
-/// each under `policy`, or none when it went unanswered: names and bands
-/// only, never the candidate's text or Jev's probabilities (rules 43, 44).
-fn log_withheld(withheld: &Withheld, policy: &AssessmentPolicy) {
+/// each under the policy that withheld it, or none when it went
+/// unanswered: names and bands only, never the candidate's text or Jev's
+/// probabilities (rules 43, 44).
+fn log_withheld(withheld: &Withheld) {
     let failed: Vec<(CandidateCheck, Option<Band>)> = withheld
         .failed()
         .iter()
@@ -363,7 +366,7 @@ fn log_withheld(withheld: &Withheld, policy: &AssessmentPolicy) {
             let band = withheld
                 .answers()
                 .get(check)
-                .map(|answer| policy.band(check.job(), answer));
+                .map(|answer| withheld.policy().band(check.job(), answer));
             (check, band)
         })
         .collect();
@@ -482,7 +485,8 @@ impl Practice {
             time_limit: context.time_limit,
             evidence: None,
             gate: Gate::Undecided,
-            why_withheld: WhyWithheld::default(),
+            withheld: Vec::new(),
+            dropped: Vec::new(),
             stage: Stage::FindingConnectedCode(Lookup::Requested(Arc::new(ShowcaseLookup {
                 tree,
                 position: index.get(),
@@ -542,7 +546,8 @@ impl Practice {
             time_limit: context.time_limit,
             evidence: Some(evidence),
             gate: Gate::Undecided,
-            why_withheld: WhyWithheld::default(),
+            withheld: Vec::new(),
+            dropped: Vec::new(),
             stage: Stage::CheckingAreas(Request::Unsent),
             waiting: Waiting::new(),
             sent,
@@ -621,7 +626,8 @@ impl Practice {
 
     /// Asks the generator for candidates about every area asked about.
     fn write(&mut self) {
-        self.why_withheld = WhyWithheld::default();
+        self.withheld.clear();
+        self.dropped.clear();
         self.stage = Stage::Writing(Request::all(self.gate.asked_about(&self.areas).len()));
         self.focus = Position::default();
     }
@@ -652,7 +658,7 @@ impl Practice {
                     dropped = checked.dropped().len(),
                     "the generator wrote candidates"
                 );
-                self.why_withheld.written(written, checked.dropped());
+                self.dropped.extend_from_slice(checked.dropped());
                 Request::Replied(checked.into_passed())
             }
             Err(failure) => {
@@ -733,8 +739,8 @@ impl Practice {
             match show_rule(candidate, answers, policy) {
                 Ok(question) => passed.push(question),
                 Err(withheld) => {
-                    log_withheld(&withheld, policy);
-                    self.why_withheld.withheld(withheld);
+                    log_withheld(&withheld);
+                    self.withheld.push(withheld);
                 }
             }
         }
@@ -943,7 +949,7 @@ impl Practice {
                 ])
                 .collect(),
             (Stage::NonePassed, _) => {
-                let mut lines = self.why_withheld.lines(self.sent.policy());
+                let mut lines = withheld::reasons(0, &self.dropped, &self.withheld);
                 lines.extend([
                     String::new(),
                     "Retry writes and checks new ones.".to_owned(),
@@ -974,9 +980,11 @@ impl Practice {
     }
 
     /// The reader of why fewer questions passed their checks than were
-    /// asked for: the same reasons No questions passed checks gives.
-    fn why_withheld_reader(&self) -> Reader {
-        let mut lines = self.why_withheld.lines(self.sent.policy()).into_iter();
+    /// asked for, all of which are the `questions` shown: the same reasons
+    /// No questions passed checks gives.
+    fn why_withheld_reader(&self, questions: &Questions) -> Reader {
+        let mut lines =
+            withheld::reasons(questions.len(), &self.dropped, &self.withheld).into_iter();
         let count = lines.next().unwrap_or_default();
         Reader::new(
             Route::Read(Reading::WhyWithheld),
@@ -1211,7 +1219,7 @@ impl View for Practice {
                 _ => None,
             },
             Route::Read(Reading::WhyWithheld) => match &self.stage {
-                Stage::Shown(_) => Some(Box::new(self.why_withheld_reader())),
+                Stage::Shown(questions) => Some(Box::new(self.why_withheld_reader(questions))),
                 _ => None,
             },
             _ => None,

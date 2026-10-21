@@ -1,9 +1,9 @@
-//! Why Practice shows fewer questions than were asked for, or none: how
-//! many candidates the generator wrote last, why the plain checks dropped
-//! each one they dropped, and each candidate the question check withheld,
-//! with Jev's answers and the checks that withheld it. No questions passed
-//! checks gives the reasons in words, and so does the shortfall's See why
-//! fewer passed.
+//! Why Practice shows fewer questions than were asked for, or none, in
+//! words: from the candidates the generator wrote last, why the plain
+//! checks dropped each one they dropped, and each candidate the question
+//! check withheld, with Jev's answers and the policy that banded them,
+//! which Practice keeps. No questions passed checks gives these reasons,
+//! and so does the shortfall's See why fewer passed.
 //!
 //! Each check that withholds a candidate is worded here alone, with one
 //! sentence for each way Jev can answer it against the show rule: "Jev
@@ -16,19 +16,87 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use whetstone_core::{
-    AssessmentPolicy, Band, CandidateCheck, CutOffsOrigin, DropReason, OptionLetter, Part, Withheld,
+    Band, CandidateCheck, CutOffsOrigin, DropReason, OptionLetter, Part, Withheld,
 };
 
-/// Why the candidates the generator wrote last weren't shown.
-#[derive(Debug, Default)]
-pub(crate) struct WhyWithheld {
-    /// How many candidates the generator wrote, every area's together.
-    written: usize,
-    /// Why the plain checks dropped each candidate they dropped, in the
-    /// order written.
-    dropped: Vec<DropReason>,
-    /// Each candidate the show rule withheld, in the order checked.
-    withheld: Vec<Withheld>,
+/// The reasons, a line each, as the learner reads them, for the candidates
+/// the generator wrote last: `passed` of them passed their checks, the
+/// plain checks dropped one for each of `dropped`, and the show rule
+/// withheld `withheld`, each banded with its own policy.
+///
+/// First comes the count written and withheld, and whose cut-offs decided;
+/// then each reason a candidate was withheld, with how many it withheld,
+/// most first, then in the order the checks are asked; then the plain
+/// checks' drops, counted apart.
+pub(crate) fn reasons(passed: usize, dropped: &[DropReason], withheld: &[Withheld]) -> Vec<String> {
+    let mut lines = vec![count(passed + dropped.len() + withheld.len(), withheld)];
+    let mut counts = BTreeMap::new();
+    for reason in withheld.iter().flat_map(each_reason) {
+        *counts.entry(reason).or_insert(0) += 1;
+    }
+    let all = withheld.len();
+    for (reason, count) in most_first(counts) {
+        let lead = if count == all && count > 1 {
+            format!("all {count}")
+        } else {
+            count.to_string()
+        };
+        lines.push(format!("{lead}: {}", reason.sentence()));
+    }
+    for (reason, count) in most_first(dropped.iter().map(|&reason| (reason, 1))) {
+        let subject = if count == 1 { "it" } else { "each" };
+        lines.push(format!(
+            "{count} dropped: {}",
+            words_dropped(reason, subject)
+        ));
+    }
+    lines
+}
+
+/// How many were `written` and `withheld`, and whose cut-offs withheld
+/// them.
+fn count(written: usize, withheld: &[Withheld]) -> String {
+    let Some(first) = withheld.first() else {
+        return format!("{written} written");
+    };
+    let (mut defaults, mut learners) = (false, false);
+    for withheld in withheld {
+        for check in withheld.failed() {
+            match withheld.policy().cut_offs(check.job()).origin() {
+                CutOffsOrigin::Default => defaults = true,
+                CutOffsOrigin::Learner => learners = true,
+            }
+        }
+    }
+    let version = first.policy().version();
+    let whose = match (learners, defaults) {
+        (false, _) => format!("policy {version}'s cut-offs"),
+        (true, false) => "your cut-offs from config".to_owned(),
+        (true, true) => format!("your cut-offs from config and policy {version}'s"),
+    };
+    format!(
+        "{written} written · {} withheld, using {whose}",
+        withheld.len()
+    )
+}
+
+/// Each reason `withheld` was withheld, once, in order.
+fn each_reason(withheld: &Withheld) -> BTreeSet<Reason> {
+    let answer_key = withheld.candidate().answer_key();
+    withheld
+        .failed()
+        .iter()
+        .filter_map(|&check| {
+            let band = withheld
+                .answers()
+                .get(check)
+                .map(|answer| withheld.policy().band(check.job(), answer));
+            Some(Reason {
+                asks: Asks::of(check, answer_key)?,
+                answered: Answered::of(band),
+            })
+        })
+        .collect()
 }
 
 /// One reason a candidate was withheld: what a check it failed asks, and
@@ -65,98 +133,6 @@ enum Answered {
     Unclearly,
     /// Not at all.
     Not,
-}
-
-impl WhyWithheld {
-    /// Counts `written` more candidates, of which the plain checks dropped
-    /// one for each of `dropped`.
-    pub(crate) fn written(&mut self, written: usize, dropped: &[DropReason]) {
-        self.written += written;
-        self.dropped.extend_from_slice(dropped);
-    }
-
-    /// Keeps a candidate the show rule withheld.
-    pub(crate) fn withheld(&mut self, withheld: Withheld) {
-        self.withheld.push(withheld);
-    }
-
-    /// The reasons, a line each, as the learner reads them, banded with the
-    /// cut-offs of `policy`, the policy the checks went out with: the
-    /// count written and withheld, and whose cut-offs decided; each reason
-    /// a candidate was withheld, with how many it withheld, most first;
-    /// then the plain checks' drops, counted apart.
-    pub(crate) fn lines(&self, policy: &AssessmentPolicy) -> Vec<String> {
-        let mut lines = vec![self.count(policy)];
-        let withheld = self.withheld.len();
-        for (reason, count) in most_first(self.reasons(policy)) {
-            let lead = if count == withheld && count > 1 {
-                format!("all {count}")
-            } else {
-                count.to_string()
-            };
-            lines.push(format!("{lead}: {}", reason.sentence()));
-        }
-        for (reason, count) in most_first(self.dropped.iter().map(|&reason| (reason, 1))) {
-            let subject = if count == 1 { "it" } else { "each" };
-            lines.push(format!("{count} dropped: {}", dropped(reason, subject)));
-        }
-        lines
-    }
-
-    /// How many were written and withheld, and whose cut-offs withheld
-    /// them under `policy`.
-    fn count(&self, policy: &AssessmentPolicy) -> String {
-        if self.withheld.is_empty() {
-            return format!("{} written", self.written);
-        }
-        let (mut policys, mut learners) = (false, false);
-        for check in self.withheld.iter().flat_map(Withheld::failed) {
-            match policy.cut_offs(check.job()).origin() {
-                CutOffsOrigin::Default => policys = true,
-                CutOffsOrigin::Learner => learners = true,
-            }
-        }
-        let whose = match (learners, policys) {
-            (false, _) => format!("policy {}'s cut-offs", policy.version()),
-            (true, false) => "your cut-offs from config".to_owned(),
-            (true, true) => format!(
-                "your cut-offs from config and policy {}'s",
-                policy.version()
-            ),
-        };
-        format!(
-            "{} written · {} withheld, using {whose}",
-            self.written,
-            self.withheld.len()
-        )
-    }
-
-    /// Each reason a candidate was withheld under `policy`, once per
-    /// candidate it withheld, in order.
-    fn reasons(&self, policy: &AssessmentPolicy) -> BTreeMap<Reason, usize> {
-        let mut counts = BTreeMap::new();
-        for withheld in &self.withheld {
-            let answer_key = withheld.candidate().answer_key();
-            let reasons: BTreeSet<Reason> = withheld
-                .failed()
-                .iter()
-                .filter_map(|&check| {
-                    let band = withheld
-                        .answers()
-                        .get(check)
-                        .map(|answer| policy.band(check.job(), answer));
-                    Some(Reason {
-                        asks: Asks::of(check, answer_key)?,
-                        answered: Answered::of(band),
-                    })
-                })
-                .collect();
-            for reason in reasons {
-                *counts.entry(reason).or_insert(0) += 1;
-            }
-        }
-        counts
-    }
 }
 
 impl Reason {
@@ -253,7 +229,7 @@ impl Answered {
 
 /// The plain checks' `reason` for dropping candidates, after `subject`:
 /// "it" for one, "each" for several.
-fn dropped(reason: DropReason, subject: &str) -> String {
+fn words_dropped(reason: DropReason, subject: &str) -> String {
     match reason {
         DropReason::Options => format!("{subject} had options other than exactly A, B and C"),
         DropReason::AnswerKey => {
