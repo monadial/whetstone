@@ -1,5 +1,6 @@
 ---
 source: crates/whetstone/tests/it/settings.rs
+assertion_line: 85
 expression: session.frame()
 ---
 Buffer {
@@ -17,12 +18,12 @@ Buffer {
         "    Colours               auto (16 detected) (default)                          ",
         "    Connected code limit  100 KB (default)                                      ",
         "    Questions             4 (default)                                           ",
+        "    Assessment policy     version 0, not validated                              ",
         "                                                                                ",
         "    Back                                                                        ",
         "                                                                                ",
         "  Where Practice sends its requests. OpenRouter is the only provider so far.    ",
         "  In config.toml: provider = "openrouter"                                       ",
-        "                                                                                ",
         "                                                                                ",
         "                                                                                ",
         "                                                                                ",

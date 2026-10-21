@@ -13,6 +13,7 @@ use whetstone_core::{Change, CommitId, Comparison, FileIndex, ShowcaseProject};
 
 use crate::config::Settings;
 use crate::connected_code::{AnalysisDirs, GraphCache};
+use crate::failures::RefusedModels;
 use crate::home::Home;
 use crate::job::{JobId, JobOutput, Jobs};
 use crate::keymap::{Command, Input, Keymap};
@@ -121,6 +122,9 @@ pub(crate) struct Context<'a> {
     pub(crate) time_limit: Duration,
     /// Jev and the generator, if Practice can ask them.
     pub(crate) ai: Option<&'a Arc<dyn Ai>>,
+    /// The models `OpenRouter` refused during this run for having no
+    /// zero-retention endpoint.
+    pub(crate) refused_models: &'a Arc<RefusedModels>,
 }
 
 /// What Practice runs on.

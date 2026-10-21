@@ -40,12 +40,13 @@ use whetstone_ai::{Ai, CandidateCount, Pending, Reply, RequestFailure};
 use whetstone_core::{
     Area, AreaId, AssessmentPolicy, Band, Candidate, CandidateCheck, CandidateId, Change, CommitId,
     ConnectedCodeLimit, Connections, ConnectionsState, Evidence, ExcludePatterns, Job, Probability,
-    QuestionCheckAnswers, QuestionCount, RepositoryConfig, ReviewChoices, Withheld,
+    QuestionCheckAnswers, QuestionCount, RepositoryConfig, ReviewChoices, Role, Withheld,
     WrittenCandidate, pick, plain_checks, show_rule,
 };
 
 use crate::columns;
 use crate::connected_code::{AnalysisDirs, GraphCache, ShowcaseTree};
+use crate::failures::Failures;
 use crate::focus::Position;
 use crate::job::{JobId, JobOutput, Jobs, Waiting};
 use crate::keymap::{self, Binding, Command, Keymap};
@@ -104,6 +105,8 @@ pub(crate) struct Practice {
     /// How many questions the learner asked for.
     count: QuestionCount,
     ai: Arc<dyn Ai>,
+    /// How a failed request is named to the learner.
+    failures: Failures,
     connected_code_limit: ConnectedCodeLimit,
     /// How long it waits for connected code.
     time_limit: Duration,
@@ -350,6 +353,7 @@ impl Practice {
             areas,
             count: settings.questions.value,
             ai,
+            failures: Failures::new(settings, context.refused_models),
             // The showcase project's config sets nothing, which its tests
             // check, so only the learner's limit applies.
             connected_code_limit: settings.connected_code_limit(&RepositoryConfig::default()),
@@ -462,6 +466,7 @@ impl Practice {
             }
             Err(failure) => {
                 tracing::info!(%failure, "checking the areas failed");
+                self.failures.note(Role::Jev, failure);
                 *gate = Request::Failed(failure);
             }
         }
@@ -518,6 +523,7 @@ impl Practice {
             }
             Err(failure) => {
                 tracing::info!(area = %area, %failure, "writing candidates failed");
+                self.failures.note(Role::Generator, failure);
                 Request::Failed(failure)
             }
         };
@@ -561,6 +567,7 @@ impl Practice {
             Ok(reply) => Request::Replied(reply.content),
             Err(failure) => {
                 tracing::info!(area = %candidate.area(), %failure, "checking a candidate failed");
+                self.failures.note(Role::Jev, failure);
                 Request::Failed(failure)
             }
         };
@@ -777,18 +784,19 @@ impl Practice {
                  show. Retry writes and checks new ones."
                     .to_owned(),
             ],
-            (stage, Some(failure)) => vec![
-                format!(
-                    "{} failed: {failure}.",
-                    match stage {
-                        Stage::CheckingAreas(_) => "Checking areas",
-                        Stage::Checking(_) => "Checking questions",
-                        _ => "Writing questions",
-                    }
-                ),
-                "Retry asks again only what failed. Nothing is retried until you choose to."
-                    .to_owned(),
-            ],
+            (stage, Some(failure)) => {
+                let (name, asked) = match stage {
+                    Stage::CheckingAreas(_) => ("Checking areas", Role::Jev),
+                    Stage::Checking(_) => ("Checking questions", Role::Jev),
+                    _ => ("Writing questions", Role::Generator),
+                };
+                vec![
+                    format!("{name} failed: {failure}."),
+                    self.failures.what_to_do(asked, failure),
+                    "Retry asks again only what failed. Nothing is retried until you choose to."
+                        .to_owned(),
+                ]
+            }
             _ => Vec::new(),
         }
     }

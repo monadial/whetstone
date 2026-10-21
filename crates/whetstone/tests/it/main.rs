@@ -20,6 +20,8 @@ mod graph_cache;
 mod jobs;
 mod links_and_mentions;
 mod live_practice;
+mod model_settings;
+mod named_failures;
 mod navigation;
 mod openrouter_key;
 mod outbound_review;

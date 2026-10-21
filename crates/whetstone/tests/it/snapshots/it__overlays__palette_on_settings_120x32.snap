@@ -1,5 +1,6 @@
 ---
 source: crates/whetstone/tests/it/overlays.rs
+assertion_line: 177
 expression: session.frame()
 ---
 Buffer {
@@ -16,12 +17,12 @@ Buffer {
         "    Colours               auto (16 detected) (default)                                                                  ",
         "    Connected code limit  100 KB (default)                                                                              ",
         "    Questions             4 (default)                                                                                   ",
-        "                                                                                                                        ",
-        "    Back                              ┌ Actions on Settings ──────────────────────┐                                     ",
-        "                                      │   Back      Return to the screen before   │                                     ",
-        "  Where Practice sends its requests. O│ > Home      Go to the home screen         │                                     ",
-        "  In config.toml: provider = "openrout│   Practice  Choose areas and a change     │                                     ",
-        "                                      │   Settings  See what Practice will use    │                                     ",
+        "    Assessment policy     version 0, not validated                                                                      ",
+        "                                      ┌ Actions on Settings ──────────────────────┐                                     ",
+        "    Back                              │   Back      Return to the screen before   │                                     ",
+        "                                      │ > Home      Go to the home screen         │                                     ",
+        "  Where Practice sends its requests. O│   Practice  Choose areas and a change     │                                     ",
+        "  In config.toml: provider = "openrout│   Settings  See what Practice will use    │                                     ",
         "                                      │   Help      Show the keys for this screen │                                     ",
         "                                      │   Quit      Leave Whetstone               │                                     ",
         "                                      └ Enter run  Esc close ─────────────────────┘                                     ",

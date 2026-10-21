@@ -651,9 +651,9 @@ fn retry_after_a_failed_write_asks_again_only_for_the_area_that_failed() {
     let mut session = generate(&ai, &[DOMAIN, INFRASTRUCTURE], SERVE_OVER_HTTP, 120, 32);
     session.settle();
     assert!(
-        session
-            .text()
-            .contains("Writing questions failed: the provider is unavailable."),
+        session.text().contains(
+            "Writing questions failed: OpenRouter or the model's provider is unavailable."
+        ),
         "{}",
         session.text()
     );

@@ -1,5 +1,6 @@
 ---
 source: crates/whetstone/tests/it/overlays.rs
+assertion_line: 88
 expression: session.frame()
 ---
 Buffer {
@@ -17,12 +18,12 @@ Buffer {
         "    Colours     │ q, Esc          Back                         │                ",
         "    Connected co│                                              │                ",
         "    Questions   │ Everywhere                                   │                ",
-        "                │ Tab, Shift+Tab  Next or previous control     │                ",
-        "    Back        │ ?               Show these keys              │                ",
-        "                │ :               List the actions             │                ",
-        "  Where Practice│ Ctrl+C          Quit from anywhere           │ider so far.    ",
-        "  In config.toml│ Ctrl+Z          Suspend until fg             │                ",
-        "                └ j/k scroll  Esc close ───────────────────────┘                ",
+        "    Assessment p│ Tab, Shift+Tab  Next or previous control     │                ",
+        "                │ ?               Show these keys              │                ",
+        "    Back        │ :               List the actions             │                ",
+        "                │ Ctrl+C          Quit from anywhere           │                ",
+        "  Where Practice│ Ctrl+Z          Suspend until fg             │ider so far.    ",
+        "  In config.toml└ j/k scroll  Esc close ───────────────────────┘                ",
         "                                                                                ",
         "                                                                                ",
         "                                                                                ",

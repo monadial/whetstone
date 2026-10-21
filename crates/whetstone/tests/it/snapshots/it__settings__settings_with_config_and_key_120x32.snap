@@ -1,5 +1,6 @@
 ---
 source: crates/whetstone/tests/it/settings.rs
+assertion_line: 228
 expression: session.frame()
 ---
 Buffer {
@@ -16,13 +17,13 @@ Buffer {
         "    Colours               24-bit                                                                                        ",
         "    Connected code limit  250 KB                                                                                        ",
         "    Questions             4 (default)                                                                                   ",
+        "    Assessment policy     version 0, not validated                                                                      ",
+        "                          Assessment policy checked against typesafe/jev-1.14; you're using typesafe/jev-1.13           ",
         "                                                                                                                        ",
         "    Back                                                                                                                ",
         "                                                                                                                        ",
         "  Where Practice sends its requests. OpenRouter is the only provider so far.                                            ",
         "  In config.toml: provider = "openrouter"                                                                               ",
-        "                                                                                                                        ",
-        "                                                                                                                        ",
         "                                                                                                                        ",
         "                                                                                                                        ",
         "                                                                                                                        ",

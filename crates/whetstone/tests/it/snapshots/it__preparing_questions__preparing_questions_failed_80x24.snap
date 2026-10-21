@@ -1,5 +1,6 @@
 ---
 source: crates/whetstone/tests/it/preparing_questions.rs
+assertion_line: 371
 expression: "writing_rate_limited(80, 24).frame()"
 ---
 Buffer {
@@ -14,12 +15,12 @@ Buffer {
         "  Model the payment lifecycle · Domain                                          ",
         "                                                                                ",
         "  Writing questions failed: rate limited.                                       ",
+        "  OpenRouter had too many requests from your key too quickly. Wait a moment,    ",
+        "  then Retry.                                                                   ",
         "  Retry asks again only what failed. Nothing is retried until you choose to.    ",
         "                                                                                ",
         "  > Retry                                                                       ",
         "    Back                                                                        ",
-        "                                                                                ",
-        "                                                                                ",
         "                                                                                ",
         "                                                                                ",
         "                                                                                ",
@@ -36,7 +37,7 @@ Buffer {
         x: 28, y: 3, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 2, y: 5, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
         x: 21, y: 5, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
-        x: 2, y: 11, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
-        x: 9, y: 11, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 13, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 9, y: 13, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
     ]
 }

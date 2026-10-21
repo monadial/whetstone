@@ -66,7 +66,8 @@ pub struct Reply<T> {
 }
 
 /// Why a request to Jev or the generator failed. Each is named to the
-/// learner, with Retry, and none is ever shown as a judgement.
+/// learner, with Retry, and none is ever shown as a judgement: its
+/// `Display` is its name, as in "Writing questions failed: timed out.".
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum RequestFailure {
     /// No API key was found.
@@ -81,23 +82,24 @@ pub enum RequestFailure {
     /// Too many requests too quickly.
     #[error("rate limited")]
     RateLimited,
-    /// The provider or the model is unavailable.
-    #[error("the provider is unavailable")]
+    /// `OpenRouter` couldn't be reached, or the model's provider failed.
+    #[error("OpenRouter or the model's provider is unavailable")]
     ProviderUnavailable,
-    /// The model has no endpoint that keeps no prompts.
-    #[error("the model has no zero-retention endpoint")]
+    /// The model has no endpoint that keeps no prompts, so `OpenRouter`
+    /// refused the route. Only a generator request asks for one until #69.
+    #[error("no zero-retention endpoint for the model (refused by OpenRouter)")]
     NoZeroRetentionEndpoint,
     /// No reply came in time.
     #[error("timed out")]
     TimedOut,
     /// A reply came that could not be read: an answer missing, unexpected
     /// or out of range. It is never coerced (rule 37).
-    #[error("the reply could not be read")]
+    #[error("the reply couldn't be read")]
     InvalidReply,
     /// The request was refused as invalid before any reply: `OpenRouter`
     /// doesn't know the model, say, or its moderation blocked the input. It
     /// is also what a request that could not be built at all is.
-    #[error("the request was invalid")]
+    #[error("OpenRouter refused the request as invalid")]
     InvalidRequest,
     /// The request was cancelled before its reply came.
     #[error("cancelled")]

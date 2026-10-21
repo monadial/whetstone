@@ -1,5 +1,6 @@
 ---
 source: crates/whetstone/tests/it/overlays.rs
+assertion_line: 80
 expression: session.frame()
 ---
 Buffer {
@@ -16,12 +17,12 @@ Buffer {
         "    Colours               auto (16 detected) (default)                                                                  ",
         "    Connected code limit  100 KB (default)                                                                              ",
         "    Questions             4 (default┌ Keys on Settings ────────────────────────────┐                                    ",
-        "                                    │ j, Down, k, Up  Move down or up              │                                    ",
-        "    Back                            │ Enter, Space    Activate the focused control │                                    ",
-        "                                    │ q, Esc          Back                         │                                    ",
-        "  Where Practice sends its requests.│                                              │                                    ",
-        "  In config.toml: provider = "openro│ Everywhere                                   │                                    ",
-        "                                    │ Tab, Shift+Tab  Next or previous control     │                                    ",
+        "    Assessment policy     version 0,│ j, Down, k, Up  Move down or up              │                                    ",
+        "                                    │ Enter, Space    Activate the focused control │                                    ",
+        "    Back                            │ q, Esc          Back                         │                                    ",
+        "                                    │                                              │                                    ",
+        "  Where Practice sends its requests.│ Everywhere                                   │                                    ",
+        "  In config.toml: provider = "openro│ Tab, Shift+Tab  Next or previous control     │                                    ",
         "                                    │ ?               Show these keys              │                                    ",
         "                                    │ :               List the actions             │                                    ",
         "                                    │ Ctrl+C          Quit from anywhere           │                                    ",

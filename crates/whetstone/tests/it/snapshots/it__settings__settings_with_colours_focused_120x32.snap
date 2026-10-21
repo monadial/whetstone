@@ -1,5 +1,6 @@
 ---
 source: crates/whetstone/tests/it/settings.rs
+assertion_line: 398
 expression: session.frame()
 ---
 Buffer {
@@ -16,6 +17,7 @@ Buffer {
         "  > Colours               none                                                                                          ",
         "    Connected code limit  100 KB (default)                                                                              ",
         "    Questions             4 (default)                                                                                   ",
+        "    Assessment policy     version 0, not validated                                                                      ",
         "                                                                                                                        ",
         "    Back                                                                                                                ",
         "                                                                                                                        ",
@@ -23,7 +25,6 @@ Buffer {
         "  when your terminal shows more than it reports, as over SSH, or less when colours look wrong. A non-empty NO_COLOR     ",
         "  turns colour off, whatever this says.                                                                                 ",
         "  In config.toml: colours = "none"                                                                                      ",
-        "                                                                                                                        ",
         "                                                                                                                        ",
         "                                                                                                                        ",
         "                                                                                                                        ",
