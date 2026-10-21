@@ -17,14 +17,14 @@ use whetstone_core::{Area, CommitId, InvalidAreaFile, ReviewChoices, ShowcasePro
 use crate::columns;
 use crate::connected_code::{Request, ShowcaseTree};
 use crate::entry::TextEntry;
-use crate::focus::Position;
 use crate::keymap::{self, Binding, Command, Input, Keymap, Press};
 use crate::outbound_review::OutboundReview;
 use crate::palette::Action;
 use crate::practice::Practice;
+use crate::reasoning_editor::grouped;
 use crate::repository::{Availability, Commit, History, HistoryEnd, HistoryError, Repository};
 use crate::search::{self, Query};
-use crate::theme::{ControlKind, ControlState, Theme};
+use crate::theme::{ColorSupport, ControlKind, ControlState, Theme};
 use crate::view::{
     ChangeIndex, ChangeRef, Context, NEEDS_KEY, Project, Route, View, comparison_label,
 };
@@ -44,9 +44,36 @@ const OPEN: Binding = Binding {
     hint: Some("Enter open"),
 };
 
+/// Page Down and Page Up on the picker: they page through the changes.
+const PAGE: Binding = Binding {
+    keys: &[
+        (Press::key(KeyCode::PageDown), Command::PageDown),
+        (Press::key(KeyCode::PageUp), Command::PageUp),
+    ],
+    does: "Move a page down or up the changes",
+    hint: Some("PgDn page"),
+};
+
+/// Ctrl+D and Ctrl+U on the picker: they move half a page.
+const HALF_PAGE: Binding = Binding {
+    does: "Move half a page down or up the changes",
+    ..keymap::HALF_PAGE
+};
+
 /// The showcase picker's own keys. Space makes a choice, and Enter also
-/// opens the chosen change.
-const KEYMAP: Keymap = &[keymap::MOVE, SPACE, OPEN, keymap::BACK];
+/// opens the chosen change. The paging keys move through the changes.
+const KEYMAP: Keymap = &[
+    keymap::MOVE,
+    SPACE,
+    OPEN,
+    PAGE,
+    HALF_PAGE,
+    Binding {
+        does: "Go to the first or last change",
+        ..keymap::ENDS
+    },
+    keymap::BACK,
+];
 
 /// The repository picker's own keys: the showcase picker's, and `/` to
 /// search the commits, with `n` and `N` for the matches.
@@ -54,6 +81,12 @@ const REPOSITORY_KEYMAP: Keymap = &[
     keymap::MOVE,
     SPACE,
     OPEN,
+    PAGE,
+    HALF_PAGE,
+    Binding {
+        does: "Go to the newest commit, or the oldest read so far",
+        ..keymap::ENDS
+    },
     Binding {
         does: "Search the commits by message or ID",
         ..keymap::SEARCH
@@ -61,6 +94,12 @@ const REPOSITORY_KEYMAP: Keymap = &[
     keymap::MATCHES,
     keymap::BACK,
 ];
+
+/// How many more commits `G` reads, at most, before it goes to the oldest
+/// commit read: enough to reach the end of most histories at once, and few
+/// enough to read in a moment, so the picker stays responsive on a history
+/// of any length. Each `G` goes this much further.
+const READ_FOR_OLDEST: usize = 1_000;
 
 /// The picker's own action in the palette.
 const ACTIONS: &[Action] = &[Action {
@@ -97,6 +136,10 @@ enum Control {
     Area(usize),
     /// The change at this index.
     Change(usize),
+    /// Previous page, under the changes: the page before shows.
+    PreviousPage,
+    /// Next page, under the changes: the page after shows.
+    NextPage,
     /// What comes after choosing: "Generate questions" on the showcase
     /// project, which starts Practice once Practice can ask Jev and the
     /// generator, and "Review what will be sent" on the learner's
@@ -132,11 +175,19 @@ enum Source {
 #[derive(Debug)]
 pub(crate) struct Picker {
     source: Source,
+    /// The areas offered, each valid or an invalid area file, kept so that
+    /// a key press knows how many rows they take, and so how many changes a
+    /// page holds, as the frame draws them.
+    offered: Vec<Result<Area, InvalidAreaFile>>,
     /// Whether each area can be chosen and is, in the order offered.
     areas: Vec<AreaChoice>,
     /// The index of the chosen change, once the learner chooses one.
     chosen: Option<usize>,
-    focus: Position,
+    focus: Control,
+    /// The index of the change the change list was last scrolled to show at
+    /// its top. A frame moves it only as far as it must to show the focused
+    /// change, so a resize changes nothing here.
+    top: usize,
     /// The search box, while the learner types a search of the commits.
     search_box: Option<TextEntry>,
     /// What the last search of the commits looked for.
@@ -157,9 +208,11 @@ impl Picker {
                 changes: showcase.changes().len(),
                 ai_available,
             },
+            offered: showcase.areas().iter().cloned().map(Ok).collect(),
             areas: vec![AreaChoice::Valid { selected: true }; showcase.areas().len()],
             chosen: None,
-            focus: Position::default(),
+            focus: first_control(showcase.areas().len(), showcase.changes().len()),
+            top: 0,
             search_box: None,
             query: None,
             review_choices: None,
@@ -169,7 +222,12 @@ impl Picker {
     /// The picker over the learner's `repository`, as it first opens: every
     /// valid area selected, and its first commits read.
     pub(crate) fn for_repository(repository: &Repository) -> Self {
+        let history = repository.history().map(Box::new);
+        let commits = history
+            .as_ref()
+            .map_or(0, |history| history.commits().len());
         Self {
+            offered: repository.areas().to_vec(),
             areas: repository
                 .areas()
                 .iter()
@@ -178,11 +236,10 @@ impl Picker {
                     Err(_) => AreaChoice::Invalid,
                 })
                 .collect(),
-            source: Source::Repository {
-                history: repository.history().map(Box::new),
-            },
+            focus: first_control(repository.areas().len(), commits),
+            source: Source::Repository { history },
             chosen: None,
-            focus: Position::default(),
+            top: 0,
             search_box: None,
             query: None,
             review_choices: None,
@@ -208,26 +265,6 @@ impl Picker {
         }
     }
 
-    /// How many controls the picker has.
-    fn controls(&self) -> usize {
-        self.areas.len() + self.changes() + 1
-    }
-
-    /// The control at `index` in focus order.
-    fn control(&self, index: usize) -> Control {
-        if index < self.areas.len() {
-            Control::Area(index)
-        } else if index < self.areas.len() + self.changes() {
-            Control::Change(index - self.areas.len())
-        } else {
-            Control::Proceed
-        }
-    }
-
-    fn focused(&self) -> Control {
-        self.control(self.focus.index())
-    }
-
     /// Whether any area is selected: Practice needs one or more.
     fn has_area(&self) -> bool {
         self.areas.contains(&AreaChoice::Valid { selected: true })
@@ -241,31 +278,19 @@ impl Picker {
             .any(|area| matches!(area, AreaChoice::Valid { .. }))
     }
 
-    /// The areas the picker offers, each valid or an invalid area file.
-    fn offered<'a>(&self, context: &Context<'a>) -> Vec<Result<&'a Area, &'a InvalidAreaFile>> {
-        match self.source {
-            Source::Showcase { .. } => context.showcase.areas().iter().map(Ok).collect(),
-            Source::Repository { .. } => context
-                .repository
-                .map(|repository| repository.areas().iter().map(Result::as_ref).collect())
-                .unwrap_or_default(),
-        }
-    }
-
     /// The areas as list items `width` cells wide. Each is a choice showing
     /// its name, with its one-line description in a column after the
     /// widest name, cut to fit. An invalid area file shows its file name,
     /// disabled, and the reason it is invalid, wrapped in that column so it
     /// can be read whole.
-    fn area_items<'a>(&self, context: &Context<'a>, width: u16) -> Vec<Text<'a>> {
-        let theme = context.theme;
-        let offered = self.offered(context);
-        let rows: Vec<Line<'a>> = offered
+    fn area_items(&self, theme: &Theme, width: u16) -> Vec<Text<'_>> {
+        let offered = &self.offered;
+        let rows: Vec<Line<'_>> = offered
             .iter()
             .zip(&self.areas)
             .enumerate()
             .map(|(index, (area, &choice))| {
-                let focused = self.focused() == Control::Area(index);
+                let focused = self.focus == Control::Area(index);
                 match area {
                     Ok(area) => theme.control(
                         area.name(),
@@ -348,7 +373,7 @@ impl Picker {
         window: Range<usize>,
     ) -> Vec<Text<'a>> {
         let state = |index| ControlState {
-            focused: self.focused() == Control::Change(index),
+            focused: self.focus == Control::Change(index),
             kind: ControlKind::Choice {
                 selected: self.chosen == Some(index),
             },
@@ -461,31 +486,156 @@ impl Picker {
 
     /// The index of the focused change, if a change has focus.
     fn focused_change(&self) -> Option<usize> {
-        match self.focused() {
+        match self.focus {
             Control::Change(index) => Some(index),
-            Control::Area(_) | Control::Proceed => None,
+            Control::Area(_) | Control::PreviousPage | Control::NextPage | Control::Proceed => None,
         }
     }
 
     /// Moves focus to the change at `index`.
     fn focus_change(&mut self, index: usize) {
-        self.focus = Position::at(self.areas.len() + index);
-        self.read_ahead();
+        self.focus = Control::Change(index);
     }
 
-    /// Reads more commits if the focused one is the last read, so the next
-    /// is there to move to.
-    fn read_ahead(&mut self) {
-        let Control::Change(index) = self.focused() else {
-            return;
-        };
+    /// Whether more commits may follow those read so far.
+    fn has_more(&self) -> bool {
+        matches!(
+            &self.source,
+            Source::Repository { history: Ok(history) } if matches!(history.end(), HistoryEnd::More)
+        )
+    }
+
+    /// Reads further, if more commits may follow, until `count` are read.
+    fn read_until(&mut self, count: usize) {
         if let Source::Repository {
             history: Ok(history),
         } = &mut self.source
-            && index + 1 == history.commits().len()
         {
-            history.read_page();
+            history.read_until(count);
         }
+    }
+
+    /// The index of the change at the top of the change list when it shows
+    /// `rows` rows: where it was scrolled to, moved just far enough to show
+    /// the focused change, and never past the last whole page.
+    fn top(&self, rows: usize) -> usize {
+        let top = self.top.min(self.change_rows().saturating_sub(rows));
+        match self.focus {
+            Control::Change(index) => top.clamp((index + 1).saturating_sub(rows), index),
+            Control::Area(_) | Control::PreviousPage | Control::NextPage | Control::Proceed => top,
+        }
+    }
+
+    /// Whether the change list, at `top` and `rows` rows, shows its last
+    /// row, with no more commits to read after it.
+    fn on_last_page(&self, top: usize, rows: usize) -> bool {
+        top + rows >= self.change_rows() && !self.has_more()
+    }
+
+    /// Where `command` moves focus while the change list shows `rows` rows.
+    /// `j` and `k` move through the areas, the changes and the control
+    /// after them, stopping at either end, and from the paging controls
+    /// to the rows above and below. Tab and Shift+Tab move through the
+    /// areas, the change list as one stop, Previous page, Next page and the
+    /// control after them, wrapping around. Coming from above, `j` and Tab
+    /// land on the first change in view, and Shift+Tab from below on the
+    /// last.
+    fn moved(&self, command: Command, rows: usize) -> Control {
+        let areas = self.areas.len();
+        let changes = self.changes();
+        let top = self.top(rows);
+        let last_area = areas.checked_sub(1).map(Control::Area);
+        let first_in_view = (changes > 0).then_some(Control::Change(top));
+        let last_in_view = (top + rows)
+            .min(changes)
+            .checked_sub(1)
+            .map(Control::Change);
+        let focus = self.focus;
+        match command {
+            Command::Down => match focus {
+                Control::Area(index) if index + 1 < areas => Control::Area(index + 1),
+                Control::Area(_) => first_in_view.unwrap_or(Control::Proceed),
+                Control::Change(index) if index + 1 < changes => Control::Change(index + 1),
+                Control::Change(_)
+                | Control::PreviousPage
+                | Control::NextPage
+                | Control::Proceed => Control::Proceed,
+            },
+            Command::Up => match focus {
+                Control::Area(index) => Control::Area(index.saturating_sub(1)),
+                Control::Change(index) => index
+                    .checked_sub(1)
+                    .map(Control::Change)
+                    .or(last_area)
+                    .unwrap_or(focus),
+                Control::PreviousPage | Control::NextPage => {
+                    last_in_view.or(last_area).unwrap_or(focus)
+                }
+                Control::Proceed => changes
+                    .checked_sub(1)
+                    .map(Control::Change)
+                    .or(last_area)
+                    .unwrap_or(focus),
+            },
+            Command::NextControl => match focus {
+                Control::Area(index) if index + 1 < areas => Control::Area(index + 1),
+                Control::Area(_) => first_in_view.unwrap_or(Control::PreviousPage),
+                Control::Change(_) => Control::PreviousPage,
+                Control::PreviousPage => Control::NextPage,
+                Control::NextPage => Control::Proceed,
+                Control::Proceed => first_control(areas, changes),
+            },
+            Command::PreviousControl => match focus {
+                Control::Area(index) => {
+                    index.checked_sub(1).map_or(Control::Proceed, Control::Area)
+                }
+                Control::Change(_) => last_area.unwrap_or(Control::Proceed),
+                Control::PreviousPage => last_in_view.or(last_area).unwrap_or(Control::Proceed),
+                Control::NextPage => Control::PreviousPage,
+                Control::Proceed => Control::NextPage,
+            },
+            _ => focus,
+        }
+    }
+
+    /// Scrolls the change list down `step` changes while it shows `rows`
+    /// rows, and the focused change, if one has focus, with it. It reads
+    /// further first, until the rows it scrolls to are all read, so a page
+    /// never stops short because commits weren't read yet. It stops at the
+    /// last whole page and the last change.
+    fn scroll_down(&mut self, step: usize, rows: usize) {
+        let top = self.top(rows) + step;
+        self.read_until(top + rows);
+        self.top = top.min(self.change_rows().saturating_sub(rows));
+        if let Control::Change(index) = self.focus {
+            self.focus = Control::Change((index + step).min(self.changes().saturating_sub(1)));
+        }
+    }
+
+    /// Scrolls the change list up `step` changes while it shows `rows` rows,
+    /// and the focused change, if one has focus, with it, stopping at the
+    /// first.
+    fn scroll_up(&mut self, step: usize, rows: usize) {
+        self.top = self.top(rows).saturating_sub(step);
+        if let Control::Change(index) = self.focus {
+            self.focus = Control::Change(index.saturating_sub(step));
+        }
+    }
+
+    /// Moves focus to the oldest change, or for a repository to the oldest
+    /// commit read after reading at most [`READ_FOR_OLDEST`] more.
+    fn go_to_oldest(&mut self) {
+        self.read_until(self.changes() + READ_FOR_OLDEST);
+        if let Some(last) = self.changes().checked_sub(1) {
+            self.focus = Control::Change(last);
+        }
+    }
+
+    /// Reads ahead while more commits may follow, until the page after the
+    /// one in view is read too, so that Next page knows whether there is
+    /// one and the focused commit always has a next to move to.
+    fn read_ahead(&mut self, rows: usize) {
+        self.read_until(self.top + 2 * rows);
     }
 
     /// What comes after choosing, once a change and an area are chosen:
@@ -549,6 +699,152 @@ impl Picker {
             .zip(&self.areas)
             .filter(|(_, choice)| **choice == AreaChoice::Valid { selected: true })
             .map(|(area, _)| area)
+    }
+
+    /// Where the picker's parts go in `area`, with the areas taking
+    /// `area_rows` rows.
+    fn parts(&self, area: Rect, area_rows: usize) -> Parts {
+        let status_rows = match self.source {
+            Source::Showcase { .. } => 0,
+            Source::Repository { .. } => 1,
+        };
+        layout(area, area_rows, self.change_rows(), status_rows)
+    }
+
+    /// How many changes a page holds with the picker drawn in `area`, as
+    /// [`View::render`] lays it out.
+    fn page(&self, area: Rect) -> usize {
+        // Styles never change how many rows the areas take.
+        let area_items = self.area_items(&Theme::new(ColorSupport::NoColor), area.width);
+        page_of(self.parts(area, height(&area_items)).change_list)
+    }
+
+    /// Where the change list is, at `top` and `rows` rows: "Commits 41–60
+    /// of 1,000", with a "+" after the total while more commits may follow.
+    fn position(&self, top: usize, rows: usize) -> Option<String> {
+        let changes = self.changes();
+        let first = top.min(changes.checked_sub(1)?) + 1;
+        let last = (top + rows).min(changes);
+        let (one, many) = match self.source {
+            Source::Showcase { .. } => ("Change", "Changes"),
+            Source::Repository { .. } => ("Commit", "Commits"),
+        };
+        let shown = if first == last {
+            format!("{one} {}", grouped(first))
+        } else {
+            format!("{many} {}–{}", grouped(first), grouped(last))
+        };
+        let more = if self.has_more() { "+" } else { "" };
+        Some(format!("{shown} of {}{more}", grouped(changes)))
+    }
+
+    /// The row under the change list, `width` cells wide, while the list
+    /// shows `rows` rows: Previous page, where the list is, and Next page.
+    /// Previous page is disabled on the first page, and Next page on the
+    /// last. Where the list is is cut to fit between them.
+    fn paging_row(&self, theme: &Theme, rows: usize, width: u16) -> Line<'static> {
+        let top = self.top(rows);
+        let control = |label, control, disabled| {
+            theme.control(
+                label,
+                ControlState {
+                    focused: self.focus == control,
+                    disabled,
+                    ..ControlState::default()
+                },
+            )
+        };
+        let mut row = control(
+            "Previous page",
+            Control::PreviousPage,
+            (top == 0).then_some(FIRST_PAGE),
+        );
+        let next = control(
+            "Next page",
+            Control::NextPage,
+            self.on_last_page(top, rows).then_some(LAST_PAGE),
+        );
+        // As far from Previous page as Next page's label is from it.
+        let before = format!("{}{UNAVAILABLE_INDENT}", " ".repeat(columns::GAP));
+        let room = usize::from(width)
+            .saturating_sub(row.width() + before.len() + columns::GAP + next.width());
+        let position = self.position(top, rows).unwrap_or_default();
+        row.push_span(before);
+        row.push_span(Span::styled(
+            columns::truncate(&position, room),
+            theme.muted,
+        ));
+        row.push_span(" ".repeat(columns::GAP));
+        row.extend(next.spans);
+        row
+    }
+
+    /// Applies `command` while the change list shows `rows` rows, and
+    /// returns what it asks of the app, if anything.
+    fn run(&mut self, command: Command, rows: usize) -> Option<Command> {
+        if self.search_box.is_some() {
+            if let Some(query) = search::edit(&mut self.search_box, command) {
+                self.search(query);
+            }
+            return None;
+        }
+        match command {
+            Command::Search => {
+                self.search_box = Some(TextEntry::default());
+                return None;
+            }
+            Command::NextMatch | Command::PreviousMatch => {
+                self.go_to_match(command);
+                return None;
+            }
+            Command::PageDown => self.scroll_down(rows, rows),
+            Command::PageUp => self.scroll_up(rows, rows),
+            Command::HalfPageDown => self.scroll_down((rows / 2).max(1), rows),
+            Command::HalfPageUp => self.scroll_up((rows / 2).max(1), rows),
+            Command::Top if self.changes() > 0 => self.focus = Control::Change(0),
+            Command::Bottom => self.go_to_oldest(),
+            _ => self.focus = self.moved(command, rows),
+        }
+        if !matches!(command, Command::Activate | Command::Open) {
+            return None;
+        }
+        match self.focus {
+            Control::Area(index) => {
+                if let Some(AreaChoice::Valid { selected }) = self.areas.get_mut(index) {
+                    *selected = !*selected;
+                }
+                None
+            }
+            Control::Change(index) => {
+                let change = match self.source {
+                    Source::Showcase { .. } => ChangeRef::Showcase(ChangeIndex::new(index)),
+                    Source::Repository { .. } => match self.commits().get(index) {
+                        Some(commit) if commit.availability() != Availability::ParentMissing => {
+                            ChangeRef::Commit(commit.id())
+                        }
+                        _ => return None,
+                    },
+                };
+                // Review choices are for one change, and never carry to
+                // another.
+                if let ChangeRef::Commit(id) = change
+                    && self.kept_choices(id).is_none()
+                {
+                    self.review_choices = None;
+                }
+                self.chosen = Some(index);
+                (command == Command::Open).then_some(Command::Go(Route::Viewer(change)))
+            }
+            Control::PreviousPage => {
+                self.scroll_up(rows, rows);
+                None
+            }
+            Control::NextPage => {
+                self.scroll_down(rows, rows);
+                None
+            }
+            Control::Proceed => self.next_screen(),
+        }
     }
 }
 
@@ -668,6 +964,23 @@ const NO_VALID_AREA: &str = "no area file is valid";
 /// cannot be chosen.
 const PARENT_MISSING: &str = "parent not in this clone";
 
+/// Why Previous page is disabled on the first page.
+const FIRST_PAGE: &str = "first page";
+/// Why Next page is disabled on the last page.
+const LAST_PAGE: &str = "last page";
+
+/// Where focus starts on a picker with `areas` areas and `changes` changes:
+/// the first area, or what comes after if there is none.
+fn first_control(areas: usize, changes: usize) -> Control {
+    if areas > 0 {
+        Control::Area(0)
+    } else if changes > 0 {
+        Control::Change(0)
+    } else {
+        Control::Proceed
+    }
+}
+
 /// Where the picker's parts go, top to bottom.
 #[derive(Debug)]
 struct Parts {
@@ -676,6 +989,8 @@ struct Parts {
     area_list: Rect,
     change_heading: Rect,
     change_list: Rect,
+    /// The row under the change list, with Previous page and Next page.
+    paging: Rect,
     proceed: Rect,
     /// The row at the bottom, for the search box and what a search found.
     status: Rect,
@@ -683,18 +998,21 @@ struct Parts {
 
 /// Where the picker's parts go in `area`, for lists of `area_rows` and
 /// `change_rows` rows, and `status_rows` at the bottom. The title,
-/// headings, lists and the control after them get their rows first, and
-/// the gaps between them share what is left, so a short terminal keeps
-/// every control. When even the lists do not fit, they
-/// scroll, and the change list always keeps at least one row.
+/// headings, lists, the paging row under the changes and the control after
+/// them get their rows first, and the gaps between them share what is
+/// left, so a short terminal keeps every control. When even the lists do
+/// not fit, they scroll, and the change list always keeps at least one row.
 fn layout(area: Rect, area_rows: usize, change_rows: usize, status_rows: u16) -> Parts {
     const TITLE: u16 = 1;
     const HEADING: u16 = 1;
+    const PAGING: u16 = 1;
     const PROCEED: u16 = 1;
     let [area, status] =
         Layout::vertical([Constraint::Fill(1), Constraint::Length(status_rows)]).areas(area);
     let rows = |count: usize| u16::try_from(count).unwrap_or(u16::MAX);
-    let mut left = area.height.saturating_sub(TITLE + 2 * HEADING + PROCEED);
+    let mut left = area
+        .height
+        .saturating_sub(TITLE + 2 * HEADING + PAGING + PROCEED);
     let area_rows = rows(area_rows).min(left.saturating_sub(rows(change_rows.min(1))));
     left -= area_rows;
     let change_rows = rows(change_rows).min(left);
@@ -715,6 +1033,7 @@ fn layout(area: Rect, area_rows: usize, change_rows: usize, status_rows: u16) ->
         _,
         change_heading,
         change_list,
+        paging,
         _,
         proceed,
     ] = Layout::vertical([
@@ -725,6 +1044,7 @@ fn layout(area: Rect, area_rows: usize, change_rows: usize, status_rows: u16) ->
         Constraint::Length(before_changes),
         Constraint::Length(HEADING),
         Constraint::Length(change_rows),
+        Constraint::Length(PAGING),
         Constraint::Length(before_proceed),
         Constraint::Length(PROCEED),
     ])
@@ -735,6 +1055,7 @@ fn layout(area: Rect, area_rows: usize, change_rows: usize, status_rows: u16) ->
         area_list,
         change_heading,
         change_list,
+        paging,
         proceed,
         status,
     }
@@ -743,6 +1064,12 @@ fn layout(area: Rect, area_rows: usize, change_rows: usize, status_rows: u16) ->
 /// How many rows `items` take.
 fn height(items: &[Text<'_>]) -> usize {
     items.iter().map(Text::height).sum()
+}
+
+/// How many changes a page holds: as many as `change_list` shows, and at
+/// least one.
+fn page_of(change_list: Rect) -> usize {
+    usize::from(change_list.height).max(1)
 }
 
 /// `items` as a list in `area`, scrolled so that the item at `shown`, if
@@ -839,68 +1166,20 @@ impl View for Picker {
         )))
     }
 
-    fn apply(&mut self, command: Command, _area: Rect) -> Option<Command> {
-        if self.search_box.is_some() {
-            if let Some(query) = search::edit(&mut self.search_box, command) {
-                self.search(query);
-            }
-            return None;
-        }
-        match command {
-            Command::Search => {
-                self.search_box = Some(TextEntry::default());
-                return None;
-            }
-            Command::NextMatch | Command::PreviousMatch => {
-                self.go_to_match(command);
-                return None;
-            }
-            _ => {}
-        }
-        self.focus = self.focus.after(command, self.controls());
-        self.read_ahead();
-        if !matches!(command, Command::Activate | Command::Open) {
-            return None;
-        }
-        match self.focused() {
-            Control::Area(index) => {
-                if let Some(AreaChoice::Valid { selected }) = self.areas.get_mut(index) {
-                    *selected = !*selected;
-                }
-                None
-            }
-            Control::Change(index) => {
-                let change = match self.source {
-                    Source::Showcase { .. } => ChangeRef::Showcase(ChangeIndex::new(index)),
-                    Source::Repository { .. } => match self.commits().get(index) {
-                        Some(commit) if commit.availability() != Availability::ParentMissing => {
-                            ChangeRef::Commit(commit.id())
-                        }
-                        _ => return None,
-                    },
-                };
-                // Review choices are for one change, and never carry to
-                // another.
-                if let ChangeRef::Commit(id) = change
-                    && self.kept_choices(id).is_none()
-                {
-                    self.review_choices = None;
-                }
-                self.chosen = Some(index);
-                (command == Command::Open).then_some(Command::Go(Route::Viewer(change)))
-            }
-            Control::Proceed => self.next_screen(),
-        }
+    fn apply(&mut self, command: Command, area: Rect) -> Option<Command> {
+        let rows = self.page(area);
+        let next = self.run(command, rows);
+        // The change list stays scrolled to show where focus went, and the
+        // page after it is read.
+        self.top = self.top(rows);
+        self.read_ahead(rows);
+        next
     }
 
     fn render(&self, context: &Context<'_>, frame: &mut Frame<'_>, area: Rect) {
         let theme = context.theme;
-        let area_items = self.area_items(context, area.width);
-        let status_rows = match self.source {
-            Source::Showcase { .. } => 0,
-            Source::Repository { .. } => 1,
-        };
-        let parts = layout(area, height(&area_items), self.change_rows(), status_rows);
+        let area_items = self.area_items(theme, area.width);
+        let parts = self.parts(area, height(&area_items));
         let title = match (&self.source, context.repository) {
             (Source::Repository { .. }, Ok(repository)) => {
                 format!("Practice on {}", repository.name())
@@ -923,36 +1202,37 @@ impl View for Picker {
             Paragraph::new(Line::styled(area_heading, theme.muted)),
             parts.area_heading,
         );
-        let shown_area = match self.focused() {
+        let shown_area = match self.focus {
             Control::Area(index) => Some(index),
-            Control::Change(_) | Control::Proceed => None,
+            Control::Change(_) | Control::PreviousPage | Control::NextPage | Control::Proceed => {
+                None
+            }
         };
         render_list(frame, parts.area_list, area_items, shown_area);
         frame.render_widget(
             Paragraph::new(Line::styled(CHANGE_HEADING, theme.muted)),
             parts.change_heading,
         );
-        // The focused change, or else the chosen one, stays in view.
-        let shown_change = match self.focused() {
-            Control::Change(index) => Some(index),
-            Control::Area(_) | Control::Proceed => self.chosen,
-        };
-        // Scrolled as a list scrolls to show an item: to where it is the
-        // last row in view.
-        let rows = usize::from(parts.change_list.height);
-        let offset = shown_change.map_or(0, |shown| (shown + 1).saturating_sub(rows));
+        // The change list stays where it was scrolled to, as far as the
+        // focused change allows.
+        let rows = page_of(parts.change_list);
+        let top = self.top(rows);
         render_list(
             frame,
             parts.change_list,
-            self.change_items(context, area.width, offset..offset + rows),
-            shown_change.and_then(|shown| shown.checked_sub(offset)),
+            self.change_items(context, area.width, top..top + rows),
+            None,
+        );
+        frame.render_widget(
+            self.paging_row(theme, rows, parts.paging.width),
+            parts.paging,
         );
         let (label, disabled) = self.proceed();
         frame.render_widget(
             theme.control(
                 label,
                 ControlState {
-                    focused: self.focused() == Control::Proceed,
+                    focused: self.focus == Control::Proceed,
                     disabled,
                     ..ControlState::default()
                 },

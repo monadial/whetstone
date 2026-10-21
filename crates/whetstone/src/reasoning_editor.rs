@@ -449,7 +449,7 @@ impl fmt::Display for Notice {
 }
 
 /// `number` with its thousands set apart by commas: `4,000`.
-fn grouped(number: usize) -> String {
+pub(crate) fn grouped(number: usize) -> String {
     let digits = number.to_string();
     let mut grouped = String::new();
     for (index, digit) in digits.chars().enumerate() {

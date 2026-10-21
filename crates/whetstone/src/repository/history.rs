@@ -135,6 +135,14 @@ impl History {
         }
     }
 
+    /// Reads pages until `count` commits have been read, every commit
+    /// has, or reading failed, as [`History::end`] then says.
+    pub(crate) fn read_until(&mut self, count: usize) {
+        while self.commits.len() < count && matches!(self.end, HistoryEnd::More) {
+            self.read_page();
+        }
+    }
+
     /// The row of the commit the walk found as `info`.
     fn commit(&self, info: &gix::traverse::commit::Info) -> Result<Commit, HistoryError> {
         let found = self.git.find_commit(info.id)?;
