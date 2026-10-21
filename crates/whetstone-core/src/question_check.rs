@@ -101,13 +101,14 @@ pub struct Question {
 }
 
 /// A candidate the show rule withheld, with Jev's answers to its question
-/// check and the checks that were not as the rule needs them. It is never
-/// shown.
+/// check, the policy that banded them, with its cut-offs, and the checks
+/// that were not as the rule needs them. It is never shown.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Withheld {
-    /// Boxed, so the show rule's `Err` stays small.
+    /// Boxed, as is the policy, so the show rule's `Err` stays small.
     candidate: Box<Candidate>,
     answers: QuestionCheckAnswers,
+    policy: Box<AssessmentPolicy>,
     failed: Vec<CandidateCheck>,
 }
 
@@ -251,8 +252,8 @@ impl DepthLevel {
 /// The hint's checks never withhold a question. A hint that isn't clear yes
 /// on both is dropped, and the question has no hint.
 ///
-/// The withheld candidate keeps itself and Jev's answers, and names every
-/// check that failed, in [`Candidate::checks`] order.
+/// The withheld candidate keeps itself, Jev's answers and `policy`, and
+/// names every check that failed, in [`Candidate::checks`] order.
 pub fn show_rule(
     candidate: Candidate,
     answers: QuestionCheckAnswers,
@@ -287,6 +288,7 @@ pub fn show_rule(
         Err(Withheld {
             candidate: Box::new(candidate),
             answers,
+            policy: Box::new(policy.clone()),
             failed,
         })
     }
@@ -425,6 +427,13 @@ impl Withheld {
     #[must_use]
     pub fn answers(&self) -> &QuestionCheckAnswers {
         &self.answers
+    }
+
+    /// The policy that withheld it: its version, and the cut-offs it banded
+    /// the answers with.
+    #[must_use]
+    pub fn policy(&self) -> &AssessmentPolicy {
+        &self.policy
     }
 
     /// The checks that were not as the show rule needs them, in
@@ -822,22 +831,23 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_withheld_candidate_keeps_itself_and_jev_s_answers() {
+    fn a_withheld_candidate_keeps_itself_jev_s_answers_and_the_policy_that_banded_them() {
         let candidate = candidate("domain", 0, OptionLetter::C);
         let mut answers = passing(&candidate);
-        answers.push((CandidateCheck::NoGiveaway, probability(0.5)));
+        answers.push((CandidateCheck::NoGiveaway, probability(0.82)));
         let answers = QuestionCheckAnswers::new(answers, depth(1.3));
+        let higher_bar = AssessmentPolicy::with_cut_offs([(
+            Job::QuestionCheck,
+            CutOffs::new(0.85, 0.20).expect("valid"),
+        )]);
 
-        let withheld = show_rule(
-            candidate.clone(),
-            answers.clone(),
-            AssessmentPolicy::current(),
-        )
-        .expect_err("withheld");
+        let withheld =
+            show_rule(candidate.clone(), answers.clone(), &higher_bar).expect_err("withheld");
 
         assert_eq!(withheld.candidate(), &candidate);
         assert_eq!(withheld.candidate().answer_key(), OptionLetter::C);
         assert_eq!(withheld.answers(), &answers);
+        assert_eq!(withheld.policy(), &higher_bar);
         assert_eq!(withheld.failed(), [CandidateCheck::NoGiveaway]);
     }
 
