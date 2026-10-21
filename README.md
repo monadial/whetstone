@@ -158,6 +158,10 @@ In tmux, set `escape-time` low, so Esc acts at once. It is how long tmux waits a
 set -sg escape-time 10
 ```
 
+## Contributing
+
+Bug reports and ideas are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) says how to report them, and how to propose a change. Report a vulnerability privately, as [SECURITY.md](SECURITY.md) describes. [CHANGELOG.md](CHANGELOG.md) lists what each release changed.
+
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
