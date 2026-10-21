@@ -15,8 +15,9 @@ use whetstone_core::{
     ConnectionGroup, Evidence, ModelId, Probability, WrittenCandidate, WrittenCitation,
 };
 
+use crate::answering::submit;
 use crate::connected_code::{AWS_KEY, REVIEW_NEWEST, rust_pay, rust_payments, send};
-use crate::preparing_questions::{DOMAIN, PAYMENT_LIFECYCLE, area_id, candidate};
+use crate::preparing_questions::{DOMAIN, PAYMENT_LIFECYCLE, area_id, candidate, reasoning_met};
 use crate::repo::TestRepo;
 use crate::repository::started_in;
 use crate::session::{NO_COLOR, Session, Setup, columns};
@@ -96,7 +97,8 @@ fn press_send(session: &mut Session) {
 }
 
 /// A scripted AI whose generator writes one candidate about the domain
-/// area, citing the first line of `src/pay.rs`, which passes every check.
+/// area, citing the first line of `src/pay.rs`, which passes every check,
+/// and whose reasoning, once submitted, meets its criterion.
 fn writing_one_about_the_domain() -> Arc<ScriptedAi> {
     let ai = Arc::new(ScriptedAi::new());
     let stem = "Why does the charge double?";
@@ -112,6 +114,7 @@ fn writing_one_about_the_domain() -> Arc<ScriptedAi> {
         }]),
     );
     ai.on_check_passing(stem);
+    reasoning_met(&ai, stem);
     ai
 }
 
@@ -550,17 +553,23 @@ fn every_request_carries_exactly_the_evidence_the_outbound_review_showed() {
 
     press_send(&mut session);
     session.settle();
-
-    let asked = evidence_asked(&ai);
-    assert_eq!(asked.len(), 3, "the gate, one write and one check");
-    for evidence in &asked {
-        assert_eq!(as_shown(evidence), shown);
-    }
     assert!(
         session.text().contains("Question 1 of 1"),
         "{}",
         session.text()
     );
+    submit(&mut session, "a", "The retry sends a new key.");
+    session.settle();
+
+    let asked = evidence_asked(&ai);
+    assert_eq!(
+        asked.len(),
+        4,
+        "the gate, one write, one check and the reasoning evaluation"
+    );
+    for evidence in &asked {
+        assert_eq!(as_shown(evidence), shown);
+    }
 }
 
 #[test]
