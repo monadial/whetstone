@@ -114,7 +114,8 @@ async fn live_check_question() {
     }
     // Depth is kept as returned, so its expected value must be what Depth
     // takes it for: the levels' places, counting from 0, weighted by their
-    // probabilities, each rounded to hundredths.
+    // probabilities. Rounding each to hundredths moves the two apart by at
+    // most 0.02, while places counted from 1 would move them apart by 1.
     let depth = reply.content.depth();
     let weighted: f64 = DepthLevel::ALL
         .into_iter()
