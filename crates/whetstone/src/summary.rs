@@ -141,22 +141,17 @@ impl Summary {
     fn counts(&self) -> Counts {
         let listed = self.questions.listed();
         let count = |counted: fn(&Listed<'_>) -> bool| listed.iter().filter(|q| counted(q)).count();
+        let answered = count(|listed| matches!(listed.attempt, Ended::Answered(_)));
+        let choice_only = count(|listed| {
+            matches!(
+                listed.attempt,
+                Ended::Answered(feedback) if matches!(feedback.evaluation(), Evaluation::NotWritten)
+            )
+        });
         Counts {
             questions: listed.len(),
-            answered_with_reasoning: count(|listed| {
-                matches!(
-                    listed.attempt,
-                    Ended::Answered(feedback)
-                        if !matches!(feedback.evaluation(), Evaluation::NotWritten)
-                )
-            }),
-            choice_only: count(|listed| {
-                matches!(
-                    listed.attempt,
-                    Ended::Answered(feedback)
-                        if matches!(feedback.evaluation(), Evaluation::NotWritten)
-                )
-            }),
+            answered_with_reasoning: answered - choice_only,
+            choice_only,
             skipped: count(|listed| matches!(listed.attempt, Ended::Skipped)),
             cannot_answer: count(|listed| matches!(listed.attempt, Ended::CannotAnswer)),
             awaiting_evaluation: count(|listed| {

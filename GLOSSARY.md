@@ -85,7 +85,7 @@ _Avoid_: threshold alone; confidence.
 ## Questions
 
 **Question type**:
-The form a question takes, such as a single choice from A, B and C with written reasoning; it sets what the generator writes, what the question check asks and how a response becomes outcomes.
+The form a question takes, such as a single choice from A, B and C with optional written reasoning; it sets what the generator writes, what the question check asks and how a response becomes outcomes.
 
 **Answer key**:
 The option the generator marks as a question's correct answer.
