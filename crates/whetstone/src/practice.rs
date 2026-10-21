@@ -405,6 +405,7 @@ impl Practice {
             areas: evidence.areas().to_vec(),
             count: context.settings.questions.value,
             ai,
+            failed_requests: FailedRequests::new(context.settings.models(), context.refused_models),
             connected_code_limit: evidence.connected_code_limit(),
             time_limit: context.time_limit,
             evidence: Some(evidence),
