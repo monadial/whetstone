@@ -395,7 +395,8 @@ fn evidence_asked(ai: &ScriptedAi) -> Vec<Evidence> {
         .map(|asked| match asked {
             Asked::CheckAreas { evidence, .. }
             | Asked::WriteCandidates { evidence, .. }
-            | Asked::CheckQuestion { evidence, .. } => evidence,
+            | Asked::CheckQuestion { evidence, .. }
+            | Asked::AssessReasoning { evidence, .. } => evidence,
         })
         .collect()
 }
@@ -435,6 +436,9 @@ fn requests_sent(ai: &ScriptedAi) -> Vec<(&'static str, Value, String)> {
                     sent.state["evidence"].clone(),
                     format!("{} {:?}", sent.state, sent.questions),
                 )
+            }
+            Asked::AssessReasoning { .. } => {
+                unreachable!("the tests that read what is sent submit no response")
             }
         })
         .collect()

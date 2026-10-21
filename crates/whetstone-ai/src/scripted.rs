@@ -2,12 +2,12 @@
 //! at once, and every request is logged exactly as it was asked.
 //!
 //! Jev's relevance gate is scripted per area, or to fail. The generator's
-//! writing is scripted per area, and Jev's question check per candidate, by
-//! its stem. A check is scripted as exact answers, or as answers that pass
-//! the show rule for whichever candidate is asked, with any checks a test
-//! answers otherwise, or at a depth a test chooses. Each reply scripted for
-//! one of them answers one request, in the order scripted, so a test
-//! scripts a Retry's reply as a second one.
+//! writing is scripted per area, and Jev's question check and reasoning
+//! evaluation per question, by its stem. A check is scripted as exact
+//! answers, or as answers that pass the show rule for whichever candidate
+//! is asked, with any checks a test answers otherwise, or at a depth a test
+//! chooses. Each reply scripted for one of them answers one request, in the
+//! order scripted, so a test scripts a Retry's reply as a second one.
 //!
 //! The gate lets through, clear yes, any area nothing was scripted for, so
 //! a test about writing or checking needn't script it. Any other request
@@ -19,13 +19,14 @@ use std::future;
 use std::sync::{Mutex, MutexGuard};
 
 use whetstone_core::{
-    Area, AreaId, Candidate, CandidateCheck, Depth, Evidence, ModelId, Probability, Provenance,
-    QuestionCheckAnswers, Role, WrittenCandidate,
+    Area, AreaId, Candidate, CandidateCheck, Criterion, Depth, Evidence, ModelId, Probability,
+    Provenance, QuestionCheckAnswers, Role, WrittenCandidate,
 };
 
 use crate::gate::gate_request;
 use crate::jev::JevRequest;
-use crate::port::{Ai, CandidateCount, Pending, Reply, RequestFailure};
+use crate::port::{Ai, CandidateCount, Pending, Reply, RequestFailure, Saved};
+use crate::reasoning::QuestionWithoutKey;
 
 /// An [`Ai`] whose replies a test chooses, and which logs what it was asked.
 #[derive(Debug, Default)]
@@ -44,6 +45,9 @@ struct Script {
     writes: HashMap<AreaId, VecDeque<Result<Vec<WrittenCandidate>, RequestFailure>>>,
     /// Jev's next replies for each candidate, by its stem.
     checks: HashMap<String, VecDeque<CheckReply>>,
+    /// Jev's next replies to the reasoning written for each question, by
+    /// its stem.
+    assessments: HashMap<String, VecDeque<Result<Vec<Probability>, RequestFailure>>>,
     asked: Vec<Asked>,
 }
 
@@ -89,6 +93,24 @@ pub enum Asked {
         evidence: Evidence,
         /// The candidate to check.
         candidate: Candidate,
+    },
+    /// Jev was asked to assess a response's reasoning. It holds all the
+    /// request held, which has no place for the chosen option or the
+    /// answer key.
+    AssessReasoning {
+        /// The session store's acknowledgement it was asked with, as its
+        /// `Debug` output shows it.
+        saved: String,
+        /// The evidence it was given.
+        evidence: Evidence,
+        /// The question's stem.
+        stem: String,
+        /// Options A, B and C's text, in that order.
+        options: [String; 3],
+        /// The rubric's criteria, in order.
+        rubric: Vec<Criterion>,
+        /// The learner's reasoning.
+        reasoning: String,
     },
 }
 
@@ -172,6 +194,17 @@ impl ScriptedAi {
                 depth,
             },
         );
+    }
+
+    /// Scripts Jev's reply to the next request to assess the reasoning
+    /// written for the question whose stem is `stem`: a probability for
+    /// each criterion, in rubric order, or a failure.
+    pub fn on_assess(&self, stem: &str, reply: Result<Vec<Probability>, RequestFailure>) {
+        self.script()
+            .assessments
+            .entry(stem.to_owned())
+            .or_default()
+            .push_back(reply);
     }
 
     fn script_check(&self, stem: &str, reply: CheckReply) {
@@ -270,6 +303,34 @@ impl Ai for ScriptedAi {
             .unwrap_or_else(|| panic!("no check scripted for {:?}", candidate.stem()));
         reply_at_once(reply.into_reply(candidate), Role::Jev, JEV_MODEL)
     }
+
+    #[expect(
+        clippy::panic,
+        reason = "a request a test didn't script is a mistake in the test, which fails at once"
+    )]
+    fn assess_reasoning(
+        &self,
+        saved: &dyn Saved,
+        evidence: &Evidence,
+        question: QuestionWithoutKey<'_>,
+        reasoning: &str,
+    ) -> Pending<Vec<Probability>> {
+        let mut script = self.script();
+        script.asked.push(Asked::AssessReasoning {
+            saved: format!("{saved:?}"),
+            evidence: evidence.clone(),
+            stem: question.stem().to_owned(),
+            options: question.options().map(str::to_owned),
+            rubric: question.rubric().to_vec(),
+            reasoning: reasoning.to_owned(),
+        });
+        let reply = script
+            .assessments
+            .get_mut(question.stem())
+            .and_then(VecDeque::pop_front)
+            .unwrap_or_else(|| panic!("no assessment scripted for {:?}", question.stem()));
+        reply_at_once(reply, Role::Jev, JEV_MODEL)
+    }
 }
 
 impl CheckReply {
@@ -329,14 +390,14 @@ mod tests {
     use std::task::{Context, Poll, Waker};
 
     use whetstone_core::{
-        Area, CandidateCheck, Change, ConnectedCodeLimit, Connections, Depth, Evidence,
-        ExcludePatterns, OptionLetter, Probability, QuestionCount, QuestionType, ReviewChoices,
-        Role, TouchedFile, WrittenCandidate, WrittenCitation, WrittenCriterion, WrittenOption,
-        plain_checks,
+        Area, AssessmentPolicy, CandidateCheck, Change, ConnectedCodeLimit, Connections, Depth,
+        Evidence, ExcludePatterns, OptionLetter, Probability, Question, QuestionCount,
+        QuestionType, ReviewChoices, Role, TouchedFile, WrittenCandidate, WrittenCitation,
+        WrittenCriterion, WrittenOption, plain_checks, show_rule,
     };
 
     use super::*;
-    use crate::port::{Ai, CandidateCount, RequestFailure};
+    use crate::port::{Ai, CandidateCount, RequestFailure, Saved};
 
     /// `request`'s outcome, which the scripted AI has at once.
     fn at_once<T>(request: impl Future<Output = T>) -> T {
@@ -447,6 +508,37 @@ mod tests {
                 .map(|(letter, value)| (CandidateCheck::Option(letter), probability(value))),
             depth(0.2, 0.3, 0.5, 1.3),
         )
+    }
+
+    /// [`candidate`] asking `stem`, once its question check passes.
+    fn question(stem: &str) -> Question {
+        let candidate = candidate(stem);
+        let answers = CheckReply::Passing {
+            except: Vec::new(),
+            depth: default_depth(),
+        }
+        .into_reply(&candidate)
+        .expect("scripted to pass");
+        show_rule(candidate, answers, AssessmentPolicy::current()).expect("every check passes")
+    }
+
+    /// A session store's acknowledgement of the response numbered `0`.
+    #[derive(Debug)]
+    struct Acknowledged(
+        #[expect(
+            dead_code,
+            reason = "read only through its Debug output, as the log keeps it"
+        )]
+        u32,
+    );
+
+    impl Saved for Acknowledged {}
+
+    fn probabilities(values: &[f64]) -> Vec<Probability> {
+        values
+            .iter()
+            .map(|&value| Probability::new(value).expect("from 0 to 1"))
+            .collect()
     }
 
     fn count() -> CandidateCount {
@@ -683,6 +775,48 @@ mod tests {
             deep.content.iter().collect::<Vec<_>>(),
             usual.content.iter().collect::<Vec<_>>(),
             "every other answer passes, as without a depth"
+        );
+    }
+
+    #[test]
+    fn jev_assesses_the_reasoning_scripted_for_each_question_by_its_stem_and_logs_what_it_was_given()
+     {
+        let ai = ScriptedAi::new();
+        ai.on_assess("Why retry?", Ok(probabilities(&[0.9])));
+        ai.on_assess("Why retry?", Err(RequestFailure::Cancelled));
+        let asked = question("Why retry?");
+
+        let first = at_once(ai.assess_reasoning(
+            &Acknowledged(1),
+            &evidence(),
+            QuestionWithoutKey::from(&asked),
+            "It retries.",
+        ));
+        let again = at_once(ai.assess_reasoning(
+            &Acknowledged(2),
+            &evidence(),
+            QuestionWithoutKey::from(&asked),
+            "It retries once.",
+        ));
+
+        let first = first.expect("scripted to answer");
+        assert_eq!(first.content, probabilities(&[0.9]), "as scripted");
+        assert_eq!(first.provenance.role(), Role::Jev);
+        assert_eq!(again, Err(RequestFailure::Cancelled));
+        let logged = |saved: &str, reasoning: &str| Asked::AssessReasoning {
+            saved: saved.to_owned(),
+            evidence: evidence(),
+            stem: "Why retry?".to_owned(),
+            options: ["An option"; 3].map(str::to_owned),
+            rubric: asked.rubric().to_vec(),
+            reasoning: reasoning.to_owned(),
+        };
+        assert_eq!(
+            ai.asked(),
+            [
+                logged("Acknowledged(1)", "It retries."),
+                logged("Acknowledged(2)", "It retries once.")
+            ]
         );
     }
 

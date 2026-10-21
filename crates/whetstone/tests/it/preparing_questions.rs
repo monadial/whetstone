@@ -245,7 +245,9 @@ fn one_generator_call_per_chosen_area_goes_out_at_once_then_one_check_per_candid
             Asked::WriteCandidates { area, count, .. } => {
                 Some((area.id().to_string(), count.get()))
             }
-            Asked::CheckQuestion { .. } => panic!("a check before every area is written"),
+            Asked::CheckQuestion { .. } | Asked::AssessReasoning { .. } => {
+                panic!("a check before every area is written")
+            }
         })
         .collect();
     assert_eq!(
@@ -260,7 +262,9 @@ fn one_generator_call_per_chosen_area_goes_out_at_once_then_one_check_per_candid
         .iter()
         .filter_map(|asked| match asked {
             Asked::CheckQuestion { candidate, .. } => Some(candidate.stem().to_owned()),
-            Asked::CheckAreas { .. } | Asked::WriteCandidates { .. } => None,
+            Asked::CheckAreas { .. }
+            | Asked::WriteCandidates { .. }
+            | Asked::AssessReasoning { .. } => None,
         })
         .collect();
     assert_eq!(
@@ -377,7 +381,7 @@ fn a_failed_request_at_80x24() {
 }
 
 /// The requests `ai` was asked, as what each was for: the area written
-/// about, or the stem checked.
+/// about, the stem checked, or the stem whose reasoning was assessed.
 fn asked_for(ai: &ScriptedAi) -> Vec<String> {
     ai.asked()
         .iter()
@@ -385,6 +389,7 @@ fn asked_for(ai: &ScriptedAi) -> Vec<String> {
             Asked::CheckAreas { .. } => "gate".to_owned(),
             Asked::WriteCandidates { area, .. } => format!("write {}", area.id()),
             Asked::CheckQuestion { candidate, .. } => format!("check {}", candidate.stem()),
+            Asked::AssessReasoning { stem, .. } => format!("assess {stem}"),
         })
         .collect()
 }
