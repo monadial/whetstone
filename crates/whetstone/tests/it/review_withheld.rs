@@ -359,6 +359,37 @@ fn a_vote_on_the_learner_s_repository_names_its_commit_by_its_full_id() {
 }
 
 #[test]
+fn the_review_offers_the_check_that_a_criterion_asks_only_what_the_question_needs() {
+    let ai = Arc::new(ScriptedAi::new());
+    ai.on_write(
+        &area_id(DOMAIN),
+        Ok(vec![candidate(FIRST, "A", PAYMENT_LIFECYCLE)]),
+    );
+    // Its one criterion asks for more than the question needs, so none is
+    // left.
+    ai.on_check_passing_except(FIRST, [answer(CandidateCheck::CriterionMinimum(0), 0.1)]);
+    let mut session = none_passed(&ai, 120, 40);
+    activate(&mut session, "Review withheld questions");
+
+    assert_eq!(
+        checks(&session),
+        [
+            "Jev's probability, not a measure of correctness",
+            "1. Criterion 1 asks only what the question needs",
+            "Jev: 0.1 · clear no · it needed clear yes",
+            "Your vote: Not voted yet",
+        ]
+    );
+    vote_rightly_withheld(&mut session, 1);
+
+    let [example] = examples(&session).try_into().expect("one vote");
+    assert_eq!(
+        example["labels"].to_string(),
+        "{ criterion_1_minimum = \"no\" }"
+    );
+}
+
+#[test]
 fn rightly_withheld_labels_the_answer_that_withheld_the_candidate_and_votes_add_up() {
     let (mut session, _) = reviewing(120, 40);
 

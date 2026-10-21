@@ -35,16 +35,15 @@ const TALL: u16 = 60;
 const REASONING: &str = "Retries reuse the key, so the provider dedupes them.";
 
 /// The first question's rubric, in order.
-const CRITERIA: [&str; 3] = [
-    "Names the key the retry reuses",
+const CRITERIA: [&str; 2] = [
     "Says why the retry can't charge twice",
     "Says what the timed-out charge may already have done",
 ];
 
-/// What the generator explains for the second criterion, which isn't met.
+/// What the generator explains for the first criterion, which isn't met.
 const NOT_MET: &str = "You didn't say why reusing the key stops a second charge.";
 
-/// What the generator explains for the third criterion, which needs review.
+/// What the generator explains for the second criterion, which needs review.
 const NEEDS_REVIEW: &str = "Meeting it would say the timed-out charge may have gone through.";
 
 fn probability(value: f64) -> Probability {
@@ -55,7 +54,7 @@ fn probability(value: f64) -> Probability {
 /// payment lifecycle change, each passing every check, its answer key A, the
 /// first with [`CRITERIA`] as its rubric. Jev assesses the reasoning written for the
 /// first as `assessment`: a probability per criterion.
-fn writing(assessment: [f64; 3]) -> Arc<ScriptedAi> {
+fn writing(assessment: [f64; 2]) -> Arc<ScriptedAi> {
     let ai = Arc::new(ScriptedAi::new());
     let stems = stems("Domain", 4);
     let mut written: Vec<WrittenCandidate> = stems
@@ -127,10 +126,10 @@ fn explaining(ai: &ScriptedAi) -> Vec<Asked> {
 
 #[test]
 fn each_paragraph_that_passes_its_checks_shows_under_its_criterions_outcome_as_the_generators() {
-    let ai = writing([0.9, 0.1, 0.5]);
+    let ai = writing([0.1, 0.5]);
     let written = [
-        paragraph(1, CriterionOutcome::NotMet, NOT_MET),
-        paragraph(2, CriterionOutcome::NeedsReview, NEEDS_REVIEW),
+        paragraph(0, CriterionOutcome::NotMet, NOT_MET),
+        paragraph(1, CriterionOutcome::NeedsReview, NEEDS_REVIEW),
     ];
     ai.on_explain(FIRST, Ok(written.to_vec()));
     ai.on_check_explanation(FIRST, Ok(vec![check(0.9, 0.85), check(0.95, 0.8)]));
@@ -141,7 +140,6 @@ fn each_paragraph_that_passes_its_checks_shows_under_its_criterions_outcome_as_t
     assert_eq!(
         session.question().section_text("Reasoning"),
         [
-            "Met · Names the key the retry reuses",
             "Not met · Says why the retry can't charge twice",
             "Explanation · generator",
             NOT_MET,
@@ -171,8 +169,8 @@ fn each_paragraph_that_passes_its_checks_shows_under_its_criterions_outcome_as_t
     assert_eq!(
         criteria,
         &[
-            (1, CriterionOutcome::NotMet),
-            (2, CriterionOutcome::NeedsReview)
+            (0, CriterionOutcome::NotMet),
+            (1, CriterionOutcome::NeedsReview)
         ],
         "the criteria not met or needing review, with their outcomes"
     );
@@ -185,10 +183,10 @@ fn each_paragraph_that_passes_its_checks_shows_under_its_criterions_outcome_as_t
 
 #[test]
 fn a_paragraph_jev_isnt_clear_about_is_withheld_with_retry() {
-    let ai = writing([0.9, 0.1, 0.9]);
+    let ai = writing([0.1, 0.9]);
     ai.on_explain(
         FIRST,
-        Ok(vec![paragraph(1, CriterionOutcome::NotMet, NOT_MET)]),
+        Ok(vec![paragraph(0, CriterionOutcome::NotMet, NOT_MET)]),
     );
     // Supported, but unclear whether it agrees with its outcome.
     ai.on_check_explanation(FIRST, Ok(vec![check(0.9, 0.5)]));
@@ -198,7 +196,6 @@ fn a_paragraph_jev_isnt_clear_about_is_withheld_with_retry() {
     assert_eq!(
         session.question().section_text("Reasoning"),
         [
-            "Met · Names the key the retry reuses",
             "Not met · Says why the retry can't charge twice",
             "Explanation withheld: it didn't pass checks",
             "Met · Says what the timed-out charge may already have done",
@@ -215,10 +212,11 @@ fn a_paragraph_jev_isnt_clear_about_is_withheld_with_retry() {
 
 #[test]
 fn a_paragraph_citing_lines_the_evidence_doesnt_send_is_withheld_before_jev_is_asked() {
-    let ai = writing([0.1, 0.1, 0.9]);
-    let mut uncited = paragraph(0, CriterionOutcome::NotMet, "You didn't name the key.");
+    let ai = writing([0.1, 0.1]);
+    let missed = "You didn't say the timed-out charge may have gone through.";
+    let mut uncited = paragraph(0, CriterionOutcome::NotMet, NOT_MET);
     uncited.citations[0].path = "src/not_sent.rs".to_owned();
-    let cited = paragraph(1, CriterionOutcome::NotMet, NOT_MET);
+    let cited = paragraph(1, CriterionOutcome::NotMet, missed);
     ai.on_explain(FIRST, Ok(vec![uncited, cited.clone()]));
     ai.on_check_explanation(FIRST, Ok(vec![check(0.9, 0.9)]));
 
@@ -228,11 +226,11 @@ fn a_paragraph_citing_lines_the_evidence_doesnt_send_is_withheld_before_jev_is_a
     assert!(
         reasoning.starts_with(
             &[
-                "Not met · Names the key the retry reuses",
-                "Explanation withheld: it didn't pass checks",
                 "Not met · Says why the retry can't charge twice",
+                "Explanation withheld: it didn't pass checks",
+                "Not met · Says what the timed-out charge may already have done",
                 "Explanation · generator",
-                NOT_MET,
+                missed,
             ]
             .join(" ")
         ),
@@ -254,7 +252,7 @@ fn a_paragraph_citing_lines_the_evidence_doesnt_send_is_withheld_before_jev_is_a
 
 #[test]
 fn an_explanation_that_fails_to_arrive_is_unavailable_and_the_assessment_stays() {
-    let ai = writing([0.9, 0.1, 0.5]);
+    let ai = writing([0.1, 0.5]);
     ai.on_explain(FIRST, Err(RequestFailure::RateLimited));
 
     let session = explained(&ai, 120, TALL);
@@ -262,7 +260,6 @@ fn an_explanation_that_fails_to_arrive_is_unavailable_and_the_assessment_stays()
     assert_eq!(
         session.question().section_text("Reasoning"),
         [
-            "Met · Names the key the retry reuses",
             "Not met · Says why the retry can't charge twice",
             "Explanation unavailable: the generator's request failed: rate limited.",
             "OpenRouter had too many requests from your key too quickly. Wait a moment, then \
@@ -288,10 +285,10 @@ fn an_explanation_that_fails_to_arrive_is_unavailable_and_the_assessment_stays()
 
 #[test]
 fn a_check_that_fails_leaves_the_explanation_unavailable() {
-    let ai = writing([0.9, 0.1, 0.9]);
+    let ai = writing([0.1, 0.9]);
     ai.on_explain(
         FIRST,
-        Ok(vec![paragraph(1, CriterionOutcome::NotMet, NOT_MET)]),
+        Ok(vec![paragraph(0, CriterionOutcome::NotMet, NOT_MET)]),
     );
     ai.on_check_explanation(FIRST, Err(RequestFailure::TimedOut));
 
@@ -299,7 +296,7 @@ fn a_check_that_fails_leaves_the_explanation_unavailable() {
 
     let reasoning = session.question().section_text("Reasoning");
     assert!(
-        reasoning.contains(
+        reasoning.starts_with(
             &[
                 "Not met · Says why the retry can't charge twice",
                 "Explanation unavailable: Jev's check failed: timed out.",
@@ -314,7 +311,7 @@ fn a_check_that_fails_leaves_the_explanation_unavailable() {
 
 #[test]
 fn a_generator_model_refused_while_explaining_is_named_and_marked_in_settings() {
-    let ai = writing([0.9, 0.1, 0.9]);
+    let ai = writing([0.1, 0.9]);
     ai.on_explain(FIRST, Err(RequestFailure::NoZeroRetentionEndpoint));
 
     let mut session = explained(&ai, 120, TALL);
@@ -348,17 +345,17 @@ fn a_generator_model_refused_while_explaining_is_named_and_marked_in_settings() 
 
 #[test]
 fn an_explanation_of_other_criteria_than_asked_is_unavailable_never_shown() {
-    let ai = writing([0.9, 0.1, 0.9]);
+    let ai = writing([0.1, 0.9]);
     ai.on_explain(
         FIRST,
-        Ok(vec![paragraph(2, CriterionOutcome::NotMet, NOT_MET)]),
+        Ok(vec![paragraph(1, CriterionOutcome::NotMet, NOT_MET)]),
     );
 
     let session = explained(&ai, 120, TALL);
 
     let reasoning = session.question().section_text("Reasoning");
     assert!(
-        reasoning.contains(
+        reasoning.starts_with(
             "Not met · Says why the retry can't charge twice Explanation unavailable: the \
              generator's request failed: the reply couldn't be read."
         ),
@@ -369,10 +366,10 @@ fn an_explanation_of_other_criteria_than_asked_is_unavailable_never_shown() {
 
 #[test]
 fn retry_asks_again_only_for_what_didnt_show_and_what_showed_stays() {
-    let ai = writing([0.9, 0.1, 0.5]);
-    let shown = paragraph(1, CriterionOutcome::NotMet, NOT_MET);
-    let withheld = paragraph(2, CriterionOutcome::NeedsReview, "You missed it.");
-    let rewritten = paragraph(2, CriterionOutcome::NeedsReview, NEEDS_REVIEW);
+    let ai = writing([0.1, 0.5]);
+    let shown = paragraph(0, CriterionOutcome::NotMet, NOT_MET);
+    let withheld = paragraph(1, CriterionOutcome::NeedsReview, "You missed it.");
+    let rewritten = paragraph(1, CriterionOutcome::NeedsReview, NEEDS_REVIEW);
     ai.on_explain(FIRST, Ok(vec![shown.clone(), withheld]));
     // Claims the learner missed a criterion that needs review: it doesn't
     // agree with the outcome.
@@ -405,29 +402,26 @@ fn retry_asks_again_only_for_what_didnt_show_and_what_showed_stays() {
     session.settle();
 
     let cited = format!("Cited {}, line 1", touched_path(PAYMENT_LIFECYCLE));
-    let reasoning = session.question().section_text("Reasoning");
-    assert!(
-        reasoning.ends_with(
-            &[
-                "Not met · Says why the retry can't charge twice",
-                "Explanation · generator",
-                NOT_MET,
-                &cited,
-                "Needs review · Says what the timed-out charge may already have done",
-                "Jev couldn't tell whether your reasoning covers this.",
-                "Explanation · generator",
-                NEEDS_REVIEW,
-                &cited,
-            ]
-            .join(" ")
-        ),
-        "{reasoning}"
+    assert_eq!(
+        session.question().section_text("Reasoning"),
+        [
+            "Not met · Says why the retry can't charge twice",
+            "Explanation · generator",
+            NOT_MET,
+            &cited,
+            "Needs review · Says what the timed-out charge may already have done",
+            "Jev couldn't tell whether your reasoning covers this.",
+            "Explanation · generator",
+            NEEDS_REVIEW,
+            &cited,
+        ]
+        .join(" ")
     );
     let asked = explaining(&ai);
     let Asked::Explain { criteria, .. } = &asked[2] else {
         panic!("the Retry asks the generator again: {asked:#?}");
     };
-    assert_eq!(criteria, &[(2, CriterionOutcome::NeedsReview)]);
+    assert_eq!(criteria, &[(1, CriterionOutcome::NeedsReview)]);
     assert!(
         matches!(&asked[3], Asked::CheckExplanation { paragraphs, .. } if paragraphs == &[rewritten]),
         "then Jev checks only the new paragraph: {asked:#?}"
@@ -437,7 +431,7 @@ fn retry_asks_again_only_for_what_didnt_show_and_what_showed_stays() {
 
 #[test]
 fn there_is_no_explanation_when_every_criterion_is_met() {
-    let ai = writing([0.9, 0.95, 0.8]);
+    let ai = writing([0.95, 0.8]);
 
     let session = explained(&ai, 120, TALL);
 
@@ -471,22 +465,9 @@ fn saved_explanations(
         .collect()
 }
 
-#[test]
-fn every_paragraph_checked_is_saved_to_the_session_record_shown_or_withheld() {
-    let ai = writing([0.1, 0.1, 0.5]);
-    let mut uncited = paragraph(0, CriterionOutcome::NotMet, "You didn't name the key.");
-    uncited.citations[0].first_line = 1000;
-    let shown = paragraph(1, CriterionOutcome::NotMet, NOT_MET);
-    let withheld = paragraph(2, CriterionOutcome::NeedsReview, NEEDS_REVIEW);
-    ai.on_explain(
-        FIRST,
-        Ok(vec![uncited.clone(), shown.clone(), withheld.clone()]),
-    );
-    ai.on_check_explanation(FIRST, Ok(vec![check(0.9, 0.85), check(0.6, 0.9)]));
-
-    let session = explained(&ai, 120, TALL);
-
-    let log = session.store().log();
+/// The log of a session that `ai` explains, and the response it saved.
+fn logged(ai: &Arc<ScriptedAi>) -> (Vec<StoreEntry>, SavedResponse) {
+    let log = explained(ai, 120, TALL).store().log();
     let saved = log
         .iter()
         .find_map(|entry| match entry {
@@ -494,19 +475,31 @@ fn every_paragraph_checked_is_saved_to_the_session_record_shown_or_withheld() {
             _ => None,
         })
         .expect("the response is saved");
+    (log, saved)
+}
+
+#[test]
+fn every_paragraph_checked_is_saved_to_the_session_record_shown_or_withheld() {
+    // Withheld by plain code, and by Jev.
+    let ai = writing([0.1, 0.5]);
+    let mut uncited = paragraph(0, CriterionOutcome::NotMet, NOT_MET);
+    uncited.citations[0].first_line = 1000;
+    let withheld = paragraph(1, CriterionOutcome::NeedsReview, NEEDS_REVIEW);
+    ai.on_explain(FIRST, Ok(vec![uncited.clone(), withheld.clone()]));
+    ai.on_check_explanation(FIRST, Ok(vec![check(0.6, 0.9)]));
+    let (log, saved) = logged(&ai);
+    // Shown.
+    let ai = writing([0.1, 0.9]);
+    let shown = paragraph(0, CriterionOutcome::NotMet, NOT_MET);
+    ai.on_explain(FIRST, Ok(vec![shown.clone()]));
+    ai.on_check_explanation(FIRST, Ok(vec![check(0.9, 0.85)]));
+    let (shown_log, shown_saved) = logged(&ai);
+
     let cut_offs = AssessmentPolicy::current().cut_offs(Job::ExplanationCheck);
     assert_eq!(
         saved_explanations(&log),
         [
             (saved.clone(), uncited, ExplanationCheck::FailedPlainChecks),
-            (
-                saved.clone(),
-                shown,
-                ExplanationCheck::Passed {
-                    answers: check(0.9, 0.85),
-                    cut_offs,
-                },
-            ),
             (
                 saved,
                 withheld,
@@ -517,13 +510,24 @@ fn every_paragraph_checked_is_saved_to_the_session_record_shown_or_withheld() {
             ),
         ]
     );
+    assert_eq!(
+        saved_explanations(&shown_log),
+        [(
+            shown_saved,
+            shown,
+            ExplanationCheck::Passed {
+                answers: check(0.9, 0.85),
+                cut_offs,
+            },
+        )]
+    );
     let outcomes = log
         .iter()
         .position(|entry| {
             matches!(
                 entry,
                 StoreEntry::Assessment {
-                    assessment: Assessment::Criterion { criterion: 2, .. },
+                    assessment: Assessment::Criterion { criterion: 1, .. },
                     ..
                 }
             )
@@ -546,10 +550,10 @@ fn every_paragraph_checked_is_saved_to_the_session_record_shown_or_withheld() {
 
 #[test]
 fn an_explanation_after_leaving_the_practice_changes_nothing() {
-    let ai = writing([0.9, 0.1, 0.9]);
+    let ai = writing([0.1, 0.9]);
     ai.on_explain(
         FIRST,
-        Ok(vec![paragraph(1, CriterionOutcome::NotMet, NOT_MET)]),
+        Ok(vec![paragraph(0, CriterionOutcome::NotMet, NOT_MET)]),
     );
     let mut session = answering(&ai, 120, TALL);
     submit(&mut session, "a", REASONING);
@@ -566,25 +570,25 @@ fn an_explanation_after_leaving_the_practice_changes_nothing() {
     assert_eq!(saved_explanations(&session.store().log()), []);
 }
 
-/// A session `width` by `height` on feedback whose second criterion is not
-/// met and whose third needs review, each explained, with the paragraph
-/// for the second passing its checks and the one for the third passing them
-/// if `third_passes`, scrolled to the bottom.
-fn feedback_with_an_explanation(third_passes: bool, width: u16, height: u16) -> Session {
-    let ai = writing([0.9, 0.1, 0.5]);
+/// A session `width` by `height` on feedback whose first criterion is not
+/// met and whose second needs review, each explained, with the paragraph
+/// for the first passing its checks and the one for the second passing them
+/// if `second_passes`, scrolled to the bottom.
+fn feedback_with_an_explanation(second_passes: bool, width: u16, height: u16) -> Session {
+    let ai = writing([0.1, 0.5]);
     ai.on_explain(
         FIRST,
         Ok(vec![
-            paragraph(1, CriterionOutcome::NotMet, NOT_MET),
-            paragraph(2, CriterionOutcome::NeedsReview, NEEDS_REVIEW),
+            paragraph(0, CriterionOutcome::NotMet, NOT_MET),
+            paragraph(1, CriterionOutcome::NeedsReview, NEEDS_REVIEW),
         ]),
     );
-    let third = if third_passes {
+    let second = if second_passes {
         check(0.9, 0.9)
     } else {
         check(0.9, 0.1)
     };
-    ai.on_check_explanation(FIRST, Ok(vec![check(0.9, 0.85), third]));
+    ai.on_check_explanation(FIRST, Ok(vec![check(0.9, 0.85), second]));
     let mut session = explained(&ai, width, height);
     session.press("G");
     session
@@ -620,8 +624,8 @@ fn an_explanation_withheld_at_80x24() {
 
 #[test]
 fn retry_after_a_failed_check_asks_jev_again_and_never_pays_for_the_writing_twice() {
-    let ai = writing([0.9, 0.1, 0.9]);
-    let written = paragraph(1, CriterionOutcome::NotMet, NOT_MET);
+    let ai = writing([0.1, 0.9]);
+    let written = paragraph(0, CriterionOutcome::NotMet, NOT_MET);
     ai.on_explain(FIRST, Ok(vec![written.clone()]));
     ai.on_check_explanation(FIRST, Err(RequestFailure::TimedOut));
     ai.on_check_explanation(FIRST, Ok(vec![check(0.9, 0.9)]));
@@ -629,14 +633,14 @@ fn retry_after_a_failed_check_asks_jev_again_and_never_pays_for_the_writing_twic
 
     session.press("k <Enter>");
     assert_eq!(
-        session.question().section("Reasoning")[2],
+        session.question().section("Reasoning")[1],
         "Jev is checking the generator's explanation."
     );
     session.settle();
 
     let reasoning = session.question().section_text("Reasoning");
     assert!(
-        reasoning.contains(
+        reasoning.starts_with(
             &[
                 "Not met · Says why the retry can't charge twice",
                 "Explanation · generator",
@@ -662,13 +666,13 @@ fn retry_after_a_failed_check_asks_jev_again_and_never_pays_for_the_writing_twic
 
 #[test]
 fn retry_after_the_explanation_failed_to_arrive_asks_the_generator_again() {
-    let ai = writing([0.9, 0.1, 0.5]);
+    let ai = writing([0.1, 0.5]);
     ai.on_explain(FIRST, Err(RequestFailure::ProviderUnavailable));
     ai.on_explain(
         FIRST,
         Ok(vec![
-            paragraph(1, CriterionOutcome::NotMet, NOT_MET),
-            paragraph(2, CriterionOutcome::NeedsReview, NEEDS_REVIEW),
+            paragraph(0, CriterionOutcome::NotMet, NOT_MET),
+            paragraph(1, CriterionOutcome::NeedsReview, NEEDS_REVIEW),
         ]),
     );
     ai.on_check_explanation(FIRST, Ok(vec![check(0.9, 0.9), check(0.9, 0.9)]));
@@ -688,18 +692,18 @@ fn retry_after_the_explanation_failed_to_arrive_asks_the_generator_again() {
         })
         .collect();
     let asked = vec![
-        (1, CriterionOutcome::NotMet),
-        (2, CriterionOutcome::NeedsReview),
+        (0, CriterionOutcome::NotMet),
+        (1, CriterionOutcome::NeedsReview),
     ];
     assert_eq!(explains, [asked.clone(), asked], "the same criteria again");
 }
 
 #[test]
 fn a_check_after_leaving_the_practice_changes_nothing() {
-    let ai = writing([0.9, 0.1, 0.9]);
+    let ai = writing([0.1, 0.9]);
     ai.on_explain(
         FIRST,
-        Ok(vec![paragraph(1, CriterionOutcome::NotMet, NOT_MET)]),
+        Ok(vec![paragraph(0, CriterionOutcome::NotMet, NOT_MET)]),
     );
     ai.on_check_explanation(FIRST, Ok(vec![check(0.9, 0.9)]));
     let mut session = answering(&ai, 120, TALL);
