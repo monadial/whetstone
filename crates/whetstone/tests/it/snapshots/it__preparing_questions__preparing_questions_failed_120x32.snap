@@ -6,7 +6,7 @@ Buffer {
     area: Rect { x: 0, y: 0, width: 120, height: 32 },
     content: [
         "                                                                                                                        ",
-        "  ✓ Reading the change → ✓ Finding connected code → ✓ Preparing evidence → – Checking areas · Jev →                     ",
+        "  ✓ Reading the change → ✓ Finding connected code → ✓ Preparing evidence → ✓ Checking areas · Jev →                     ",
         "  ✗ Writing questions · generator → · Checking questions · Jev                                                          ",
         "                                                                                                                        ",
         "  Preparing questions                                                                                                   ",

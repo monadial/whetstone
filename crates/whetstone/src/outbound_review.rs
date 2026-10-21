@@ -1184,6 +1184,7 @@ impl View for OutboundReview {
             } => self.apply_connections(commit, connections, origin),
             // Only Preparing questions waits for these.
             JobOutput::ShowcaseConnectedCode { .. }
+            | JobOutput::AreasChecked { .. }
             | JobOutput::Written { .. }
             | JobOutput::Checked { .. } => {}
         }

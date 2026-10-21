@@ -27,7 +27,7 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use whetstone_ai::{Reply, RequestFailure};
 use whetstone_core::{
-    AreaId, CandidateId, CommitId, Connections, QuestionCheckAnswers, WrittenCandidate,
+    AreaId, CandidateId, CommitId, Connections, Probability, QuestionCheckAnswers, WrittenCandidate,
 };
 
 use crate::connected_code::GraphOrigin;
@@ -57,6 +57,13 @@ pub enum JobOutput {
         connections: Connections,
         /// Whether its graph was analysed or came from the cache.
         origin: GraphOrigin,
+    },
+    /// Jev's relevance gate: for each chosen area, the probability that the
+    /// change is worth asking about in it, or why the request failed.
+    AreasChecked {
+        /// Jev's answer for each area, in the areas' order, as returned, or
+        /// why the request failed.
+        reply: Result<Reply<Vec<(AreaId, Probability)>>, RequestFailure>,
     },
     /// The candidates the generator wrote about one area, or why the
     /// request failed.

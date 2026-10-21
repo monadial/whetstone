@@ -5,7 +5,9 @@
 //!
 //! When fewer questions passed their checks than were asked for, "*n*
 //! passed checks, *N* asked for" heads them, so the learner knows nothing
-//! unchecked filled the gap.
+//! unchecked filled the gap. Below the first question, one line names any
+//! chosen area that wasn't asked about, because the relevance gate found it
+//! not worth asking about in this change.
 
 use ratatui::Frame;
 use ratatui::crossterm::event::KeyCode;
@@ -56,6 +58,8 @@ pub(crate) struct Questions {
     picked: Vec<(Question, String)>,
     /// How many were asked for, when fewer passed.
     shortfall: Option<QuestionCount>,
+    /// The names of the chosen areas not asked about, in order.
+    not_asked_about: Vec<String>,
     /// The place of the question that shows.
     at: usize,
     focus: Position,
@@ -91,9 +95,24 @@ impl Questions {
                 })
                 .collect(),
             shortfall,
+            not_asked_about: Vec::new(),
             at: 0,
             focus: Position::default(),
         })
+    }
+
+    /// The same questions, saying below the first that the chosen `areas`
+    /// weren't asked about: the relevance gate found them not worth asking
+    /// about in this change.
+    pub(crate) fn not_asking_about<'a>(
+        mut self,
+        areas: impl IntoIterator<Item = &'a Area>,
+    ) -> Self {
+        self.not_asked_about = areas
+            .into_iter()
+            .map(|area| area.name().to_owned())
+            .collect();
+        self
     }
 
     fn focused(&self) -> Control {
@@ -176,6 +195,20 @@ impl Questions {
                 let lead = if index == 0 { &lead } else { &indent };
                 lines.push(Line::raw(format!("{lead}{text}")));
             }
+        }
+        if self.at == 0 && !self.not_asked_about.is_empty() {
+            lines.push(Line::default());
+            lines.extend(
+                columns::wrap(
+                    &format!(
+                        "Not asked about: {} (not worth asking about in this change)",
+                        self.not_asked_about.join(", ")
+                    ),
+                    width,
+                )
+                .into_iter()
+                .map(|line| Line::styled(line, theme.muted)),
+            );
         }
         // The controls follow the question, and keep their rows on a short
         // screen.
