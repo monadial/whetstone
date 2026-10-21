@@ -256,28 +256,30 @@ mod tests {
             answers.iter().collect::<Vec<_>>(),
             [
                 (CandidateCheck::Answerable, 0.96),
-                (CandidateCheck::AboutArea, 0.76),
+                (CandidateCheck::AboutArea, 0.79),
                 (CandidateCheck::NeedsChange, 0.57),
-                (CandidateCheck::NoGiveaway, 0.13),
-                (CandidateCheck::Criterion(0), 0.8),
-                (CandidateCheck::Criterion(1), 0.93),
+                (CandidateCheck::NoGiveaway, 0.15),
+                (CandidateCheck::Criterion(0), 0.82),
+                (CandidateCheck::Criterion(1), 0.94),
+                (CandidateCheck::CriterionMinimum(0), 0.84),
+                (CandidateCheck::CriterionMinimum(1), 0.93),
                 (CandidateCheck::Option(OptionLetter::A), 0.98),
                 (CandidateCheck::Option(OptionLetter::B), 0.01),
-                (CandidateCheck::Option(OptionLetter::C), 0.02),
+                (CandidateCheck::Option(OptionLetter::C), 0.01),
                 (CandidateCheck::Rationale(OptionLetter::A), 0.97),
-                (CandidateCheck::Rationale(OptionLetter::B), 0.88),
+                (CandidateCheck::Rationale(OptionLetter::B), 0.9),
                 (CandidateCheck::Rationale(OptionLetter::C), 0.93),
-                (CandidateCheck::WhyItMatters, 0.81),
-                (CandidateCheck::HintPointsToEvidence, 0.95),
-                (CandidateCheck::HintHidesAnswerKey, 0.13),
+                (CandidateCheck::WhyItMatters, 0.83),
+                (CandidateCheck::HintPointsToEvidence, 0.96),
+                (CandidateCheck::HintHidesAnswerKey, 0.1),
             ]
             .map(|(check, answer)| (check, probability(answer)))
         );
         assert_eq!(
             answers.depth(),
             Depth::new(
-                [probability(0.11), probability(0.3), probability(0.59)],
-                1.47
+                [probability(0.11), probability(0.29), probability(0.6)],
+                1.48
             )
             .expect("the recorded expected depth is from 0 to 2")
         );
