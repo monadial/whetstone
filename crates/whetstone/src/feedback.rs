@@ -9,8 +9,9 @@
 //! criterion of the rubric shows met, not met or needs review. Cancel
 //! evaluation stops the request, and the response stays submitted. A
 //! failure or a cancellation shows Evaluation unavailable, with Retry
-//! evaluation, which asks Jev again. Each outcome is saved to the session
-//! record once it is known.
+//! evaluation, which asks Jev again. A failure is named, then what the
+//! learner can do about it, as on Preparing questions. Each outcome is
+//! saved to the session record once it is known.
 //!
 //! A submitted response is final, so feedback offers no way back to it. Its
 //! controls are the evaluation's, while it awaits or failed, then Next
@@ -23,10 +24,11 @@ use ratatui::widgets::{List, Paragraph};
 use whetstone_ai::RequestFailure;
 use whetstone_core::{
     Assessed, AssessmentPolicy, ChoiceOutcome, CriterionOutcome, Extent, OptionLetter, Probability,
-    Question,
+    Question, Role,
 };
 
 use crate::columns;
+use crate::failures::FailedRequests;
 use crate::focus::Position;
 use crate::keymap::{self, Binding, Command, Keymap};
 use crate::session_record::{Assessment, Durability, SavedResponse, SessionStore};
@@ -279,13 +281,15 @@ impl Feedback {
     }
 
     /// Applies `command` to the feedback on `question`, at `place`, drawn
-    /// in `area`, and returns what the learner does next, if they chose.
+    /// in `area` with a failed request worded by `failed`, and returns what
+    /// the learner does next, if they chose.
     pub(crate) fn apply(
         &mut self,
         command: Command,
         area: Rect,
         question: &Question,
         place: Place,
+        failed: &FailedRequests,
     ) -> Option<Step> {
         match command {
             Command::Activate => {
@@ -311,7 +315,12 @@ impl Feedback {
             }
             Command::HalfPageDown | Command::HalfPageUp | Command::Top | Command::Bottom => {
                 // Styles do not change how the text wraps.
-                let lines = self.lines(question, &Theme::new(ColorSupport::NoColor), area.width);
+                let lines = self.lines(
+                    question,
+                    &Theme::new(ColorSupport::NoColor),
+                    area.width,
+                    failed,
+                );
                 let [body, ..] = layout(lines.len(), self.controls().len(), area);
                 let last = lines.len().saturating_sub(usize::from(body.height));
                 self.top = self.top.scrolled(command, last, usize::from(body.height));
@@ -330,8 +339,14 @@ impl Feedback {
     }
 
     /// The feedback's text about `question`, drawn with `theme`, `width`
-    /// cells wide.
-    fn lines(&self, question: &Question, theme: &Theme, width: u16) -> Vec<Line<'static>> {
+    /// cells wide, with a failed request worded by `failed`.
+    fn lines(
+        &self,
+        question: &Question,
+        theme: &Theme,
+        width: u16,
+        failed: &FailedRequests,
+    ) -> Vec<Line<'static>> {
         let width = usize::from(width);
         let mut lines = Vec::new();
         let wrapped = |lines: &mut Vec<Line<'static>>, text: &str| {
@@ -397,7 +412,7 @@ impl Feedback {
             }
         }
         lines.push(Line::default());
-        self.reasoning_outcome(&mut lines, question, theme, width);
+        self.reasoning_outcome(&mut lines, question, theme, width, failed);
         if self.durability == Durability::Durable {
             lines.push(Line::default());
             lines.push(Line::styled("Saved", theme.muted));
@@ -406,14 +421,16 @@ impl Feedback {
     }
 
     /// Adds the reasoning's outcome to `lines`, `width` cells wide, drawn
-    /// with `theme`: awaiting evaluation, unavailable and why, or each
-    /// criterion of `question`'s rubric with its outcome.
+    /// with `theme`: awaiting evaluation, unavailable, why and what to do as
+    /// `failed` words it, or each criterion of `question`'s rubric with its
+    /// outcome.
     fn reasoning_outcome(
         &self,
         lines: &mut Vec<Line<'static>>,
         question: &Question,
         theme: &Theme,
         width: usize,
+        failed: &FailedRequests,
     ) {
         let wrapped = |lines: &mut Vec<Line<'static>>, text: &str| {
             lines.extend(columns::wrap(text, width).into_iter().map(Line::raw));
@@ -431,13 +448,13 @@ impl Feedback {
                     "Reasoning · Evaluation unavailable",
                     theme.title,
                 ));
-                wrapped(
-                    lines,
-                    &match failure {
-                        RequestFailure::Cancelled => "You cancelled the evaluation.".to_owned(),
-                        failure => format!("Jev's evaluation failed: {failure}."),
-                    },
-                );
+                match failure {
+                    RequestFailure::Cancelled => wrapped(lines, "You cancelled the evaluation."),
+                    &failure => {
+                        wrapped(lines, &format!("Jev's evaluation failed: {failure}."));
+                        wrapped(lines, &failed.what_to_do(Role::Jev, failure));
+                    }
+                }
                 wrapped(
                     lines,
                     "Your response stays submitted. Retry evaluation asks Jev again.",
@@ -479,7 +496,8 @@ impl Feedback {
         }
     }
 
-    /// Draws the feedback on `question`, at `place`, in `area` with `theme`.
+    /// Draws the feedback on `question`, at `place`, in `area` with `theme`,
+    /// with a failed request worded by `failed`.
     pub(crate) fn render(
         &self,
         theme: &Theme,
@@ -487,8 +505,9 @@ impl Feedback {
         area: Rect,
         question: &Question,
         place: Place,
+        failed: &FailedRequests,
     ) {
-        let lines = self.lines(question, theme, area.width);
+        let lines = self.lines(question, theme, area.width, failed);
         let controls = self.controls();
         let [body, _, buttons] = layout(lines.len(), controls.len(), area);
         let last = lines.len().saturating_sub(usize::from(body.height));

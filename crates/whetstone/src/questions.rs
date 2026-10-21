@@ -41,6 +41,7 @@ use whetstone_core::{
 };
 
 use crate::columns;
+use crate::failures::FailedRequests;
 use crate::feedback::{self, Feedback, Place, Step};
 use crate::focus::Position;
 use crate::keymap::{self, Binding, Command, Input, Keymap, Press};
@@ -276,12 +277,19 @@ pub(crate) struct Questions {
     /// The saved responses whose evaluation the learner cancelled, for the
     /// screen to stop.
     cancelled: Vec<SavedResponse>,
+    /// What the learner can do about a request about a response that failed.
+    failed_requests: FailedRequests,
 }
 
 impl Questions {
     /// The questions `picked`, about the chosen `areas`, showing the first,
-    /// or `None` when there are none to show.
-    pub(crate) fn new(picked: Picked, areas: &[Area]) -> Option<Self> {
+    /// or `None` when there are none to show. A request about a response
+    /// that fails says what to do as `failed_requests` words it.
+    pub(crate) fn new(
+        picked: Picked,
+        areas: &[Area],
+        failed_requests: FailedRequests,
+    ) -> Option<Self> {
         let (questions, shortfall) = match picked {
             Picked::All(questions) => (questions, None),
             Picked::Shortfall {
@@ -318,6 +326,7 @@ impl Questions {
             record: Record::ToStart,
             submitted: None,
             cancelled: Vec::new(),
+            failed_requests,
         })
     }
 
@@ -551,7 +560,13 @@ impl Questions {
             Attempt::Draft(draft) => draft,
             Attempt::Submitted(feedback) => {
                 let [_, body] = layout(self.shortfall, area);
-                return match feedback.apply(command, body, &entry.question, place)? {
+                return match feedback.apply(
+                    command,
+                    body,
+                    &entry.question,
+                    place,
+                    &self.failed_requests,
+                )? {
                     Step::NextQuestion => {
                         self.at = (at + 1).min(self.picked.len() - 1);
                         None
@@ -628,7 +643,14 @@ impl Questions {
         match &entry.attempt {
             Attempt::Draft(draft) => self.render_draft(draft, &entry.question, theme, frame, body),
             Attempt::Submitted(feedback) => {
-                feedback.render(theme, frame, body, &entry.question, self.place());
+                feedback.render(
+                    theme,
+                    frame,
+                    body,
+                    &entry.question,
+                    self.place(),
+                    &self.failed_requests,
+                );
             }
         }
     }

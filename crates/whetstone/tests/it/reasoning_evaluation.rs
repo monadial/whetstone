@@ -358,6 +358,8 @@ fn a_failure_shows_evaluation_unavailable_and_retry_asks_jev_again() {
         session.section("Reasoning · Evaluation unavailable"),
         [
             "Jev's evaluation failed: rate limited.",
+            "OpenRouter had too many requests from your key too quickly. Wait a moment, then \
+             Retry.",
             "Your response stays submitted. Retry evaluation asks Jev again.",
         ]
     );
@@ -392,6 +394,7 @@ fn a_reply_that_doesnt_answer_each_criterion_is_unavailable_never_needs_review()
         session.section("Reasoning · Evaluation unavailable"),
         [
             "Jev's evaluation failed: the reply couldn't be read.",
+            "Nothing in Jev's reply is used, and none of it is shown as a judgement.",
             "Your response stays submitted. Retry evaluation asks Jev again.",
         ]
     );
