@@ -4,17 +4,18 @@
 //! The generator's writing is scripted per area, and Jev's question check
 //! per candidate, by its stem. A check is scripted as exact answers, or as
 //! answers that pass the show rule for whichever candidate is asked, with
-//! any checks a test answers otherwise. Each reply scripted for one of them
-//! answers one request, in the order scripted, so a test scripts a Retry's
-//! reply as a second one. A request nothing was scripted for is a mistake
-//! in the test, which panics as the request is made.
+//! any checks a test answers otherwise, or at a depth a test chooses. Each
+//! reply scripted for one of them answers one request, in the order
+//! scripted, so a test scripts a Retry's reply as a second one. A request
+//! nothing was scripted for is a mistake in the test, which panics as the
+//! request is made.
 
 use std::collections::{HashMap, VecDeque};
 use std::future;
 use std::sync::{Mutex, MutexGuard};
 
 use whetstone_core::{
-    Area, AreaId, Candidate, CandidateCheck, Evidence, ModelId, Probability, Provenance,
+    Area, AreaId, Candidate, CandidateCheck, Depth, Evidence, ModelId, Probability, Provenance,
     QuestionCheckAnswers, Role, WrittenCandidate,
 };
 
@@ -41,9 +42,12 @@ struct Script {
 enum CheckReply {
     /// These answers, or this failure, whatever the candidate.
     Exactly(Result<QuestionCheckAnswers, RequestFailure>),
-    /// Answers that pass the show rule for the candidate asked, but for
-    /// these, which answer their checks instead.
-    PassingExcept(Vec<(CandidateCheck, Probability)>),
+    /// Answers that pass the show rule for the candidate asked, at this
+    /// depth, but for `except`, which answer their checks instead.
+    Passing {
+        except: Vec<(CandidateCheck, Probability)>,
+        depth: Depth,
+    },
 }
 
 /// One request the scripted AI was asked, exactly as asked.
@@ -98,7 +102,8 @@ impl ScriptedAi {
     /// Scripts Jev's reply to the next request to check the candidate whose
     /// stem is `stem` as answers the show rule passes, made for the
     /// candidate asked: every one of its checks clear yes, at 0.9, but the
-    /// options that aren't its answer key clear no, at 0.1.
+    /// options that aren't its answer key clear no, at 0.1. Its depth is
+    /// needs reading the change, at 0.8, so its expected value is 1.
     pub fn on_check_passing(&self, stem: &str) {
         self.on_check_passing_except(stem, []);
     }
@@ -112,7 +117,22 @@ impl ScriptedAi {
     ) {
         self.script_check(
             stem,
-            CheckReply::PassingExcept(answers.into_iter().collect()),
+            CheckReply::Passing {
+                except: answers.into_iter().collect(),
+                depth: default_depth(),
+            },
+        );
+    }
+
+    /// The same as [`on_check_passing`](Self::on_check_passing), but Jev
+    /// scores the candidate's depth as `depth`.
+    pub fn on_check_passing_at(&self, stem: &str, depth: Depth) {
+        self.script_check(
+            stem,
+            CheckReply::Passing {
+                except: Vec::new(),
+                depth,
+            },
         );
     }
 
@@ -191,7 +211,7 @@ impl CheckReply {
     fn into_reply(self, candidate: &Candidate) -> Result<QuestionCheckAnswers, RequestFailure> {
         match self {
             Self::Exactly(reply) => reply,
-            Self::PassingExcept(answers) => {
+            Self::Passing { except, depth } => {
                 let passing = candidate.checks().into_iter().map(|check| {
                     let answer = match check {
                         CandidateCheck::Option(letter) if letter != candidate.answer_key() => 0.1,
@@ -203,10 +223,18 @@ impl CheckReply {
                     )
                 });
                 // A check answered twice keeps its last answer.
-                Ok(QuestionCheckAnswers::new(passing.chain(answers)))
+                Ok(QuestionCheckAnswers::new(passing.chain(except), depth))
             }
         }
     }
+}
+
+/// The depth a check scripted to pass scores unless a test scripts one:
+/// needs reading the change, at 0.8, so its expected value is 1.
+fn default_depth() -> Depth {
+    let probability = |value| Probability::new(value).expect("0.1 and 0.8 are probabilities");
+    Depth::new([probability(0.1), probability(0.8), probability(0.1)], 1.0)
+        .expect("1 is an expected depth")
 }
 
 /// `reply` as a request that has it at once, from `model` in `role`.
@@ -230,9 +258,10 @@ mod tests {
     use std::task::{Context, Poll, Waker};
 
     use whetstone_core::{
-        Area, CandidateCheck, Change, ConnectedCodeLimit, Connections, Evidence, ExcludePatterns,
-        OptionLetter, Probability, QuestionCount, QuestionType, ReviewChoices, Role, TouchedFile,
-        WrittenCandidate, WrittenCitation, WrittenCriterion, WrittenOption, plain_checks,
+        Area, CandidateCheck, Change, ConnectedCodeLimit, Connections, Depth, Evidence,
+        ExcludePatterns, OptionLetter, Probability, QuestionCount, QuestionType, ReviewChoices,
+        Role, TouchedFile, WrittenCandidate, WrittenCitation, WrittenCriterion, WrittenOption,
+        plain_checks,
     };
 
     use super::*;
@@ -325,15 +354,28 @@ mod tests {
             .expect("it passes the plain checks")
     }
 
+    fn probability(value: f64) -> Probability {
+        Probability::new(value).expect("from 0 to 1")
+    }
+
+    /// A depth whose levels are at `one_line`, `the_change` and
+    /// `code_around`, and whose expected value is `expected`.
+    fn depth(one_line: f64, the_change: f64, code_around: f64, expected: f64) -> Depth {
+        Depth::new(
+            [one_line, the_change, code_around].map(probability),
+            expected,
+        )
+        .expect("from 0 to 2")
+    }
+
     fn answers(a: f64, b: f64, c: f64) -> QuestionCheckAnswers {
-        QuestionCheckAnswers::new(OptionLetter::ALL.into_iter().zip([a, b, c]).map(
-            |(letter, value)| {
-                (
-                    CandidateCheck::Option(letter),
-                    Probability::new(value).expect("from 0 to 1"),
-                )
-            },
-        ))
+        QuestionCheckAnswers::new(
+            OptionLetter::ALL
+                .into_iter()
+                .zip([a, b, c])
+                .map(|(letter, value)| (CandidateCheck::Option(letter), probability(value))),
+            depth(0.2, 0.3, 0.5, 1.3),
+        )
     }
 
     fn count() -> CandidateCount {
@@ -406,7 +448,7 @@ mod tests {
     fn a_check_scripted_to_pass_answers_every_check_of_the_candidate_asked_but_those_given() {
         use CandidateCheck::*;
         let ai = ScriptedAi::new();
-        let unclear = Probability::new(0.5).expect("from 0 to 1");
+        let unclear = probability(0.5);
         ai.on_check_passing("Why retry?");
         ai.on_check_passing_except(
             "Why retry?",
@@ -421,7 +463,8 @@ mod tests {
             QuestionCheckAnswers::new(
                 answers
                     .iter()
-                    .map(|&(check, value)| (check, Probability::new(value).expect("from 0 to 1"))),
+                    .map(|&(check, value)| (check, probability(value))),
+                depth(0.1, 0.8, 0.1, 1.0),
             )
         };
         assert_eq!(
@@ -443,7 +486,8 @@ mod tests {
                 (HintPointsToEvidence, 0.9),
                 (HintHidesAnswerKey, 0.9),
             ])),
-            "every check clear yes, but the options that aren't the answer key clear no"
+            "every check clear yes, but the options that aren't the answer key clear no, \
+             and needs reading the change"
         );
         assert_eq!(
             except.map(|reply| reply.content),
@@ -465,6 +509,25 @@ mod tests {
                 (HintHidesAnswerKey, 0.9),
             ])),
             "the same, but the answers given"
+        );
+    }
+
+    #[test]
+    fn a_check_scripted_to_pass_at_a_depth_scores_that_depth() {
+        let ai = ScriptedAi::new();
+        let deepest = depth(0.05, 0.15, 0.8, 1.75);
+        ai.on_check_passing_at("Why retry?", deepest);
+        ai.on_check_passing("Why retry?");
+        let candidate = candidate("Why retry?");
+
+        let deep = at_once(ai.check_question(&evidence(), &candidate)).expect("scripted to pass");
+        let usual = at_once(ai.check_question(&evidence(), &candidate)).expect("scripted to pass");
+
+        assert_eq!(deep.content.depth(), deepest, "the depth scripted");
+        assert_eq!(
+            deep.content.iter().collect::<Vec<_>>(),
+            usual.content.iter().collect::<Vec<_>>(),
+            "every other answer passes, as without a depth"
         );
     }
 
