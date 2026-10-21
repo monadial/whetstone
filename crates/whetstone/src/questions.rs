@@ -47,7 +47,7 @@
 //! report.
 //!
 //! Beside the question, and beside its feedback, the code it cites shows,
-//! as the evidence sent it (see [`crate::question_context`]): on the left
+//! as the evidence sent it (see [`crate::cited_code`]): on the left
 //! at 120 columns or wider, and above the question otherwise, in at most
 //! two fifths of the screen's height. Tab from the last control gives it
 //! focus, and Shift+Tab from the first, and it then scrolls on its own. `z`
@@ -92,6 +92,7 @@ use whetstone_core::{
 };
 
 use crate::cannot_answer::{self, CannotAnswer};
+use crate::cited_code::{self, CitedCode};
 use crate::columns;
 use crate::failures::FailedRequests;
 use crate::feedback::{self, AttemptKind, Feedback, Place, Step};
@@ -100,7 +101,6 @@ use crate::focus::Position;
 use crate::jev_answers;
 use crate::keymap::{self, Binding, Command, Input, Keymap, Press};
 use crate::palette::Action;
-use crate::question_context::{self, QuestionContext};
 use crate::reader::{Reader, Section};
 use crate::reasoning_editor::{self, Caret, Editing, ReasoningEditor};
 use crate::report::{self, ReportForm, Reporting};
@@ -152,7 +152,7 @@ const OPTIONS_KEYMAP: Keymap = &[
         ..WRITE
     },
     HINT,
-    question_context::ZOOM,
+    cited_code::ZOOM,
     keymap::BACK,
 ];
 
@@ -163,29 +163,29 @@ const KEYMAP: Keymap = &[
     keymap::ACTIVATE,
     WRITE,
     HINT,
-    question_context::ZOOM,
+    cited_code::ZOOM,
     keymap::BACK,
 ];
 
 /// The keys while the code beside a question has focus.
-const CONTEXT_KEYMAP: Keymap = &[
-    question_context::SCROLL,
-    question_context::PAGE,
-    question_context::ENDS,
-    question_context::HALF_PAGE,
+const CODE_KEYMAP: Keymap = &[
+    cited_code::SCROLL,
+    cited_code::PAGE,
+    cited_code::ENDS,
+    cited_code::HALF_PAGE,
     WRITE,
     HINT,
-    question_context::ZOOM,
+    cited_code::ZOOM,
     keymap::BACK,
 ];
 
 /// The keys while the code beside a question's feedback has focus.
-const FEEDBACK_CONTEXT_KEYMAP: Keymap = &[
-    question_context::SCROLL,
-    question_context::PAGE,
-    question_context::ENDS,
-    question_context::HALF_PAGE,
-    question_context::ZOOM,
+const FEEDBACK_CODE_KEYMAP: Keymap = &[
+    cited_code::SCROLL,
+    cited_code::PAGE,
+    cited_code::ENDS,
+    cited_code::HALF_PAGE,
+    cited_code::ZOOM,
     keymap::BACK,
 ];
 
@@ -329,7 +329,7 @@ enum Pane {
     #[default]
     Question,
     /// The code the question cites, beside it.
-    Context,
+    Code,
     /// The code the question cites, on the whole screen.
     Zoomed,
 }
@@ -417,7 +417,7 @@ struct Entry {
     /// Its area's name.
     area_name: String,
     /// The code it cites, beside it.
-    context: QuestionContext,
+    code: CitedCode,
     attempt: Attempt,
     /// Whether the learner asked for the question's hint.
     hint: HintState,
@@ -510,7 +510,7 @@ pub(crate) struct Questions {
 impl Questions {
     /// The questions `picked`, about the chosen `areas`, showing the first,
     /// or `None` when there are none to show, each beside the code it
-    /// cites as `evidence` sends it, under `change`, which names the
+    /// cites as `evidence` sends it, under `change_name`, which names the
     /// change. A request about a response that fails says what to do as
     /// `failed_requests` words it.
     pub(crate) fn new(
@@ -518,7 +518,7 @@ impl Questions {
         areas: &[Area],
         failed_requests: FailedRequests,
         evidence: &Evidence,
-        change: &str,
+        change_name: &str,
     ) -> Option<Self> {
         let (questions, shortfall) = match picked {
             Picked::All(questions) => (questions, None),
@@ -546,7 +546,7 @@ impl Questions {
                 .into_iter()
                 .map(|question| Entry {
                     area_name: name(&question),
-                    context: QuestionContext::new(change.to_owned(), &question, evidence),
+                    code: CitedCode::new(change_name.to_owned(), &question, evidence),
                     question,
                     attempt: Attempt::Draft(Draft::default()),
                     hint: HintState::Hidden,
@@ -683,9 +683,9 @@ impl Questions {
             return form.keymap();
         }
         match (self.pane(), &self.current().attempt) {
-            (Pane::Zoomed, _) => return question_context::ZOOMED_KEYMAP,
-            (Pane::Context, Attempt::Draft(_)) => return CONTEXT_KEYMAP,
-            (Pane::Context, _) => return FEEDBACK_CONTEXT_KEYMAP,
+            (Pane::Zoomed, _) => return cited_code::ZOOMED_KEYMAP,
+            (Pane::Code, Attempt::Draft(_)) => return CODE_KEYMAP,
+            (Pane::Code, _) => return FEEDBACK_CODE_KEYMAP,
             (Pane::Question, _) => {}
         }
         match &self.current().attempt {
@@ -1006,10 +1006,10 @@ impl Questions {
             return self.finish();
         }
         if self.pane() != Pane::Question {
-            self.apply_context(command, area);
+            self.apply_code(command, area);
             return None;
         }
-        let beside = self.parts(area).question.unwrap_or(area);
+        let beside = self.question_area(area);
         let place = self.place();
         let Entry {
             question, attempt, ..
@@ -1022,7 +1022,7 @@ impl Questions {
                     return None;
                 }
                 if feedback.wraps(command) {
-                    self.pane = Pane::Context;
+                    self.pane = Pane::Code;
                     return None;
                 }
                 let [_, body] = layout(self.shortfall, beside);
@@ -1055,14 +1055,14 @@ impl Questions {
     /// Applies `command` to the code the question that shows cites, beside
     /// it or on the whole screen, drawn in `area`: it scrolls the code, or
     /// moves focus back to the question.
-    fn apply_context(&mut self, command: Command, area: Rect) {
+    fn apply_code(&mut self, command: Command, area: Rect) {
         let parts = self.parts(area);
         let pane = self.pane;
         let entry = &mut self.picked[self.at];
         match (pane, command) {
             (Pane::Zoomed, Command::Zoom) => self.pane = Pane::Question,
             (_, Command::Zoom) => self.pane = Pane::Zoomed,
-            (Pane::Context, Command::NextControl | Command::PreviousControl) => {
+            (Pane::Code, Command::NextControl | Command::PreviousControl) => {
                 self.pane = Pane::Question;
                 // Focus comes back to the first control after the code, and
                 // to the last before it.
@@ -1077,16 +1077,16 @@ impl Questions {
                     Attempt::CannotAnswer(_) => {}
                 }
             }
-            (Pane::Context, Command::Edit) => {
+            (Pane::Code, Command::Edit) => {
                 if let Attempt::Draft(draft) = &mut entry.attempt {
                     self.pane = Pane::Question;
                     draft.edit();
                 }
             }
-            (Pane::Context, Command::ShowHint) => show_hint(entry, &mut self.signals),
+            (Pane::Code, Command::ShowHint) => show_hint(entry, &mut self.signals),
             (_, command) => {
-                if let Some(context) = parts.context {
-                    entry.context.scroll(command, context);
+                if let Some(code) = parts.code() {
+                    entry.code.scroll(command, code);
                 }
             }
         }
@@ -1101,34 +1101,24 @@ impl Questions {
     /// on a page that has no code beside it.
     fn parts(&self, area: Rect) -> Parts {
         match (self.pane(), &self.current().attempt) {
-            (_, Attempt::CannotAnswer(_)) => {
-                return Parts {
-                    context: None,
-                    question: Some(area),
-                };
-            }
-            (Pane::Zoomed, _) => {
-                return Parts {
-                    context: Some(area),
-                    question: None,
-                };
-            }
-            (Pane::Question | Pane::Context, _) => {}
+            (_, Attempt::CannotAnswer(_)) => return Parts::Question(area),
+            (Pane::Zoomed, _) => return Parts::Code(area),
+            (Pane::Question | Pane::Code, _) => {}
         }
-        let [context, _, question] = if area.width >= WIDE {
+        let [code, _, question] = if area.width >= WIDE {
             Layout::horizontal([
-                Constraint::Percentage(CONTEXT_PERCENT),
+                Constraint::Percentage(CODE_PERCENT),
                 Constraint::Length(GAP),
                 Constraint::Fill(1),
             ])
             .areas(area)
         } else {
-            let most = (area.height * 2 / 5).min(self.current().context.rows(area.width));
+            let most = (area.height * 2 / 5).min(self.current().code.rows(area.width));
             let rows = area
                 .height
                 .saturating_sub(self.rows_needed(area.width) + 1)
                 .min(most)
-                .max(CONTEXT_ROWS.min(most));
+                .max(CODE_ROWS.min(most));
             Layout::vertical([
                 Constraint::Length(rows),
                 Constraint::Length(1),
@@ -1136,16 +1126,20 @@ impl Questions {
             ])
             .areas(area)
         };
-        Parts {
-            context: Some(context),
-            question: Some(question),
-        }
+        Parts::Both { code, question }
     }
 
     /// The control of `draft` that shows focus: none while the learner
     /// edits the reasoning, or while the code beside it has focus.
     fn draft_focus(&self, draft: &Draft) -> Option<Control> {
         (self.pane() == Pane::Question && draft.mode == Mode::Moving).then(|| draft.focused())
+    }
+
+    /// Where the question that shows goes in `area`. It always shows while
+    /// a command reaches it: the code alone shows only while it has the
+    /// keys.
+    fn question_area(&self, area: Rect) -> Rect {
+        self.parts(area).question().unwrap_or(area)
     }
 
     /// The fewest rows the question that shows needs, `width` cells wide,
@@ -1225,7 +1219,7 @@ impl Questions {
     /// Applies `command` to the draft response to the question that shows,
     /// drawn in `area`, and returns what it asks of the app, if anything.
     fn apply_draft(&mut self, command: Command, area: Rect) -> Option<Command> {
-        let beside = self.parts(area).question.unwrap_or(area);
+        let beside = self.question_area(area);
         let at = self.at;
         let skip_to = self.skip_to(at);
         let submit_disabled = match &self.picked[at].attempt {
@@ -1262,7 +1256,7 @@ impl Questions {
             Command::Edit => draft.edit(),
             Command::Zoom => self.pane = Pane::Zoomed,
             Command::NextControl | Command::PreviousControl if draft.wraps(command) => {
-                self.pane = Pane::Context;
+                self.pane = Pane::Code;
             }
             Command::Activate => match draft.focused() {
                 Control::Option(letter) => draft.choose(letter),
@@ -1440,11 +1434,11 @@ impl Questions {
     pub(crate) fn render(&self, theme: &Theme, frame: &mut Frame<'_>, area: Rect) {
         let parts = self.parts(area);
         let entry = self.current();
-        if let Some(context) = parts.context {
+        if let Some(code) = parts.code() {
             let focused = self.pane() != Pane::Question;
-            entry.context.render(theme, frame, context, focused);
+            entry.code.render(theme, frame, code, focused);
         }
-        if let Some(question) = parts.question {
+        if let Some(question) = parts.question() {
             let [head, body] = layout(self.shortfall, question);
             frame.render_widget(Paragraph::new(self.head(theme)), head);
             match &entry.attempt {
@@ -1510,7 +1504,15 @@ impl Questions {
                 },
             )
         };
-        let mut controls = fitted(control(Control::Submit, self.submit_disabled(draft)), width);
+        let mut controls = theme.control_rows(
+            Control::Submit.label(),
+            ControlState {
+                focused: focused == Some(Control::Submit),
+                disabled: self.submit_disabled(draft),
+                ..ControlState::default()
+            },
+            width,
+        );
         controls.push(control(Control::InspectSource, None));
         let skip = self
             .skip_to(self.at)
@@ -1687,33 +1689,6 @@ fn hint_lines(entry: &Entry, theme: &Theme, width: usize) -> Vec<Line<'static>> 
     lines
 }
 
-/// `control`, one line, in rows `width` cells wide: whole if it fits, or
-/// else its label, with why it is disabled wrapped below, under the label.
-fn fitted(control: Line<'static>, width: usize) -> Vec<Line<'static>> {
-    // A disabled action is its focus marker, its label and why.
-    if control.width() <= width || control.spans.len() < 3 {
-        return vec![control];
-    }
-    let style = control.style;
-    let mut spans = control.spans;
-    let reason = spans.split_off(2);
-    let indent = spans.first().map(Span::width).unwrap_or_default();
-    let why: String = reason.iter().map(|span| span.content.as_ref()).collect();
-    let why_style = reason.first().map(|span| span.style).unwrap_or_default();
-    let mut rows = vec![Line::from(spans).style(style)];
-    rows.extend(
-        columns::wrap(why.trim_start(), width.saturating_sub(indent))
-            .into_iter()
-            .map(|row| {
-                Line::from(vec![
-                    Span::raw(" ".repeat(indent)),
-                    Span::styled(row, why_style),
-                ])
-            }),
-    );
-    rows
-}
-
 /// `controls`, each one line, packed in order into rows `width` cells wide,
 /// two cells apart, so a row holds as many as fit.
 fn packed(controls: Vec<Line<'static>>, width: usize) -> Vec<Line<'static>> {
@@ -1752,22 +1727,42 @@ const FEEDBACK_ROWS: usize = 4;
 const WIDE: u16 = 116;
 
 /// How much of the width the code beside a question takes, in percent.
-const CONTEXT_PERCENT: u16 = 55;
+const CODE_PERCENT: u16 = 55;
 
 /// The cells between the code and the question beside it.
 const GAP: u16 = 2;
 
 /// The fewest rows the code above a question takes, its header included.
-const CONTEXT_ROWS: u16 = 3;
+const CODE_ROWS: u16 = 3;
 
 /// Where the code a question cites and the question go on the screen.
 #[derive(Debug, Clone, Copy)]
-struct Parts {
-    /// The code, unless the page has none beside it.
-    context: Option<Rect>,
-    /// The question, or its feedback, with the lines heading it, unless the
-    /// code shows on the whole screen.
-    question: Option<Rect>,
+enum Parts {
+    /// The question, or its feedback, with the lines heading it, alone, on
+    /// a page that has no code beside it.
+    Question(Rect),
+    /// The code alone, on the whole screen.
+    Code(Rect),
+    /// The code, and beside it or below it, the question.
+    Both { code: Rect, question: Rect },
+}
+
+impl Parts {
+    /// Where the code goes, if it shows.
+    fn code(self) -> Option<Rect> {
+        match self {
+            Self::Code(code) | Self::Both { code, .. } => Some(code),
+            Self::Question(_) => None,
+        }
+    }
+
+    /// Where the question goes, if it shows.
+    fn question(self) -> Option<Rect> {
+        match self {
+            Self::Question(question) | Self::Both { question, .. } => Some(question),
+            Self::Code(_) => None,
+        }
+    }
 }
 
 /// The reasoning editor's box, without its title: a border, and a cell of

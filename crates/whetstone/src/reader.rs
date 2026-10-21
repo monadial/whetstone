@@ -3,7 +3,7 @@
 //! under a title, in sections that scroll together. Code is numbered, so a
 //! line the review or a question names can be found. The questions screen
 //! shows the code a question cites in the same sections (see
-//! [`crate::question_context`]), each line the change added or removed
+//! [`crate::cited_code`]), each line the change added or removed
 //! marked as a diff marks it.
 
 use std::fmt;
@@ -13,8 +13,9 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Paragraph, Wrap};
-use whetstone_core::{DiffMark, ExcerptLine};
+use whetstone_core::{DiffMark, Excerpt, ExcerptLine};
 
+use crate::columns;
 use crate::focus::Position;
 use crate::keymap::{self, Binding, Command, Keymap};
 use crate::palette::Action;
@@ -69,10 +70,12 @@ enum Numbering {
     Plain,
     /// Code, each line after its number, the first numbered `first`.
     Numbered { first: usize },
-    /// Code from a touched file, each line after its number, or none for a
-    /// line the change removed, then how the change marks it: one for each
-    /// line of the text.
-    Marked(Vec<(Option<usize>, DiffMark)>),
+    /// An excerpt of code a question cites, in place of the text: each
+    /// line after its number in its file, or none for a line the change
+    /// removed, and its mark, `+` or `-`, where the change added or removed
+    /// it. A line too wide for a row goes on under its text, not under its
+    /// number.
+    Excerpt(Vec<ExcerptLine>),
 }
 
 impl Section {
@@ -99,74 +102,78 @@ impl Section {
         }
     }
 
-    /// Lines of code from a touched file under `heading`, each numbered as
-    /// in the file, and marked `+` or `-` where the change added or removed
-    /// it, as its diff marks it.
-    pub(crate) fn marked(heading: &str, lines: &[ExcerptLine]) -> Self {
+    /// The lines of `excerpt` under `heading`, each numbered as in its
+    /// file, and marked `+` or `-` where the change added or removed it, as
+    /// its diff marks it.
+    pub(crate) fn excerpt(heading: &str, excerpt: &Excerpt) -> Self {
         Self {
             heading: heading.to_owned(),
-            // Each line ends in a line break, so an empty last line stays.
-            text: lines.iter().flat_map(|line| [line.text(), "\n"]).collect(),
-            numbering: Numbering::Marked(
-                lines
-                    .iter()
-                    .map(|line| (line.number(), line.mark()))
-                    .collect(),
-            ),
+            text: String::new(),
+            numbering: Numbering::Excerpt(excerpt.lines().to_vec()),
         }
     }
 
-    /// How many lines it takes before it wraps: its heading and its text.
-    fn len(&self) -> usize {
-        1 + self.text.lines().count()
-    }
-
-    /// The section's lines: its heading, then its text, each line after
-    /// its number if it is code, and its mark if the change added or
-    /// removed it.
-    fn lines(&self, theme: &Theme) -> Vec<Line<'_>> {
+    /// The section's lines, `width` cells wide: its heading, then its
+    /// text, each line after its number if it is code, or its excerpt.
+    fn lines(&self, theme: &Theme, width: u16) -> Vec<Line<'_>> {
         let mut lines = vec![Line::styled(self.heading.as_str(), theme.muted)];
-        let digits = match &self.numbering {
-            Numbering::Plain => 1,
-            Numbering::Numbered { first } => (first + self.text.lines().count().max(1) - 1)
-                .to_string()
-                .len(),
-            Numbering::Marked(marks) => marks
-                .iter()
-                .filter_map(|&(number, _)| number)
-                .max()
-                .unwrap_or(1)
-                .to_string()
-                .len(),
-        };
-        for (index, line) in self.text.lines().enumerate() {
-            lines.push(match &self.numbering {
-                Numbering::Plain => Line::raw(line),
-                Numbering::Numbered { first } => Line::from(vec![
-                    Span::styled(format!("{:>digits$} ", first + index), theme.muted),
-                    Span::raw(line),
-                ]),
-                Numbering::Marked(marks) => {
-                    let (number, mark) = marks
-                        .get(index)
-                        .copied()
-                        .unwrap_or((None, DiffMark::Unchanged));
-                    let (sign, style) = match mark {
-                        DiffMark::Unchanged => (' ', Style::new()),
-                        DiffMark::Added => ('+', theme.added),
-                        DiffMark::Removed => ('-', theme.removed),
-                    };
-                    let number = number.map(|number| number.to_string()).unwrap_or_default();
+        match &self.numbering {
+            Numbering::Plain => lines.extend(self.text.lines().map(Line::raw)),
+            Numbering::Numbered { first } => {
+                let last = first + self.text.lines().count().max(1) - 1;
+                let digits = last.to_string().len();
+                lines.extend(self.text.lines().enumerate().map(|(index, line)| {
                     Line::from(vec![
-                        Span::styled(format!("{number:>digits$} "), theme.muted),
-                        Span::styled(format!("{sign} "), style),
-                        Span::styled(line, style),
+                        Span::styled(format!("{:>digits$} ", first + index), theme.muted),
+                        Span::raw(line),
                     ])
-                }
-            });
+                }));
+            }
+            Numbering::Excerpt(excerpt) => lines.extend(excerpt_rows(excerpt, theme, width)),
         }
         lines
     }
+}
+
+/// The rows of `excerpt`, drawn with `theme` `width` cells wide: each line
+/// after its number and its mark, and the rest of a line too wide for its
+/// row on the rows below it, under its text.
+fn excerpt_rows<'a>(excerpt: &'a [ExcerptLine], theme: &Theme, width: u16) -> Vec<Line<'a>> {
+    let digits = excerpt
+        .iter()
+        .filter_map(ExcerptLine::number)
+        .max()
+        .unwrap_or(1)
+        .to_string()
+        .len();
+    // The number, a space, the mark and a space.
+    let gutter = digits + 3;
+    let room = usize::from(width).saturating_sub(gutter);
+    let mut rows = Vec::new();
+    for line in excerpt {
+        let (sign, style) = match line.mark() {
+            DiffMark::Unchanged => (' ', Style::new()),
+            DiffMark::Added => ('+', theme.added),
+            DiffMark::Removed => ('-', theme.removed),
+        };
+        let number = line
+            .number()
+            .map(|number| number.to_string())
+            .unwrap_or_default();
+        for (index, piece) in columns::cut(line.text(), room).into_iter().enumerate() {
+            let mut spans = if index == 0 {
+                vec![
+                    Span::styled(format!("{number:>digits$} "), theme.muted),
+                    Span::styled(format!("{sign} "), style),
+                ]
+            } else {
+                vec![Span::raw(" ".repeat(gutter))]
+            };
+            spans.push(Span::styled(piece, style));
+            rows.push(Line::from(spans));
+        }
+    }
+    rows
 }
 
 /// Sections that scroll together: the reader's text under its title, and
@@ -182,9 +189,10 @@ pub(crate) struct Sections {
 enum Top {
     /// This row of the text, as it wraps, is at the top.
     Row(Position),
-    /// This line of the text, before it wraps, is at the top, until it is
-    /// first scrolled, at the width it then shows at.
-    Line(usize),
+    /// A few lines above `line` of the section at `section`, before they
+    /// wrap, but not above its heading, are at the top, until it is first
+    /// scrolled, at the width it then shows at.
+    Line { section: usize, line: usize },
 }
 
 impl Sections {
@@ -200,28 +208,25 @@ impl Sections {
     /// from 0, with a few lines above it, but not above its heading.
     #[must_use]
     pub(crate) fn opening_at(self, section: usize, line: usize) -> Self {
-        let heading: usize = self
-            .sections
-            .iter()
-            .take(section)
-            .map(|section| section.len() + 1)
-            .sum();
         Self {
-            top: Top::Line((heading + 1 + line).saturating_sub(LEAD).max(heading)),
+            top: Top::Line { section, line },
             ..self
         }
     }
 
-    /// The text, its sections a blank line apart.
-    fn text(&self, theme: &Theme) -> Text<'_> {
+    /// The text `width` cells wide, its sections a blank line apart, and
+    /// where each section's heading is in it.
+    fn text(&self, theme: &Theme, width: u16) -> (Text<'_>, Vec<usize>) {
         let mut lines = Vec::new();
+        let mut headings = Vec::new();
         for (index, section) in self.sections.iter().enumerate() {
             if index > 0 {
                 lines.push(Line::default());
             }
-            lines.extend(section.lines(theme));
+            headings.push(lines.len());
+            lines.extend(section.lines(theme, width));
         }
-        Text::from(lines)
+        (Text::from(lines), headings)
     }
 
     /// The text's paragraph, wrapping long lines.
@@ -232,24 +237,31 @@ impl Sections {
     /// The furthest the text scrolls in `area`: to where its last row is at
     /// the bottom.
     fn last_top(&self, theme: &Theme, area: Rect) -> usize {
-        Self::paragraph(self.text(theme))
-            .line_count(area.width)
+        self.rows_with(theme, area.width)
             .saturating_sub(usize::from(area.height))
     }
 
     /// How many rows the text takes `width` cells wide.
     pub(crate) fn rows(&self, width: u16) -> usize {
         // Styles do not change how the text wraps.
-        Self::paragraph(self.text(&Theme::new(ColorSupport::NoColor))).line_count(width)
+        self.rows_with(&Theme::new(ColorSupport::NoColor), width)
+    }
+
+    /// How many rows the text takes `width` cells wide, drawn with
+    /// `theme`.
+    fn rows_with(&self, theme: &Theme, width: u16) -> usize {
+        Self::paragraph(self.text(theme, width).0).line_count(width)
     }
 
     /// The row at the top in `area`, measured with `theme`.
     fn top(&self, theme: &Theme, area: Rect) -> usize {
         let row = match self.top {
             Top::Row(row) => row.index(),
-            Top::Line(line) => {
-                let mut text = self.text(theme);
-                text.lines.truncate(line);
+            Top::Line { section, line } => {
+                let (mut text, headings) = self.text(theme, area.width);
+                let heading = headings.get(section).copied().unwrap_or_default();
+                text.lines
+                    .truncate((heading + 1 + line).saturating_sub(LEAD).max(heading));
                 Self::paragraph(text).line_count(area.width)
             }
         };
@@ -263,7 +275,7 @@ impl Sections {
         let last = self.last_top(&theme, area);
         let top = match self.top {
             Top::Row(row) => row,
-            Top::Line(_) => Position::at(self.top(&theme, area)),
+            Top::Line { .. } => Position::at(self.top(&theme, area)),
         };
         let scrolled = top.scrolled(command, last, usize::from(area.height));
         // A command that doesn't scroll leaves the top as it was, even past
@@ -277,7 +289,8 @@ impl Sections {
     pub(crate) fn render(&self, theme: &Theme, frame: &mut Frame<'_>, area: Rect) {
         let top = self.top(theme, area);
         frame.render_widget(
-            Self::paragraph(self.text(theme)).scroll((u16::try_from(top).unwrap_or(u16::MAX), 0)),
+            Self::paragraph(self.text(theme, area.width).0)
+                .scroll((u16::try_from(top).unwrap_or(u16::MAX), 0)),
             area,
         );
     }

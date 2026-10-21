@@ -42,12 +42,12 @@ use whetstone_core::{
     Probability, Question, Reasoning, Role,
 };
 
+use crate::cited_code;
 use crate::columns;
 use crate::explanation::Explanation;
 use crate::failures::FailedRequests;
 use crate::focus::Position;
 use crate::keymap::{self, Binding, Command, Keymap};
-use crate::question_context;
 use crate::session_record::{
     Assessment, Durability, ExplanationCheck, SavedReasoning, SavedResponse, SessionStore,
 };
@@ -66,7 +66,7 @@ pub(crate) const KEYMAP: Keymap = &[
         does: "Scroll to the top or bottom of the feedback",
         ..keymap::ENDS
     },
-    question_context::ZOOM,
+    cited_code::ZOOM,
     keymap::BACK,
 ];
 

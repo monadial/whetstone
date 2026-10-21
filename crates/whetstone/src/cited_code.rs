@@ -15,7 +15,7 @@ use ratatui::crossterm::event::KeyCode;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
-use whetstone_core::{Evidence, ExcerptLine, ExcerptSource, Extent, Question};
+use whetstone_core::{Evidence, ExcerptSource, Extent, Question};
 
 use crate::keymap::{self, Binding, Command, Press};
 use crate::reader::{Section, Sections};
@@ -78,13 +78,13 @@ pub(crate) const ZOOMED_KEYMAP: keymap::Keymap = &[SCROLL, PAGE, ENDS, HALF_PAGE
 
 /// The code one question cites, and how far it is scrolled.
 #[derive(Debug, Clone)]
-pub(crate) struct QuestionContext {
+pub(crate) struct CitedCode {
     /// The change, as the header names it.
     header: String,
     code: Sections,
 }
 
-impl QuestionContext {
+impl CitedCode {
     /// The code `question` cites, as `evidence` sends it, under `header`,
     /// which names the change.
     pub(crate) fn new(header: String, question: &Question, evidence: &Evidence) -> Self {
@@ -94,29 +94,19 @@ impl QuestionContext {
             .filter_map(|citation| {
                 // Plain checks drop a citation the evidence doesn't send.
                 let excerpt = citation.excerpt(evidence, AROUND)?;
-                let heading = format!("{}, {}", citation.path(), Extent::Lines(citation.lines()));
-                Some(match excerpt.source() {
-                    ExcerptSource::TouchedFile => Section::marked(&heading, excerpt.lines()),
-                    ExcerptSource::Connection { relations } => {
-                        let relations: Vec<String> =
-                            relations.iter().map(ToString::to_string).collect();
-                        let text: String = excerpt
-                            .lines()
-                            .iter()
-                            .flat_map(|line| [line.text(), "\n"])
-                            .collect();
-                        let first = excerpt
-                            .lines()
-                            .first()
-                            .and_then(ExcerptLine::number)
-                            .unwrap_or(1);
-                        Section::numbered_from(
-                            &format!("{heading} · {}", relations.join(", ")),
-                            &text,
-                            first,
-                        )
+                let mut heading =
+                    format!("{}, {}", citation.path(), Extent::Lines(citation.lines()));
+                if let ExcerptSource::Connection { relations } = excerpt.source() {
+                    // Relations to different touched files can read alike.
+                    let mut said: Vec<String> = Vec::new();
+                    for relation in relations.iter().map(ToString::to_string) {
+                        if !said.contains(&relation) {
+                            said.push(relation);
+                        }
                     }
-                })
+                    heading = format!("{heading} · {}", said.join(", "));
+                }
+                Some(Section::excerpt(&heading, &excerpt))
             })
             .collect();
         Self {
