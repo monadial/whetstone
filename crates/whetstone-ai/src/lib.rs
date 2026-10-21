@@ -35,6 +35,8 @@ mod evidence;
 mod failure;
 mod generator;
 mod jev;
+#[cfg(test)]
+mod live;
 mod openrouter_ai;
 mod port;
 mod prompts;
