@@ -13,9 +13,10 @@ use whetstone_core::{
     WrittenCitation,
 };
 
+use crate::answering::submit;
 use crate::preparing_questions::{
-    DOMAIN, PAYMENT_LIFECYCLE, answer, area_id, candidate, generate, generate_in, stems,
-    touched_path,
+    DOMAIN, PAYMENT_LIFECYCLE, answer, area_id, candidate, generate, generate_in, reasoning_met,
+    stems, touched_path,
 };
 use crate::session::{NO_COLOR, Session, Setup};
 
@@ -486,4 +487,108 @@ fn after_retry_the_reasons_are_the_new_candidates_alone() {
         "{}",
         session.text()
     );
+}
+
+/// A session where 3 of the 4 questions asked for passed: the generator
+/// wrote six, one of which the plain checks dropped, and Jev couldn't tell
+/// whether the options of two others give the answer away. Reasoning
+/// submitted to those shown meets its criterion.
+fn a_shortfall(width: u16, height: u16) -> Session {
+    let passing = stems("Passing", 3);
+    let ai = Arc::new(ScriptedAi::new());
+    let mut written: Vec<WrittenCandidate> = passing
+        .iter()
+        .chain(["Withheld first?".to_owned(), "Withheld second?".to_owned()].iter())
+        .map(|stem| candidate(stem, "A", PAYMENT_LIFECYCLE))
+        .collect();
+    written.push(malformed("No hint?", |written| written.hint.clear()));
+    ai.on_write(&area_id(DOMAIN), Ok(written));
+    for stem in &passing {
+        ai.on_check_passing(stem);
+        reasoning_met(&ai, stem);
+    }
+    for stem in ["Withheld first?", "Withheld second?"] {
+        ai.on_check_passing_except(stem, [answer(CandidateCheck::NoGiveaway, 0.5)]);
+    }
+    prepared(&ai, width, height)
+}
+
+#[test]
+fn the_shortfall_line_offers_why_fewer_passed() {
+    let session = a_shortfall(80, 24);
+
+    assert_eq!(
+        session.rows()[1].trim(),
+        "3 passed checks, 4 asked for · see why in actions"
+    );
+}
+
+#[test]
+fn see_why_fewer_passed_gives_the_same_reasons_and_back_returns_to_the_question() {
+    let mut session = a_shortfall(80, 24);
+
+    session.press(": j <Enter>");
+
+    let text = session.text();
+    assert!(text.contains("Why fewer passed checks"), "{text}");
+    for reason in [
+        "6 written · 2 withheld, using policy 0's cut-offs",
+        "all 2: Jev couldn't tell whether the options give the answer away",
+        "1 dropped: it was missing its hint",
+    ] {
+        assert!(text.contains(reason), "{reason}: {text}");
+    }
+    session.press("q");
+    assert_eq!(session.row_with("Question 1"), "Question 1 of 3 · Domain");
+}
+
+#[test]
+fn see_why_fewer_passed_is_offered_on_feedback_too() {
+    let mut session = a_shortfall(120, 32);
+    submit(&mut session, "a", "Because.");
+
+    session.press(": j <Enter>");
+
+    assert!(
+        session.text().contains("Why fewer passed checks"),
+        "{}",
+        session.text()
+    );
+}
+
+#[test]
+fn see_why_fewer_passed_is_offered_only_with_a_shortfall() {
+    let ai = Arc::new(ScriptedAi::new());
+    let passing = stems("Passing", 4);
+    ai.on_write(
+        &area_id(DOMAIN),
+        Ok(passing
+            .iter()
+            .map(|stem| candidate(stem, "A", PAYMENT_LIFECYCLE))
+            .collect()),
+    );
+    for stem in &passing {
+        ai.on_check_passing(stem);
+    }
+    let mut session = prepared(&ai, 120, 32);
+
+    session.press(":");
+
+    assert!(!session.text().contains("See why"), "{}", session.text());
+}
+
+#[test]
+fn see_why_fewer_passed_at_120x32() {
+    let mut session = a_shortfall(120, 32);
+    session.press(": j <Enter>");
+
+    insta::assert_debug_snapshot!("see_why_fewer_passed_120x32", session.frame());
+}
+
+#[test]
+fn see_why_fewer_passed_at_80x24() {
+    let mut session = a_shortfall(80, 24);
+    session.press(": j <Enter>");
+
+    insta::assert_debug_snapshot!("see_why_fewer_passed_80x24", session.frame());
 }

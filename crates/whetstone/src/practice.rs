@@ -968,6 +968,21 @@ impl Practice {
         format!("{} · {}", self.change.summary(), areas.join(", "))
     }
 
+    /// The reader of why fewer questions passed their checks than were
+    /// asked for: the same reasons No questions passed checks gives.
+    fn why_withheld_reader(&self) -> Reader {
+        let mut lines = self.why_withheld.lines(self.sent.policy()).into_iter();
+        let count = lines.next().unwrap_or_default();
+        Reader::new(
+            Route::Read(Reading::WhyWithheld),
+            "Why fewer passed checks".to_owned(),
+            vec![Section::plain(
+                &count,
+                &lines.collect::<Vec<_>>().join("\n"),
+            )],
+        )
+    }
+
     /// The reader of everything the evidence sent, once it is prepared: the
     /// change's message, what each touched file sends, each area prompt and
     /// each connection.
@@ -1188,6 +1203,10 @@ impl View for Practice {
                 Stage::Shown(questions) => questions
                     .jev_answers(self.sent.requests())
                     .map(|reader| Box::new(reader) as Box<dyn View>),
+                _ => None,
+            },
+            Route::Read(Reading::WhyWithheld) => match &self.stage {
+                Stage::Shown(_) => Some(Box::new(self.why_withheld_reader())),
                 _ => None,
             },
             _ => None,

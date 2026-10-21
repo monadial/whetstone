@@ -196,6 +196,9 @@ pub(crate) enum Reading {
     /// Each of Jev's answers about the question whose feedback shows, with
     /// its number, which Inspect Jev's answers opens.
     JevAnswers,
+    /// Why fewer questions passed their checks than were asked for, which
+    /// See why fewer passed opens.
+    WhyWithheld,
 }
 
 /// A change the viewer can show.
