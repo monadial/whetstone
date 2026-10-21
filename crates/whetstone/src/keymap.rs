@@ -40,6 +40,10 @@ pub(crate) enum Command {
     HalfPageDown,
     /// Scroll up half a page.
     HalfPageUp,
+    /// Move down a page.
+    PageDown,
+    /// Move up a page.
+    PageUp,
     /// Move focus to the next control.
     NextControl,
     /// Move focus to the previous control.
@@ -147,6 +151,8 @@ impl Key {
             KeyCode::Down => "Down".to_owned(),
             KeyCode::Left => "Left".to_owned(),
             KeyCode::Right => "Right".to_owned(),
+            KeyCode::PageDown => "PgDn".to_owned(),
+            KeyCode::PageUp => "PgUp".to_owned(),
             code => format!("{code:?}"),
         };
         if self.modifiers.contains(KeyModifiers::CONTROL) {

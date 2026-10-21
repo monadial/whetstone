@@ -20,6 +20,7 @@ Buffer {
         "  > ( ) 01cfa23  Bump the counter to 4                                                                                  ",
         "    ( ) 10daf72  Add refunds                                                                                            ",
         "    ( ) 4d7751c  Bump the counter to 3 (parent not in this clone)                                                       ",
+        "    Previous page (first page)    Commits 1–4 of 4    Next page (last page)                                             ",
         "                                                                                                                        ",
         "    Review what will be sent (choose a change)                                                                          ",
         "                                                                                                                        ",
@@ -33,9 +34,8 @@ Buffer {
         "                                                                                                                        ",
         "                                                                                                                        ",
         "                                                                                                                        ",
-        "                                                                                                                        ",
         "  Match 1 of 2 for "counter"                                                                                            ",
-        "  ? keys  : actions  Space toggle  Enter open  / search  q back                                                         ",
+        "  ? keys  : actions  Space toggle  Enter open  PgDn page  / search  q back                                              ",
         "                                                                                                                        ",
     ],
     styles: [
@@ -46,7 +46,11 @@ Buffer {
         x: 38, y: 12, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 8, y: 14, fg: Reset, bg: Reset, underline: Reset, modifier: DIM | ITALIC,
         x: 65, y: 14, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
-        x: 4, y: 16, fg: Reset, bg: Reset, underline: Reset, modifier: DIM | ITALIC,
-        x: 46, y: 16, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 4, y: 15, fg: Reset, bg: Reset, underline: Reset, modifier: DIM | ITALIC,
+        x: 30, y: 15, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 54, y: 15, fg: Reset, bg: Reset, underline: Reset, modifier: DIM | ITALIC,
+        x: 75, y: 15, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 4, y: 17, fg: Reset, bg: Reset, underline: Reset, modifier: DIM | ITALIC,
+        x: 46, y: 17, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
     ]
 }

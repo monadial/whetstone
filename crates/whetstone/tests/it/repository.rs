@@ -711,7 +711,11 @@ fn the_picker_lists_the_commits_reachable_from_head_newest_first_with_short_ids_
         .map(str::to_owned)
         .collect();
     assert_eq!(expected.len(), 5);
-    let rows = session.section(CHANGES);
+    let rows: Vec<String> = session
+        .section(CHANGES)
+        .into_iter()
+        .take_while(|row| !row.starts_with("Previous page"))
+        .collect();
     for (row, expected) in rows.iter().zip(&expected) {
         assert!(row.starts_with(expected), "{row:?} is {expected:?}");
     }
@@ -877,7 +881,7 @@ fn key_help_on_the_repository_picker_says_enter_opens_a_change_and_slash_searche
     session.press("<Enter>");
     assert_eq!(
         session.rows()[22].trim(),
-        "? keys  : actions  Space toggle  Enter open  / search  q back"
+        "? keys  : actions  Space toggle  Enter open  PgDn page  / search  q back"
     );
 
     session.press("?");

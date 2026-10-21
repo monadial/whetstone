@@ -99,14 +99,22 @@ fn space_and_enter_toggle_the_focused_area() {
 /// The heading above the changes.
 const CHANGES: &str = "Change to practice on";
 
+/// How the row under the changes starts, with Previous page.
+const PAGING: &str = "Previous page";
+
 #[test]
 fn the_change_list_shows_every_curated_change_with_its_message_and_areas() {
     let mut session = Session::plain(80, 24);
 
     session.press("<Enter>");
 
+    let list: Vec<String> = session
+        .section(CHANGES)
+        .into_iter()
+        .take_while(|row| !row.starts_with(PAGING))
+        .collect();
     assert_eq!(
-        columns(&session.section(CHANGES)),
+        columns(&list),
         [
             ["( ) Model the payment lifecycle", "Domain"],
             [
@@ -241,7 +249,7 @@ fn the_footer_reminds_that_space_toggles_enter_opens_and_q_goes_back() {
 
     assert_eq!(
         session.rows()[22].trim(),
-        "? keys  : actions  Space toggle  Enter open  q back"
+        "? keys  : actions  Space toggle  Enter open  PgDn page  q back"
     );
 }
 

@@ -22,7 +22,7 @@ fn with_bumps(bumps: usize) -> TestRepo {
 
 /// The rows of `repo`'s commits as `git log` lists them, newest first: the
 /// short ID and subject, as the picker shows them unfocused.
-fn git_log(repo: &TestRepo) -> Vec<String> {
+pub(crate) fn git_log(repo: &TestRepo) -> Vec<String> {
     repo.git(&["log", "--format=( ) %h  %s"])
         .lines()
         .map(str::to_owned)
@@ -30,7 +30,7 @@ fn git_log(repo: &TestRepo) -> Vec<String> {
 }
 
 /// The focused row, trimmed, without its focus marker.
-fn focused(session: &Session) -> String {
+pub(crate) fn focused(session: &Session) -> String {
     let rows = session.rows();
     let row = rows
         .iter()
@@ -170,7 +170,7 @@ fn esc_closes_the_search_box_without_searching() {
     assert_eq!(status(&session), "");
     assert_eq!(
         footer(&session),
-        "? keys  : actions  Space toggle  Enter open  / search  q back"
+        "? keys  : actions  Space toggle  Enter open  PgDn page  / search  q back"
     );
     assert!(
         focused(&session).starts_with("(x) Domain"),
@@ -193,7 +193,11 @@ fn in_a_shallow_clone_the_commit_whose_parent_is_missing_is_listed_but_cannot_be
 
     let boundary = format!("{} (parent not in this clone)", log[2]);
     assert_eq!(
-        session.section(CHANGES),
+        session
+            .section(CHANGES)
+            .into_iter()
+            .take_while(|row| !row.starts_with("Previous page"))
+            .collect::<Vec<_>>(),
         [log[0].clone(), log[1].clone(), boundary.clone()]
     );
     session.press("j j j j j j j <Space> <Enter>");
