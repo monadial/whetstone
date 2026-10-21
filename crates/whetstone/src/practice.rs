@@ -148,28 +148,41 @@ enum Gate {
 }
 
 impl Gate {
+    /// What Jev's `bands`, its answer for each area banded, decide about the
+    /// chosen `areas`. Only a clear no drops an area: an unclear verdict lets
+    /// it through, for the question check to filter.
+    fn decided(areas: &[Area], bands: &[(AreaId, Band)]) -> Self {
+        let dropped = areas
+            .iter()
+            .map(Area::id)
+            .filter(|chosen| {
+                bands
+                    .iter()
+                    .any(|(area, band)| area == *chosen && *band == Band::ClearNo)
+            })
+            .cloned()
+            .collect();
+        Self::Decided { dropped }
+    }
+
+    /// Whether the gate clearly said `area` isn't worth asking about.
+    fn drops(&self, area: &Area) -> bool {
+        match self {
+            Self::Undecided | Self::AskedAnyway => false,
+            Self::Decided { dropped } => dropped.contains(area.id()),
+        }
+    }
+
     /// Of the chosen `areas`, those the gate clearly said aren't worth
     /// asking about, in order.
     fn dropped<'a>(&self, areas: &'a [Area]) -> Vec<&'a Area> {
-        match self {
-            Self::Undecided | Self::AskedAnyway => Vec::new(),
-            Self::Decided { dropped } => areas
-                .iter()
-                .filter(|area| dropped.contains(area.id()))
-                .collect(),
-        }
+        areas.iter().filter(|area| self.drops(area)).collect()
     }
 
     /// Of the chosen `areas`, those Practice asks about, in order: those the
     /// gate let through.
     fn asked_about<'a>(&self, areas: &'a [Area]) -> Vec<&'a Area> {
-        match self {
-            Self::Undecided | Self::AskedAnyway => areas.iter().collect(),
-            Self::Decided { dropped } => areas
-                .iter()
-                .filter(|area| !dropped.contains(area.id()))
-                .collect(),
-        }
+        areas.iter().filter(|area| !self.drops(area)).collect()
     }
 }
 
@@ -392,22 +405,8 @@ impl Practice {
                     .map(|(area, answer)| (area, policy.band(Job::RelevanceGate, answer)))
                     .collect();
                 tracing::info!(bands = ?bands, "the relevance gate decided");
-                // Only a clear no drops an area: an unclear verdict lets it
-                // through, for the question check to filter.
-                let dropped = self
-                    .areas
-                    .iter()
-                    .map(Area::id)
-                    .filter(|chosen| {
-                        bands
-                            .iter()
-                            .any(|(area, band)| area == *chosen && *band == Band::ClearNo)
-                    })
-                    .cloned()
-                    .collect::<Vec<_>>();
-                let none_passed = dropped.len() == self.areas.len();
-                self.gate = Gate::Decided { dropped };
-                if none_passed {
+                self.gate = Gate::decided(&self.areas, &bands);
+                if self.gate.asked_about(&self.areas).is_empty() {
                     self.stage = Stage::NothingToPractice;
                     self.focus = Position::default();
                 } else {
