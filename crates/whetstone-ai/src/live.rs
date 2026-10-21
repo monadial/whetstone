@@ -19,18 +19,17 @@
 //!    to every question asked;
 //! 3. checks its provenance with [`assert_reported`].
 //!
-//! A ticket that adds a kind of request to the port (the explanation or its
-//! check) adds its test here the same way, next to its recorder in
-//! `record.rs` and its contract tests.
+//! A ticket that adds a kind of request to the port adds its test here the
+//! same way, next to its recorder in `record.rs` and its contract tests.
 //! The job runs every ignored test whose name starts with `live_`, so the
 //! new test needs nothing else.
 
-use whetstone_core::{DepthLevel, ModelId, Provenance, QuestionCount};
+use whetstone_core::{CriterionOutcome, DepthLevel, ModelId, Provenance, QuestionCount};
 
 use crate::replay::live_key;
 use crate::samples::{
-    Acknowledged, REASONING, area, candidate, evidence, generator_model, jev_model, observability,
-    question,
+    Acknowledged, OUTCOMES, REASONING, area, candidate, evidence, generator_model, jev_model,
+    observability, paragraphs, question,
 };
 use crate::{Ai, CandidateCount, Models, OpenRouter, OpenRouterAi, QuestionWithoutKey};
 
@@ -189,6 +188,68 @@ async fn live_assess_reasoning() {
         reply.content.len(),
         question.rubric().len(),
         "an answer per criterion"
+    );
+    assert_reported(&reply.provenance);
+}
+
+#[tokio::test]
+#[ignore = "calls OpenRouter with a real key"]
+async fn live_explain() {
+    let _log = log_replies();
+    // The sample question's two criteria, as recorded: the first not met,
+    // the second needing review.
+    let criteria: Vec<(usize, CriterionOutcome)> = OUTCOMES.into_iter().enumerate().collect();
+
+    let reply = live_ai()
+        .explain(
+            &Acknowledged(REASONING),
+            &evidence(),
+            &question(),
+            &criteria,
+        )
+        .await
+        .expect("the generator explains the criteria");
+
+    let explained: Vec<(usize, CriterionOutcome)> = reply
+        .content
+        .iter()
+        .map(|paragraph| (paragraph.criterion, paragraph.outcome))
+        .collect();
+    assert_eq!(
+        explained, criteria,
+        "one paragraph per criterion asked, in rubric order"
+    );
+    for paragraph in &reply.content {
+        assert!(
+            !paragraph.text.trim().is_empty(),
+            "the paragraph about criterion {} says nothing",
+            paragraph.criterion
+        );
+    }
+    assert_reported(&reply.provenance);
+}
+
+#[tokio::test]
+#[ignore = "calls OpenRouter with a real key"]
+async fn live_check_explanation() {
+    let _log = log_replies();
+    // The explanation recorded for the sample question, two paragraphs.
+    let paragraphs = paragraphs();
+
+    let reply = live_ai()
+        .check_explanation(
+            &Acknowledged(REASONING),
+            &evidence(),
+            &question(),
+            &paragraphs,
+        )
+        .await
+        .expect("Jev checks the explanation");
+
+    assert_eq!(
+        reply.content.len(),
+        paragraphs.len(),
+        "an answer to both questions per paragraph"
     );
     assert_reported(&reply.provenance);
 }
