@@ -151,7 +151,7 @@ mod tests {
     use std::time::Duration;
 
     use serde_json::Value;
-    use whetstone_core::{CandidateCheck, OptionLetter, Probability, QuestionCount, Usage};
+    use whetstone_core::{CandidateCheck, Depth, OptionLetter, Probability, QuestionCount, Usage};
 
     use super::*;
     use crate::port::RequestFailure;
@@ -241,24 +241,30 @@ mod tests {
                 rating(OptionLetter::B),
                 rating(OptionLetter::C)
             ],
-            [Some(0.98), Some(0.01), Some(0.01)]
+            [Some(0.98), Some(0.01), Some(0.02)]
         );
         assert_eq!(
             reply
                 .content
                 .get(CandidateCheck::NoGiveaway)
                 .map(Probability::get),
-            Some(0.11)
+            Some(0.13)
+        );
+        let probability = |value| Probability::new(value).expect("from 0 to 1");
+        assert_eq!(
+            reply.content.depth(),
+            Depth::new([0.11, 0.3, 0.59].map(probability), 1.47).expect("from 0 to 2"),
+            "the depth's distribution and expected value, as returned"
         );
         assert_eq!(
             reply.provenance,
             Provenance::new(Role::Jev, jev_model())
                 .with_reported_model(ModelId::new("typesafe/jev-1.14-20261014".to_owned()))
                 .with_usage(Usage {
-                    input_tokens: Some(3012),
-                    output_tokens: Some(283),
+                    input_tokens: Some(3076),
+                    output_tokens: Some(296),
                 })
-                .with_cost(Cost::new(0.000_126_504).expect("0.000126504 is a cost"))
+                .with_cost(Cost::new(0.000_129_192).expect("0.000129192 is a cost"))
         );
         let (_, body) = received(&server).await;
         assert_eq!(body["model"], jev_model().as_str());
@@ -283,6 +289,7 @@ mod tests {
                 "answerable",
                 "criterion_1",
                 "criterion_2",
+                "depth",
                 "hint_hides_answer_key",
                 "hint_points_to_evidence",
                 "needs_change",
@@ -295,7 +302,8 @@ mod tests {
                 "rationale_c",
                 "why_it_matters",
             ],
-            "every check, in the same call, named per criterion and per rationale"
+            "every check and the depth score, in the same call, named per criterion and per \
+             rationale"
         );
     }
 
@@ -433,7 +441,7 @@ mod tests {
             log.contains("cost_usd=0.022528"),
             "the generator's cost: {log}"
         );
-        assert!(log.contains("cost_usd=0.000126504"), "Jev's cost: {log}");
+        assert!(log.contains("cost_usd=0.000129192"), "Jev's cost: {log}");
         for never in [
             // The key.
             crate::replay::TEST_KEY,
