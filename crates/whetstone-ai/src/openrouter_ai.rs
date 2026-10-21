@@ -3,25 +3,30 @@
 //!
 //! Each call builds its request from the evidence before it returns, so the
 //! request it hands back owns everything it sends ([`Pending`]). The reply
-//! is decoded strictly (rule 37), and its provenance is the model asked for,
-//! the model that answered, and the usage and cost the reply reports. A
-//! failure is one of the port's [`RequestFailure`]s.
+//! is decoded strictly (rule 37), and its provenance is the caller's stamp,
+//! the model asked for, the model that answered, for Jev each question sent
+//! with its answer as returned, for the generator `OpenRouter`'s generation
+//! ID, and the usage and cost the reply reports. A failure is one of the
+//! port's [`RequestFailure`]s.
 
 use std::num::NonZeroUsize;
 
 use tokio_util::sync::CancellationToken;
 use whetstone_core::{
-    Area, AreaId, Candidate, Cost, CriterionOutcome, Evidence, ModelId, Probability, Provenance,
-    Question, QuestionCheckAnswers, Role, WrittenCandidate,
+    Area, AreaId, Candidate, Cost, CriterionOutcome, Evidence, GenerationId, ModelId, Probability,
+    Provenance, Question, QuestionCheckAnswers, Role, WrittenCandidate,
 };
 
 use crate::candidates::{CandidatesOutput, candidates_request};
 use crate::connection::OpenRouter;
+use crate::exchanges::jev_exchanges;
 use crate::explanation::{
     ExplanationOutput, ParagraphCheck, WrittenParagraph, explanation_check_answers,
     explanation_check_request, explanation_paragraphs, explanation_request,
 };
+use crate::failure::AiError;
 use crate::gate::{gate_answers, gate_request};
+use crate::jev::{JevReply, JevRequest};
 use crate::port::{Ai, CandidateCount, Pending, Reply, RequestFailure, Saved, Stamp};
 use crate::question_check::{question_check_answers, question_check_request};
 use crate::reasoning::{QuestionWithoutKey, reasoning_answers, reasoning_request};
@@ -74,11 +79,7 @@ impl Ai for OpenRouterAi {
         Box::pin(async move {
             let reply = connection.evaluate(&request, &never_cancelled()).await?;
             let content = gate_answers(&areas, &reply)?;
-            let provenance = provenance(
-                Provenance::new(stamp.request, Role::Jev, model, stamp.versions),
-                Some(reply.model),
-                reply.usage,
-            );
+            let provenance = jev_provenance(stamp, model, &request, reply)?;
             log_reply(&provenance);
             Ok(Reply {
                 content,
@@ -106,8 +107,8 @@ impl Ai for OpenRouterAi {
             let reply = connection
                 .generate::<CandidatesOutput>(&request, &never_cancelled())
                 .await?;
-            let provenance = provenance(
-                Provenance::new(stamp.request, Role::Generator, model, stamp.versions),
+            let provenance = reported(
+                generated(stamp, model, reply.generation_id),
                 reply.model,
                 reply.usage,
             );
@@ -132,11 +133,7 @@ impl Ai for OpenRouterAi {
         Box::pin(async move {
             let reply = connection.evaluate(&request, &never_cancelled()).await?;
             let content = question_check_answers(&candidate, &reply)?;
-            let provenance = provenance(
-                Provenance::new(stamp.request, Role::Jev, model, stamp.versions),
-                Some(reply.model),
-                reply.usage,
-            );
+            let provenance = jev_provenance(stamp, model, &request, reply)?;
             log_reply(&provenance);
             Ok(Reply {
                 content,
@@ -159,11 +156,7 @@ impl Ai for OpenRouterAi {
         Box::pin(async move {
             let reply = connection.evaluate(&request, &never_cancelled()).await?;
             let content = reasoning_answers(&rubric, &reply)?;
-            let provenance = provenance(
-                Provenance::new(stamp.request, Role::Jev, model, stamp.versions),
-                Some(reply.model),
-                reply.usage,
-            );
+            let provenance = jev_provenance(stamp, model, &request, reply)?;
             log_reply(&provenance);
             Ok(Reply {
                 content,
@@ -210,8 +203,8 @@ impl Ai for OpenRouterAi {
                 .generate::<ExplanationOutput>(&request, &never_cancelled())
                 .await?;
             let content = explanation_paragraphs(&outcomes, reply.output)?;
-            let provenance = provenance(
-                Provenance::new(stamp.request, Role::Generator, model, stamp.versions),
+            let provenance = reported(
+                generated(stamp, model, reply.generation_id),
                 reply.model,
                 reply.usage,
             );
@@ -238,11 +231,7 @@ impl Ai for OpenRouterAi {
         Box::pin(async move {
             let reply = connection.evaluate(&request, &never_cancelled()).await?;
             let content = explanation_check_answers(&paragraphs, &reply)?;
-            let provenance = provenance(
-                Provenance::new(stamp.request, Role::Jev, model, stamp.versions),
-                Some(reply.model),
-                reply.usage,
-            );
+            let provenance = jev_provenance(stamp, model, &request, reply)?;
             log_reply(&provenance);
             Ok(Reply {
                 content,
@@ -252,10 +241,38 @@ impl Ai for OpenRouterAi {
     }
 }
 
+/// The provenance of Jev's `reply` to `request`, which was stamped `stamp`
+/// and asked `model`: each question sent, exactly as sent, with its answer
+/// as returned, and what the reply reports.
+fn jev_provenance(
+    stamp: Stamp,
+    model: ModelId,
+    request: &JevRequest,
+    reply: JevReply,
+) -> Result<Provenance, AiError> {
+    let exchanges = jev_exchanges(request, &reply)?;
+    Ok(reported(
+        Provenance::new(stamp.request, Role::Jev, model, stamp.versions).with_exchanges(exchanges),
+        Some(reply.model),
+        reply.usage,
+    ))
+}
+
+/// The provenance of a request to the generator stamped `stamp`, which
+/// asked `model`, with `OpenRouter`'s `generation` ID, if the reply gave
+/// one.
+fn generated(stamp: Stamp, model: ModelId, generation: Option<String>) -> Provenance {
+    let requested = Provenance::new(stamp.request, Role::Generator, model, stamp.versions);
+    match generation {
+        Some(id) => requested.with_generation(GenerationId::new(id)),
+        None => requested,
+    }
+}
+
 /// `requested` with what the reply reports: the model that answered, and its
 /// usage and cost. A cost that isn't one (negative, say) counts as not
 /// reported, since a cost is never estimated.
-fn provenance(requested: Provenance, reported_model: Option<String>, usage: Usage) -> Provenance {
+fn reported(requested: Provenance, reported_model: Option<String>, usage: Usage) -> Provenance {
     let provenance = requested.with_usage(whetstone_core::Usage {
         input_tokens: usage.input_tokens,
         output_tokens: usage.output_tokens,
@@ -270,10 +287,13 @@ fn provenance(requested: Provenance, reported_model: Option<String>, usage: Usag
     }
 }
 
-/// Logs a reply's `provenance`: its models, token counts and cost, and
-/// nothing that was sent or written (rules 43 and 44).
+/// Logs a reply's `provenance`: its identities, models, token counts and
+/// cost, and nothing that was sent or written, nor Jev's answers (rules 43
+/// and 44).
 fn log_reply(provenance: &Provenance) {
     tracing::info!(
+        request = %provenance.request(),
+        generation = provenance.generation().map(GenerationId::as_str),
         role = ?provenance.role(),
         model = %provenance.requested_model(),
         answered = provenance.reported_model().map(ModelId::as_str),
@@ -292,7 +312,8 @@ mod tests {
 
     use serde_json::Value;
     use whetstone_core::{
-        CandidateCheck, CriterionOutcome, Depth, OptionLetter, Probability, QuestionCount, Usage,
+        CandidateCheck, CriterionOutcome, Depth, GenerationId, JevExchange, OptionLetter,
+        Probability, QuestionCount, Usage,
     };
 
     use super::*;
@@ -330,6 +351,57 @@ mod tests {
         CandidateCount::per_area(QuestionCount::try_from(4).expect("from 3 to 5"), 3)
     }
 
+    /// Asserts that `exchanges`, kept in a Jev reply's provenance, hold each
+    /// question the request `body` sent Jev exactly as it was sent, in name
+    /// order: its instructions and its meanings of yes and no, or its
+    /// levels.
+    fn assert_kept_as_sent(exchanges: &[JevExchange], body: &Value) {
+        let sent = body["questions"]
+            .as_object()
+            .expect("the questions are an object");
+        let names: Vec<&str> = exchanges.iter().map(JevExchange::name).collect();
+        assert_eq!(names, sent.keys().map(String::as_str).collect::<Vec<_>>());
+        for exchange in exchanges {
+            let question = &sent[exchange.name()];
+            match exchange {
+                JevExchange::YesNo {
+                    instructions,
+                    yes,
+                    no,
+                    ..
+                } => {
+                    assert_eq!(question["instructions"], instructions.as_str());
+                    assert_eq!(question["criteria"]["true"].as_str(), yes.as_deref());
+                    assert_eq!(question["criteria"]["false"].as_str(), no.as_deref());
+                }
+                JevExchange::Score {
+                    instructions,
+                    levels,
+                    ..
+                } => {
+                    assert_eq!(question["instructions"], instructions.as_str());
+                    assert_eq!(question["criteria"], serde_json::json!(levels));
+                }
+            }
+        }
+    }
+
+    /// Each yes/no answer in `exchanges`, by its question's name.
+    fn yes_no_answers(exchanges: &[JevExchange]) -> Vec<(&str, f64)> {
+        exchanges
+            .iter()
+            .filter_map(|exchange| match exchange {
+                JevExchange::YesNo { name, answer, .. } => Some((name.as_str(), answer.get())),
+                JevExchange::Score { .. } => None,
+            })
+            .collect()
+    }
+
+    /// `provenance` without the questions it keeps.
+    fn without_exchanges(provenance: &Provenance) -> Provenance {
+        provenance.clone().with_exchanges(Vec::new())
+    }
+
     #[tokio::test]
     async fn the_generator_writes_candidates_with_the_models_it_was_asked_and_what_it_cost() {
         let (server, ai) = ai("/chat/completions", 200, CANDIDATES).await;
@@ -354,6 +426,9 @@ mod tests {
                 generator_model(),
                 versions()
             )
+            .with_generation(GenerationId::new(
+                "gen-1792537070-YoyTT3rXqgdB9TwPdG1K".to_owned()
+            ))
             .with_reported_model(ModelId::new("anthropic/claude-sonnet-5.5".to_owned()))
             .with_usage(Usage {
                 input_tokens: Some(3364),
@@ -410,7 +485,7 @@ mod tests {
             "the depth's distribution and expected value, as returned"
         );
         assert_eq!(
-            *reply.provenance,
+            without_exchanges(&reply.provenance),
             Provenance::new(stamp().request, Role::Jev, jev_model(), versions())
                 .with_reported_model(ModelId::new("typesafe/jev-1.14-20261014".to_owned()))
                 .with_usage(Usage {
@@ -461,6 +536,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn jev_s_question_check_keeps_each_question_sent_with_its_answer_as_returned() {
+        let (server, ai) = ai("/systemone", 200, QUESTION_CHECK).await;
+
+        let reply = ai
+            .check_question(stamp(), &evidence(), &candidate())
+            .await
+            .expect("the recorded reply decodes");
+
+        let (_, body) = received(&server).await;
+        let probability = |value| Probability::new(value).expect("from 0 to 1");
+        let exchanges = reply.provenance.exchanges();
+        assert_kept_as_sent(exchanges, &body);
+        let kept = yes_no_answers(exchanges);
+        for answer in [
+            ("option_a", 0.98),
+            ("option_b", 0.01),
+            ("no_giveaway", 0.13),
+        ] {
+            assert!(kept.contains(&answer), "{answer:?}, as returned: {kept:?}");
+        }
+        assert_eq!(kept.len(), 15, "every yes/no question: {kept:?}");
+        let depth = exchanges.iter().find_map(|exchange| match exchange {
+            JevExchange::Score { name, answer, .. } if name == "depth" => Some(*answer),
+            JevExchange::YesNo { .. } | JevExchange::Score { .. } => None,
+        });
+        assert_eq!(
+            depth,
+            Some(Depth::new([0.11, 0.3, 0.59].map(probability), 1.47).expect("from 0 to 2")),
+            "the depth's distribution and expected value, as returned"
+        );
+    }
+
+    #[tokio::test]
     async fn jev_checks_the_chosen_areas_with_the_model_it_was_asked_and_what_it_cost() {
         let (server, ai) = ai("/systemone", 200, GATE).await;
         let areas = [area(), observability()];
@@ -481,7 +589,7 @@ mod tests {
             "an answer per area, in the areas' order, as returned"
         );
         assert_eq!(
-            *reply.provenance,
+            without_exchanges(&reply.provenance),
             Provenance::new(stamp().request, Role::Jev, jev_model(), versions())
                 .with_reported_model(ModelId::new("typesafe/jev-1.14-20261014".to_owned()))
                 .with_usage(Usage {
@@ -491,6 +599,12 @@ mod tests {
                 .with_cost(Cost::new(0.000_051_828).expect("0.000051828 is a cost"))
         );
         let (_, body) = received(&server).await;
+        assert_kept_as_sent(reply.provenance.exchanges(), &body);
+        assert_eq!(
+            yes_no_answers(reply.provenance.exchanges()),
+            [("domain", 0.89), ("observability", 0.07)],
+            "each answer as returned"
+        );
         assert_eq!(body["model"], jev_model().as_str());
         assert_eq!(body.get("provider"), None::<&Value>);
         let state: Vec<&str> = body["state"]
@@ -558,7 +672,7 @@ mod tests {
             [0.75, 0.96].map(|answer| Probability::new(answer).expect("a probability"))
         );
         assert_eq!(
-            *reply.provenance,
+            without_exchanges(&reply.provenance),
             Provenance::new(stamp().request, Role::Jev, jev_model(), versions())
                 .with_reported_model(ModelId::new("typesafe/jev-1.14-20261014".to_owned()))
                 .with_usage(Usage {
@@ -568,6 +682,11 @@ mod tests {
                 .with_cost(Cost::new(0.000_061_95).expect("0.00006195 is a cost"))
         );
         let (_, body) = received(&server).await;
+        assert_kept_as_sent(reply.provenance.exchanges(), &body);
+        assert_eq!(
+            yes_no_answers(reply.provenance.exchanges()),
+            [("criterion_1", 0.75), ("criterion_2", 0.96)]
+        );
         assert_eq!(body["model"], jev_model().as_str());
         assert_eq!(body.get("provider"), None::<&Value>);
         let keys = |value: &Value| -> Vec<String> {
@@ -647,6 +766,9 @@ mod tests {
                 generator_model(),
                 versions()
             )
+            .with_generation(GenerationId::new(
+                "gen-1792537737-d8T3jmrltBTKAIJQNBGU".to_owned()
+            ))
             .with_reported_model(ModelId::new("anthropic/claude-sonnet-5.5".to_owned()))
             .with_usage(Usage {
                 input_tokens: Some(3100),
@@ -786,7 +908,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            *reply.provenance,
+            without_exchanges(&reply.provenance),
             Provenance::new(stamp().request, Role::Jev, jev_model(), versions())
                 .with_reported_model(ModelId::new("typesafe/jev-1.14-20261014".to_owned()))
                 .with_usage(Usage {
@@ -796,6 +918,16 @@ mod tests {
                 .with_cost(Cost::new(0.000_086_604).expect("0.000086604 is a cost"))
         );
         let (_, body) = received(&server).await;
+        assert_kept_as_sent(reply.provenance.exchanges(), &body);
+        assert_eq!(
+            yes_no_answers(reply.provenance.exchanges()),
+            [
+                ("criterion_1_agrees", 0.85),
+                ("criterion_1_supported", 0.71),
+                ("criterion_2_agrees", 0.89),
+                ("criterion_2_supported", 0.95),
+            ]
+        );
         assert_eq!(body["model"], jev_model().as_str());
         assert_eq!(body.get("provider"), None::<&Value>);
         let questions: Vec<&str> = body["questions"]
@@ -1148,7 +1280,18 @@ mod tests {
         );
         assert!(log.contains("cost_usd=0.000129192"), "Jev's cost: {log}");
         assert!(log.contains("cost_usd=5.1828e-5"), "the gate's cost: {log}");
+        assert!(log.contains("request=1"), "Whetstone's identity: {log}");
+        assert!(
+            log.contains("gen-1792537070-YoyTT3rXqgdB9TwPdG1K"),
+            "OpenRouter's generation ID: {log}"
+        );
         for never in [
+            // Jev's answers: an option rating, the depth, the gate's answer
+            // about an area, and an explanation check's.
+            "0.98",
+            "1.47",
+            "0.89",
+            "0.71",
             // The key.
             crate::replay::TEST_KEY,
             // A base prompt, the area prompt, and the evidence.

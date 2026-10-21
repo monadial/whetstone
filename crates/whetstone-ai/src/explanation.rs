@@ -228,15 +228,10 @@ pub fn explanation_check_request(
             .flat_map(|paragraph| {
                 let criterion = criterion_name(paragraph.criterion);
                 let values = [("criterion", criterion.as_str())];
+                let [supported, agrees] = paragraph_check_names(paragraph.criterion);
                 [
-                    (
-                        format!("{criterion}_supported"),
-                        EXPLANATION_CHECK.supported.question(&values),
-                    ),
-                    (
-                        format!("{criterion}_agrees"),
-                        EXPLANATION_CHECK.agrees.question(&values),
-                    ),
+                    (supported, EXPLANATION_CHECK.supported.question(&values)),
+                    (agrees, EXPLANATION_CHECK.agrees.question(&values)),
                 ]
             })
             .collect(),
@@ -256,15 +251,27 @@ pub fn explanation_check_answers(
     let checks = paragraphs
         .iter()
         .map(|paragraph| {
-            let criterion = criterion_name(paragraph.criterion);
+            let [supported, agrees] = paragraph_check_names(paragraph.criterion);
             Ok(ParagraphCheck {
-                supported: answers.yes_no(&format!("{criterion}_supported"))?,
-                agrees: answers.yes_no(&format!("{criterion}_agrees"))?,
+                supported: answers.yes_no(&supported)?,
+                agrees: answers.yes_no(&agrees)?,
             })
         })
         .collect::<Result<Vec<_>, AiError>>()?;
     answers.done()?;
     Ok(checks)
+}
+
+/// The names the two questions about the paragraph explaining the rubric's
+/// criterion at `criterion`, counting from 0, go under: whether it is
+/// supported, then whether it agrees, such as `criterion_1_supported` and
+/// `criterion_1_agrees` for the first.
+pub(crate) fn paragraph_check_names(criterion: usize) -> [String; 2] {
+    let criterion = criterion_name(criterion);
+    [
+        format!("{criterion}_supported"),
+        format!("{criterion}_agrees"),
+    ]
 }
 
 /// Whether a criterion with `outcome` is explained: it is not met, or needs

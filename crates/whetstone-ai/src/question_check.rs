@@ -76,11 +76,11 @@ pub fn question_check_answers(
 }
 
 /// The name the depth score goes under.
-const DEPTH: &str = "depth";
+pub(crate) const DEPTH: &str = "depth";
 
 /// The name a check's question goes under, such as `criterion_1` or
 /// `option_a`.
-fn name(check: CandidateCheck) -> String {
+pub(crate) fn name(check: CandidateCheck) -> String {
     match check {
         CandidateCheck::Answerable => "answerable".to_owned(),
         CandidateCheck::AboutArea => "about_area".to_owned(),
