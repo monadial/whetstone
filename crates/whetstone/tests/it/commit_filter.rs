@@ -246,3 +246,111 @@ fn the_filtered_commit_picker_at_80x24() {
 
     insta::assert_debug_snapshot!("filtered_commit_picker_80x24", session.frame());
 }
+
+#[test]
+fn enter_before_the_first_match_comes_waits_on_clear_the_filter_then_moves_to_it() {
+    let repo = long_history();
+    let log = listed(&repo);
+    let mut session = started_in(repo.root(), 120, 32);
+    session.press(TO_THE_NEWEST);
+    session.press(&typing("/payments service"));
+    session.press("<Enter>");
+
+    // Nothing matches yet, so focus can't stay on the newest commit, which
+    // the filter hides.
+    assert_eq!(session.section(CHANGES)[0], "> Clear the filter");
+    assert_eq!(
+        session.row_with("Review what will be sent"),
+        "Review what will be sent (choose a change)"
+    );
+
+    session.settle();
+    assert_eq!(focused(&session), log[249]);
+}
+
+#[test]
+fn j_on_the_last_match_waits_for_more_and_none_are_missed() {
+    let repo = history_of(60);
+    let mut session = started_in(repo.root(), 120, 32);
+    session.press("<Enter>");
+    // Every bump matches: the 50 read, and nine more past them.
+    session.press(&typing("/Bump"));
+    session.press("<Enter> G");
+    assert_eq!(position(&session), "50+ matching “Bump” · 33–50");
+
+    session.press("j");
+    assert!(
+        focused(&session).ends_with("Bump the counter to 10"),
+        "focus waits on the last match: {}",
+        session.text()
+    );
+    session.settle();
+    session.press("j G");
+    assert!(
+        focused(&session).ends_with("Bump the counter to 1"),
+        "{}",
+        session.text()
+    );
+    assert_eq!(position(&session), "59 matching “Bump” · 42–59");
+}
+
+#[test]
+fn cleared_while_older_commits_are_read_the_list_carries_on_once_they_come() {
+    let repo = long_history();
+    let log = listed(&repo);
+    let mut session = started_in(repo.root(), 120, 32);
+    session.press(TO_THE_NEWEST);
+    session.press(&typing("/payments service"));
+
+    // Cleared while the read runs: the full list shows, and j on the last
+    // commit read waits rather than leave the list.
+    session.press("<Esc> G j");
+    assert_eq!(focused(&session), log[49]);
+
+    session.settle();
+    session.press("j");
+    assert_eq!(focused(&session), log[50]);
+    session.press("G");
+    assert_eq!(focused(&session), log[249]);
+}
+
+#[test]
+fn a_taller_window_reads_older_commits_for_more_matches() {
+    let repo = long_history();
+    let mut session = started_in(repo.root(), 80, 24);
+    session.press("<Enter>");
+    session.press(&typing("/to 1"));
+    session.settle();
+    assert_eq!(position(&session), "20+ matching “to 1” · 1–10");
+
+    session.resize(120, 80);
+    session.settle();
+    assert_eq!(position(&session), "111 matching “to 1” · 1–66");
+}
+
+#[test]
+fn clearing_the_filter_shows_the_chosen_commit_when_focus_is_off_the_list() {
+    let repo = long_history();
+    let log = listed(&repo);
+    let mut session = started_in(repo.root(), 120, 32);
+    session.press(TO_THE_NEWEST);
+    session.press("<PageDown> <PageDown> <PageDown> <Space> <Tab> <Tab> <Tab>");
+    let chosen = log[54].replacen("( )", "(x)", 1);
+    assert!(
+        session
+            .row_with("Review what will be sent")
+            .starts_with("> Review"),
+        "{}",
+        session.text()
+    );
+
+    // A filter that hides it, then Esc.
+    session.press(&typing("/to 249"));
+    assert!(!in_view(&session).contains(&chosen));
+    session.press("<Esc>");
+    assert!(
+        in_view(&session).contains(&chosen),
+        "{:#?}",
+        in_view(&session)
+    );
+}

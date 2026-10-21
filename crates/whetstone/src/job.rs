@@ -32,7 +32,7 @@ use whetstone_core::{
 
 use crate::connected_code::GraphOrigin;
 use crate::labels_file::SavedVote;
-use crate::repository::Read;
+use crate::repository::Batch;
 use crate::session_record::SavedResponse;
 
 /// A job's identity, unique among the jobs one [`Jobs`] starts.
@@ -117,7 +117,7 @@ pub enum JobOutput {
     /// The commits a background read of the learner's history found, for
     /// the picker's filter, boxed, as it holds what reads on, to keep the
     /// app's messages small.
-    CommitsRead(Box<Read>),
+    CommitsRead(Box<Batch>),
     /// Whether a vote on a withheld question was appended to the labels
     /// file, boxed, as it holds why it wasn't, to keep the app's messages
     /// small. The app applies it to the labels file, whichever screen shows.

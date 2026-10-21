@@ -859,10 +859,11 @@ fn browsing_commits_and_reviewing_one_writes_nothing() {
     let before = repo.on_disk();
     let mut session = started_in(repo.root(), 80, 24);
 
-    // Page past the first fifty commits, search back to the one with
-    // secrets and open it in the viewer.
-    session.press("<Enter> <S-Tab> k j");
+    // Page through the first commits, filter back to the one with secrets,
+    // older than the first fifty read, and open it in the viewer.
+    session.press("<Enter> <S-Tab> k j <PageDown>");
     session.press(&crate::viewer::typing("/Configure the payments"));
+    session.settle();
     session.press("<Enter> <Enter> h j l l q");
     // Review it: bring back `.env` and read it, read an area, mark a
     // match, leave a file out, then go back and review it again.

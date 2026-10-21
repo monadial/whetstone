@@ -77,7 +77,7 @@ const KEYMAP: Keymap = &[
 ];
 
 /// The repository picker's own keys: the showcase picker's, and `/` to
-/// search the commits, with `n` and `N` for the matches.
+/// filter the commits.
 const REPOSITORY_KEYMAP: Keymap = &[
     keymap::MOVE,
     SPACE,
@@ -145,7 +145,7 @@ const FILTER_BOX: Keymap = &[
 
 /// How many commits one background read for the filter reads at most, so
 /// the filtered list grows as matches are found on a long history.
-const READ_IN_THE_BACKGROUND: usize = 1_000;
+const BACKGROUND_BATCH: usize = 1_000;
 
 /// How many more commits `G` reads, at most, before it goes to the oldest
 /// commit read: enough to reach the end of most histories at once, and few
@@ -250,6 +250,16 @@ impl Filter {
             looked_at: 0,
             wanted: 0,
         }
+    }
+
+    /// The index of the match at `position` among the matches.
+    fn at(&self, position: usize) -> Option<usize> {
+        self.matches.get(position).copied()
+    }
+
+    /// Where the commit at `index` is among the matches, if it matches.
+    fn position_of(&self, index: usize) -> Option<usize> {
+        self.matches.binary_search(&index).ok()
     }
 
     /// Looks at the `commits` read since it last looked, for matches.
@@ -457,11 +467,8 @@ impl Picker {
                 history: Ok(history),
             } => {
                 let failed = usize::from(matches!(history.end(), HistoryEnd::Failed(_)));
-                let no_match = if self.matches_nothing() {
-                    1 + usize::from(self.offers_clear())
-                } else {
-                    0
-                };
+                let no_match =
+                    usize::from(self.matches_nothing()) + usize::from(self.offers_clear());
                 self.listed() + no_match + failed
             }
             Source::Repository { history: Err(_) } => 1,
@@ -480,7 +487,7 @@ impl Picker {
     /// The change at `position` in the change list, if it lists one there.
     fn listed_at(&self, position: usize) -> Option<Control> {
         let index = match &self.filter {
-            Some(filter) => *filter.matches.get(position)?,
+            Some(filter) => filter.at(position)?,
             None => position,
         };
         (index < self.changes()).then_some(Control::Change(index))
@@ -491,7 +498,7 @@ impl Picker {
     fn focused_position(&self) -> Option<usize> {
         let index = self.focused_change()?;
         match &self.filter {
-            Some(filter) => filter.matches.binary_search(&index).ok(),
+            Some(filter) => filter.position_of(index),
             None => Some(index),
         }
     }
@@ -505,10 +512,15 @@ impl Picker {
             && !self.has_more()
     }
 
-    /// Whether Clear the filter shows: when the filter matches nothing,
-    /// once the learner has stopped typing it.
+    /// Whether Clear the filter shows: while the filter matches nothing
+    /// so far, once the learner has stopped typing it, so focus always has
+    /// somewhere in the list to go.
     fn offers_clear(&self) -> bool {
-        self.matches_nothing() && self.search_box.is_none()
+        self.search_box.is_none()
+            && self
+                .filter
+                .as_ref()
+                .is_some_and(|filter| filter.matches.is_empty())
     }
 
     /// The changes in `window`, by index, as list items `width` cells wide,
@@ -551,22 +563,20 @@ impl Picker {
                     && self.matches_nothing()
                 {
                     let said = format!("No commits match “{}”", filter.query.text());
+                    let room = usize::from(width).saturating_sub(UNAVAILABLE_INDENT.len());
                     items.push(Text::styled(
-                        format!(
-                            "{UNAVAILABLE_INDENT}{}",
-                            columns::truncate(&said, usize::from(width))
-                        ),
+                        format!("{UNAVAILABLE_INDENT}{}", columns::truncate(&said, room)),
                         context.theme.muted,
                     ));
-                    if self.offers_clear() {
-                        items.push(Text::from(context.theme.control(
-                            "Clear the filter",
-                            ControlState {
-                                focused: self.focus == Control::ClearFilter,
-                                ..ControlState::default()
-                            },
-                        )));
-                    }
+                }
+                if self.offers_clear() {
+                    items.push(Text::from(context.theme.control(
+                        "Clear the filter",
+                        ControlState {
+                            focused: self.focus == Control::ClearFilter,
+                            ..ControlState::default()
+                        },
+                    )));
                 }
                 if let HistoryEnd::Failed(error) = history.end()
                     && window.end > listed
@@ -631,10 +641,19 @@ impl Picker {
             }
             command => {
                 search_box.apply(command);
-                let query = Query::new(search_box.text());
-                self.set_filter(query);
+                self.refilter();
             }
         }
+    }
+
+    /// Filters the change list by what the search box holds, as the learner
+    /// types or pastes it.
+    fn refilter(&mut self) {
+        let query = self
+            .search_box
+            .as_ref()
+            .and_then(|search_box| Query::new(search_box.text()));
+        self.set_filter(query);
     }
 
     /// Moves focus to the filtered list as the learner stops typing the
@@ -723,9 +742,14 @@ impl Picker {
             Command::Down => match focus {
                 Control::Area(index) if index + 1 < areas => Control::Area(index + 1),
                 Control::Area(_) => first_in_view.unwrap_or(Control::Proceed),
+                // Past the last listed, more may follow, so focus waits.
                 Control::Change(_) => position
                     .and_then(|position| self.listed_at(position + 1))
-                    .unwrap_or(Control::Proceed),
+                    .unwrap_or(if self.has_more() {
+                        focus
+                    } else {
+                        Control::Proceed
+                    }),
                 Control::ClearFilter
                 | Control::PreviousPage
                 | Control::NextPage
@@ -780,9 +804,10 @@ impl Picker {
     /// Scrolls the change list down `step` changes while it shows `rows`
     /// rows, and the focused change, if one has focus, with it. Unfiltered,
     /// it reads further first, until the rows it scrolls to are all read, so
-    /// a page never stops short because commits weren't read yet; a filter
-    /// reads in the background instead. It stops at the last whole page and
-    /// the last change.
+    /// a page never stops short because commits weren't read yet, unless a
+    /// background read has the reader for a moment; a filter reads in the
+    /// background instead. It stops at the last whole page and the last
+    /// change.
     fn scroll_down(&mut self, step: usize, rows: usize) {
         let top = self.top_in_view(rows) + step;
         if self.filter.is_none() {
@@ -939,36 +964,38 @@ impl Picker {
     /// of 1,000", with a "+" after the total while more commits may follow.
     /// Filtered, it says so: "12 matching “retry” · 1–12", with a "+" while
     /// more may match, and while older commits are read for more matches,
-    /// that they are.
-    fn position(&self, top: usize, rows: usize) -> Option<String> {
+    /// that they are, with the query cut to fit `room` cells.
+    fn position(&self, top: usize, rows: usize, room: usize) -> Option<String> {
         let more = if self.has_more() { "+" } else { "" };
         if let Some(filter) = &self.filter {
             let found = filter.matches.len();
-            let mut said = match found.checked_sub(1) {
-                None => String::new(),
-                Some(last_found) => {
-                    let first = top.min(last_found) + 1;
-                    let last = (top + rows).min(found);
-                    let shown = if first == last {
-                        grouped(first)
+            let said = |query: &str| {
+                let mut said = match found.checked_sub(1) {
+                    None => String::new(),
+                    Some(last_found) => {
+                        let first = top.min(last_found) + 1;
+                        let last = (top + rows).min(found);
+                        let shown = if first == last {
+                            grouped(first)
+                        } else {
+                            format!("{}–{}", grouped(first), grouped(last))
+                        };
+                        format!("{}{more} matching “{query}” · {shown}", grouped(found))
+                    }
+                };
+                if self.reading.is_some() {
+                    said.push_str(if said.is_empty() {
+                        "Searching older commits…"
                     } else {
-                        format!("{}–{}", grouped(first), grouped(last))
-                    };
-                    format!(
-                        "{}{more} matching “{}” · {shown}",
-                        grouped(found),
-                        filter.query.text()
-                    )
+                        " · searching older commits…"
+                    });
                 }
+                said
             };
-            if self.reading.is_some() {
-                said.push_str(if said.is_empty() {
-                    "Searching older commits…"
-                } else {
-                    " · searching older commits…"
-                });
-            }
-            return Some(said);
+            // The query is cut to fit, so the rest always shows.
+            let around = Line::raw(said("")).width();
+            let query = columns::truncate(filter.query.text(), room.saturating_sub(around));
+            return Some(said(&query));
         }
         let changes = self.changes();
         let first = top.min(changes.checked_sub(1)?) + 1;
@@ -989,8 +1016,10 @@ impl Picker {
     /// list shows `rows` rows: "Change to practice on", and after it where
     /// the list is, cut to fit.
     fn change_heading(&self, rows: usize, width: u16) -> String {
-        let heading = match self.position(self.top_in_view(rows), rows) {
-            Some(position) if !position.is_empty() => format!("{CHANGE_HEADING} · {position}"),
+        let before = format!("{CHANGE_HEADING} · ");
+        let room = usize::from(width).saturating_sub(Line::raw(&before).width());
+        let heading = match self.position(self.top_in_view(rows), rows, room) {
+            Some(position) if !position.is_empty() => format!("{before}{position}"),
             _ => CHANGE_HEADING.to_owned(),
         };
         columns::truncate(&heading, usize::from(width))
@@ -1066,8 +1095,10 @@ impl Picker {
             Command::Top => self.go_to_first(),
             Command::Bottom => self.go_to_oldest(),
             _ => {
-                // Moving past the last commit read reads further first.
+                // Moving past the last commit read reads further first. A
+                // filter reads in the background instead.
                 if command == Command::Down
+                    && self.filter.is_none()
                     && self
                         .focused_change()
                         .is_some_and(|index| index + 1 == self.changes())
@@ -1087,6 +1118,8 @@ impl Picker {
                 }
                 None
             }
+            // A change the filter hides can't be chosen or opened.
+            Control::Change(_) if self.focused_position().is_none() => None,
             Control::Change(index) => {
                 let change = match self.source {
                     Source::Showcase { .. } => ChangeRef::Showcase(ChangeIndex::new(index)),
@@ -1389,8 +1422,7 @@ impl View for Picker {
     fn paste(&mut self, text: &str) {
         if let Some(search_box) = &mut self.search_box {
             search_box.paste(text);
-            let query = Query::new(search_box.text());
-            self.set_filter(query);
+            self.refilter();
         }
     }
 
@@ -1423,13 +1455,13 @@ impl View for Picker {
         // Off the UI loop (rule 19), until the matches wanted are found, a
         // batch is read, or the history ends.
         self.reading = Some(jobs.start(move |token| {
-            let read = reader.read(token, READ_IN_THE_BACKGROUND, |commit| {
+            let batch = reader.read(token, BACKGROUND_BATCH, |commit| {
                 if is_match(&query, commit) {
                     wanted -= 1;
                 }
                 wanted == 0
             })?;
-            Ok(JobOutput::CommitsRead(Box::new(read)))
+            Ok(JobOutput::CommitsRead(Box::new(batch)))
         }));
     }
 
@@ -1443,16 +1475,21 @@ impl View for Picker {
         }
         self.reading = None;
         if let (
-            JobOutput::CommitsRead(read),
+            JobOutput::CommitsRead(batch),
             Source::Repository {
                 history: Ok(history),
             },
         ) = (output, &mut self.source)
         {
-            history.add(*read);
+            history.give_back(*batch);
             if let Some(filter) = &mut self.filter {
                 filter.look_at(history.commits());
             }
+        }
+        // Focus waited on Clear the filter for the first matches, which
+        // have come.
+        if self.focus == Control::ClearFilter && !self.offers_clear() {
+            self.focus = self.listed_at(self.top).unwrap_or(Control::ClearFilter);
         }
     }
 

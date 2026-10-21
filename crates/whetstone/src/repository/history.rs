@@ -42,10 +42,19 @@ pub(crate) struct Reader {
 
 /// What a background read found: the commits it read, in order, what
 /// follows them, and the reader to give back.
-pub struct Read {
+pub struct Batch {
     reader: Reader,
     commits: Vec<Commit>,
     end: HistoryEnd,
+}
+
+/// Why reading stopped before the count it was asked for, if it did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Stopped {
+    /// It read the count, or no more commits follow.
+    AtCount,
+    /// A commit it read was the last needed.
+    Enough,
 }
 
 /// What follows the commits read so far.
@@ -167,12 +176,12 @@ impl History {
         }
     }
 
-    /// Adds what a background read found after the commits read so far,
-    /// and takes its reader back.
-    pub(crate) fn add(&mut self, read: Read) {
-        self.commits.extend(read.commits);
-        self.end = read.end;
-        self.reader = Some(read.reader);
+    /// Adds the batch a background read found after the commits read so
+    /// far, and takes its reader back.
+    pub(crate) fn give_back(&mut self, batch: Batch) {
+        self.commits.extend(batch.commits);
+        self.end = batch.end;
+        self.reader = Some(batch.reader);
     }
 }
 
@@ -186,18 +195,21 @@ impl Reader {
         token: &CancellationToken,
         limit: usize,
         mut enough: impl FnMut(&Commit) -> bool,
-    ) -> Result<Read, Cancelled> {
+    ) -> Result<Batch, Cancelled> {
         let mut commits = Vec::new();
         let mut end = HistoryEnd::More;
-        let mut done = false;
-        while !done && matches!(end, HistoryEnd::More) && commits.len() < limit {
+        let mut stopped = Stopped::AtCount;
+        while stopped == Stopped::AtCount
+            && matches!(end, HistoryEnd::More)
+            && commits.len() < limit
+        {
             if token.is_cancelled() {
                 return Err(Cancelled);
             }
             let page = PAGE.min(limit - commits.len());
-            done = self.read_into(&mut commits, &mut end, page, &mut enough);
+            stopped = self.read_into(&mut commits, &mut end, page, &mut enough);
         }
-        Ok(Read {
+        Ok(Batch {
             reader: self,
             commits,
             end,
@@ -206,14 +218,14 @@ impl Reader {
 
     /// Reads up to `count` more commits into `commits`, setting `end` when
     /// none follow or reading fails, and stops after a commit `enough` says
-    /// is the last needed. Returns whether it stopped there.
+    /// is the last needed. Returns why it stopped.
     fn read_into(
         &mut self,
         commits: &mut Vec<Commit>,
         end: &mut HistoryEnd,
         count: usize,
         mut enough: impl FnMut(&Commit) -> bool,
-    ) -> bool {
+    ) -> Stopped {
         let before = commits.len();
         while matches!(end, HistoryEnd::More) && commits.len() < before + count {
             match self.walk.next() {
@@ -224,7 +236,7 @@ impl Reader {
                         let last = enough(&commit);
                         commits.push(commit);
                         if last {
-                            return true;
+                            return Stopped::Enough;
                         }
                     }
                     Err(error) => *end = HistoryEnd::Failed(error),
@@ -234,7 +246,7 @@ impl Reader {
         if let HistoryEnd::Failed(error) = end {
             tracing::warn!(%error, read = commits.len(), "cannot read further commits");
         }
-        false
+        Stopped::AtCount
     }
 
     /// The row of the commit the walk found as `info`.
@@ -282,9 +294,9 @@ impl fmt::Debug for Reader {
     }
 }
 
-impl fmt::Debug for Read {
+impl fmt::Debug for Batch {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Read")
+        f.debug_struct("Batch")
             .field("commits", &self.commits)
             .field("end", &self.end)
             .finish_non_exhaustive()
