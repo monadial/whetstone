@@ -50,6 +50,7 @@ mod theme;
 mod tui;
 mod view;
 mod viewer;
+mod withheld;
 
 pub use crate::app::{App, Flow, Message};
 pub use crate::config::{ConfigError, Settings};

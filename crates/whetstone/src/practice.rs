@@ -77,6 +77,7 @@ use crate::stage_row::{PracticeStage, Stage as RowStage, StageRow, StageState};
 use crate::summary::{self, Summary};
 use crate::theme::{ControlState, Theme};
 use crate::view::{ChangeIndex, ChangeRef, Context, Reading, Route, View};
+use crate::withheld::WhyWithheld;
 
 /// Preparing questions' own keys: `q` and Esc cancel.
 const KEYMAP: Keymap = &[
@@ -137,6 +138,10 @@ pub(crate) struct Practice {
     evidence: Option<Evidence>,
     /// What the relevance gate decided about the chosen areas.
     gate: Gate,
+    /// Why the candidates written last weren't shown: the plain checks'
+    /// drops, and each candidate the question check withheld, with Jev's
+    /// answers.
+    why_withheld: WhyWithheld,
     stage: Stage,
     /// The requests to Jev and the generator it waits for, each with what
     /// it asked (rule 24).
@@ -345,12 +350,13 @@ fn send<T: Send + 'static>(
 /// Logs which checks withheld a candidate, with the band of Jev's answer to
 /// each under `policy`, or none when it went unanswered: names and bands
 /// only, never the candidate's text or Jev's probabilities (rules 43, 44).
-fn log_withheld(withheld: &Withheld, answers: &QuestionCheckAnswers, policy: &AssessmentPolicy) {
+fn log_withheld(withheld: &Withheld, policy: &AssessmentPolicy) {
     let failed: Vec<(CandidateCheck, Option<Band>)> = withheld
         .failed()
         .iter()
         .map(|&check| {
-            let band = answers
+            let band = withheld
+                .answers()
                 .get(check)
                 .map(|answer| policy.band(check.job(), answer));
             (check, band)
@@ -471,6 +477,7 @@ impl Practice {
             time_limit: context.time_limit,
             evidence: None,
             gate: Gate::Undecided,
+            why_withheld: WhyWithheld::default(),
             stage: Stage::FindingConnectedCode(Lookup::Requested(Arc::new(ShowcaseLookup {
                 tree,
                 position: index.get(),
@@ -530,6 +537,7 @@ impl Practice {
             time_limit: context.time_limit,
             evidence: Some(evidence),
             gate: Gate::Undecided,
+            why_withheld: WhyWithheld::default(),
             stage: Stage::CheckingAreas(Request::Unsent),
             waiting: Waiting::new(),
             sent,
@@ -608,6 +616,7 @@ impl Practice {
 
     /// Asks the generator for candidates about every area asked about.
     fn write(&mut self) {
+        self.why_withheld = WhyWithheld::default();
         self.stage = Stage::Writing(Request::all(self.gate.asked_about(&self.areas).len()));
         self.focus = Position::default();
     }
@@ -638,6 +647,7 @@ impl Practice {
                     dropped = checked.dropped().len(),
                     "the generator wrote candidates"
                 );
+                self.why_withheld.written(written, checked.dropped());
                 Request::Replied(checked.into_passed())
             }
             Err(failure) => {
@@ -710,18 +720,20 @@ impl Practice {
         let policy = self.sent.policy();
         let checks = mem::take(checks);
         let checked = checks.len();
-        let (passed, withheld): (Vec<_>, Vec<_>) = checks
-            .into_iter()
-            .filter_map(|(candidate, check)| Some((candidate, check.replied()?)))
-            .map(|(candidate, answers)| {
-                let shown = show_rule(candidate, answers.clone(), policy);
-                if let Err(withheld) = &shown {
-                    log_withheld(withheld, &answers, policy);
+        let mut passed = Vec::new();
+        for (candidate, check) in checks {
+            let Some(answers) = check.replied() else {
+                continue;
+            };
+            match show_rule(candidate, answers, policy) {
+                Ok(question) => passed.push(question),
+                Err(withheld) => {
+                    log_withheld(&withheld, policy);
+                    self.why_withheld.withheld(withheld);
                 }
-                shown
-            })
-            .partition(Result::is_ok);
-        let passed: Vec<_> = passed.into_iter().filter_map(Result::ok).collect();
+            }
+        }
+        let passing = passed.len();
         let hints_dropped = passed
             .iter()
             .filter(|question| question.hint().is_none())
@@ -735,7 +747,7 @@ impl Practice {
         let picked = pick(passed, &areas, self.count);
         tracing::info!(
             checked,
-            withheld = withheld.len(),
+            withheld = checked - passing,
             hints_dropped,
             picked = picked.questions().len(),
             asked_for = self.count.get(),
@@ -925,11 +937,14 @@ impl Practice {
                         .to_owned(),
                 ])
                 .collect(),
-            (Stage::NonePassed, _) => vec![
-                "None of the questions written passed their checks, so there is nothing to \
-                 show. Retry writes and checks new ones."
-                    .to_owned(),
-            ],
+            (Stage::NonePassed, _) => {
+                let mut lines = self.why_withheld.lines(self.sent.policy());
+                lines.extend([
+                    String::new(),
+                    "Retry writes and checks new ones.".to_owned(),
+                ]);
+                lines
+            }
             (stage, Some(failure)) => {
                 let (name, role) = match stage {
                     Stage::CheckingAreas(_) => ("Checking areas", Role::Jev),
