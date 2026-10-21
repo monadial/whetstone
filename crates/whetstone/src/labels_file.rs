@@ -12,9 +12,11 @@
 //! Votes about the learner's own repository hold private code from it.
 //!
 //! Each vote is appended as it is cast, by a background job, off the UI loop
-//! (rule 19), one append at a time. The run remembers each vote cast and
-//! whether it was saved, so a review opened again shows it, and a vote saved
-//! once is never asked for again in the run.
+//! (rule 19), one append at a time. Whether it was saved comes back as the
+//! job's result, through `App::handle`, which the app applies here whichever
+//! screen shows. The run remembers each vote cast and whether it was saved,
+//! so a review opened again shows it, and a vote saved once is never asked
+//! for again in the run.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -28,7 +30,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::Serialize;
 use toml::value::{Date, Datetime};
 use whetstone_ai::question_check_name;
-use whetstone_core::{Band, Candidate, CandidateCheck, OptionLetter};
+use whetstone_core::{Band, Candidate, CandidateCheck, CommitId, OptionLetter};
 
 use crate::config;
 use crate::environment::Environment;
@@ -120,21 +122,74 @@ pub(crate) enum VoteState {
     Saving(Verdict),
     /// Saved to the labels file.
     Saved(Verdict),
-    /// It couldn't be saved, for this reason: the learner can vote again.
+    /// It couldn't be saved, for this reason, with its causes: the learner
+    /// can vote again.
     Unsaved(Verdict, String),
 }
 
+/// Why a vote couldn't be saved.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum SaveError {
+    /// Whetstone has no state folder.
+    #[error("there's no state folder to keep votes in")]
+    NoStateFolder,
+    /// The vote couldn't be written as TOML.
+    #[error("the vote couldn't be written as a labelled example")]
+    Format(#[source] toml::ser::Error),
+    /// The file couldn't be created or appended to.
+    #[error("cannot write {}", path.display())]
+    Write {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+}
+
+/// A learner's note on a vote. Its `Debug` output shows its length, never
+/// its text.
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct Note(String);
+
+impl Note {
+    /// The note `text`, trimmed, or none when it is blank.
+    pub(crate) fn new(text: &str) -> Option<Self> {
+        let text = text.trim();
+        (!text.is_empty()).then(|| Self(text.to_owned()))
+    }
+
+    /// What the learner wrote.
+    pub(crate) fn text(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for Note {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("Note").field(&self.0.len()).finish()
+    }
+}
+
 /// The change a candidate was written about, as a vote names it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) struct VotedChange {
     /// The commit's subject.
     pub(crate) subject: String,
-    /// The commit's full ID, when it is one of the learner's own
-    /// repository's rather than the showcase project's.
-    pub(crate) commit_id: Option<String>,
+    /// The commit's ID, when it is one of the learner's own repository's
+    /// rather than the showcase project's.
+    pub(crate) commit_id: Option<CommitId>,
 }
 
-/// One vote, as it is saved.
+/// Shows the subject's length, never the subject.
+impl fmt::Debug for VotedChange {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("VotedChange")
+            .field("subject_bytes", &self.subject.len())
+            .field("commit_id", &self.commit_id)
+            .finish()
+    }
+}
+
+/// One vote, as it is saved. Its `Debug` output shows no text.
 #[derive(Debug, Clone)]
 pub(crate) struct Vote {
     pub(crate) change: VotedChange,
@@ -146,7 +201,7 @@ pub(crate) struct Vote {
     pub(crate) needed: Band,
     pub(crate) verdict: Verdict,
     /// The learner's note, if they wrote one.
-    pub(crate) note: Option<String>,
+    pub(crate) note: Option<Note>,
 }
 
 /// A vote that is cast, for a job to save.
@@ -157,6 +212,17 @@ pub(crate) struct Cast {
     /// When it was cast.
     at: SystemTime,
     vote: Vote,
+}
+
+/// Whether a vote was saved, as the job that saved it reports it.
+#[derive(Debug)]
+pub struct SavedVote {
+    /// The vote's number among those cast during the run.
+    number: usize,
+    /// What the vote is on.
+    key: (CandidateKey, CandidateCheck),
+    verdict: Verdict,
+    saved: Result<(), SaveError>,
 }
 
 impl LabelsFile {
@@ -221,56 +287,71 @@ impl LabelsFile {
     }
 
     /// Appends the `cast` vote to the file, creating it owner-only if it
-    /// isn't there, and remembers whether it was saved. It blocks, so only
-    /// a background job calls it.
-    pub(crate) fn save(&self, cast: &Cast) {
+    /// isn't there, and says whether it was saved, for the app to apply with
+    /// [`saved`](Self::saved). It blocks, so only a background job calls it.
+    pub(crate) fn write(&self, cast: &Cast) -> SavedVote {
         let saved = match &self.path {
             Some(path) => self.append(path, cast),
-            None => Err(io::Error::new(
-                io::ErrorKind::NotFound,
-                "Whetstone has no state folder to keep votes in",
-            )),
+            None => Err(SaveError::NoStateFolder),
         };
-        let verdict = cast.vote.verdict;
-        let state = match saved {
+        SavedVote {
+            number: cast.number,
+            key: (CandidateKey::of(&cast.vote.candidate), cast.vote.check),
+            verdict: cast.vote.verdict,
+            saved,
+        }
+    }
+
+    /// Remembers whether a vote was saved, as `saved` says.
+    pub(crate) fn saved(&self, saved: SavedVote) {
+        let state = match saved.saved {
             Ok(()) => {
-                tracing::info!(vote = cast.number, "saved a vote to the labels file");
-                VoteState::Saved(verdict)
+                tracing::info!(vote = saved.number, "saved a vote to the labels file");
+                VoteState::Saved(saved.verdict)
             }
             Err(error) => {
-                tracing::warn!(vote = cast.number, %error, "a vote wasn't saved to the labels file");
-                VoteState::Unsaved(verdict, error.to_string())
+                let mut why = error.to_string();
+                let mut cause = std::error::Error::source(&error);
+                while let Some(source) = cause {
+                    why = format!("{why}: {source}");
+                    cause = source.source();
+                }
+                tracing::warn!(vote = saved.number, error = %why, "a vote wasn't saved to the labels file");
+                VoteState::Unsaved(saved.verdict, why)
             }
         };
-        self.votes().on.insert(
-            (CandidateKey::of(&cast.vote.candidate), cast.vote.check),
-            state,
-        );
+        self.votes().on.insert(saved.key, state);
     }
 
     /// Appends `cast` to the file at `path` as a labelled example.
-    fn append(&self, path: &Path, cast: &Cast) -> io::Result<()> {
-        let text = example(cast).map_err(io::Error::other)?;
+    fn append(&self, path: &Path, cast: &Cast) -> Result<(), SaveError> {
+        let text = example(cast).map_err(SaveError::Format)?;
+        let write = |source| SaveError::Write {
+            path: path.to_owned(),
+            source,
+        };
         // Appends take turns, and a poisoned lock guards nothing broken.
         let _appending = self
             .appending
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
         if let Some(dir) = path.parent() {
-            fs::create_dir_all(dir)?;
+            fs::create_dir_all(dir).map_err(write)?;
         }
         let mut file = OpenOptions::new()
             .create(true)
             .append(true)
             .mode(0o600)
-            .open(path)?;
-        let text = if file.metadata()?.len() == 0 {
+            .open(path)
+            .map_err(write)?;
+        let text = if file.metadata().map_err(write)?.len() == 0 {
             format!("{HEADER}\n{text}")
         } else {
             format!("\n{text}")
         };
-        file.write_all(text.as_bytes())?;
-        file.flush()
+        file.write_all(text.as_bytes())
+            .and_then(|()| file.flush())
+            .map_err(write)
     }
 
     fn votes(&self) -> MutexGuard<'_, Votes> {
@@ -315,9 +396,9 @@ fn example(cast: &Cast) -> Result<String, toml::ser::Error> {
                 time: None,
                 offset: None,
             },
-            note: vote.note.as_deref(),
+            note: vote.note.as_ref().map(Note::text),
             commit: &vote.change.subject,
-            commit_id: vote.change.commit_id.as_deref(),
+            commit_id: vote.change.commit_id.as_ref().map(CommitId::full),
             area: candidate.area().as_str(),
             stem: candidate.stem(),
             answer_key: candidate.answer_key().to_string(),

@@ -62,7 +62,7 @@ pub use crate::environment::{Dirs, Environment, NoHome};
 pub use crate::job::{
     Cancelled, Finished, Job, JobId, JobOutcome, JobOutput, Jobs, TimeLimit, Waiting, Workers,
 };
-pub use crate::labels_file::LabelsFile;
+pub use crate::labels_file::{LabelsFile, SavedVote};
 pub use crate::repository::{Repository, Unavailable};
 pub use crate::sent_requests::{Asking, RequestEnded, SentRequest};
 pub use crate::session_record::{

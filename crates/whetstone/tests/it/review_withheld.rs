@@ -12,14 +12,16 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use whetstone_ai::{Asked, ScriptedAi};
-use whetstone_core::{CandidateCheck, OptionLetter};
+use whetstone_core::{CandidateCheck, OptionLetter, WrittenCandidate, WrittenCitation};
 
 use crate::answering::type_text;
+use crate::connected_code::{rust_pay, rust_payments};
 use crate::help_and_signals::activate;
 use crate::preparing_questions::{
     DOMAIN, PAYMENT_LIFECYCLE, answer, area_id, candidate, generate, stems, touched_path,
 };
-use crate::session::Session;
+use crate::send_starts_practice::{REVIEW_ABOUT_THE_DOMAIN, press_send};
+use crate::session::{NO_COLOR, Session, Setup};
 
 /// The stems of the candidates the generator writes first, both withheld.
 const FIRST: &str = "Domain question 1?";
@@ -85,18 +87,22 @@ fn reviewing(width: u16, height: u16) -> (Session, Arc<ScriptedAi>) {
     (session, ai)
 }
 
-/// Votes Should have passed on the check at `number`, from 1, with `note`.
+/// Votes Should have passed on the check at `number`, from 1, with `note`,
+/// and lets the job that saves it end.
 fn vote_should_have_passed(session: &mut Session, number: usize, note: &str) {
     activate(session, &format!("Vote on check {number}"));
     session.press("<Tab> <Enter> <Tab>");
     type_text(session, note);
     session.press("<Tab> <Enter>");
+    session.settle();
 }
 
-/// Votes Rightly withheld on the check at `number`, from 1, with no note.
+/// Votes Rightly withheld on the check at `number`, from 1, with no note,
+/// and lets the job that saves it end.
 fn vote_rightly_withheld(session: &mut Session, number: usize) {
     activate(session, &format!("Vote on check {number}"));
     session.press("<Enter> <Tab> <Tab> <Tab> <Enter>");
+    session.settle();
 }
 
 /// Skips the check at `number`, from 1.
@@ -263,7 +269,16 @@ fn the_review_says_where_votes_are_kept_and_that_they_hold_private_code_on_the_l
 fn a_vote_a_skip_and_a_note_are_written_to_the_labels_file_created_owner_only() {
     let (mut session, _) = reviewing(120, 40);
 
-    vote_should_have_passed(&mut session, 1, NOTE);
+    activate(&mut session, "Vote on check 1");
+    session.press("<Tab> <Enter> <Tab>");
+    type_text(&mut session, NOTE);
+    session.press("<Tab> <Enter>");
+    assert_eq!(
+        checks(&session)[3],
+        "Your vote: Should have passed · saving",
+        "until the job that saves it ends"
+    );
+    session.settle();
     skip(&mut session, 2);
 
     assert_eq!(checks(&session)[3], "Your vote: Should have passed · saved");
@@ -299,6 +314,48 @@ fn a_vote_a_skip_and_a_note_are_written_to_the_labels_file_created_owner_only() 
         "labels_file",
         fs::read_to_string(&path).expect("the labels file")
     );
+}
+
+#[test]
+fn a_vote_on_the_learner_s_repository_names_its_commit_by_its_full_id() {
+    let repo = rust_payments();
+    repo.write("src/pay.rs", rust_pay("validate(amount * 2)"));
+    let commit = repo.commit("Double the charge");
+    let ai = Arc::new(ScriptedAi::new());
+    ai.on_write(
+        &area_id(DOMAIN),
+        Ok(vec![WrittenCandidate {
+            citations: vec![WrittenCitation {
+                path: "src/pay.rs".to_owned(),
+                first_line: 1,
+                last_line: 1,
+            }],
+            ..candidate(FIRST, "A", PAYMENT_LIFECYCLE)
+        }]),
+    );
+    ai.on_check_passing_except(FIRST, [answer(CandidateCheck::NoGiveaway, 0.46)]);
+    let mut session = Session::start(
+        Setup {
+            variables: NO_COLOR,
+            start: Some(repo.root()),
+            ai: Some(&ai),
+            ..Setup::default()
+        },
+        120,
+        40,
+    );
+    session.press(REVIEW_ABOUT_THE_DOMAIN);
+    session.settle();
+    press_send(&mut session);
+    session.settle();
+    activate(&mut session, "Review withheld questions");
+
+    vote_rightly_withheld(&mut session, 1);
+
+    let [example] = examples(&session).try_into().expect("one vote");
+    assert_eq!(example["commit"].as_str(), Some("Double the charge"));
+    assert_eq!(example["commit_id"].as_str(), Some(commit.as_str()));
+    assert_eq!(example["labels"].to_string(), "{ no_giveaway = \"no\" }");
 }
 
 #[test]
@@ -484,6 +541,11 @@ fn capture<T>(run: impl FnOnce() -> T) -> (T, String) {
         .with_writer(move || writer.clone())
         .with_max_level(tracing::Level::TRACE)
         .finish();
+    // While only one dispatcher is alive, tracing asks only the calling
+    // thread's whether a log line is wanted, and remembers the answer, so
+    // other tests' threads, which have none, could make it drop this one's
+    // lines. A second, which wants nothing, keeps every thread asking all.
+    let _second = tracing::Dispatch::new(tracing::subscriber::NoSubscriber::default());
     let returned = tracing::subscriber::with_default(subscriber, run);
     let bytes = captured.0.lock().expect("log lock").clone();
     (

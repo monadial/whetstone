@@ -14,7 +14,7 @@ use whetstone_ai::AiError;
 use whetstone_core::{AssessmentPolicy, Band, Job, ModelId, Probability};
 
 use crate::labels::{ExampleId, Expected};
-use crate::prepare::{Skipped, not_measured};
+use crate::prepare::{SkipReason, Skipped};
 
 /// One label, and Jev's answer to it in each run that answered.
 #[derive(Debug, Clone, PartialEq)]
@@ -521,10 +521,31 @@ fn counted(n: usize, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })
 }
 
+/// What the tool says about the learner votes it `skipped`, if any: how
+/// many, and why, as one sentence.
+pub(crate) fn not_measured(skipped: &[Skipped]) -> Option<String> {
+    if skipped.is_empty() {
+        return None;
+    }
+    let reasons: Vec<String> = SkipReason::ALL
+        .into_iter()
+        .filter_map(
+            |reason| match skipped.iter().filter(|vote| vote.reason == reason).count() {
+                0 => None,
+                n => Some(format!("{n} {reason}")),
+            },
+        )
+        .collect();
+    Some(format!(
+        "{}, which the tool can't send to Jev as Practice sent them: {}.",
+        counted(skipped.len(), "learner vote", "learner votes"),
+        reasons.join(", and ")
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::prepare::SkipReason;
 
     fn measured(name: &str, expected: Expected, answers: &[f64]) -> Measured {
         Measured {

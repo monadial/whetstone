@@ -24,12 +24,12 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{List, Paragraph};
-use whetstone_core::{Band, CandidateCheck, Extent, OptionLetter, Withheld};
+use whetstone_core::{CandidateCheck, Extent, OptionLetter, Withheld};
 
 use crate::columns;
 use crate::focus::Position;
 use crate::jev_answers;
-use crate::job::{JobId, JobOutput, Jobs};
+use crate::job::{JobOutput, Jobs};
 use crate::keymap::{self, Binding, Command, Input, Keymap};
 use crate::labels_file::{Cast, LabelsFile, Vote, VoteState, VotedChange};
 use crate::palette::Action;
@@ -120,8 +120,6 @@ pub(crate) struct ReviewWithheld {
     voting: Option<(usize, Box<VoteForm>)>,
     /// The votes cast, waiting for a job to save each.
     to_save: Vec<Cast>,
-    /// The jobs saving votes.
-    saving: Vec<JobId>,
     /// The change the candidates were written about.
     change: VotedChange,
     /// The reader of the evidence the candidates rest on.
@@ -154,7 +152,6 @@ impl ReviewWithheld {
             skipped: BTreeSet::new(),
             voting: None,
             to_save: Vec::new(),
-            saving: Vec::new(),
             change,
             evidence,
             labels: Arc::clone(labels),
@@ -210,13 +207,13 @@ impl ReviewWithheld {
     /// answer to it against what the show rule needed.
     fn banded(&self, check: CandidateCheck) -> (String, String) {
         let withheld = &self.current().withheld;
-        let needed = band_name(withheld.needed(check));
+        let needed = jev_answers::band_name(withheld.needed(check));
         let banded = match (withheld.answers().get(check), withheld.band(check)) {
             (Some(answer), Some(band)) => {
                 format!(
                     "{} · {} · it needed {needed}",
                     answer.get(),
-                    band_name(band)
+                    jev_answers::band_name(band)
                 )
             }
             _ => format!("Jev didn't answer it · it needed {needed}"),
@@ -359,8 +356,10 @@ impl ReviewWithheld {
         for (place, &check) in entry.withheld.failed().iter().enumerate() {
             let (statement, banded) = self.banded(check);
             let lead = format!("{}. ", place + 1);
-            let indent = " ".repeat(lead.len());
-            for (index, text) in columns::wrap(&statement, width.saturating_sub(lead.len()))
+            // Measured in cells, as the lines are.
+            let lead_width = Line::raw(lead.as_str()).width();
+            let indent = " ".repeat(lead_width);
+            for (index, text) in columns::wrap(&statement, width.saturating_sub(lead_width))
                 .into_iter()
                 .enumerate()
             {
@@ -383,7 +382,7 @@ impl ReviewWithheld {
             };
             for text in [format!("Jev: {banded}"), format!("Your vote: {vote}")] {
                 lines.extend(
-                    columns::wrap(&text, width.saturating_sub(indent.len()))
+                    columns::wrap(&text, width.saturating_sub(lead_width))
                         .into_iter()
                         .map(|text| Line::styled(format!("{indent}{text}"), theme.muted)),
                 );
@@ -454,11 +453,6 @@ fn packed(controls: Vec<Line<'static>>, width: usize) -> Vec<Line<'static>> {
     rows
 }
 
-/// A band's name, as the review words it.
-fn band_name(band: Band) -> &'static str {
-    jev_answers::band_name(band)
-}
-
 /// Where the head, the text, a blank row and the `controls` rows go in
 /// `area`. The controls keep their rows on a short screen, and the text
 /// scrolls above them.
@@ -517,24 +511,10 @@ impl View for ReviewWithheld {
     fn start_jobs(&mut self, jobs: &mut Jobs<JobOutput>) {
         for cast in self.to_save.drain(..) {
             let labels = Arc::clone(&self.labels);
-            // A vote is saved even if the review closes first: the job runs
-            // on, and only its result is ignored.
-            let job = jobs.start(move |_token| {
-                labels.save(&cast);
-                Ok(JobOutput::VoteSaved)
-            });
-            self.saving.push(job);
+            // The app applies the result to the labels file it keeps, so a
+            // vote is saved even if the review closes first.
+            jobs.start(move |_token| Ok(JobOutput::VoteSaved(Box::new(labels.write(&cast)))));
         }
-    }
-
-    fn waits_for(&self, job: JobId) -> bool {
-        self.saving.contains(&job)
-    }
-
-    fn finish_job(&mut self, job: JobId, _output: JobOutput) {
-        // The job keeps whether the vote was saved, which the review reads
-        // as it draws.
-        self.saving.retain(|saving| *saving != job);
     }
 
     fn paste(&mut self, text: &str) {
@@ -574,7 +554,8 @@ impl View for ReviewWithheld {
                 let theme = Theme::new(ColorSupport::NoColor);
                 let lines = self.lines(&theme, area.width);
                 let controls = self.control_rows(&theme, usize::from(area.width));
-                let [_, body, ..] = layout(3, lines.len(), controls.len(), area);
+                let head = self.head(&theme).len();
+                let [_, body, ..] = layout(head, lines.len(), controls.len(), area);
                 let last = lines.len().saturating_sub(usize::from(body.height));
                 self.top = self.top.scrolled(command, last, usize::from(body.height));
             }

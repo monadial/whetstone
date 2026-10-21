@@ -20,7 +20,7 @@ use crate::columns;
 use crate::entry::TextEntry;
 use crate::focus::Position;
 use crate::keymap::{self, Binding, Command, Input, Keymap, Press};
-use crate::labels_file::Verdict;
+use crate::labels_file::{Note, Verdict};
 use crate::overlay;
 use crate::palette::Action;
 use crate::theme::{ControlKind, ControlState, Theme};
@@ -110,7 +110,7 @@ pub(crate) enum Voting {
     /// They skipped the check, voting nothing, which closes it.
     Skipped,
     /// They voted, with the note they wrote, if any, which closes it.
-    Voted(Verdict, Option<String>),
+    Voted(Verdict, Option<Note>),
 }
 
 /// A vote being cast on one check: the check in plain words, and what
@@ -193,10 +193,7 @@ impl VoteForm {
                 Voting::Open
             }
             (Field::Save, Command::Activate) => match self.verdict {
-                Some(verdict) => {
-                    let note = self.note.text().trim();
-                    Voting::Voted(verdict, (!note.is_empty()).then(|| note.to_owned()))
-                }
+                Some(verdict) => Voting::Voted(verdict, Note::new(self.note.text())),
                 None => Voting::Open,
             },
             (_, command) => {

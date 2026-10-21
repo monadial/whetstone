@@ -224,38 +224,39 @@ fn labels_dir(labels: Option<&Path>, environment: &Environment) -> PathBuf {
     )
 }
 
-/// Reads every `.toml` file in `dir`, in file-name order, or, when `dir` is
-/// a file, such as a learner's labels file of votes, that file alone.
-pub fn load(dir: &Path) -> Result<Labels, ToolError> {
+/// Reads every `.toml` file in the folder at `path`, in file-name order, or,
+/// when `path` is a file, such as a learner's labels file of votes, that
+/// file alone.
+pub fn load(path: &Path) -> Result<Labels, ToolError> {
     let read = |path: &Path, source| ToolError::Read {
         path: path.to_owned(),
         source,
     };
     let mut paths = Vec::new();
-    if dir.is_file() {
-        paths.push(dir.to_owned());
+    if path.is_file() {
+        paths.push(path.to_owned());
     } else {
-        for entry in fs::read_dir(dir).map_err(|source| read(dir, source))? {
-            paths.push(entry.map_err(|source| read(dir, source))?.path());
+        for entry in fs::read_dir(path).map_err(|source| read(path, source))? {
+            paths.push(entry.map_err(|source| read(path, source))?.path());
         }
     }
     let mut files = Vec::new();
-    for path in paths {
-        if path
+    for file in paths {
+        if file
             .extension()
             .is_some_and(|extension| extension == "toml")
         {
-            let name = path
+            let name = file
                 .file_name()
                 .map(|name| name.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            let text = fs::read_to_string(&path).map_err(|source| read(&path, source))?;
+            let text = fs::read_to_string(&file).map_err(|source| read(&file, source))?;
             files.push((name, text));
         }
     }
     if files.is_empty() {
         return Err(ToolError::NoFiles {
-            dir: dir.to_owned(),
+            dir: path.to_owned(),
         });
     }
     files.sort();
@@ -276,7 +277,7 @@ fn summary(prepared: &Prepared) -> String {
         items.len(),
         prepared.by_agent(),
     );
-    if let Some(not_measured) = prepare::not_measured(prepared.skipped()) {
+    if let Some(not_measured) = report::not_measured(prepared.skipped()) {
         writeln!(summary, "Not measured: {not_measured}").expect("writing to a String never fails");
     }
     for job in Job::ALL {

@@ -92,20 +92,26 @@ pub struct Skipped {
     pub reason: SkipReason,
 }
 
-/// Why a learner's vote isn't measured.
+/// Why a learner's vote isn't measured, as the tool says it after a count:
+/// "2 about a commit of the learner's own repository, …".
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum SkipReason {
     /// It is about a commit of the learner's own repository: the tool has
     /// only the showcase project, and sending that code again would need a
     /// new outbound review.
     #[error(
-        "it is about a commit of the learner's own repository, and sending it again would send their code without a new outbound review"
+        "about a commit of the learner's own repository, whose code would go out again without a new outbound review"
     )]
     OwnRepository,
     /// Its candidate cites lines the tool's evidence doesn't send, such as
     /// the connected code Practice sent.
-    #[error("it cites lines the tool's evidence does not send, such as connected code")]
+    #[error("citing lines the tool's evidence doesn't send, such as connected code")]
     NotInEvidence,
+}
+
+impl SkipReason {
+    /// Every reason, in the order the tool counts them.
+    pub const ALL: [Self; 2] = [Self::OwnRepository, Self::NotInEvidence];
 }
 
 /// One example's Jev call, and the labels its answers are measured against.
@@ -177,38 +183,6 @@ impl fmt::Debug for Call {
             .field("items", &self.items)
             .finish()
     }
-}
-
-/// What the tool says about the learner votes it `skipped`, if any: how
-/// many, and why, as one sentence.
-pub(crate) fn not_measured(skipped: &[Skipped]) -> Option<String> {
-    if skipped.is_empty() {
-        return None;
-    }
-    let count = |reason| skipped.iter().filter(|vote| vote.reason == reason).count();
-    let reasons: Vec<String> = [
-        (
-            SkipReason::OwnRepository,
-            "about a commit of the learner's own repository, whose code would go out again \
-             without a new outbound review",
-        ),
-        (
-            SkipReason::NotInEvidence,
-            "citing lines the tool's evidence doesn't send, such as connected code",
-        ),
-    ]
-    .into_iter()
-    .filter_map(|(reason, why)| match count(reason) {
-        0 => None,
-        n => Some(format!("{n} {why}")),
-    })
-    .collect();
-    Some(format!(
-        "{} learner {}, which the tool can't send to Jev as Practice sent them: {}.",
-        skipped.len(),
-        if skipped.len() == 1 { "vote" } else { "votes" },
-        reasons.join(", and ")
-    ))
 }
 
 /// How a call's reply is read: what its decoder needs.
@@ -994,24 +968,17 @@ mod tests {
             vote("", "no_giveaway = \"no\"\n").replace("last_line = 37", "last_line = 999");
 
         for (votes, reason) in [
-            (
-                own,
-                "it is about a commit of the learner's own repository, and sending it again would \
-                 send their code without a new outbound review",
-            ),
-            (
-                connected,
-                "it cites lines the tool's evidence does not send, such as connected code",
-            ),
+            (own, SkipReason::OwnRepository),
+            (connected, SkipReason::NotInEvidence),
         ] {
             let prepared = prepared(&votes).unwrap();
 
-            assert_eq!(prepared.calls().len(), 0, "{reason}");
+            assert_eq!(prepared.calls().len(), 0, "{reason:?}");
             let [skipped] = prepared.skipped() else {
                 panic!("expected one vote skipped: {prepared:?}");
             };
             assert_eq!(skipped.example.as_str(), "learner-vote-20261021T101502-1");
-            assert_eq!(skipped.reason.to_string(), reason);
+            assert_eq!(skipped.reason, reason);
         }
     }
 
