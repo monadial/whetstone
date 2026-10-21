@@ -163,6 +163,18 @@ pub(crate) enum AttemptKind {
     Assisted,
 }
 
+/// One of Jev's checks of a paragraph of the explanation.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct CheckedParagraph {
+    /// The place in the rubric of the criterion the paragraph explains,
+    /// counting from 0.
+    pub(crate) criterion: usize,
+    /// Jev's answers, as returned.
+    pub(crate) answers: ParagraphCheck,
+    /// The version of the policy that banded them.
+    pub(crate) policy: PolicyVersion,
+}
+
 /// Feedback on one submitted response.
 #[derive(Debug)]
 pub(crate) struct Feedback {
@@ -186,9 +198,8 @@ pub(crate) struct Feedback {
     /// saved to the session record.
     unrecorded: Vec<Assessment>,
     /// Each of Jev's checks of a paragraph of the explanation, in the order
-    /// they came: the place in the rubric of the criterion it explains,
-    /// counting from 0, Jev's answers, and the policy that banded them.
-    explanation_checks: Vec<(usize, ParagraphCheck, PolicyVersion)>,
+    /// they came.
+    explanation_checks: Vec<CheckedParagraph>,
     /// The control with focus. If it is gone, as Cancel evaluation goes once
     /// the outcomes come, focus is where it started.
     focus: Control,
@@ -245,9 +256,8 @@ impl Feedback {
     }
 
     /// Each of Jev's checks of a paragraph of the explanation, in the order
-    /// they came: the place in the rubric of the criterion it explains,
-    /// counting from 0, Jev's answers, and the policy that banded them.
-    pub(crate) fn explanation_checks(&self) -> &[(usize, ParagraphCheck, PolicyVersion)] {
+    /// they came, a Retry's included.
+    pub(crate) fn explanation_checks(&self) -> &[CheckedParagraph] {
         &self.explanation_checks
     }
 
@@ -368,7 +378,11 @@ impl Feedback {
                     check:
                         ExplanationCheck::Passed { answers, policy }
                         | ExplanationCheck::Failed { answers, policy },
-                } => Some((paragraph.criterion, *answers, *policy)),
+                } => Some(CheckedParagraph {
+                    criterion: paragraph.criterion,
+                    answers: *answers,
+                    policy: *policy,
+                }),
                 Assessment::Choice(_)
                 | Assessment::Criterion { .. }
                 | Assessment::Explanation { .. } => None,

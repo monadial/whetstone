@@ -20,6 +20,7 @@ use crate::keymap::{Command, Input, Keymap};
 use crate::palette::Action;
 use crate::picker::Picker;
 use crate::repository::{Repository, Unavailable};
+use crate::sent_requests::RequestIds;
 use crate::session_record::SessionStore;
 use crate::settings::SettingsScreen;
 use crate::theme::Theme;
@@ -141,6 +142,8 @@ pub(crate) struct Context<'a> {
     /// The models `OpenRouter` refused during this run for having no
     /// zero-retention endpoint.
     pub(crate) refused_models: &'a Arc<RefusedModels>,
+    /// Whetstone's identities for the requests sent during this run.
+    pub(crate) request_ids: &'a Arc<RequestIds>,
 }
 
 /// What Practice runs on.

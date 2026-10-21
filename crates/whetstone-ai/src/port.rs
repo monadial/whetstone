@@ -135,7 +135,7 @@ pub struct Stamp {
     /// Whetstone's own identity for the request, unique within a run.
     pub request: RequestId,
     /// Whetstone's version, the base prompts', the assessment policy's, and
-    /// each area file's that went into the request.
+    /// the file of each area the request is about.
     pub versions: Versions,
 }
 

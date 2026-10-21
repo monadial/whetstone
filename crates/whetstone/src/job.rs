@@ -478,10 +478,15 @@ impl<K> Waiting<K> {
 
     /// Stops waiting for every job, and cancels each with `jobs`, as Cancel
     /// does: none of their results is applied, and their requests stop.
-    pub fn cancel<T>(&mut self, jobs: &mut Jobs<T>) {
-        for (job, _) in self.keys.drain(..) {
-            jobs.cancel(job);
-        }
+    /// Returns the key each job cancelled was waited for with.
+    pub fn cancel<T>(&mut self, jobs: &mut Jobs<T>) -> Vec<K> {
+        self.keys
+            .drain(..)
+            .map(|(job, key)| {
+                jobs.cancel(job);
+                key
+            })
+            .collect()
     }
 
     /// Stops waiting for the jobs whose results must carry `key`, and

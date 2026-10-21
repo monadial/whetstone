@@ -42,6 +42,7 @@ use crate::leave::{Leave, Leaving};
 use crate::overlay::{Outcome, Overlay};
 use crate::palette::Palette;
 use crate::repository::{Repository, Unavailable};
+use crate::sent_requests::RequestIds;
 use crate::session_record::{InMemoryStore, SessionStore};
 use crate::theme::Theme;
 use crate::view::{Context, Route, View};
@@ -87,6 +88,9 @@ pub struct App {
     /// The models `OpenRouter` refused during this run for having no
     /// zero-retention endpoint, which Settings marks until Whetstone quits.
     refused_models: Arc<RefusedModels>,
+    /// Whetstone's identities for the requests sent during this run, shared
+    /// by every Practice in it.
+    request_ids: Arc<RequestIds>,
     /// Where session records are kept: in memory until the durable store
     /// arrives.
     store: Box<dyn SessionStore>,
@@ -162,11 +166,18 @@ impl Screens {
     /// current screen builds it if it can, and otherwise it opens over the
     /// showcase project or the repository in `context`. A screen that opens
     /// starts its background jobs with `jobs`, and going home closes every
-    /// screen above it, the current one first.
-    fn go(&mut self, route: Route, context: &Context<'_>, jobs: &mut Jobs<JobOutput>) {
+    /// screen above it, the current one first, each saving to `store` what
+    /// closing it leaves to keep.
+    fn go(
+        &mut self,
+        route: Route,
+        context: &Context<'_>,
+        jobs: &mut Jobs<JobOutput>,
+        store: &mut dyn SessionStore,
+    ) {
         if route == Route::Home {
             while !self.above.is_empty() {
-                self.back(jobs);
+                self.back(jobs, store);
             }
         } else if route != self.current().route()
             && let Some(screen) = self.open(route, context)
@@ -177,11 +188,18 @@ impl Screens {
 
     /// Goes to `route` in place of the current screen, which builds it if
     /// it can, as [`Screens::go`] does. The current screen then closes with
-    /// `jobs`, and the new one opens above the screen before it and starts
-    /// its background jobs, so going back from it returns there.
-    fn replace(&mut self, route: Route, context: &Context<'_>, jobs: &mut Jobs<JobOutput>) {
+    /// `jobs`, saving to `store` what closing it leaves to keep, and the new
+    /// one opens above the screen before it and starts its background jobs,
+    /// so going back from it returns there.
+    fn replace(
+        &mut self,
+        route: Route,
+        context: &Context<'_>,
+        jobs: &mut Jobs<JobOutput>,
+        store: &mut dyn SessionStore,
+    ) {
         if let Some(screen) = self.open(route, context) {
-            self.back(jobs);
+            self.back(jobs, store);
             self.push(screen, jobs);
         }
     }
@@ -214,10 +232,12 @@ impl Screens {
     }
 
     /// Returns to the screen before the current one, if there is one,
-    /// closing the current one with `jobs`.
-    fn back(&mut self, jobs: &mut Jobs<JobOutput>) {
+    /// closing the current one with `jobs`, then saving to `store` what
+    /// closing it leaves to keep, such as the requests it cancelled.
+    fn back(&mut self, jobs: &mut Jobs<JobOutput>, store: &mut dyn SessionStore) {
         if let Some(mut screen) = self.above.pop() {
             screen.close(jobs);
+            screen.keep_record(store);
         }
     }
 }
@@ -262,6 +282,7 @@ impl App {
             time_limit: connected_code::TIME_LIMIT,
             ai: None,
             refused_models: Arc::default(),
+            request_ids: Arc::default(),
             store: Box::new(InMemoryStore::new()),
         }
     }
@@ -483,14 +504,17 @@ impl App {
                     time_limit: self.time_limit,
                     ai: self.ai.as_ref(),
                     refused_models: &self.refused_models,
+                    request_ids: &self.request_ids,
                 };
                 if let Command::Replace(_) = command {
-                    self.screens.replace(route, &context, &mut self.jobs);
+                    self.screens
+                        .replace(route, &context, &mut self.jobs, self.store.as_mut());
                 } else {
-                    self.screens.go(route, &context, &mut self.jobs);
+                    self.screens
+                        .go(route, &context, &mut self.jobs, self.store.as_mut());
                 }
             }
-            Command::Back => self.screens.back(&mut self.jobs),
+            Command::Back => self.screens.back(&mut self.jobs, self.store.as_mut()),
             command => {
                 // Until the loop reports a size, assume the smallest the
                 // screens are drawn in.
@@ -528,6 +552,7 @@ impl App {
             time_limit: self.time_limit,
             ai: self.ai.as_ref(),
             refused_models: &self.refused_models,
+            request_ids: &self.request_ids,
         };
         screen.render(&context, frame, body);
         // While a text entry has focus, the keys that work everywhere type.

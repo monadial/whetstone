@@ -9,13 +9,12 @@
 //! feedback gives only the words the bands lead to and never a number. The
 //! answers show here alone: they are never logged (rules 43 and 44).
 
-use whetstone_ai::ParagraphCheck;
 use whetstone_core::{
     Assessed, AssessmentPolicy, Band, CandidateCheck, DepthLevel, Job, PolicyVersion, Probability,
     Provenance, Question, Validation,
 };
 
-use crate::feedback::{Evaluation, Feedback};
+use crate::feedback::{CheckedParagraph, Evaluation, Feedback};
 use crate::reader::{Reader, Section};
 use crate::sent_requests::{Asking, RequestEnded, SentRequest};
 use crate::view::{Reading, Route};
@@ -37,12 +36,12 @@ pub(crate) fn reader(
     sections.push(reasoning(
         question,
         feedback.evaluation(),
-        &models(requests, &Asking::Evaluate(saved.clone())),
+        &replied(requests, &Asking::Evaluate(saved.clone())),
     ));
     if !feedback.explanation_checks().is_empty() {
         sections.push(explanation_check(
             feedback.explanation_checks(),
-            &models(requests, &Asking::CheckExplanation(saved.clone())),
+            &replied(requests, &Asking::CheckExplanation(saved.clone())),
         ));
     }
     Reader::new(
@@ -75,7 +74,7 @@ fn label() -> Section {
 fn question_check(question: &Question, requests: &[SentRequest]) -> Section {
     let policy = AssessmentPolicy::current();
     let mut lines = vec![models_line(
-        &models(requests, &Asking::Check(question.id().clone())),
+        &replied(requests, &Asking::Check(question.id().clone())),
         question.policy(),
     )];
     lines.extend(question.answers().iter().map(|(check, answer)| {
@@ -95,8 +94,8 @@ fn question_check(question: &Question, requests: &[SentRequest]) -> Section {
 }
 
 /// Jev's answers about the learner's reasoning written for `question`, as
-/// `evaluation` stands, asked of `models`.
-fn reasoning(question: &Question, evaluation: &Evaluation, models: &[&Provenance]) -> Section {
+/// `evaluation` stands, from the requests whose provenance is `requests`.
+fn reasoning(question: &Question, evaluation: &Evaluation, requests: &[&Provenance]) -> Section {
     let text = match evaluation {
         Evaluation::Unsent | Evaluation::Awaiting => {
             "Awaiting evaluation: Jev hasn't answered yet.".to_owned()
@@ -107,7 +106,7 @@ fn reasoning(question: &Question, evaluation: &Evaluation, models: &[&Provenance
         Evaluation::Assessed(outcomes) => {
             let policy = AssessmentPolicy::current();
             let version = outcomes.first().map_or(policy.version(), Assessed::policy);
-            let mut lines = vec![models_line(models, version)];
+            let mut lines = vec![models_line(requests, version)];
             lines.extend(question.rubric().iter().zip(outcomes).enumerate().map(
                 |(place, (criterion, assessed))| {
                     answered(
@@ -123,35 +122,37 @@ fn reasoning(question: &Question, evaluation: &Evaluation, models: &[&Provenance
     Section::plain("Reasoning", &text)
 }
 
-/// Jev's `checks` of the explanation's paragraphs, each its criterion's
-/// place in the rubric, counting from 0, with Jev's answers and the version
-/// of the policy that banded them, asked of `models`.
-fn explanation_check(
-    checks: &[(usize, ParagraphCheck, PolicyVersion)],
-    models: &[&Provenance],
-) -> Section {
+/// Jev's `checks` of the explanation's paragraphs, in the order they came,
+/// from the requests whose provenance is `requests`. A paragraph checked
+/// more than once, as Retry explanation writes it again, names each check:
+/// the last is of the paragraph written last.
+fn explanation_check(checks: &[CheckedParagraph], requests: &[&Provenance]) -> Section {
     let policy = AssessmentPolicy::current();
     let version = checks
         .first()
-        .map_or(policy.version(), |&(.., version)| version);
-    let mut lines = vec![models_line(models, version)];
-    for &(criterion, check, _) in checks {
-        let band = |answer| policy.band(Job::ExplanationCheck, answer);
-        lines.push(answered(
-            &format!(
-                "Criterion {}'s explanation is supported by the evidence",
-                criterion + 1
+        .map_or(policy.version(), |checked| checked.policy);
+    let mut lines = vec![models_line(requests, version)];
+    for (at, checked) in checks.iter().enumerate() {
+        let same = |other: &&CheckedParagraph| other.criterion == checked.criterion;
+        let explanation = match checks.iter().filter(same).count() {
+            1 => format!("Criterion {}'s explanation", checked.criterion + 1),
+            of => format!(
+                "Criterion {}'s explanation, check {} of {of},",
+                checked.criterion + 1,
+                checks[..=at].iter().filter(same).count()
             ),
-            check.supported,
-            band(check.supported),
+        };
+        let band = |answer| policy.band(Job::ExplanationCheck, answer);
+        let answers = checked.answers;
+        lines.push(answered(
+            &format!("{explanation} is supported by the evidence"),
+            answers.supported,
+            band(answers.supported),
         ));
         lines.push(answered(
-            &format!(
-                "Criterion {}'s explanation agrees with its outcome",
-                criterion + 1
-            ),
-            check.agrees,
-            band(check.agrees),
+            &format!("{explanation} agrees with its outcome"),
+            answers.agrees,
+            band(answers.agrees),
         ));
     }
     Section::plain("Explanation check", &lines.join("\n"))
@@ -159,7 +160,7 @@ fn explanation_check(
 
 /// The provenance of each request in `requests` that asked `asking` and
 /// was answered.
-fn models<'a>(requests: &'a [SentRequest], asking: &Asking) -> Vec<&'a Provenance> {
+fn replied<'a>(requests: &'a [SentRequest], asking: &Asking) -> Vec<&'a Provenance> {
     requests
         .iter()
         .filter(|sent| sent.asking == *asking && sent.ended == RequestEnded::Replied)

@@ -8,9 +8,15 @@
 //! no cost instead of estimating it.
 //!
 //! Each request is stamped as it is sent with Whetstone's own identity for
-//! it, counting from 1 in the order sent, and the versions behind it:
-//! Whetstone's, the base prompts', the assessment policy's, and each area
-//! file's that went into it.
+//! it, counting from 1 in the order sent across the whole run
+//! ([`RequestIds`]), and the versions behind it: Whetstone's, the base
+//! prompts', the assessment policy's, and the file of each area it is about.
+//! A question's requests after its check (its reasoning's evaluation, the
+//! explanation and its check) carry its area's file too, as the question
+//! they are about was written from it.
+
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use whetstone_ai::{Models, Reply, RequestFailure, Stamp, base_prompts_hash};
 use whetstone_core::{
@@ -89,6 +95,21 @@ impl Asking {
     }
 }
 
+/// Whetstone's identities for the requests sent during a run, which every
+/// Practice in it shares, so that no two requests have the same one.
+#[derive(Debug, Default)]
+pub(crate) struct RequestIds {
+    /// The identity last given: none is 0.
+    last: AtomicU64,
+}
+
+impl RequestIds {
+    /// The identity for the next request: one more than the last.
+    fn next(&self) -> RequestId {
+        RequestId::new(self.last.fetch_add(1, Ordering::Relaxed) + 1)
+    }
+}
+
 /// The requests a Practice sent, in the order they ended, and those still
 /// on their way, each with its stamp.
 #[derive(Debug, Clone)]
@@ -100,8 +121,8 @@ pub(crate) struct SentRequests {
     base_prompts: ContentHash,
     /// The chosen areas' files.
     area_files: Vec<AreaFileVersion>,
-    /// The identity of the last request stamped: none is 0.
-    last: u64,
+    /// Where each request's identity comes from.
+    ids: Arc<RequestIds>,
     /// Each request on its way, with what it asked and its stamp.
     sending: Vec<(Asking, Stamp)>,
     ended: Vec<SentRequest>,
@@ -111,13 +132,17 @@ pub(crate) struct SentRequests {
 
 impl SentRequests {
     /// No request yet, to `models`, about the chosen areas, whose files
-    /// are `area_files`.
-    pub(crate) fn new(models: Models, area_files: Vec<AreaFileVersion>) -> Self {
+    /// are `area_files`, each request's identity from `ids`.
+    pub(crate) fn new(
+        models: Models,
+        area_files: Vec<AreaFileVersion>,
+        ids: &Arc<RequestIds>,
+    ) -> Self {
         Self {
             models,
             base_prompts: base_prompts_hash(),
             area_files,
-            last: 0,
+            ids: Arc::clone(ids),
             sending: Vec::new(),
             ended: Vec::new(),
             recorded: 0,
@@ -135,8 +160,7 @@ impl SentRequests {
 
     /// The next identity, with the versions behind a request that asks
     /// `asking`.
-    fn next_stamp(&mut self, asking: &Asking) -> Stamp {
-        self.last += 1;
+    fn next_stamp(&self, asking: &Asking) -> Stamp {
         let area_files = self
             .area_files
             .iter()
@@ -144,7 +168,7 @@ impl SentRequests {
             .cloned()
             .collect();
         Stamp {
-            request: RequestId::new(self.last),
+            request: self.ids.next(),
             versions: Versions::new(
                 env!("CARGO_PKG_VERSION").to_owned(),
                 self.base_prompts.clone(),
@@ -188,12 +212,18 @@ impl SentRequests {
 
     /// The stamp of the request on its way that asked `asking`, which no
     /// longer is. A request is stamped as it is sent, so one is always
-    /// there; were it not, a new one stands in.
+    /// there; were it not, a new one stands in, and the log says so.
     fn take_stamp(&mut self, asking: &Asking) -> Stamp {
-        match self.sending.iter().position(|(sent, _)| sent == asking) {
-            Some(at) => self.sending.remove(at).1,
-            None => self.next_stamp(asking),
+        if let Some(at) = self.sending.iter().position(|(sent, _)| sent == asking) {
+            return self.sending.remove(at).1;
         }
+        let stamp = self.next_stamp(asking);
+        tracing::warn!(
+            request = %stamp.request,
+            role = ?asking.role(),
+            "a request ended that was never stamped, so it has a new identity"
+        );
+        stamp
     }
 
     /// Keeps the request stamped `stamp`, which asked `asking` and ended
@@ -234,7 +264,7 @@ impl SentRequests {
     /// `running` more still run.
     pub(crate) fn spending(&self, running: usize) -> Spending {
         let provenance = || self.ended.iter().map(|sent| &sent.provenance);
-        let of = |role| SessionCost::of(provenance().filter(|sent| sent.role() == role));
+        let of = |role| SessionCost::of(provenance().filter(|request| request.role() == role));
         Spending {
             jev: of(Role::Jev),
             generator: of(Role::Generator),

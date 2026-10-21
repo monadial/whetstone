@@ -30,7 +30,8 @@
 //! A failed request stops its stage, which names itself and offers Retry,
 //! which asks again only what failed, and Back. Nothing is retried
 //! automatically. Cancel, Back or going home cancels every request still
-//! running, and a result that comes after changes nothing (rule 24). Finding
+//! running, keeping each as cancelled, and a result that comes after changes
+//! nothing (rule 24). Finding
 //! connected code runs on instead, as it does for the outbound review, so
 //! its graph is cached.
 //!
@@ -52,7 +53,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::Line;
 use ratatui::widgets::{List, Paragraph};
-use whetstone_ai::{Ai, CandidateCount, Pending, QuestionWithoutKey, Reply, RequestFailure};
+use whetstone_ai::{Ai, CandidateCount, Pending, QuestionWithoutKey, Reply, RequestFailure, Stamp};
 use whetstone_core::{
     Area, AreaId, AssessmentPolicy, Band, Candidate, CandidateCheck, CandidateId, Change, CommitId,
     ConnectedCodeLimit, Connections, ConnectionsState, Evidence, ExcludePatterns, Job, Probability,
@@ -325,15 +326,18 @@ impl<T> Request<T> {
     }
 }
 
-/// Starts `request` as a background job, whose result `output` makes the
-/// app's, and waits for it as what it asked, `asking` (rule 24).
+/// Sends the request that asks `asking`: stamps it with `sent`, makes it
+/// with `request`, starts it as a background job, whose result `output`
+/// makes the app's, and waits for it as what it asked (rule 24).
 fn send<T: Send + 'static>(
     jobs: &mut Jobs<JobOutput>,
     waiting: &mut Waiting<Asking>,
+    sent: &mut SentRequests,
     asking: Asking,
-    request: Pending<T>,
+    request: impl FnOnce(Stamp) -> Pending<T>,
     output: impl FnOnce(Result<Reply<T>, RequestFailure>) -> JobOutput + Send + 'static,
 ) {
+    let request = request(sent.stamp(&asking));
     let job = jobs.start_async(async move { output(request.await) });
     waiting.wait_for(job, asking);
 }
@@ -386,13 +390,12 @@ fn ask_about_responses(
     }
     questions.evaluate(|saved, question| {
         let key = saved.clone();
-        let asking = Asking::Evaluate(saved.clone());
-        let stamp = sent.stamp(&asking);
         send(
             jobs,
             waiting,
-            asking,
-            ai.assess_reasoning(stamp, saved, evidence, QuestionWithoutKey::from(question)),
+            sent,
+            Asking::Evaluate(saved.clone()),
+            |stamp| ai.assess_reasoning(stamp, saved, evidence, QuestionWithoutKey::from(question)),
             |reply| JobOutput::Evaluated {
                 saved: Box::new(key),
                 reply,
@@ -401,13 +404,12 @@ fn ask_about_responses(
     });
     questions.explain(|saved, question, criteria| {
         let key = saved.clone();
-        let asking = Asking::Explain(saved.clone());
-        let stamp = sent.stamp(&asking);
         send(
             jobs,
             waiting,
-            asking,
-            ai.explain(stamp, saved, evidence, question, criteria),
+            sent,
+            Asking::Explain(saved.clone()),
+            |stamp| ai.explain(stamp, saved, evidence, question, criteria),
             |reply| JobOutput::Explained {
                 saved: Box::new(key),
                 reply,
@@ -416,13 +418,12 @@ fn ask_about_responses(
     });
     questions.check_explanations(|saved, question, paragraphs| {
         let key = saved.clone();
-        let asking = Asking::CheckExplanation(saved.clone());
-        let stamp = sent.stamp(&asking);
         send(
             jobs,
             waiting,
-            asking,
-            ai.check_explanation(stamp, saved, evidence, question, paragraphs),
+            sent,
+            Asking::CheckExplanation(saved.clone()),
+            |stamp| ai.check_explanation(stamp, saved, evidence, question, paragraphs),
             |reply| JobOutput::ExplanationChecked {
                 saved: Box::new(key),
                 reply,
@@ -446,7 +447,11 @@ impl Practice {
         let settings = context.settings;
         // The showcase project ships no area files, so its areas are
         // Whetstone's defaults.
-        let sent = SentRequests::new(settings.models(), area_files::of(&areas, &[]));
+        let sent = SentRequests::new(
+            settings.models(),
+            area_files::of(&areas, &[]),
+            context.request_ids,
+        );
         tracing::info!(
             position = index.get(),
             areas = areas.len(),
@@ -510,6 +515,7 @@ impl Practice {
         let sent = SentRequests::new(
             context.settings.models(),
             area_files::of(evidence.areas(), repository_files),
+            context.request_ids,
         );
         Some(Self {
             change_ref: ChangeRef::Commit(id),
@@ -1073,12 +1079,12 @@ impl View for Practice {
         match &mut self.stage {
             Stage::CheckingAreas(gate) => {
                 if let Request::Unsent = gate {
-                    let stamp = self.sent.stamp(&Asking::Gate);
                     send(
                         jobs,
                         &mut self.waiting,
+                        &mut self.sent,
                         Asking::Gate,
-                        self.ai.check_areas(stamp, evidence, &self.areas),
+                        |stamp| self.ai.check_areas(stamp, evidence, &self.areas),
                         |reply| JobOutput::AreasChecked { reply },
                     );
                     *gate = Request::Sent;
@@ -1090,13 +1096,12 @@ impl View for Practice {
                 for (area, write) in areas.into_iter().zip(writes) {
                     if let Request::Unsent = write {
                         let id = area.id().clone();
-                        let asking = Asking::Write(id.clone());
-                        let stamp = self.sent.stamp(&asking);
                         send(
                             jobs,
                             &mut self.waiting,
-                            asking,
-                            self.ai.write_candidates(stamp, evidence, area, count),
+                            &mut self.sent,
+                            Asking::Write(id.clone()),
+                            |stamp| self.ai.write_candidates(stamp, evidence, area, count),
                             |reply| JobOutput::Written { area: id, reply },
                         );
                         *write = Request::Sent;
@@ -1107,13 +1112,12 @@ impl View for Practice {
                 for (candidate, check) in checks {
                     if let Request::Unsent = check {
                         let id = candidate.id().clone();
-                        let asking = Asking::Check(id.clone());
-                        let stamp = self.sent.stamp(&asking);
                         send(
                             jobs,
                             &mut self.waiting,
-                            asking,
-                            self.ai.check_question(stamp, evidence, candidate),
+                            &mut self.sent,
+                            Asking::Check(id.clone()),
+                            |stamp| self.ai.check_question(stamp, evidence, candidate),
                             |reply| JobOutput::Checked {
                                 candidate: id,
                                 reply,
@@ -1264,8 +1268,11 @@ impl View for Practice {
     }
 
     fn close(&mut self, jobs: &mut Jobs<JobOutput>) {
-        // The learner pays for each request, so none runs on.
-        self.waiting.cancel(jobs);
+        // The learner pays for each request, so none runs on. Each is kept
+        // as cancelled, for the session record.
+        for asking in self.waiting.cancel(jobs) {
+            self.sent.cancelled(&asking);
+        }
         // The analysis runs on, to be cached, and its result is ignored.
         if let Stage::FindingConnectedCode(Lookup::Running(job)) = self.stage {
             jobs.forget(job);
