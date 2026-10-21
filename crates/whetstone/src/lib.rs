@@ -11,6 +11,7 @@ mod config;
 mod connected_code;
 mod entry;
 mod environment;
+mod explanation;
 mod failures;
 mod feedback;
 mod focus;
@@ -52,8 +53,8 @@ pub use crate::job::{
 };
 pub use crate::repository::{Repository, Unavailable};
 pub use crate::session_record::{
-    Assessment, AttemptId, Durability, InMemoryStore, NewRecord, Report, ReportKind, SavedResponse,
-    SessionId, SessionStore, Signal, StoreEntry, StoreError,
+    Assessment, AttemptId, Durability, ExplanationCheck, InMemoryStore, NewRecord, Report,
+    ReportKind, SavedResponse, SessionId, SessionStore, Signal, StoreEntry, StoreError,
 };
 pub use crate::showcase::embedded_showcase;
 pub use crate::terminal::{ModeSwitch, TerminalGuard, TerminalMode};
