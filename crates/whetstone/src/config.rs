@@ -25,7 +25,7 @@ use std::path::{Path, PathBuf};
 use std::{fmt, fs, io};
 
 use serde::{Deserialize, Deserializer};
-use whetstone_ai::{Models, OpenRouter, OpenRouterAi, SecretString};
+use whetstone_ai::{Models, OPENROUTER_BASE_URL, OpenRouter, OpenRouterAi, SecretString, Timeouts};
 use whetstone_core::{
     ConnectedCodeLimit, ConnectedCodeLimitError, ConnectedCodeLimitKb, ModelId, QuestionCount,
     QuestionCountError, RepositoryConfig,
@@ -197,11 +197,20 @@ impl Settings {
 
     /// Jev and the generator on `OpenRouter`, asked for the models this
     /// config names with the key `OPENROUTER_API_KEY` set, which only the auth
-    /// header exposes (rule 41). Without a key there is none, and Practice
-    /// can't start. Nor can it when the HTTP client can't be built, which
-    /// only a broken TLS setup causes: that is logged.
+    /// header exposes (rule 41), within Whetstone's time limits: 10 s to
+    /// connect, 30 s for a Jev call and 120 s for a generator call (rule 22).
+    /// Without a key there is none, and Practice can't start. Nor can it
+    /// when the HTTP client can't be built, which only a broken TLS setup
+    /// causes: that is logged.
     #[must_use]
     pub fn openrouter(&self) -> Option<OpenRouterAi> {
+        self.openrouter_at(OPENROUTER_BASE_URL, Timeouts::default())
+    }
+
+    /// The same as [`Settings::openrouter`], but at `base_url` and within
+    /// `timeouts`, as a test gives its local server and shorter limits.
+    #[must_use]
+    pub fn openrouter_at(&self, base_url: &str, timeouts: Timeouts) -> Option<OpenRouterAi> {
         let KeyStatus::Set(key) = &self.openrouter_key else {
             return None;
         };
@@ -209,7 +218,7 @@ impl Settings {
             jev: ModelId::new(self.jev_model.value.clone()),
             generator: ModelId::new(self.generator_model.value.clone()),
         };
-        match OpenRouter::new(Some(key.clone())) {
+        match OpenRouter::with_settings(Some(key.clone()), base_url, timeouts) {
             Ok(connection) => Some(OpenRouterAi::new(connection, models)),
             Err(failure) => {
                 tracing::warn!(%failure, "Practice can't reach OpenRouter");
