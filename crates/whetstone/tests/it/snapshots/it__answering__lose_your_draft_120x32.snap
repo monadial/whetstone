@@ -15,8 +15,8 @@ Buffer {
         "    ( ) C  Option C of the question                                                                                     ",
         "                                                                                                                        ",
         "  ┌   Your reasoning ────────────────────────────────────────────────────────────────────────────────────────────────┐  ",
+        "  │ Optional: explain why, to have your reasoning assessed.                                                          │  ",
         "  │ Press i to write your reasoning.                                                                                 │  ",
-        "  │                                                                                                                  │  ",
         "  │                                                                                                                  │  ",
         "  │                                ┌ Lose your draft? ──────────────────────────────┐                                │  ",
         "  │                                │ Your draft response hasn't been submitted, and │                                │  ",
@@ -32,7 +32,7 @@ Buffer {
         "  │                                                                                                                  │  ",
         "  └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  ",
         "                                                                                                                        ",
-        "    Submit response (write your reasoning)                                                                              ",
+        "    Submit response                                                                                                     ",
         "    Inspect source                                                                                                      ",
         "    Hint    Show answer    Skip    Cannot answer from this context    Report                                            ",
         "  ? keys  : actions  a/b/c choose  i write  q back                                                                      ",
@@ -48,7 +48,5 @@ Buffer {
         x: 54, y: 13, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 37, y: 17, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
         x: 53, y: 17, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
-        x: 4, y: 27, fg: Reset, bg: Reset, underline: Reset, modifier: DIM | ITALIC,
-        x: 42, y: 27, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
     ]
 }

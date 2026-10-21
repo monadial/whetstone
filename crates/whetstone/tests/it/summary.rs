@@ -50,7 +50,7 @@ fn finish_once_every_question_is_attempted_shows_the_summary_at_once() {
     activate(&mut session, "Finish");
 
     assert_eq!(session.rows()[1].trim(), "Summary", "{}", session.text());
-    assert_eq!(count(&session, "Answered"), 3);
+    assert_eq!(count(&session, "Answered with reasoning"), 3);
     assert_eq!(count(&session, "Skipped"), 0);
 }
 
@@ -85,7 +85,7 @@ fn finish_on_feedback_asks_first_while_questions_are_still_unattempted() {
     session.press("<Enter> j <Enter>");
 
     assert_eq!(session.rows()[1].trim(), "Summary", "{}", session.text());
-    assert_eq!(count(&session, "Answered"), 1);
+    assert_eq!(count(&session, "Answered with reasoning"), 1);
     assert_eq!(count(&session, "Skipped"), 3);
 }
 
@@ -198,7 +198,8 @@ fn the_summary_counts_answered_skipped_cannot_answer_awaiting_evaluation_assiste
 
     assert_eq!(
         [
-            "Answered",
+            "Answered with reasoning",
+            "Choice only",
             "Skipped",
             "Cannot answer from this context",
             "Awaiting evaluation",
@@ -206,7 +207,7 @@ fn the_summary_counts_answered_skipped_cannot_answer_awaiting_evaluation_assiste
             "Reported",
         ]
         .map(|label| count(&session, label)),
-        [2, 1, 1, 1, 1, 1],
+        [2, 0, 1, 1, 1, 1, 1],
         "{}",
         session.text()
     );
@@ -223,7 +224,7 @@ fn an_evaluation_still_awaited_as_the_learner_finished_comes_into_the_summary() 
     session.settle();
 
     assert_eq!(count(&session, "Awaiting evaluation"), 0);
-    assert_eq!(count(&session, "Answered"), 2);
+    assert_eq!(count(&session, "Answered with reasoning"), 2);
     assert!(!session.text().contains("still running"));
 }
 
