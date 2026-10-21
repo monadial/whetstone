@@ -79,7 +79,7 @@ An outcome whose support or reliability has not been established well enough to 
 _Avoid_: treating it as incorrect.
 
 **Assessment policy**:
-The versioned cut-off values that turn Jev's probabilities into clear yes, unclear or clear no for each kind of check.
+The versioned cut-off values that turn Jev's probabilities into clear yes, unclear or clear no for each kind of check. The learner's own config can override any check's cut-offs, which makes outcomes not comparable with the policy's; every outcome records the cut-offs that produced it.
 _Avoid_: threshold alone; confidence.
 
 ## Questions
