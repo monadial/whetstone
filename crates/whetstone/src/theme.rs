@@ -344,6 +344,38 @@ impl Theme {
         }
     }
 
+    /// A control whose label is laid out in `columns`, each a span in its
+    /// own style, as [`Theme::control`] draws one: its markers, then the
+    /// columns. Focus shows every column in the focus style, and a disabled
+    /// control every column in the disabled style, as they show a label.
+    /// The reason a control is disabled is not added: one of the columns
+    /// says it, where its row has room.
+    #[must_use]
+    pub(crate) fn control_in_columns<'a>(
+        &self,
+        columns: Vec<Span<'a>>,
+        state: ControlState<'a>,
+    ) -> Line<'a> {
+        let restyled = match (state.disabled, state.focused) {
+            (Some(_), _) => Some(self.disabled),
+            (None, true) => Some(self.focus),
+            (None, false) => None,
+        };
+        let mut line = self.control(
+            "",
+            ControlState {
+                disabled: None,
+                ..state
+            },
+        );
+        line.spans
+            .extend(columns.into_iter().map(|column| match restyled {
+                Some(style) => column.style(style),
+                None => column,
+            }));
+        line
+    }
+
     /// How many cells [`Theme::control`] takes for a control of `kind`
     /// labelled `label` that is not disabled, focused or not.
     #[must_use]

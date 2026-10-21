@@ -11,6 +11,7 @@ use tokio_util::sync::CancellationToken;
 use whetstone_core::{CommitId, Comparison};
 
 use super::{HistoryError, commit_id};
+use crate::author_date::AuthorDate;
 use crate::job::Cancelled;
 
 /// How many commits are read at a time: when the picker opens, and each
@@ -76,6 +77,10 @@ pub(crate) struct Commit {
     summary: String,
     /// The whole commit message, for searching.
     message: String,
+    /// Who authored it, by name.
+    author: String,
+    /// When it was authored, in its author's time zone.
+    date: AuthorDate,
     availability: Availability,
 }
 
@@ -253,6 +258,7 @@ impl Reader {
     fn commit(&self, info: &gix::traverse::commit::Info) -> Result<Commit, HistoryError> {
         let found = self.git.find_commit(info.id)?;
         let message = found.message()?;
+        let author = found.author()?;
         // Only the first parent is compared with, so only it must be there.
         let availability = if info
             .parent_ids
@@ -271,6 +277,9 @@ impl Reader {
             id: commit_id(info.id, self.short_len),
             summary: message.summary().to_string(),
             message: found.message_raw_sloppy().to_string(),
+            author: author.name.to_string(),
+            // A date Git can't read is the Unix epoch, as `git log` shows it.
+            date: AuthorDate::new(author.time().unwrap_or_default()),
             availability,
         })
     }
@@ -317,6 +326,16 @@ impl Commit {
     /// The whole commit message.
     pub(crate) fn message(&self) -> &str {
         &self.message
+    }
+
+    /// Who authored it, by name.
+    pub(crate) fn author(&self) -> &str {
+        &self.author
+    }
+
+    /// When it was authored.
+    pub(crate) fn date(&self) -> AuthorDate {
+        self.date
     }
 
     /// Whether it can be opened, and what it is compared with.
