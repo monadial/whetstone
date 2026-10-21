@@ -27,6 +27,11 @@
 //! chosen area without the gate; their questions are still checked. Retry on
 //! No questions passed checks keeps the gate's decision.
 //!
+//! No questions passed checks says why in words, and so does the
+//! shortfall's See why fewer passed: Practice keeps, for the candidates
+//! written last, the plain checks' drops and each candidate the question
+//! check withheld, with Jev's answers (see [`crate::withheld`]).
+//!
 //! A failed request stops its stage, which names itself and offers Retry,
 //! which asks again only what failed, and Back. Nothing is retried
 //! automatically. Cancel, Back or going home cancels every request still
