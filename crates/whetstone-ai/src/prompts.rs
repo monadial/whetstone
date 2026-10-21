@@ -79,6 +79,9 @@ pub(crate) struct QuestionCheckPrompts {
     pub(crate) no_giveaway: YesNoPrompt,
     /// One criterion's check; `{criterion}` is the criterion's name.
     pub(crate) criterion: YesNoPrompt,
+    /// Whether one criterion asks only for what the stem needs;
+    /// `{criterion}` is the criterion's name.
+    pub(crate) criterion_minimum: YesNoPrompt,
     /// One option's rating; `{letter}` is the option's.
     pub(crate) option: YesNoPrompt,
     /// One rationale's check; `{letter}` is its option's.

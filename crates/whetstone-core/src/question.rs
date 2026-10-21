@@ -172,8 +172,8 @@ pub enum DropReason {
     /// Its answer key is not one of its options.
     #[error("its answer key is not one of its options")]
     AnswerKey,
-    /// Its rubric has fewer than 1 or more than 3 criteria.
-    #[error("its rubric does not have 1 to 3 criteria")]
+    /// Its rubric has no criterion, or more than 2.
+    #[error("its rubric does not have 1 or 2 criteria")]
     RubricSize,
     /// A citation names a file or lines the evidence does not send.
     #[error("it cites lines the evidence does not send")]
@@ -207,8 +207,8 @@ pub enum Part {
 /// `area`, in the order it wrote them, against the `evidence` that was sent.
 ///
 /// A candidate is dropped when its options are not exactly A, B and C; when
-/// its answer key is not one of them; when its rubric has fewer than 1 or
-/// more than 3 criteria; when a citation names a file or lines the evidence
+/// its answer key is not one of them; when its rubric has no criterion, or
+/// more than 2; when a citation names a file or lines the evidence
 /// does not send; or when a part is missing or empty, the citations
 /// included. Text of only whitespace is empty.
 ///
@@ -259,7 +259,7 @@ impl Candidate {
             QuestionType::SingleChoice => single_choice_options(options)?,
         };
         let answer_key = OptionLetter::from_written(&answer_key).ok_or(DropReason::AnswerKey)?;
-        if !(1..=3).contains(&rubric.len()) {
+        if !(1..=2).contains(&rubric.len()) {
             return Err(DropReason::RubricSize);
         }
         let citations = citations
@@ -357,7 +357,9 @@ impl Candidate {
         &self.why_it_matters
     }
 
-    /// The criteria written reasoning is assessed against: 1 to 3 of them.
+    /// The criteria written reasoning is assessed against, as the generator
+    /// wrote them: 1 or 2. The show rule may drop some (see
+    /// [`Question::rubric`](crate::Question::rubric)).
     #[must_use]
     pub fn rubric(&self) -> &[Criterion] {
         &self.rubric
@@ -790,7 +792,7 @@ pub(crate) mod tests {
                 .collect(),
             answer_key: answer_key.to_string(),
             why_it_matters: "A retry must not charge twice.".to_owned(),
-            rubric: vec![criterion(); 2],
+            rubric: vec![criterion(), second_criterion()],
             hint: "Look at how the key is made.".to_owned(),
             citations: vec![cite("src/pay.rs", 1, 3)],
         }
@@ -801,6 +803,14 @@ pub(crate) mod tests {
             statement: "Links the key to deduplication".to_owned(),
             met: "Says the provider deduplicates by key".to_owned(),
             not_met: "Doesn't mention deduplication".to_owned(),
+        }
+    }
+
+    fn second_criterion() -> WrittenCriterion {
+        WrittenCriterion {
+            statement: "Says the provider charges once".to_owned(),
+            met: "Says one charge is applied".to_owned(),
+            not_met: "Doesn't say how often it charges".to_owned(),
         }
     }
 
@@ -886,12 +896,12 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_rubric_has_1_to_3_criteria() {
+    fn a_rubric_has_1_or_2_criteria() {
         for (count, verdict) in [
             (0, Err(DropReason::RubricSize)),
             (1, Ok(())),
-            (3, Ok(())),
-            (4, Err(DropReason::RubricSize)),
+            (2, Ok(())),
+            (3, Err(DropReason::RubricSize)),
         ] {
             let mut candidate = written(OptionLetter::A);
             candidate.rubric = vec![criterion(); count];

@@ -4,12 +4,13 @@
 //!
 //! [`Candidate::checks`] lists the yes/no questions the check asks: whether
 //! the candidate is answerable from the evidence, about its area, needs this
-//! change and doesn't give the answer away; whether each criterion is fair;
-//! each option's rating; whether each rationale and the "why it matters"
-//! line hold up; and whether the hint points to the evidence without
-//! revealing the answer key. It also scores the candidate's [`Depth`], which
-//! orders questions and never passes or fails one. Jev's answers come back
-//! as [`QuestionCheckAnswers`], as returned, and [`show_rule`] decides under
+//! change and doesn't give the answer away; whether each criterion is fair,
+//! and whether it asks only for what the question needs; each option's
+//! rating; whether each rationale and the "why it matters" line hold up;
+//! and whether the hint points to the evidence without revealing the answer
+//! key. It also scores the candidate's [`Depth`], which orders questions
+//! and never passes or fails one. Jev's answers come back as
+//! [`QuestionCheckAnswers`], as returned, and [`show_rule`] decides under
 //! the [`AssessmentPolicy`]. Only a question that passes is ever shown.
 
 use std::collections::BTreeMap;
@@ -38,6 +39,10 @@ pub enum CandidateCheck {
     /// 0: it follows from the evidence and the answer key, and can be judged
     /// from written reasoning.
     Criterion(usize),
+    /// Check 6, for the criterion at this place in the rubric, counting from
+    /// 0: it asks only for what a sufficient answer to the stem needs, so a
+    /// learner who understands the change could meet it in their own words.
+    CriterionMinimum(usize),
     /// Option rating: given the evidence, this option correctly answers the
     /// question.
     Option(OptionLetter),
@@ -88,13 +93,18 @@ pub enum DepthLevel {
 pub struct InvalidDepth(f64);
 
 /// A candidate that passed its question check, with Jev's answers, its
-/// depth, the policy that passed it, with its cut-offs, and its hint if the
-/// hint passed its checks too. Only questions are ever shown.
+/// depth, the policy that passed it, with its cut-offs, the criteria of its
+/// rubric that ask only for what it needs, and its hint if the hint passed
+/// its checks too. Only questions are ever shown.
 ///
 /// Its `Debug` output shows no question text.
 #[derive(Clone, PartialEq)]
 pub struct Question {
     candidate: Candidate,
+    /// The criteria of the candidate's rubric the show rule kept, in order.
+    rubric: Vec<Criterion>,
+    /// The places, counting from 0, of the criteria it dropped, in order.
+    dropped: Vec<usize>,
     answers: QuestionCheckAnswers,
     policy: AssessmentPolicy,
     hint: Option<Hint>,
@@ -114,8 +124,9 @@ pub struct Withheld {
 
 impl Candidate {
     /// The yes/no questions its question check asks Jev, in order: checks
-    /// 1 to 4; one per criterion; one option rating per option; one per
-    /// rationale, then "why it matters"; and the hint's two.
+    /// 1 to 4; one per criterion; one per criterion again, whether it asks
+    /// only for what the question needs; one option rating per option; one
+    /// per rationale, then "why it matters"; and the hint's two.
     #[must_use]
     pub fn checks(&self) -> Vec<CandidateCheck> {
         let letters = match self.question_type() {
@@ -129,6 +140,7 @@ impl Candidate {
         ]
         .into_iter()
         .chain((0..self.rubric().len()).map(CandidateCheck::Criterion))
+        .chain((0..self.rubric().len()).map(CandidateCheck::CriterionMinimum))
         .chain(letters.into_iter().map(CandidateCheck::Option))
         .chain(letters.into_iter().map(CandidateCheck::Rationale))
         .chain([
@@ -149,7 +161,8 @@ impl CandidateCheck {
             | Self::AboutArea
             | Self::NeedsChange
             | Self::NoGiveaway
-            | Self::Criterion(_) => Job::QuestionCheck,
+            | Self::Criterion(_)
+            | Self::CriterionMinimum(_) => Job::QuestionCheck,
             Self::Option(_) => Job::OptionRating,
             Self::Rationale(_)
             | Self::WhyItMatters
@@ -249,8 +262,13 @@ impl DepthLevel {
 /// clear yes; exactly one option rating is clear yes and it is the answer
 /// key; and the other two are clear no.
 ///
-/// The hint's checks never withhold a question. A hint that isn't clear yes
-/// on both is dropped, and the question has no hint.
+/// A criterion whose [`CandidateCheck::CriterionMinimum`] isn't clear yes
+/// asks for more than the question needs, so it is dropped, as a failing
+/// hint is: the question keeps the other criteria, in order, and reasoning
+/// is assessed against those alone. When no criterion is left, the candidate
+/// is withheld, naming each criterion's minimum check. The hint's checks
+/// never withhold a question. A hint that isn't clear yes on both is
+/// dropped, and the question has no hint.
 ///
 /// The withheld candidate keeps itself, Jev's answers and `policy`, and
 /// names every check that failed, in [`Candidate::checks`] order.
@@ -265,11 +283,16 @@ pub fn show_rule(
             .map(|answer| policy.band(check.job(), answer))
     };
     let checks = candidate.checks();
+    let (kept, dropped): (Vec<usize>, Vec<usize>) = (0..candidate.rubric().len())
+        .partition(|&place| band(CandidateCheck::CriterionMinimum(place)) == Some(Band::ClearYes));
     let failed: Vec<CandidateCheck> = checks
         .iter()
         .copied()
         .filter(|check| !check.is_hint())
-        .filter(|&check| band(check) != Some(needed(&candidate, check)))
+        .filter(|&check| match check {
+            CandidateCheck::CriterionMinimum(_) => kept.is_empty(),
+            _ => band(check) != Some(needed(&candidate, check)),
+        })
         .collect();
     let hint = checks
         .iter()
@@ -278,8 +301,14 @@ pub fn show_rule(
         .all(|check| band(check) == Some(Band::ClearYes))
         .then(|| candidate.hint().clone());
     if failed.is_empty() {
+        let rubric = kept
+            .iter()
+            .map(|&place| candidate.rubric()[place].clone())
+            .collect();
         Ok(Question {
             candidate,
+            rubric,
+            dropped,
             answers,
             policy: policy.clone(),
             hint,
@@ -354,12 +383,25 @@ impl Question {
         self.candidate.why_it_matters()
     }
 
-    /// The criteria written reasoning is assessed against: 1 to 3 of them.
-    /// Jev checked that each follows from the evidence and the answer key,
-    /// and can be judged from written reasoning.
+    /// The criteria written reasoning is assessed against: those of the
+    /// generator's 1 or 2 the show rule kept, in order, at least one. Jev
+    /// checked that each follows from the evidence and the answer key, can
+    /// be judged from written reasoning, and asks only for what the question
+    /// needs.
     #[must_use]
     pub fn rubric(&self) -> &[Criterion] {
-        self.candidate.rubric()
+        &self.rubric
+    }
+
+    /// The criteria the show rule dropped from the generator's rubric,
+    /// because Jev's answer to their [`CandidateCheck::CriterionMinimum`]
+    /// wasn't clear yes, in order, each with its place in that rubric,
+    /// counting from 0. The answer that dropped each is in
+    /// [`answers`](Self::answers). Reasoning is never assessed against them.
+    pub fn dropped_criteria(&self) -> impl Iterator<Item = (usize, &Criterion)> + '_ {
+        self.dropped
+            .iter()
+            .map(|&place| (place, &self.candidate.rubric()[place]))
     }
 
     /// Its hint, if the hint points to the evidence without revealing the
@@ -403,6 +445,8 @@ impl fmt::Debug for Question {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Question")
             .field("candidate", &self.candidate)
+            .field("rubric", &self.rubric)
+            .field("dropped", &self.dropped)
             .field("answers", &self.answers)
             .field("policy", &self.policy)
             .field("hint", &self.hint)
@@ -555,6 +599,8 @@ pub(crate) mod tests {
                 NoGiveaway,
                 Criterion(0),
                 Criterion(1),
+                CriterionMinimum(0),
+                CriterionMinimum(1),
                 Option(OptionLetter::A),
                 Option(OptionLetter::B),
                 Option(OptionLetter::C),
@@ -578,6 +624,7 @@ pub(crate) mod tests {
             (NeedsChange, Job::QuestionCheck),
             (NoGiveaway, Job::QuestionCheck),
             (Criterion(2), Job::QuestionCheck),
+            (CriterionMinimum(1), Job::QuestionCheck),
             (Option(OptionLetter::B), Job::OptionRating),
             (Rationale(OptionLetter::C), Job::RationaleAndHintChecks),
             (WhyItMatters, Job::RationaleAndHintChecks),
@@ -812,6 +859,16 @@ pub(crate) mod tests {
                 CandidateCheck::HintPointsToEvidence | CandidateCheck::HintHidesAnswerKey => {
                     assert_eq!(shown.expect("shown").hint(), None);
                 }
+                CandidateCheck::CriterionMinimum(place) => {
+                    let question = shown.expect("shown, with the other criterion");
+                    assert_eq!(
+                        question
+                            .dropped_criteria()
+                            .map(|(dropped, _)| dropped)
+                            .collect::<Vec<_>>(),
+                        [place]
+                    );
+                }
                 _ => assert_eq!(failed(shown), [missing]),
             }
         }
@@ -830,6 +887,100 @@ pub(crate) mod tests {
             .expect("a failed hint keeps its question");
 
             assert_eq!(question.hint(), None, "{points}, {hides}");
+        }
+    }
+
+    /// The statements of `criteria`, in order.
+    fn statements<'a>(criteria: impl IntoIterator<Item = &'a Criterion>) -> Vec<&'a str> {
+        criteria.into_iter().map(Criterion::statement).collect()
+    }
+
+    #[test]
+    fn a_criterion_that_asks_more_than_the_question_needs_is_dropped_and_the_question_shown() {
+        let minimum = CandidateCheck::CriterionMinimum(0);
+        for answer in [Some(0.79), Some(0.5), Some(0.0), None] {
+            let candidate = candidate("domain", 0, OptionLetter::A);
+            let answers = passing(&candidate)
+                .into_iter()
+                .filter(|&(check, _)| check != minimum)
+                .chain(answer.map(|answer| (minimum, probability(answer))));
+
+            let question = show_rule(
+                candidate,
+                QuestionCheckAnswers::new(answers, depth(1.3)),
+                AssessmentPolicy::current(),
+            )
+            .expect("shown, with the criterion left");
+
+            assert_eq!(
+                statements(question.rubric()),
+                ["Says the provider charges once"],
+                "{answer:?}"
+            );
+            let dropped: Vec<(usize, &str)> = question
+                .dropped_criteria()
+                .map(|(place, criterion)| (place, criterion.statement()))
+                .collect();
+            assert_eq!(dropped, [(0, "Links the key to deduplication")]);
+            assert_eq!(
+                question.answers().get(minimum),
+                answer.map(probability),
+                "the answer that dropped it is kept"
+            );
+        }
+    }
+
+    #[test]
+    fn a_question_keeps_its_criteria_in_order_when_every_one_asks_only_what_it_needs() {
+        let question = show(OptionLetter::A, Vec::new()).expect("shown");
+
+        assert_eq!(
+            statements(question.rubric()),
+            [
+                "Links the key to deduplication",
+                "Says the provider charges once"
+            ]
+        );
+        assert_eq!(question.dropped_criteria().count(), 0);
+    }
+
+    #[test]
+    fn a_candidate_whose_every_criterion_asks_too_much_is_withheld_naming_each() {
+        use CandidateCheck::*;
+
+        let withheld = show(
+            OptionLetter::A,
+            vec![
+                (CriterionMinimum(0), probability(0.4)),
+                (CriterionMinimum(1), probability(0.1)),
+            ],
+        )
+        .expect_err("no criterion is left");
+
+        assert_eq!(
+            withheld.failed(),
+            [CriterionMinimum(0), CriterionMinimum(1)]
+        );
+        assert_eq!(withheld.band(CriterionMinimum(0)), Some(Band::Unclear));
+        assert_eq!(withheld.needed(CriterionMinimum(1)), Band::ClearYes);
+    }
+
+    #[test]
+    fn a_criterion_check_not_clear_yes_still_withholds_whether_or_not_its_criterion_is_dropped() {
+        use CandidateCheck::*;
+
+        for minimum in [0.9, 0.3] {
+            assert_eq!(
+                failed(show(
+                    OptionLetter::A,
+                    vec![
+                        (Criterion(0), probability(0.5)),
+                        (CriterionMinimum(0), probability(minimum)),
+                    ],
+                )),
+                [Criterion(0)],
+                "minimum check at {minimum}"
+            );
         }
     }
 

@@ -31,6 +31,11 @@ instructions = "Rubric criterion {criterion} of the candidate follows from the e
 yes = "The criterion follows from the evidence and the answer key, and written reasoning can show whether it is met."
 no = "The criterion doesn't follow from the evidence and the answer key, or written reasoning can't show whether it is met."
 
+[criterion_minimum]
+instructions = "Rubric criterion {criterion} of the candidate asks only for what a sufficient answer to the candidate's stem needs: the idea that explains why the correct option is right, or something the stem itself asks for, such as a boundary. A learner who understands the change could meet it in their own words, without naming the code's identifiers, quoting its conditions, giving exact values, or covering details the stem doesn't ask about."
+yes = "The criterion asks only for an idea a sufficient answer to the stem needs, which a learner could give in their own words."
+no = "The criterion asks for more than a sufficient answer to the stem needs: particular names or wording, a quoted condition, an exact value, or something the stem doesn't ask about."
+
 [option]
 instructions = "Given the evidence, option {letter} correctly answers the candidate's stem. Judge it from the evidence alone, not from the candidate's answer key or rationales."
 yes = "The evidence shows that option {letter} is a correct answer to the stem."
