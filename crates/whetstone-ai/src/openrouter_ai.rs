@@ -11,12 +11,13 @@ use std::num::NonZeroUsize;
 
 use tokio_util::sync::CancellationToken;
 use whetstone_core::{
-    Area, Candidate, Cost, Evidence, ModelId, Provenance, QuestionCheckAnswers, Role,
-    WrittenCandidate,
+    Area, AreaId, Candidate, Cost, Evidence, ModelId, Probability, Provenance,
+    QuestionCheckAnswers, Role, WrittenCandidate,
 };
 
 use crate::candidates::{CandidatesOutput, candidates_request};
 use crate::connection::OpenRouter;
+use crate::gate::{gate_answers, gate_request};
 use crate::port::{Ai, CandidateCount, Pending, Reply};
 use crate::question_check::{question_check_answers, question_check_request};
 use crate::usage::Usage;
@@ -55,6 +56,31 @@ fn never_cancelled() -> CancellationToken {
 }
 
 impl Ai for OpenRouterAi {
+    fn check_areas(
+        &self,
+        evidence: &Evidence,
+        areas: &[Area],
+    ) -> Pending<Vec<(AreaId, Probability)>> {
+        let request = gate_request(&self.models.jev, evidence, areas);
+        let areas = areas.to_vec();
+        let connection = self.connection.clone();
+        let model = self.models.jev.clone();
+        Box::pin(async move {
+            let reply = connection.evaluate(&request, &never_cancelled()).await?;
+            let content = gate_answers(&areas, &reply)?;
+            let provenance = provenance(
+                Provenance::new(Role::Jev, model),
+                Some(reply.model),
+                reply.usage,
+            );
+            log_reply(&provenance);
+            Ok(Reply {
+                content,
+                provenance,
+            })
+        })
+    }
+
     fn write_candidates(
         &self,
         evidence: &Evidence,
@@ -156,11 +182,12 @@ mod tests {
     use super::*;
     use crate::port::RequestFailure;
     use crate::replay::{connection, received, server};
-    use crate::samples::{area, candidate, evidence, generator_model, jev_model};
+    use crate::samples::{area, candidate, evidence, generator_model, jev_model, observability};
     use crate::{AiError, Timeouts};
 
     const CANDIDATES: &str = include_str!("../fixtures/candidates.json");
     const QUESTION_CHECK: &str = include_str!("../fixtures/question-check.json");
+    const GATE: &str = include_str!("../fixtures/gate.json");
 
     fn models() -> Models {
         Models {
@@ -308,6 +335,83 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn jev_checks_the_chosen_areas_with_the_model_it_was_asked_and_what_it_cost() {
+        let (server, ai) = ai("/systemone", 200, GATE).await;
+        let areas = [area(), observability()];
+
+        let reply = ai
+            .check_areas(&evidence(), &areas)
+            .await
+            .expect("the recorded reply decodes");
+
+        let answers: Vec<(&str, f64)> = reply
+            .content
+            .iter()
+            .map(|(area, answer)| (area.as_str(), answer.get()))
+            .collect();
+        assert_eq!(
+            answers,
+            [("domain", 0.89), ("observability", 0.07)],
+            "an answer per area, in the areas' order, as returned"
+        );
+        assert_eq!(
+            reply.provenance,
+            Provenance::new(Role::Jev, jev_model())
+                .with_reported_model(ModelId::new("typesafe/jev-1.14-20261014".to_owned()))
+                .with_usage(Usage {
+                    input_tokens: Some(1234),
+                    output_tokens: Some(39),
+                })
+                .with_cost(Cost::new(0.000_051_828).expect("0.000051828 is a cost"))
+        );
+        let (_, body) = received(&server).await;
+        assert_eq!(body["model"], jev_model().as_str());
+        assert_eq!(body.get("provider"), None::<&Value>);
+        let state: Vec<&str> = body["state"]
+            .as_object()
+            .expect("the state is an object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(state, ["evidence"], "the evidence alone");
+        let questions: Vec<&str> = body["questions"]
+            .as_object()
+            .expect("the questions are an object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(
+            questions,
+            ["domain", "observability"],
+            "one question per area, named by its ID"
+        );
+        let sent = body.to_string();
+        for area in areas {
+            assert!(
+                !sent.contains(area.prompt().trim()),
+                "{}'s area prompt reached Jev",
+                area.id()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_gate_reply_that_leaves_out_an_area_is_an_invalid_reply() {
+        let (_server, ai) = ai("/systemone", 200, GATE).await;
+        let security = crate::samples::area_file(
+            "security.md",
+            "+++\nname = \"Security\"\ndescription = \"Who can do what\"\n+++\n\nLook for checks.\n",
+        );
+
+        assert_eq!(
+            ai.check_areas(&evidence(), &[area(), observability(), security])
+                .await
+                .err(),
+            Some(RequestFailure::InvalidReply)
+        );
+    }
+
+    #[tokio::test]
     async fn a_refused_key_is_named_by_the_port() {
         let refused = include_str!("../fixtures/key-refused.json");
         let (_server, ai) = ai("/chat/completions", 401, refused).await;
@@ -434,6 +538,10 @@ mod tests {
         jev.check_question(&evidence(), &candidate())
             .await
             .expect("the recorded reply decodes");
+        let (_gate, gate) = ai("/systemone", 200, GATE).await;
+        gate.check_areas(&evidence(), &[area(), observability()])
+            .await
+            .expect("the recorded reply decodes");
 
         let log = log.text();
         assert!(log.contains("OpenRouter replied"), "{log}");
@@ -442,6 +550,7 @@ mod tests {
             "the generator's cost: {log}"
         );
         assert!(log.contains("cost_usd=0.000129192"), "Jev's cost: {log}");
+        assert!(log.contains("cost_usd=5.1828e-5"), "the gate's cost: {log}");
         for never in [
             // The key.
             crate::replay::TEST_KEY,
@@ -449,6 +558,8 @@ mod tests {
             "You write candidate questions for Whetstone",
             "Given the evidence",
             "Focus on the rules the change encodes",
+            // The gate's question about an area.
+            "worth answering about the area",
             "Reuse the charge's key when retrying after a timeout",
             "let key = original.key.clone();",
             // A candidate sent to Jev, and one the generator wrote.

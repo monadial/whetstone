@@ -1,12 +1,16 @@
 //! A scripted AI for tests: each request gets the reply a test chose for it,
 //! at once, and every request is logged exactly as it was asked.
 //!
-//! The generator's writing is scripted per area, and Jev's question check
-//! per candidate, by its stem. A check is scripted as exact answers, or as
-//! answers that pass the show rule for whichever candidate is asked, with
-//! any checks a test answers otherwise, or at a depth a test chooses. Each
-//! reply scripted for one of them answers one request, in the order
-//! scripted, so a test scripts a Retry's reply as a second one. A request
+//! Jev's relevance gate is scripted per area, or to fail. The generator's
+//! writing is scripted per area, and Jev's question check per candidate, by
+//! its stem. A check is scripted as exact answers, or as answers that pass
+//! the show rule for whichever candidate is asked, with any checks a test
+//! answers otherwise, or at a depth a test chooses. Each reply scripted for
+//! one of them answers one request, in the order scripted, so a test
+//! scripts a Retry's reply as a second one.
+//!
+//! The gate lets through, clear yes, any area nothing was scripted for, so
+//! a test about writing or checking needn't script it. Any other request
 //! nothing was scripted for is a mistake in the test, which panics as the
 //! request is made.
 
@@ -19,6 +23,8 @@ use whetstone_core::{
     QuestionCheckAnswers, Role, WrittenCandidate,
 };
 
+use crate::gate::gate_request;
+use crate::jev::JevRequest;
 use crate::port::{Ai, CandidateCount, Pending, Reply, RequestFailure};
 
 /// An [`Ai`] whose replies a test chooses, and which logs what it was asked.
@@ -30,6 +36,10 @@ pub struct ScriptedAi {
 /// What the scripted AI will reply, and what it was asked so far.
 #[derive(Debug, Default)]
 struct Script {
+    /// Jev's next answers in the relevance gate for each area.
+    gate: HashMap<AreaId, VecDeque<Probability>>,
+    /// The next relevance gates that fail, and how.
+    gate_failures: VecDeque<RequestFailure>,
     /// The generator's next replies for each area.
     writes: HashMap<AreaId, VecDeque<Result<Vec<WrittenCandidate>, RequestFailure>>>,
     /// Jev's next replies for each candidate, by its stem.
@@ -53,6 +63,17 @@ enum CheckReply {
 /// One request the scripted AI was asked, exactly as asked.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Asked {
+    /// Jev was asked the relevance gate.
+    CheckAreas {
+        /// The evidence it was given.
+        evidence: Evidence,
+        /// The chosen areas it was asked about, in order.
+        areas: Vec<Area>,
+        /// Exactly what Jev is sent for them: the request the real AI
+        /// builds, which holds each area's name and description, never its
+        /// area prompt.
+        sent: JevRequest,
+    },
     /// The generator was asked to write candidates.
     WriteCandidates {
         /// The evidence it was given.
@@ -81,6 +102,23 @@ impl ScriptedAi {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Scripts Jev's answer for the area `area` in the next relevance gate
+    /// that doesn't fail: the probability that the change is worth asking
+    /// about in it. An area with no answer scripted gets 0.9, clear yes.
+    pub fn on_gate(&self, area: &AreaId, answer: Probability) {
+        self.script()
+            .gate
+            .entry(area.clone())
+            .or_default()
+            .push_back(answer);
+    }
+
+    /// Scripts the next relevance gate to fail with `failure`, before any
+    /// answer scripted with [`on_gate`](Self::on_gate) is used.
+    pub fn on_gate_failing(&self, failure: RequestFailure) {
+        self.script().gate_failures.push_back(failure);
     }
 
     /// Scripts the generator's reply to the next request to write about the
@@ -159,6 +197,34 @@ impl ScriptedAi {
 }
 
 impl Ai for ScriptedAi {
+    fn check_areas(
+        &self,
+        evidence: &Evidence,
+        areas: &[Area],
+    ) -> Pending<Vec<(AreaId, Probability)>> {
+        let mut script = self.script();
+        script.asked.push(Asked::CheckAreas {
+            evidence: evidence.clone(),
+            areas: areas.to_vec(),
+            sent: gate_request(&ModelId::new(JEV_MODEL.to_owned()), evidence, areas),
+        });
+        let reply = match script.gate_failures.pop_front() {
+            Some(failure) => Err(failure),
+            None => Ok(areas
+                .iter()
+                .map(|area| {
+                    let answer = script
+                        .gate
+                        .get_mut(area.id())
+                        .and_then(VecDeque::pop_front)
+                        .unwrap_or_else(worth_asking);
+                    (area.id().clone(), answer)
+                })
+                .collect()),
+        };
+        reply_at_once(reply, Role::Jev, JEV_MODEL)
+    }
+
     #[expect(
         clippy::panic,
         reason = "a request a test didn't script is a mistake in the test, which fails at once"
@@ -227,6 +293,11 @@ impl CheckReply {
             }
         }
     }
+}
+
+/// The gate's answer for an area a test scripted none for: 0.9, clear yes.
+fn worth_asking() -> Probability {
+    Probability::new(0.9).expect("0.9 is a probability")
 }
 
 /// The depth a check scripted to pass scores unless a test scripts one:
@@ -417,6 +488,90 @@ mod tests {
                 },
             ]
         );
+    }
+
+    /// Every piece of text in `request`: its state and each question's
+    /// instructions and meanings.
+    fn text_of(request: &JevRequest) -> String {
+        std::iter::once(request.state.to_string())
+            .chain(
+                request
+                    .questions
+                    .values()
+                    .map(|question| format!("{question:?}")),
+            )
+            .collect()
+    }
+
+    #[test]
+    fn jev_answers_the_gate_as_scripted_for_each_area_and_lets_every_other_area_through() {
+        let ai = ScriptedAi::new();
+        ai.on_gate(area(1).id(), probability(0.1));
+        ai.on_gate(area(2).id(), probability(0.5));
+        let areas = [area(0), area(1), area(2)];
+
+        let gate = at_once(ai.check_areas(&evidence(), &areas)).expect("scripted to answer");
+
+        assert_eq!(
+            gate.content,
+            [
+                (area(0).id().clone(), probability(0.9)),
+                (area(1).id().clone(), probability(0.1)),
+                (area(2).id().clone(), probability(0.5)),
+            ],
+            "the answers scripted, and clear yes for an area with none"
+        );
+        assert_eq!(gate.provenance.role(), Role::Jev);
+        let asked = ai.asked();
+        let [
+            Asked::CheckAreas {
+                evidence: given,
+                areas: asked_about,
+                sent,
+            },
+        ] = asked.as_slice()
+        else {
+            panic!("one gate: {asked:#?}");
+        };
+        assert_eq!(given, &evidence());
+        assert_eq!(asked_about, &areas);
+        assert_eq!(
+            sent.questions
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            areas
+                .iter()
+                .map(|area| area.id().as_str())
+                .collect::<Vec<_>>(),
+            "Jev is sent one question per area, named by its ID"
+        );
+        let sent = text_of(sent);
+        for area in &areas {
+            assert!(sent.contains(area.description()), "{}", area.id());
+            assert!(!sent.contains(area.prompt().trim()), "{}", area.id());
+        }
+    }
+
+    #[test]
+    fn a_gate_scripted_to_fail_fails_once_and_the_next_gate_is_answered() {
+        let ai = ScriptedAi::new();
+        ai.on_gate_failing(RequestFailure::TimedOut);
+        ai.on_gate(area(0).id(), probability(0.2));
+        let areas = [area(0), area(1)];
+
+        let failed = at_once(ai.check_areas(&evidence(), &areas));
+        let again = at_once(ai.check_areas(&evidence(), &areas));
+
+        assert_eq!(failed, Err(RequestFailure::TimedOut));
+        assert_eq!(
+            again.map(|reply| reply.content),
+            Ok(vec![
+                (area(0).id().clone(), probability(0.2)),
+                (area(1).id().clone(), probability(0.9)),
+            ])
+        );
+        assert_eq!(ai.asked().len(), 2, "each gate is logged");
     }
 
     #[test]
