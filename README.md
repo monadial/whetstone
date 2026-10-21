@@ -19,6 +19,15 @@ On your repository, **Review what will be sent** opens the outbound review: exac
 
 On the showcase project, **Generate questions** prepares questions once `OPENROUTER_API_KEY` is set, and is disabled until then. It sends showcase excerpts to OpenRouter, paid with your credits: Jev first decides which chosen areas the change is worth asking about, the generator writes candidate questions about those, and Jev checks each one, so only questions that pass are shown. When no chosen area is worth asking about, **Ask anyway** writes about them all the same, and their questions are still checked.
 
+When the question check withholds questions, on **No questions passed checks** or when fewer passed than you asked for, **Review withheld questions** shows each withheld question, one at a time and read-only. You see everything the generator wrote, each check that withheld it with Jev's band and probability, and the evidence it rests on. For each check, you vote **Rightly withheld** or **Should have passed**, with an optional note, or skip it. Voting never changes an outcome, and a withheld question never comes into Practice. Each vote is saved as a labelled example in `labels.toml` in Whetstone's state folder, beside the log (by default `~/.local/state/whetstone/labels.toml`). The file is readable only by you and is never sent anywhere. Votes about your own repository hold private code from it. The labelled-example tool reads it, and skips the votes it can't send to Jev as Practice did, such as those about your own repository:
+
+```sh
+cargo run -p whetstone-labels -- check --labels ~/.local/state/whetstone/labels.toml
+OPENROUTER_API_KEY=… cargo run -p whetstone-labels -- measure --labels ~/.local/state/whetstone/labels.toml
+```
+
+[`showcase/labels/README.md`](showcase/labels/README.md#learner-votes) describes the format. Votes about the showcase project hold no private code, and can be copied into `showcase/labels/` by hand.
+
 A request that fails stops its stage, which says plainly what went wrong and what you can do: no key, a refused key, no credits left, rate limited, OpenRouter or the model's provider unavailable, no zero-retention endpoint for the model, no reply in time (30 seconds for Jev, 120 for the generator), a request OpenRouter refuses as invalid, or a reply that couldn't be read, which is never shown as a judgement. **Retry** asks again only what failed, and nothing is retried until you choose to.
 
 ## Run it
@@ -104,7 +113,7 @@ explanation_check = { upper = 0.80, lower = 0.20 }
 
 Settings also says how far to trust the outcomes: the assessment policy's version, whether its cut-offs have been validated against labelled examples, each job's cut-offs, marked default or from your config, a note when any of them isn't policy 0's, and a note when `[jev] model` isn't `typesafe/jev-1.14`, the model the policy was checked against. A model OpenRouter refuses for having no zero-retention endpoint is marked there until Whetstone quits.
 
-The OpenRouter key never goes in the file. Set `OPENROUTER_API_KEY` in your shell; Settings shows only whether it is set. Whetstone writes nothing to disk except its log, in `$XDG_STATE_HOME/whetstone/` (by default `~/.local/state/whetstone/`), and the area files `whetstone areas init` copies.
+The OpenRouter key never goes in the file. Set `OPENROUTER_API_KEY` in your shell; Settings shows only whether it is set. Whetstone writes nothing to disk except its log and your votes on withheld questions (`labels.toml`), both in `$XDG_STATE_HOME/whetstone/` (by default `~/.local/state/whetstone/`), and the area files `whetstone areas init` copies.
 
 ## Terminal support
 
