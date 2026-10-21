@@ -516,19 +516,19 @@ mod tests {
                 rating(OptionLetter::B),
                 rating(OptionLetter::C)
             ],
-            [Some(0.98), Some(0.01), Some(0.02)]
+            [Some(0.98), Some(0.01), Some(0.01)]
         );
         assert_eq!(
             reply
                 .content
                 .get(CandidateCheck::NoGiveaway)
                 .map(Probability::get),
-            Some(0.13)
+            Some(0.15)
         );
         let probability = |value| Probability::new(value).expect("from 0 to 1");
         assert_eq!(
             reply.content.depth(),
-            Depth::new([0.11, 0.3, 0.59].map(probability), 1.47).expect("from 0 to 2"),
+            Depth::new([0.11, 0.29, 0.6].map(probability), 1.48).expect("from 0 to 2"),
             "the depth's distribution and expected value, as returned"
         );
         assert_eq!(
@@ -536,10 +536,10 @@ mod tests {
             Provenance::new(stamp().request, Role::Jev, jev_model(), versions())
                 .with_reported_model(ModelId::new("typesafe/jev-1.14-20261014".to_owned()))
                 .with_usage(Usage {
-                    input_tokens: Some(3076),
-                    output_tokens: Some(296),
+                    input_tokens: Some(3416),
+                    output_tokens: Some(340),
                 })
-                .with_cost(Cost::new(0.000_129_192).expect("0.000129192 is a cost"))
+                .with_cost(Cost::new(0.000_143_472).expect("0.000143472 is a cost"))
         );
         let (_, body) = received(&server).await;
         assert_eq!(body["model"], jev_model().as_str());
@@ -563,7 +563,9 @@ mod tests {
                 "about_area",
                 "answerable",
                 "criterion_1",
+                "criterion_1_minimum",
                 "criterion_2",
+                "criterion_2_minimum",
                 "depth",
                 "hint_hides_answer_key",
                 "hint_points_to_evidence",
@@ -599,18 +601,19 @@ mod tests {
         for answer in [
             ("option_a", 0.98),
             ("option_b", 0.01),
-            ("no_giveaway", 0.13),
+            ("no_giveaway", 0.15),
+            ("criterion_2_minimum", 0.93),
         ] {
             assert!(kept.contains(&answer), "{answer:?}, as returned: {kept:?}");
         }
-        assert_eq!(kept.len(), 15, "every yes/no question: {kept:?}");
+        assert_eq!(kept.len(), 17, "every yes/no question: {kept:?}");
         let depth = exchanges.iter().find_map(|exchange| match exchange {
             JevExchange::Score { name, answer, .. } if name == "depth" => Some(*answer),
             JevExchange::YesNo { .. } | JevExchange::Score { .. } => None,
         });
         assert_eq!(
             depth,
-            Some(Depth::new([0.11, 0.3, 0.59].map(probability), 1.47).expect("from 0 to 2")),
+            Some(Depth::new([0.11, 0.29, 0.6].map(probability), 1.48).expect("from 0 to 2")),
             "the depth's distribution and expected value, as returned"
         );
     }
@@ -1325,7 +1328,7 @@ mod tests {
             log.contains("cost_usd=0.036766"),
             "the generator's cost: {log}"
         );
-        assert!(log.contains("cost_usd=0.000129192"), "Jev's cost: {log}");
+        assert!(log.contains("cost_usd=0.000143472"), "Jev's cost: {log}");
         assert!(log.contains("cost_usd=5.1828e-5"), "the gate's cost: {log}");
         assert!(log.contains("request=1"), "Whetstone's identity: {log}");
         assert!(
