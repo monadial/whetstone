@@ -4,6 +4,7 @@
 //! as an exit code. `main.rs` only passes in the process's inputs.
 
 mod app;
+mod area_files;
 mod areas;
 mod cannot_answer;
 mod cli;

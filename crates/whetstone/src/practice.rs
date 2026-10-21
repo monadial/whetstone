@@ -58,6 +58,7 @@ use whetstone_core::{
     WrittenCandidate, pick, plain_checks, show_rule,
 };
 
+use crate::area_files;
 use crate::columns;
 use crate::connected_code::{AnalysisDirs, GraphCache, ShowcaseTree};
 use crate::failures::FailedRequests;
@@ -441,6 +442,9 @@ impl Practice {
     ) -> Option<Self> {
         let ai = Arc::clone(context.ai?);
         let settings = context.settings;
+        // The showcase project ships no area files, so its areas are
+        // Whetstone's defaults.
+        let sent = SentRequests::new(settings.models(), area_files::of(&areas, &[]));
         tracing::info!(
             position = index.get(),
             areas = areas.len(),
@@ -466,7 +470,7 @@ impl Practice {
                 cache: Arc::clone(context.cache),
             }))),
             waiting: Waiting::new(),
-            sent: SentRequests::new(settings.models(), Vec::new()),
+            sent,
             focus: Position::default(),
         })
     }
@@ -498,6 +502,13 @@ impl Practice {
             bytes = evidence.size(),
             "opened Preparing questions on a commit, with the evidence approved"
         );
+        let repository_files = context
+            .repository
+            .map_or(&[][..], |repository| repository.area_files());
+        let sent = SentRequests::new(
+            context.settings.models(),
+            area_files::of(evidence.areas(), repository_files),
+        );
         Some(Self {
             change_ref: ChangeRef::Commit(id),
             change,
@@ -511,7 +522,7 @@ impl Practice {
             gate: Gate::Undecided,
             stage: Stage::CheckingAreas(Request::Unsent),
             waiting: Waiting::new(),
-            sent: SentRequests::new(context.settings.models(), Vec::new()),
+            sent,
             focus: Position::default(),
         })
     }

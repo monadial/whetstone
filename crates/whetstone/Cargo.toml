@@ -68,6 +68,10 @@ serde = { version = "1", features = ["derive"] }
 # Cached connected-code graphs are stored as JSON, through their serde
 # implementations.
 serde_json = "1"
+# Each area file's version in provenance is a SHA-256 hash of its content,
+# the hash the AI crate keeps the base prompts' version with. Already built
+# for whetstone-ai, at the same version.
+sha2 = "0.10"
 signal-hook = "0.3"
 # The private directory a commit's files are written to for cgg: created
 # mode 0700 with an unpredictable name, and removed on drop, even while a
