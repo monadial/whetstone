@@ -64,7 +64,12 @@ fn is_shown(session: &mut Session) -> bool {
 /// check passes: only the three others are shown, and the shortfall says
 /// so.
 fn assert_withheld_unless_clear_yes(tested: &WrittenCandidate, check: CandidateCheck) {
-    for value in [0.79, 0.5, 0.21, 0.1] {
+    // The giveaway check's upper cut-off is 0.50, every other's 0.80.
+    let values = match check {
+        CandidateCheck::NoGiveaway => [0.49, 0.35, 0.21, 0.1],
+        _ => [0.79, 0.5, 0.21, 0.1],
+    };
+    for value in values {
         let mut session = prepared(tested.clone(), [answer(check, value)]);
 
         assert_eq!(
@@ -140,7 +145,7 @@ fn a_question_whose_checks_are_all_at_the_cut_offs_is_shown() {
             (Answerable, 0.80),
             (AboutArea, 0.80),
             (NeedsChange, 0.80),
-            (NoGiveaway, 0.80),
+            (NoGiveaway, 0.50),
             (Criterion(0), 0.80),
             (Option(OptionLetter::A), 0.80),
             (Option(OptionLetter::B), 0.20),

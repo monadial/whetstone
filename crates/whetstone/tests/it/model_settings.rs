@@ -48,7 +48,7 @@ fn settings_shows_the_assessment_policy_s_version_and_that_it_isn_t_validated() 
 
     assert_eq!(
         session.row_with("Assessment policy"),
-        "Assessment policy     version 0, not validated"
+        "Assessment policy     version 1, not validated"
     );
     assert!(
         !session.text().contains("checked against"),

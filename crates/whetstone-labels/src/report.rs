@@ -100,7 +100,7 @@ impl CutOffs {
 }
 
 /// The candidate cut-offs every job is measured at, from the loosest to the
-/// strictest, around policy 0's 0.80 and 0.20. The clear-yes counts depend
+/// strictest, around Jev's example 0.80 and 0.20. The clear-yes counts depend
 /// only on the upper cut-off and the clear-no counts only on the lower, so
 /// any pair of them can be read off these rows.
 pub const SWEEP: [CutOffs; 5] = [
@@ -595,7 +595,7 @@ mod tests {
                 [2, 1, 6, 2, 7], // 0.80 / 0.20
                 [1, 0, 6, 2, 8], // 0.85 / 0.15
                 [1, 0, 5, 1, 9], // 0.90 / 0.10
-                [2, 1, 6, 2, 7], // policy 0, which is 0.80 / 0.20
+                [2, 1, 6, 2, 7], // policy 1, 0.80 / 0.20 for option ratings
             ]
         );
         let disagreement = |row: usize| report.rows()[row].disagreement().unwrap();
@@ -673,6 +673,34 @@ mod tests {
         let report = JobReport::new(Job::OptionRating, &unclear);
 
         assert_eq!(report.rows()[0].disagreement(), None);
+    }
+
+    #[test]
+    fn giveaway_labels_are_their_own_job_and_policy_1_bands_them_from_0_50() {
+        let labels = vec![
+            Measured {
+                job: Job::GiveawayCheck,
+                ..measured("a/no_giveaway", Expected::Yes, &[0.55, 0.52, 0.58])
+            },
+            Measured {
+                job: Job::QuestionCheck,
+                ..measured("a/needs_change", Expected::Yes, &[0.55, 0.52, 0.58])
+            },
+        ];
+
+        let giveaway = JobReport::new(Job::GiveawayCheck, &labels);
+        let question_check = JobReport::new(Job::QuestionCheck, &labels);
+
+        assert_eq!((giveaway.yes(), giveaway.answers()), (1, 3));
+        let policy = |report: &JobReport| counts(&report.rows()[5]);
+        assert_eq!(counts(&giveaway.rows()[2]), [0, 0, 0, 0, 3], "0.80 / 0.20");
+        assert_eq!(policy(&giveaway), [3, 0, 0, 0, 0], "policy 1: 0.50 / 0.20");
+        assert_eq!(
+            policy(&question_check),
+            [0, 0, 0, 0, 3],
+            "policy 1: 0.80 / 0.20"
+        );
+        assert_eq!(giveaway.flagged(), []);
     }
 
     #[test]

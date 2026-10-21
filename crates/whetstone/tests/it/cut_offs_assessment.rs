@@ -1,7 +1,7 @@
-//! The cut-offs in effect band every one of Jev's answers: policy 0's by
+//! The cut-offs in effect band every one of Jev's answers: policy 1's by
 //! default, or the ones the learner's config sets under `[cut_offs]`. Each
 //! outcome, each request's provenance and Inspect Jev's answers record the
-//! cut-offs that banded it, and whether they are policy 0's or the
+//! cut-offs that banded it, and whether they are policy 1's or the
 //! learner's own. With none set, nothing changes.
 
 use std::sync::Arc;
@@ -23,7 +23,7 @@ use crate::questions_screen::every_stem_shown;
 use crate::session::{NO_COLOR, Session, Setup};
 
 /// The stem of the candidate each test checks, which is written first.
-const TESTED: &str = "Tested question?";
+pub(crate) const TESTED: &str = "Tested question?";
 
 /// A terminal height that fits all of the feedback and Inspect.
 const TALL: u16 = 60;
@@ -35,7 +35,7 @@ fn probability(value: f64) -> Probability {
     Probability::new(value).expect("from 0 to 1")
 }
 
-/// The cut-offs of `job` under policy 0 with the learner's `upper` and
+/// The cut-offs of `job` under policy 1 with the learner's `upper` and
 /// `lower` for it.
 fn learner(job: Job, upper: f64, lower: f64) -> AppliedCutOffs {
     AssessmentPolicy::with_cut_offs([(job, CutOffs::new(upper, lower).expect("valid"))])
@@ -47,7 +47,7 @@ fn learner(job: Job, upper: f64, lower: f64) -> AppliedCutOffs {
 /// candidate, written first, and three that pass every check. Jev passes
 /// the tested candidate's check but for `answers`, and the reasoning
 /// submitted to each meets its criterion. Every result is delivered.
-fn prepared(
+pub(crate) fn prepared(
     config: Option<&str>,
     answers: impl IntoIterator<Item = (CandidateCheck, Probability)>,
 ) -> Session {
@@ -91,7 +91,7 @@ fn started(config: Option<&str>, ai: &Arc<ScriptedAi>) -> Session {
 
 /// Whether the tested candidate is shown, and the shortfall line says it
 /// isn't, or else no shortfall line shows.
-fn is_shown(session: &mut Session) -> bool {
+pub(crate) fn is_shown(session: &mut Session) -> bool {
     let shortfall = session.text().contains("3 passed checks, 4 asked for");
     let shown = every_stem_shown(session, &[TESTED.to_owned()]).contains(&TESTED.to_owned());
     assert_eq!(shown, !shortfall, "{}", session.text());
@@ -109,7 +109,7 @@ fn assessments(log: &[StoreEntry]) -> Vec<Assessment> {
 }
 
 #[test]
-fn a_question_needing_the_change_at_0_6_is_withheld_under_policy_0_and_shown_under_the_learner_s_question_check()
+fn a_question_needing_the_change_at_0_6_is_withheld_under_policy_1_and_shown_under_the_learner_s_question_check()
  {
     let needs_change = [answer(CandidateCheck::NeedsChange, 0.6)];
 
@@ -139,7 +139,7 @@ fn the_option_ratings_and_the_rationale_and_hint_checks_use_the_learner_s_cut_of
         let mut defaults = prepared(None, [answers]);
         let mut learners = prepared(Some(&format!("[cut_offs]\n{config}\n")), [answers]);
 
-        assert!(!is_shown(&mut defaults), "{config}: unclear under policy 0");
+        assert!(!is_shown(&mut defaults), "{config}: unclear under policy 1");
         assert!(
             is_shown(&mut learners),
             "{config}: clear under the learner's"
@@ -233,7 +233,7 @@ fn a_reasoning_criterion_is_met_under_the_learner_s_cut_offs_and_records_them() 
         learner(Job::ReasoningCriterion, 0.60, 0.20)
     );
     assert_eq!(learners.cut_offs().origin(), CutOffsOrigin::Learner);
-    assert_eq!(learners.policy().get(), 0);
+    assert_eq!(learners.policy().get(), 1);
 }
 
 #[test]
@@ -386,8 +386,9 @@ fn inspect_shows_the_cut_offs_that_banded_each_answer_and_whose_they_are() {
     let check = session.question().section("Question check");
     for line in [
         "Cut-offs for the question check · upper 0.55, lower 0.2 · from your config",
-        "Cut-offs for the option rating · upper 0.8, lower 0.2 · policy 0's",
-        "Cut-offs for the rationale and hint checks · upper 0.8, lower 0.2 · policy 0's",
+        "Cut-offs for the giveaway check · upper 0.5, lower 0.2 · policy 1's",
+        "Cut-offs for the option rating · upper 0.8, lower 0.2 · policy 1's",
+        "Cut-offs for the rationale and hint checks · upper 0.8, lower 0.2 · policy 1's",
         "Needs this change, not general knowledge · 0.6 · clear yes",
     ] {
         assert!(check.contains(&line.to_owned()), "{line}: {check:#?}");
@@ -395,7 +396,7 @@ fn inspect_shows_the_cut_offs_that_banded_each_answer_and_whose_they_are() {
     let reasoning = session.question().section("Reasoning");
     assert!(
         reasoning.contains(
-            &"Cut-offs for the reasoning criterion · upper 0.8, lower 0.2 · policy 0's".to_owned()
+            &"Cut-offs for the reasoning criterion · upper 0.8, lower 0.2 · policy 1's".to_owned()
         ),
         "{reasoning:#?}"
     );
@@ -407,14 +408,14 @@ fn inspect_shows_the_cut_offs_that_banded_each_answer_and_whose_they_are() {
     assert!(
         words.contains(
             "Your config changes some of its cut-offs, so these bands aren't comparable with \
-             policy 0's."
+             policy 1's."
         ),
         "{words}"
     );
 }
 
 #[test]
-fn with_every_job_at_its_default_inspect_names_policy_0_s_cut_offs_and_nothing_else_changes() {
+fn with_every_job_at_its_default_inspect_names_policy_1_s_cut_offs_and_nothing_else_changes() {
     for config in [
         None,
         Some("[cut_offs]\nquestion_check = { upper = 0.80, lower = 0.20 }\n"),
@@ -439,7 +440,7 @@ fn with_every_job_at_its_default_inspect_names_policy_0_s_cut_offs_and_nothing_e
         activate(&mut session, "Inspect Jev's answers");
         assert!(
             session.question().section("Question check").contains(
-                &"Cut-offs for the question check · upper 0.8, lower 0.2 · policy 0's".to_owned()
+                &"Cut-offs for the question check · upper 0.8, lower 0.2 · policy 1's".to_owned()
             ),
             "{config:?}: {}",
             session.text()

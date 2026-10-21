@@ -88,6 +88,7 @@ fn question_check(question: &Question, requests: &[SentRequest]) -> Section {
             policy.version(),
         ),
         cut_offs_line(Job::QuestionCheck, policy.cut_offs(Job::QuestionCheck)),
+        cut_offs_line(Job::GiveawayCheck, policy.cut_offs(Job::GiveawayCheck)),
         cut_offs_line(Job::OptionRating, policy.cut_offs(Job::OptionRating)),
         cut_offs_line(
             Job::RationaleAndHintChecks,

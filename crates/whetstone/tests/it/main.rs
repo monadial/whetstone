@@ -26,6 +26,7 @@ mod cut_offs_setting;
 mod dirs;
 mod explanation;
 mod feedback;
+mod giveaway_cut_off;
 mod graph_cache;
 mod help_and_signals;
 mod hint_key;

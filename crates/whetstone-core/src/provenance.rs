@@ -614,7 +614,7 @@ mod tests {
         let versions = Versions::new("0.1.0".to_owned(), hash("9f2c"), policy.clone(), Vec::new());
 
         assert_eq!(versions.policy(), &policy);
-        assert_eq!(versions.policy().version().get(), 0);
+        assert_eq!(versions.policy().version().get(), 1);
         assert_eq!(
             versions.policy().cut_offs(Job::QuestionCheck).origin(),
             CutOffsOrigin::Learner
