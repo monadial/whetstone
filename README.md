@@ -103,7 +103,7 @@ model = "anthropic/claude-sonnet-5.5"
 # upper. Your own make outcomes not comparable with the policy's, and every
 # outcome records the cut-offs that banded it. A repository's config can't set them.
 # The giveaway check is the question check's "doesn't give the answer away",
-# which Jev scores on a scale of its own.
+# whose probabilities from Jev run lower than the other checks'.
 [cut_offs]
 relevance_gate = { upper = 0.80, lower = 0.20 }
 question_check = { upper = 0.80, lower = 0.20 }

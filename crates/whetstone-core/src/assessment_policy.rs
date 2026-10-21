@@ -54,8 +54,8 @@ pub enum Job {
     /// whether each criterion asks only what the question needs.
     QuestionCheck,
     /// A candidate's check 4: its stem and options don't give the answer
-    /// away. Jev scores it on a scale of its own, so it has its own
-    /// cut-offs.
+    /// away. Jev's probabilities for it run lower than for the other
+    /// checks, so it has its own cut-offs.
     GiveawayCheck,
     /// Whether an option correctly answers its question.
     OptionRating,

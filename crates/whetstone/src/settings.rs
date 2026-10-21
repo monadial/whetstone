@@ -134,7 +134,7 @@ impl Control {
                 ListedCutOffs::Shared(shared) => {
                     (format!("{shared} for every job"), Some(" (default)"))
                 }
-                ListedCutOffs::SharedBut(shared, _) => {
+                ListedCutOffs::SharedExcept(shared, _) => {
                     (format!("{shared} for every other job"), Some(" (default)"))
                 }
                 ListedCutOffs::Learner(_) => ("from your config for every job".to_owned(), None),
@@ -309,7 +309,7 @@ enum ListedCutOffs {
     Shared(CutOffs),
     /// The default the jobs not listed share, then each job whose cut-offs
     /// the config sets or differ from it, in [`Job::ALL`] order.
-    SharedBut(CutOffs, Vec<(Job, AppliedCutOffs)>),
+    SharedExcept(CutOffs, Vec<(Job, AppliedCutOffs)>),
     /// The config sets every job's, each listed in [`Job::ALL`] order.
     Learner(Vec<(Job, AppliedCutOffs)>),
 }
@@ -344,7 +344,7 @@ impl ListedCutOffs {
         if listed.is_empty() {
             Self::Shared(shared)
         } else {
-            Self::SharedBut(shared, listed)
+            Self::SharedExcept(shared, listed)
         }
     }
 
@@ -352,7 +352,7 @@ impl ListedCutOffs {
     fn listed(&self) -> &[(Job, AppliedCutOffs)] {
         match self {
             Self::Shared(_) => &[],
-            Self::SharedBut(_, listed) | Self::Learner(listed) => listed,
+            Self::SharedExcept(_, listed) | Self::Learner(listed) => listed,
         }
     }
 }
