@@ -14,6 +14,9 @@ use crate::preparing_questions::{
 };
 use crate::session::Session;
 
+/// The showcase area observability, third in the picker.
+const OBSERVABILITY: usize = 2;
+
 /// The requests `ai` was asked, as what each was for: the areas the gate
 /// was asked about, the area written about, or the stem checked.
 fn asked_for(ai: &ScriptedAi) -> Vec<String> {
@@ -558,5 +561,40 @@ fn preparing_questions_while_jev_checks_the_areas_at_80x24() {
     insta::assert_debug_snapshot!(
         "preparing_questions_checking_areas_80x24",
         checking_areas(80, 24).frame()
+    );
+}
+
+/// A session `width` by `height` on the first question, whose areas are
+/// domain, infrastructure and observability, the last two of which Jev's
+/// relevance gate clearly said aren't worth asking about.
+fn two_areas_not_asked_about(width: u16, height: u16) -> Session {
+    let ai = Arc::new(ScriptedAi::new());
+    ai.on_gate(&area_id(INFRASTRUCTURE), gate(0.1));
+    ai.on_gate(&area_id(OBSERVABILITY), gate(0.1));
+    writing(&ai, DOMAIN, "Domain", 6);
+    let mut session = generate(
+        &ai,
+        &[DOMAIN, INFRASTRUCTURE, OBSERVABILITY],
+        SERVE_OVER_HTTP,
+        width,
+        height,
+    );
+    session.settle();
+    session
+}
+
+#[test]
+fn the_areas_not_asked_about_below_the_first_question_at_120x32() {
+    insta::assert_debug_snapshot!(
+        "areas_not_asked_about_120x32",
+        two_areas_not_asked_about(120, 32).frame()
+    );
+}
+
+#[test]
+fn the_areas_not_asked_about_below_the_first_question_at_80x24() {
+    insta::assert_debug_snapshot!(
+        "areas_not_asked_about_80x24",
+        two_areas_not_asked_about(80, 24).frame()
     );
 }

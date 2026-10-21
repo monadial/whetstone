@@ -182,7 +182,9 @@ mod tests {
     use super::*;
     use crate::port::RequestFailure;
     use crate::replay::{connection, received, server};
-    use crate::samples::{area, candidate, evidence, generator_model, jev_model, observability};
+    use crate::samples::{
+        area, area_file, candidate, evidence, generator_model, jev_model, observability,
+    };
     use crate::{AiError, Timeouts};
 
     const CANDIDATES: &str = include_str!("../fixtures/candidates.json");
@@ -398,7 +400,7 @@ mod tests {
     #[tokio::test]
     async fn a_gate_reply_that_leaves_out_an_area_is_an_invalid_reply() {
         let (_server, ai) = ai("/systemone", 200, GATE).await;
-        let security = crate::samples::area_file(
+        let security = area_file(
             "security.md",
             "+++\nname = \"Security\"\ndescription = \"Who can do what\"\n+++\n\nLook for checks.\n",
         );
