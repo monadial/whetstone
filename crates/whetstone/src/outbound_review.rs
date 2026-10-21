@@ -18,10 +18,11 @@
 //! the review carries on without connected code, and stays that way while
 //! the job runs on and caches its graph for the commit's next review.
 //!
-//! Send, once the evidence can be sent and an `OpenRouter` key was found,
-//! starts Practice in the review's place, with exactly the evidence the
-//! review shows: what the learner approves. Going back from Practice
-//! returns to the picker, which keeps the choices for the change.
+//! Send, once an `OpenRouter` key was found, the evidence can be sent and
+//! connected code is found or given up on, starts Practice in the review's
+//! place, with exactly the evidence the review shows: what the learner
+//! approves. Going back from Practice returns to the picker, which keeps the
+//! choices for the change.
 
 use std::cell::RefCell;
 use std::mem;
@@ -95,6 +96,9 @@ const DISCLAIMER: &str =
     "Whetstone checks for common secret formats and can't guarantee there are none.";
 /// Said over the limit.
 const TOO_LARGE: &str = "This change is too large to practise on.";
+/// Why Send waits while connected code is found: what the learner approves
+/// is the evidence with it, or without it once it isn't available.
+const FINDING: &str = "finding connected code";
 
 /// In front of a line that belongs to the controls above it, as wide as the
 /// focus marker.
@@ -454,15 +458,20 @@ impl OutboundReview {
         self.rebuild();
     }
 
-    /// Why Send is disabled, if it is: the evidence's reason, or else that
-    /// no `OpenRouter` key was found.
+    /// Why Send is disabled, if it is: first that no `OpenRouter` key was
+    /// found, so the learner knows before choosing anything, then the
+    /// evidence's reason, which the learner can act on meanwhile, then that
+    /// connected code is still being found.
     fn send_disabled(&self) -> Option<&'static str> {
+        if !self.ai_available {
+            return Some(NEEDS_KEY);
+        }
         match self.evidence.unsendable() {
             Some(Unsendable::UnresolvedFindings) => Some("resolve the possible secrets"),
             Some(Unsendable::TooLarge) => Some("over the size limit"),
             Some(Unsendable::NothingToSend) => Some("nothing left to send"),
-            None if self.ai_available => None,
-            None => Some(NEEDS_KEY),
+            None if self.evidence.connections_state() == ConnectionsState::Finding => Some(FINDING),
+            None => None,
         }
     }
 

@@ -23,6 +23,25 @@ pub(crate) fn started_in(start: &Path, width: u16, height: u16) -> Session {
     )
 }
 
+/// Starts the app as [`started_in`] does, with an `OpenRouter` key found,
+/// so that Send on the outbound review gives the evidence's reasons. Jev
+/// and the generator then have nothing scripted, so a request fails the
+/// test rather than leave the machine.
+pub(crate) fn started_with_a_key_in(start: &Path, width: u16, height: u16) -> Session {
+    Session::start(
+        Setup {
+            variables: &[
+                ("NO_COLOR", "1"),
+                ("OPENROUTER_API_KEY", "sk-or-v1-made-up"),
+            ],
+            start: Some(start),
+            ..Setup::default()
+        },
+        width,
+        height,
+    )
+}
+
 /// Home's actions, and the lines between them, trimmed: from the first
 /// "Practice on" row to the next blank one.
 fn home_actions(session: &Session) -> Vec<String> {

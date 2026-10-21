@@ -3,7 +3,7 @@
 //! review opens, and listed, read and left out like touched files.
 
 use crate::repo::TestRepo;
-use crate::repository::started_in;
+use crate::repository::{started_in, started_with_a_key_in};
 use crate::session::{Session, Setup, columns};
 
 /// From home: open the repository's picker, choose the newest commit, and
@@ -455,10 +455,13 @@ pub(crate) const AWS_KEY: &str = concat!("AKIA", "FAKEFAKEFAKEFAKE");
 
 /// The Send control's row, trimmed, without the focus marker.
 pub(crate) fn send(session: &Session) -> String {
-    session
-        .row_with("Send (")
-        .trim_start_matches("> ")
-        .to_owned()
+    let rows = session.rows();
+    let send = rows
+        .iter()
+        .map(|row| row.trim().trim_start_matches("> "))
+        .find(|row| *row == "Send" || row.starts_with("Send ("));
+    assert!(send.is_some(), "no Send:\n{}", session.text());
+    send.unwrap_or_default().to_owned()
 }
 
 /// `python_ops` whose `use_sub.py` holds an AWS key in its caller of
@@ -480,9 +483,9 @@ fn with_a_secret_in_a_caller() -> TestRepo {
 #[test]
 fn a_secret_in_a_caller_blocks_send_until_it_is_left_out_or_marked_as_not_a_secret() {
     let repo = with_a_secret_in_a_caller();
-    let mut session = started_in(repo.root(), 120, 60);
+    let mut session = started_with_a_key_in(repo.root(), 120, 60);
     session.press(REVIEW_NEWEST);
-    assert_eq!(send(&session), "Send (needs OPENROUTER_API_KEY)");
+    assert_eq!(send(&session), "Send (finding connected code)");
 
     session.settle();
 
@@ -505,14 +508,14 @@ fn a_secret_in_a_caller_blocks_send_until_it_is_left_out_or_marked_as_not_a_secr
     );
     session.press("<Space>");
     assert_eq!(connected_rows(&session)[1][3], "left out by you");
-    assert_eq!(send(&session), "Send (needs OPENROUTER_API_KEY)");
+    assert_eq!(send(&session), "Send");
 
     // Bring it back from its row, then mark the match as not a secret.
     session.press("k k k k k k <Space>");
     assert_eq!(send(&session), "Send (resolve the possible secrets)");
     session.press("k k k <S-Tab> k k <Space>");
     assert_eq!(session.section("Secret check")[2], "> (x) Not a secret");
-    assert_eq!(send(&session), "Send (needs OPENROUTER_API_KEY)");
+    assert_eq!(send(&session), "Send");
 }
 
 #[test]

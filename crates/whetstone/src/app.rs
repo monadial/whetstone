@@ -158,13 +158,9 @@ impl Screens {
                 self.back(jobs);
             }
         } else if route != self.current().route()
-            && let Some(mut screen) = self
-                .current()
-                .open(route, context)
-                .or_else(|| route.open(context))
+            && let Some(screen) = self.open(route, context)
         {
-            screen.start_jobs(jobs);
-            self.above.push(screen);
+            self.push(screen, jobs);
         }
     }
 
@@ -173,15 +169,26 @@ impl Screens {
     /// `jobs`, and the new one opens above the screen before it and starts
     /// its background jobs, so going back from it returns there.
     fn replace(&mut self, route: Route, context: &Context<'_>, jobs: &mut Jobs<JobOutput>) {
-        if let Some(mut screen) = self
-            .current()
+        if let Some(screen) = self.open(route, context) {
+            self.back(jobs);
+            self.push(screen, jobs);
+        }
+    }
+
+    /// The screen at `route`, built by the current screen if it can, and
+    /// otherwise opened over the showcase project or the repository in
+    /// `context`.
+    fn open(&self, route: Route, context: &Context<'_>) -> Option<Box<dyn View>> {
+        self.current()
             .open(route, context)
             .or_else(|| route.open(context))
-        {
-            self.back(jobs);
-            screen.start_jobs(jobs);
-            self.above.push(screen);
-        }
+    }
+
+    /// Opens `screen` above the current one, starting its background jobs
+    /// with `jobs`.
+    fn push(&mut self, mut screen: Box<dyn View>, jobs: &mut Jobs<JobOutput>) {
+        screen.start_jobs(jobs);
+        self.above.push(screen);
     }
 
     /// The open screen that waits for the job `job`, if one does.
