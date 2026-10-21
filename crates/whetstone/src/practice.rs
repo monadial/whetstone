@@ -46,7 +46,7 @@ use whetstone_core::{
 
 use crate::columns;
 use crate::connected_code::{AnalysisDirs, GraphCache, ShowcaseTree};
-use crate::failures::Failures;
+use crate::failures::FailedRequests;
 use crate::focus::Position;
 use crate::job::{JobId, JobOutput, Jobs, Waiting};
 use crate::keymap::{self, Binding, Command, Keymap};
@@ -105,8 +105,9 @@ pub(crate) struct Practice {
     /// How many questions the learner asked for.
     count: QuestionCount,
     ai: Arc<dyn Ai>,
-    /// How a failed request is named to the learner.
-    failures: Failures,
+    /// What the learner can do about a failed request, and the models
+    /// `OpenRouter` refused.
+    failed_requests: FailedRequests,
     connected_code_limit: ConnectedCodeLimit,
     /// How long it waits for connected code.
     time_limit: Duration,
@@ -353,7 +354,7 @@ impl Practice {
             areas,
             count: settings.questions.value,
             ai,
-            failures: Failures::new(settings, context.refused_models),
+            failed_requests: FailedRequests::new(settings.models(), context.refused_models),
             // The showcase project's config sets nothing, which its tests
             // check, so only the learner's limit applies.
             connected_code_limit: settings.connected_code_limit(&RepositoryConfig::default()),
@@ -466,7 +467,7 @@ impl Practice {
             }
             Err(failure) => {
                 tracing::info!(%failure, "checking the areas failed");
-                self.failures.note(Role::Jev, failure);
+                self.failed_requests.note_refusal(Role::Jev, failure);
                 *gate = Request::Failed(failure);
             }
         }
@@ -523,7 +524,7 @@ impl Practice {
             }
             Err(failure) => {
                 tracing::info!(area = %area, %failure, "writing candidates failed");
-                self.failures.note(Role::Generator, failure);
+                self.failed_requests.note_refusal(Role::Generator, failure);
                 Request::Failed(failure)
             }
         };
@@ -567,7 +568,7 @@ impl Practice {
             Ok(reply) => Request::Replied(reply.content),
             Err(failure) => {
                 tracing::info!(area = %candidate.area(), %failure, "checking a candidate failed");
-                self.failures.note(Role::Jev, failure);
+                self.failed_requests.note_refusal(Role::Jev, failure);
                 Request::Failed(failure)
             }
         };
@@ -785,14 +786,14 @@ impl Practice {
                     .to_owned(),
             ],
             (stage, Some(failure)) => {
-                let (name, asked) = match stage {
+                let (name, role) = match stage {
                     Stage::CheckingAreas(_) => ("Checking areas", Role::Jev),
                     Stage::Checking(_) => ("Checking questions", Role::Jev),
                     _ => ("Writing questions", Role::Generator),
                 };
                 vec![
                     format!("{name} failed: {failure}."),
-                    self.failures.what_to_do(asked, failure),
+                    self.failed_requests.what_to_do(role, failure),
                     "Retry asks again only what failed. Nothing is retried until you choose to."
                         .to_owned(),
                 ]

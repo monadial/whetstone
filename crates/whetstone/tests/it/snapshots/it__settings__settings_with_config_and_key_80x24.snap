@@ -1,6 +1,5 @@
 ---
 source: crates/whetstone/tests/it/settings.rs
-assertion_line: 243
 expression: session.frame()
 ---
 Buffer {

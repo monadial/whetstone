@@ -151,6 +151,22 @@ pub(crate) async fn bounded<T>(
 mod tests {
     use super::*;
 
+    /// Rule 22's limits, as the spec sets them. A test that lets the
+    /// connect limit fire would need a server that never accepts, which only
+    /// the network has, so the limit is pinned here and given to every
+    /// client.
+    #[test]
+    fn calls_connect_within_10_seconds_and_jev_s_end_after_30_and_the_generator_s_after_120() {
+        assert_eq!(
+            Timeouts::default(),
+            Timeouts {
+                connect: Duration::from_secs(10),
+                jev: Duration::from_secs(30),
+                generator: Duration::from_secs(120),
+            }
+        );
+    }
+
     #[test]
     fn a_connection_prints_without_its_key() {
         let connection = OpenRouter::new(Some(SecretString::from("sk-or-v1-secret")))
