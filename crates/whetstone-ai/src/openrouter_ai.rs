@@ -140,12 +140,11 @@ impl Ai for OpenRouterAi {
 
     fn assess_reasoning(
         &self,
-        _saved: &dyn Saved,
+        saved: &dyn Saved,
         evidence: &Evidence,
         question: QuestionWithoutKey<'_>,
-        reasoning: &str,
     ) -> Pending<Vec<Probability>> {
-        let request = reasoning_request(&self.models.jev, evidence, question, reasoning);
+        let request = reasoning_request(&self.models.jev, evidence, question, saved.reasoning());
         let rubric = question.rubric().to_vec();
         let connection = self.connection.clone();
         let model = self.models.jev.clone();
@@ -208,11 +207,11 @@ mod tests {
     use whetstone_core::{CandidateCheck, Depth, OptionLetter, Probability, QuestionCount, Usage};
 
     use super::*;
-    use crate::port::{RequestFailure, Saved};
+    use crate::port::RequestFailure;
     use crate::replay::{connection, received, server};
     use crate::samples::{
-        REASONING, area, area_file, candidate, evidence, generator_model, jev_model, observability,
-        question,
+        Acknowledged, REASONING, area, area_file, candidate, evidence, generator_model, jev_model,
+        observability, question,
     };
     use crate::{AiError, QuestionWithoutKey, Timeouts};
 
@@ -220,12 +219,6 @@ mod tests {
     const QUESTION_CHECK: &str = include_str!("../fixtures/question-check.json");
     const GATE: &str = include_str!("../fixtures/gate.json");
     const REASONING_REPLY: &str = include_str!("../fixtures/reasoning.json");
-
-    /// A session store's acknowledgement, as the app's store gives one.
-    #[derive(Debug)]
-    struct Acknowledged;
-
-    impl Saved for Acknowledged {}
 
     fn models() -> Models {
         Models {
@@ -457,10 +450,9 @@ mod tests {
 
         let reply = ai
             .assess_reasoning(
-                &Acknowledged,
+                &Acknowledged(REASONING),
                 &evidence(),
                 QuestionWithoutKey::from(&question),
-                REASONING,
             )
             .await
             .expect("the recorded reply decodes");
@@ -511,10 +503,9 @@ mod tests {
 
         assert_eq!(
             ai.assess_reasoning(
-                &Acknowledged,
+                &Acknowledged(REASONING),
                 &evidence(),
                 QuestionWithoutKey::from(&question),
-                REASONING,
             )
             .await
             .err(),

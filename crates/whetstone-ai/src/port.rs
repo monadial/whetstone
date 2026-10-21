@@ -55,27 +55,30 @@ pub trait Ai: fmt::Debug + Send + Sync {
         candidate: &Candidate,
     ) -> Pending<QuestionCheckAnswers>;
 
-    /// Jev's assessment of `reasoning`, the reasoning of the response the
-    /// session store acknowledged saving with `saved`, written for
-    /// `question`, against `evidence`: for each criterion of the rubric, in
-    /// rubric order, the probability that the reasoning meets it, as
-    /// returned. Jev is never told the chosen option or the answer key,
-    /// which `question` doesn't hold.
+    /// Jev's assessment of the reasoning of the response the session store
+    /// acknowledged saving with `saved`, written for `question`, against
+    /// `evidence`: for each criterion of the rubric, in rubric order, the
+    /// probability that the reasoning meets it, as returned. Jev is never
+    /// told the chosen option or the answer key, which neither `saved` nor
+    /// `question` gives.
     fn assess_reasoning(
         &self,
         saved: &dyn Saved,
         evidence: &Evidence,
         question: QuestionWithoutKey<'_>,
-        reasoning: &str,
     ) -> Pending<Vec<Probability>>;
 }
 
-/// A session store's acknowledgement that it saved a response. A reasoning
-/// evaluation can be asked only with one, so it is never paid for while the
-/// response could still be lost (rule 39). The app's `SavedResponse`, which
-/// only its session store makes, is the only one; nothing else implements
-/// this outside tests.
-pub trait Saved: fmt::Debug + Send + Sync {}
+/// A session store's acknowledgement that it saved a response, which gives
+/// the response's reasoning as saved. A reasoning evaluation is built from
+/// one, so it is never paid for while the response could still be lost
+/// (rule 39), and it sends exactly what was saved. The app's
+/// `SavedResponse`, which only its session store makes, is the only one;
+/// nothing else implements this outside tests.
+pub trait Saved: fmt::Debug + Send + Sync {
+    /// The learner's reasoning, as the store saved it.
+    fn reasoning(&self) -> &str;
+}
 
 /// A request on its way to Jev or the generator: it resolves to the reply
 /// or to why the request failed. It owns everything it holds, so it can run

@@ -23,7 +23,7 @@ use ratatui::widgets::{List, Paragraph};
 use whetstone_ai::RequestFailure;
 use whetstone_core::{
     Assessed, AssessmentPolicy, ChoiceOutcome, CriterionOutcome, Extent, OptionLetter, Probability,
-    Question, Response,
+    Question,
 };
 
 use crate::columns;
@@ -115,16 +115,17 @@ pub(crate) enum Place {
 /// Feedback on one submitted response.
 #[derive(Debug)]
 pub(crate) struct Feedback {
-    response: Response,
     outcome: Assessed<ChoiceOutcome>,
     /// The store's acknowledgement of the response, which names its
-    /// session, question and attempt: Jev is asked about the reasoning with
-    /// it, and its result is waited for by it (rules 24 and 39).
+    /// session, question and attempt and holds the response as saved: Jev
+    /// is asked about the reasoning with it, and its result is waited for
+    /// by it (rules 24 and 39).
     saved: SavedResponse,
     /// Whether the store that saved the response keeps it after Whetstone
     /// closes: only then does "Saved" show.
     durability: Durability,
-    reasoning: Evaluation,
+    /// Where Jev's evaluation of the reasoning stands.
+    evaluation: Evaluation,
     /// The criterion outcomes known but not yet saved to the session
     /// record.
     unrecorded: Vec<Assessment>,
@@ -138,11 +139,10 @@ pub(crate) struct Feedback {
 }
 
 impl Feedback {
-    /// Feedback on `response`, saved as `saved` by a store of `durability`,
+    /// Feedback on the response a store of `durability` saved as `saved`,
     /// whose choice's outcome is `outcome`, for a question at `place`. Focus
     /// starts on Next question, or on Finish after the last.
     pub(crate) fn new(
-        response: Response,
         outcome: Assessed<ChoiceOutcome>,
         saved: SavedResponse,
         durability: Durability,
@@ -153,11 +153,10 @@ impl Feedback {
             Place::Last => Control::Finish,
         };
         Self {
-            response,
             outcome,
             saved,
             durability,
-            reasoning: Evaluation::Unsent,
+            evaluation: Evaluation::Unsent,
             unrecorded: Vec::new(),
             focus: start,
             start,
@@ -170,14 +169,14 @@ impl Feedback {
         &self.saved
     }
 
-    /// The evaluation to ask Jev for, if it waits to be asked for: the
-    /// saved response and its reasoning. It then awaits.
-    pub(crate) fn take_evaluation(&mut self) -> Option<(&SavedResponse, &str)> {
-        let Evaluation::Unsent = self.reasoning else {
+    /// The saved response whose reasoning to ask Jev about, if its
+    /// evaluation waits to be asked for. It then awaits.
+    pub(crate) fn take_evaluation(&mut self) -> Option<&SavedResponse> {
+        let Evaluation::Unsent = self.evaluation else {
             return None;
         };
-        self.reasoning = Evaluation::Awaiting;
-        Some((&self.saved, self.response.reasoning()))
+        self.evaluation = Evaluation::Awaiting;
+        Some(&self.saved)
     }
 
     /// Applies Jev's `reply` about the reasoning written for `question`: a
@@ -192,7 +191,11 @@ impl Feedback {
     ) {
         let session = self.saved.session();
         let attempt = self.saved.attempt().get();
-        self.reasoning = match reply {
+        // Only an evaluation it awaits takes a result (rule 24).
+        let Evaluation::Awaiting = self.evaluation else {
+            return;
+        };
+        self.evaluation = match reply {
             Ok(answers) if answers.len() == question.rubric().len() => {
                 let policy = AssessmentPolicy::current();
                 let outcomes: Vec<_> = answers
@@ -251,7 +254,7 @@ impl Feedback {
     /// The controls, in focus order: the evaluation's, while it awaits or
     /// is unavailable, then the rest.
     fn controls(&self) -> Vec<Control> {
-        let evaluation = match self.reasoning {
+        let evaluation = match self.evaluation {
             Evaluation::Unsent | Evaluation::Awaiting => Some(Control::CancelEvaluation),
             Evaluation::Unavailable(_) => Some(Control::RetryEvaluation),
             Evaluation::Assessed(_) => None,
@@ -292,12 +295,12 @@ impl Feedback {
                 }
                 return match control {
                     Control::CancelEvaluation => {
-                        self.reasoning = Evaluation::Unavailable(RequestFailure::Cancelled);
+                        self.evaluation = Evaluation::Unavailable(RequestFailure::Cancelled);
                         self.focus = Control::RetryEvaluation;
                         Some(Step::CancelEvaluation)
                     }
                     Control::RetryEvaluation => {
-                        self.reasoning = Evaluation::Unsent;
+                        self.evaluation = Evaluation::Unsent;
                         self.focus = Control::CancelEvaluation;
                         None
                     }
@@ -336,7 +339,7 @@ impl Feedback {
         };
         wrapped(&mut lines, question.stem());
         lines.push(Line::default());
-        let chosen = self.response.choice();
+        let chosen = self.saved.response().choice();
         let answer_key = question.answer_key();
         lines.push(Line::from(vec![
             Span::styled("Choice · ", theme.title),
@@ -386,7 +389,7 @@ impl Feedback {
         }
         lines.push(Line::default());
         lines.push(Line::styled("Your reasoning", theme.title));
-        for line in self.response.reasoning().lines() {
+        for line in self.saved.response().reasoning().lines() {
             if line.trim().is_empty() {
                 lines.push(Line::default());
             } else {
@@ -415,7 +418,7 @@ impl Feedback {
         let wrapped = |lines: &mut Vec<Line<'static>>, text: &str| {
             lines.extend(columns::wrap(text, width).into_iter().map(Line::raw));
         };
-        match &self.reasoning {
+        match &self.evaluation {
             Evaluation::Unsent | Evaluation::Awaiting => {
                 lines.push(Line::styled("Reasoning · Awaiting evaluation", theme.title));
                 wrapped(

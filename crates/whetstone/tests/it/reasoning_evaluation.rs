@@ -275,17 +275,9 @@ fn every_criterion_outcome_is_saved_to_the_session_record_after_the_choice_outco
     };
     assert!(
         matches!(
-            &log[..2],
+            &log[..3],
             [
-                StoreEntry::Response { saved: response, .. },
-                StoreEntry::Assessment {
-                    assessment: Assessment::Choice(_),
-                    ..
-                },
-            ] if response == saved
-        ) || matches!(
-            &log[1..3],
-            [
+                StoreEntry::Started { .. },
                 StoreEntry::Response { saved: response, .. },
                 StoreEntry::Assessment {
                     assessment: Assessment::Choice(_),
@@ -293,7 +285,7 @@ fn every_criterion_outcome_is_saved_to_the_session_record_after_the_choice_outco
                 },
             ] if response == saved
         ),
-        "the response, then its choice outcome: {log:#?}"
+        "the start, the response, then its choice outcome: {log:#?}"
     );
     assert_eq!(
         criterion_outcomes(&log),
@@ -503,6 +495,15 @@ fn reasoning_met_not_met_and_needs_review_at_120x32() {
     let session = assessed(&[0.9, 0.1, 0.5], 120, 32);
 
     insta::assert_debug_snapshot!("reasoning_assessed_120x32", session.frame());
+}
+
+#[test]
+fn evaluation_unavailable_at_120x32() {
+    let ai = writing(&CRITERIA, vec![Err(RequestFailure::TimedOut)]);
+    let mut session = submitted(&ai, "a", 120, 32);
+    session.settle();
+
+    insta::assert_debug_snapshot!("reasoning_evaluation_unavailable_120x32", session.frame());
 }
 
 #[test]

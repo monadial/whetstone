@@ -1008,7 +1008,7 @@ impl View for Practice {
                     );
                     self.waiting.cancel_for(&Asking::Evaluate(saved), jobs);
                 }
-                questions.evaluate(|saved, question, reasoning| {
+                questions.evaluate(|saved, question| {
                     let key = saved.clone();
                     send(
                         jobs,
@@ -1018,9 +1018,11 @@ impl View for Practice {
                             saved,
                             evidence,
                             QuestionWithoutKey::from(question),
-                            reasoning,
                         ),
-                        |reply| JobOutput::Evaluated { saved: key, reply },
+                        |reply| JobOutput::Evaluated {
+                            saved: Box::new(key),
+                            reply,
+                        },
                     );
                 });
             }
@@ -1080,6 +1082,7 @@ impl View for Practice {
                 }
             }
             JobOutput::Evaluated { saved, reply } => {
+                let saved = *saved;
                 if self.waiting.accept(job, &Asking::Evaluate(saved.clone()))
                     && let Stage::Shown(questions) = &mut self.stage
                 {

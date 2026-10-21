@@ -453,14 +453,15 @@ impl Questions {
     }
 
     /// Hands `evaluate` each evaluation of the reasoning that waits to be
-    /// asked for: the store's acknowledgement of the response, its
-    /// question and its reasoning. Each then awaits its result.
-    pub(crate) fn evaluate(&mut self, mut evaluate: impl FnMut(&SavedResponse, &Question, &str)) {
+    /// asked for: the store's acknowledgement of the response, which holds
+    /// the reasoning as saved, and its question. Each then awaits its
+    /// result.
+    pub(crate) fn evaluate(&mut self, mut evaluate: impl FnMut(&SavedResponse, &Question)) {
         for entry in &mut self.picked {
             if let Attempt::Submitted(feedback) = &mut entry.attempt
-                && let Some((saved, reasoning)) = feedback.take_evaluation()
+                && let Some(saved) = feedback.take_evaluation()
             {
-                evaluate(saved, &entry.question, reasoning);
+                evaluate(saved, &entry.question);
             }
         }
     }
@@ -505,7 +506,7 @@ impl Questions {
         let Attempt::Draft(draft) = &mut entry.attempt else {
             return;
         };
-        let saved = match store.save_response(session, entry.question.id(), response.clone()) {
+        let saved = match store.save_response(session, entry.question.id(), response) {
             Ok(saved) => saved,
             Err(error) => {
                 tracing::warn!(%error, "a response wasn't saved");
@@ -513,7 +514,7 @@ impl Questions {
                 return;
             }
         };
-        let outcome = entry.question.choice_outcome(response.choice());
+        let outcome = entry.question.choice_outcome(saved.response().choice());
         tracing::info!(
             %session,
             attempt = saved.attempt().get(),
@@ -524,13 +525,8 @@ impl Questions {
         if let Err(error) = store.save_assessment(&saved, Assessment::Choice(outcome)) {
             tracing::warn!(%error, "a choice outcome wasn't saved");
         }
-        entry.attempt = Attempt::Submitted(Feedback::new(
-            response,
-            outcome,
-            saved,
-            store.durability(),
-            place,
-        ));
+        entry.attempt =
+            Attempt::Submitted(Feedback::new(outcome, saved, store.durability(), place));
     }
 
     /// Why Submit is disabled for `draft`, if it is.
