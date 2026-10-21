@@ -27,7 +27,7 @@ Buffer {
         "    ( ) Run rustfmt over the HTTP layer                      Infrastructure     ",
         "    Previous page (first page)    Changes 1–10 of 10    Next page (last page)   ",
         "  > Generate questions (needs OPENROUTER_API_KEY)                               ",
-        "  ? keys  : actions  Space toggle  Enter open  PgDn page  q back                ",
+        "  ? keys  : actions  Space toggle  Enter open  PgDn/Up page  q back             ",
         "                                                                                ",
     ],
     styles: [

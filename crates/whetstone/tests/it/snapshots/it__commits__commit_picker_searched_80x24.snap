@@ -27,7 +27,7 @@ Buffer {
         "                                                                                ",
         "                                                                                ",
         "  Match 1 of 2 for "counter"                                                    ",
-        "  ? keys  : actions  Space toggle  Enter open  PgDn page  / search  q back      ",
+        "  ? keys  : actions  Space toggle  Enter open  PgDn/Up page  / search  q back   ",
         "                                                                                ",
     ],
     styles: [

@@ -249,7 +249,7 @@ fn the_footer_reminds_that_space_toggles_enter_opens_and_q_goes_back() {
 
     assert_eq!(
         session.rows()[22].trim(),
-        "? keys  : actions  Space toggle  Enter open  PgDn page  q back"
+        "? keys  : actions  Space toggle  Enter open  PgDn/Up page  q back"
     );
 }
 

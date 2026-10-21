@@ -35,7 +35,7 @@ Buffer {
         "    Previous page    Commits 37–54 of 100+  > Next page                                                                 ",
         "    Review what will be sent                                                                                            ",
         "                                                                                                                        ",
-        "  ? keys  : actions  Space toggle  Enter open  PgDn page  / search  q back                                              ",
+        "  ? keys  : actions  Space toggle  Enter open  PgDn/Up page  / search  q back                                           ",
         "                                                                                                                        ",
     ],
     styles: [

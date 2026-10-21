@@ -51,7 +51,7 @@ const PAGE: Binding = Binding {
         (Press::key(KeyCode::PageUp), Command::PageUp),
     ],
     does: "Move a page down or up the changes",
-    hint: Some("PgDn page"),
+    hint: Some("PgDn/Up page"),
 };
 
 /// Ctrl+D and Ctrl+U on the picker: they move half a page.
@@ -518,11 +518,11 @@ impl Picker {
     /// The index of the change at the top of the change list when it shows
     /// `rows` rows: where it was scrolled to, moved just far enough to show
     /// the focused change, and never past the last whole page.
-    fn top(&self, rows: usize) -> usize {
+    fn top_in_view(&self, rows: usize) -> usize {
         let top = self.top.min(self.change_rows().saturating_sub(rows));
-        match self.focus {
-            Control::Change(index) => top.clamp((index + 1).saturating_sub(rows), index),
-            Control::Area(_) | Control::PreviousPage | Control::NextPage | Control::Proceed => top,
+        match self.focused_change() {
+            Some(index) => top.max((index + 1).saturating_sub(rows)).min(index),
+            None => top,
         }
     }
 
@@ -533,17 +533,16 @@ impl Picker {
     }
 
     /// Where `command` moves focus while the change list shows `rows` rows.
-    /// `j` and `k` move through the areas, the changes and the control
-    /// after them, stopping at either end, and from the paging controls
-    /// to the rows above and below. Tab and Shift+Tab move through the
-    /// areas, the change list as one stop, Previous page, Next page and the
-    /// control after them, wrapping around. Coming from above, `j` and Tab
-    /// land on the first change in view, and Shift+Tab from below on the
-    /// last.
+    /// `j` and `k` move through the areas, the changes, the paging row and
+    /// the control after them, stopping at either end. Tab and Shift+Tab
+    /// move through the areas, the change list as one stop, Previous page,
+    /// Next page and the control after them, wrapping around. Into the
+    /// change list, they land on the page in view: on its first change from
+    /// above, and on its last from below.
     fn moved(&self, command: Command, rows: usize) -> Control {
         let areas = self.areas.len();
         let changes = self.changes();
-        let top = self.top(rows);
+        let top = self.top_in_view(rows);
         let last_area = areas.checked_sub(1).map(Control::Area);
         let first_in_view = (changes > 0).then_some(Control::Change(top));
         let last_in_view = (top + rows)
@@ -568,14 +567,9 @@ impl Picker {
                     .map(Control::Change)
                     .or(last_area)
                     .unwrap_or(focus),
-                Control::PreviousPage | Control::NextPage => {
+                Control::PreviousPage | Control::NextPage | Control::Proceed => {
                     last_in_view.or(last_area).unwrap_or(focus)
                 }
-                Control::Proceed => changes
-                    .checked_sub(1)
-                    .map(Control::Change)
-                    .or(last_area)
-                    .unwrap_or(focus),
             },
             Command::NextControl => match focus {
                 Control::Area(index) if index + 1 < areas => Control::Area(index + 1),
@@ -598,13 +592,22 @@ impl Picker {
         }
     }
 
+    /// Moves focus to the first change in view, while the change list shows
+    /// `rows` rows, unless a change has focus already: the paging keys move
+    /// focus through the changes from anywhere on the picker.
+    fn focus_page_in_view(&mut self, rows: usize) {
+        if self.focused_change().is_none() && self.changes() > 0 {
+            self.focus = Control::Change(self.top_in_view(rows));
+        }
+    }
+
     /// Scrolls the change list down `step` changes while it shows `rows`
     /// rows, and the focused change, if one has focus, with it. It reads
     /// further first, until the rows it scrolls to are all read, so a page
     /// never stops short because commits weren't read yet. It stops at the
     /// last whole page and the last change.
     fn scroll_down(&mut self, step: usize, rows: usize) {
-        let top = self.top(rows) + step;
+        let top = self.top_in_view(rows) + step;
         self.read_until(top + rows);
         self.top = top.min(self.change_rows().saturating_sub(rows));
         if let Control::Change(index) = self.focus {
@@ -616,14 +619,14 @@ impl Picker {
     /// and the focused change, if one has focus, with it, stopping at the
     /// first.
     fn scroll_up(&mut self, step: usize, rows: usize) {
-        self.top = self.top(rows).saturating_sub(step);
+        self.top = self.top_in_view(rows).saturating_sub(step);
         if let Control::Change(index) = self.focus {
             self.focus = Control::Change(index.saturating_sub(step));
         }
     }
 
     /// Moves focus to the oldest change, or for a repository to the oldest
-    /// commit read after reading at most [`READ_FOR_OLDEST`] more.
+    /// commit read, after reading at most [`READ_FOR_OLDEST`] more.
     fn go_to_oldest(&mut self) {
         self.read_until(self.changes() + READ_FOR_OLDEST);
         if let Some(last) = self.changes().checked_sub(1) {
@@ -632,8 +635,8 @@ impl Picker {
     }
 
     /// Reads ahead while more commits may follow, until the page after the
-    /// one in view is read too, so that Next page knows whether there is
-    /// one and the focused commit always has a next to move to.
+    /// one in view, `rows` rows long, is read too: the page in view is
+    /// whole, and Next page knows whether there is one.
     fn read_ahead(&mut self, rows: usize) {
         self.read_until(self.top + 2 * rows);
     }
@@ -702,21 +705,31 @@ impl Picker {
     }
 
     /// Where the picker's parts go in `area`, with the areas taking
-    /// `area_rows` rows.
-    fn parts(&self, area: Rect, area_rows: usize) -> Parts {
+    /// `area_rows` rows and the changes `change_rows`.
+    fn parts(&self, area: Rect, area_rows: usize, change_rows: usize) -> Parts {
         let status_rows = match self.source {
             Source::Showcase { .. } => 0,
             Source::Repository { .. } => 1,
         };
-        layout(area, area_rows, self.change_rows(), status_rows)
+        layout(area, area_rows, change_rows, status_rows)
     }
 
     /// How many changes a page holds with the picker drawn in `area`, as
-    /// [`View::render`] lays it out.
-    fn page(&self, area: Rect) -> usize {
+    /// [`View::render`] lays it out, with `change_rows` rows of changes to
+    /// show.
+    fn page_size(&self, area: Rect, change_rows: usize) -> usize {
         // Styles never change how many rows the areas take.
         let area_items = self.area_items(&Theme::new(ColorSupport::NoColor), area.width);
-        page_of(self.parts(area, height(&area_items)).change_list)
+        page_size_of(
+            self.parts(area, height(&area_items), change_rows)
+                .change_list,
+        )
+    }
+
+    /// How many changes the change list has room for in `area`: a page, once
+    /// enough commits are read to fill it.
+    fn room(&self, area: Rect) -> usize {
+        self.page_size(area, usize::MAX)
     }
 
     /// Where the change list is, at `top` and `rows` rows: "Commits 41–60
@@ -743,7 +756,7 @@ impl Picker {
     /// Previous page is disabled on the first page, and Next page on the
     /// last. Where the list is is cut to fit between them.
     fn paging_row(&self, theme: &Theme, rows: usize, width: u16) -> Line<'static> {
-        let top = self.top(rows);
+        let top = self.top_in_view(rows);
         let control = |label, control, disabled| {
             theme.control(
                 label,
@@ -764,12 +777,13 @@ impl Picker {
             Control::NextPage,
             self.on_last_page(top, rows).then_some(LAST_PAGE),
         );
-        // As far from Previous page as Next page's label is from it.
-        let before = format!("{}{UNAVAILABLE_INDENT}", " ".repeat(columns::GAP));
-        let room = usize::from(width)
-            .saturating_sub(row.width() + before.len() + columns::GAP + next.width());
+        // As far from Previous page as Next page's label is from it: a gap
+        // and a focus marker.
+        let before = columns::GAP + Theme::control_width("", ControlKind::Action);
+        let room =
+            usize::from(width).saturating_sub(row.width() + before + columns::GAP + next.width());
         let position = self.position(top, rows).unwrap_or_default();
-        row.push_span(before);
+        row.push_span(" ".repeat(before));
         row.push_span(Span::styled(
             columns::truncate(&position, room),
             theme.muted,
@@ -779,9 +793,9 @@ impl Picker {
         row
     }
 
-    /// Applies `command` while the change list shows `rows` rows, and
+    /// Applies `command` itself while the change list shows `rows` rows, and
     /// returns what it asks of the app, if anything.
-    fn run(&mut self, command: Command, rows: usize) -> Option<Command> {
+    fn apply_command(&mut self, command: Command, rows: usize) -> Option<Command> {
         if self.search_box.is_some() {
             if let Some(query) = search::edit(&mut self.search_box, command) {
                 self.search(query);
@@ -797,13 +811,35 @@ impl Picker {
                 self.go_to_match(command);
                 return None;
             }
-            Command::PageDown => self.scroll_down(rows, rows),
-            Command::PageUp => self.scroll_up(rows, rows),
-            Command::HalfPageDown => self.scroll_down((rows / 2).max(1), rows),
-            Command::HalfPageUp => self.scroll_up((rows / 2).max(1), rows),
+            Command::PageDown => {
+                self.focus_page_in_view(rows);
+                self.scroll_down(rows, rows);
+            }
+            Command::PageUp => {
+                self.focus_page_in_view(rows);
+                self.scroll_up(rows, rows);
+            }
+            Command::HalfPageDown => {
+                self.focus_page_in_view(rows);
+                self.scroll_down((rows / 2).max(1), rows);
+            }
+            Command::HalfPageUp => {
+                self.focus_page_in_view(rows);
+                self.scroll_up((rows / 2).max(1), rows);
+            }
             Command::Top if self.changes() > 0 => self.focus = Control::Change(0),
             Command::Bottom => self.go_to_oldest(),
-            _ => self.focus = self.moved(command, rows),
+            _ => {
+                // Moving past the last commit read reads further first.
+                if command == Command::Down
+                    && self
+                        .focused_change()
+                        .is_some_and(|index| index + 1 == self.changes())
+                {
+                    self.read_until(self.changes() + 1);
+                }
+                self.focus = self.moved(command, rows);
+            }
         }
         if !matches!(command, Command::Activate | Command::Open) {
             return None;
@@ -1068,7 +1104,7 @@ fn height(items: &[Text<'_>]) -> usize {
 
 /// How many changes a page holds: as many as `change_list` shows, and at
 /// least one.
-fn page_of(change_list: Rect) -> usize {
+fn page_size_of(change_list: Rect) -> usize {
     usize::from(change_list.height).max(1)
 }
 
@@ -1166,20 +1202,27 @@ impl View for Picker {
         )))
     }
 
+    fn fit(&mut self, area: Rect) {
+        self.read_ahead(self.room(area));
+    }
+
     fn apply(&mut self, command: Command, area: Rect) -> Option<Command> {
-        let rows = self.page(area);
-        let next = self.run(command, rows);
+        let rows = self.page_size(area, self.change_rows());
+        let next = self.apply_command(command, rows);
         // The change list stays scrolled to show where focus went, and the
-        // page after it is read.
-        self.top = self.top(rows);
-        self.read_ahead(rows);
+        // page after it is read, but for after `G`, which goes to the
+        // oldest commit read.
+        self.top = self.top_in_view(rows);
+        if command != Command::Bottom {
+            self.read_ahead(self.room(area));
+        }
         next
     }
 
     fn render(&self, context: &Context<'_>, frame: &mut Frame<'_>, area: Rect) {
         let theme = context.theme;
         let area_items = self.area_items(theme, area.width);
-        let parts = self.parts(area, height(&area_items));
+        let parts = self.parts(area, height(&area_items), self.change_rows());
         let title = match (&self.source, context.repository) {
             (Source::Repository { .. }, Ok(repository)) => {
                 format!("Practice on {}", repository.name())
@@ -1215,8 +1258,8 @@ impl View for Picker {
         );
         // The change list stays where it was scrolled to, as far as the
         // focused change allows.
-        let rows = page_of(parts.change_list);
-        let top = self.top(rows);
+        let rows = page_size_of(parts.change_list);
+        let top = self.top_in_view(rows);
         render_list(
             frame,
             parts.change_list,

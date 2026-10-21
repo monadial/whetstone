@@ -258,7 +258,9 @@ impl TestRepo {
     }
 
     /// Runs `git` with `args` in `dir`, with `env` set and `input` on its
-    /// standard input, and returns its standard output.
+    /// standard input, and returns its standard output. It writes all of
+    /// `input` before it reads what `git` prints, so it suits commands that
+    /// print little until their input ends, such as `git fast-import`.
     fn git_fed(&self, dir: &Path, args: &[&str], env: &[(&str, &str)], input: &[u8]) -> String {
         let home = self.dir.path().join(".home");
         fs::create_dir_all(&home).expect("create git's home directory");
