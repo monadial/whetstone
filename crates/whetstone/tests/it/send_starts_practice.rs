@@ -10,14 +10,18 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::{Value, json};
-use whetstone_ai::{Asked, RequestFailure, ScriptedAi, candidates_request, question_check_request};
+use whetstone_ai::{
+    Asked, ParagraphCheck, RequestFailure, ScriptedAi, WrittenParagraph, candidates_request,
+    question_check_request,
+};
 use whetstone_core::{
-    ConnectionGroup, Evidence, ModelId, Probability, WrittenCandidate, WrittenCitation,
+    ConnectionGroup, CriterionOutcome, Evidence, ModelId, Probability, WrittenCandidate,
+    WrittenCitation,
 };
 
 use crate::answering::submit;
 use crate::connected_code::{AWS_KEY, REVIEW_NEWEST, rust_pay, rust_payments, send};
-use crate::preparing_questions::{DOMAIN, PAYMENT_LIFECYCLE, area_id, candidate, reasoning_met};
+use crate::preparing_questions::{DOMAIN, PAYMENT_LIFECYCLE, area_id, candidate};
 use crate::repo::TestRepo;
 use crate::repository::started_in;
 use crate::session::{NO_COLOR, Session, Setup, columns};
@@ -97,24 +101,43 @@ fn press_send(session: &mut Session) {
 }
 
 /// A scripted AI whose generator writes one candidate about the domain
-/// area, citing the first line of `src/pay.rs`, which passes every check,
-/// and whose reasoning, once submitted, meets its criterion.
+/// area, citing the first line of `src/pay.rs`, which passes every check.
+/// Once submitted, its reasoning misses its criterion, and the generator's
+/// explanation of that, citing the same line, passes Jev's check.
 fn writing_one_about_the_domain() -> Arc<ScriptedAi> {
     let ai = Arc::new(ScriptedAi::new());
     let stem = "Why does the charge double?";
+    let first_line = || WrittenCitation {
+        path: "src/pay.rs".to_owned(),
+        first_line: 1,
+        last_line: 1,
+    };
     ai.on_write(
         &area_id(DOMAIN),
         Ok(vec![WrittenCandidate {
-            citations: vec![WrittenCitation {
-                path: "src/pay.rs".to_owned(),
-                first_line: 1,
-                last_line: 1,
-            }],
+            citations: vec![first_line()],
             ..candidate(stem, "A", PAYMENT_LIFECYCLE)
         }]),
     );
     ai.on_check_passing(stem);
-    reasoning_met(&ai, stem);
+    let probability = |value| Probability::new(value).expect("from 0 to 1");
+    ai.on_assess(stem, Ok(vec![probability(0.1)]));
+    ai.on_explain(
+        stem,
+        Ok(vec![WrittenParagraph {
+            criterion: 0,
+            outcome: CriterionOutcome::NotMet,
+            text: "You didn't say the retry sends a new key.".to_owned(),
+            citations: vec![first_line()],
+        }]),
+    );
+    ai.on_check_explanation(
+        stem,
+        Ok(vec![ParagraphCheck {
+            supported: probability(0.9),
+            agrees: probability(0.9),
+        }]),
+    );
     ai
 }
 
@@ -568,12 +591,19 @@ fn every_request_carries_exactly_the_evidence_the_outbound_review_showed() {
     let asked = evidence_asked(&ai);
     assert_eq!(
         asked.len(),
-        4,
-        "the gate, one write, one check and the reasoning evaluation"
+        6,
+        "the gate, one write, one check, the reasoning evaluation, the explanation and its check"
     );
     for evidence in &asked {
         assert_eq!(as_shown(evidence), shown);
     }
+    assert!(
+        session
+            .text()
+            .contains("You didn't say the retry sends a new key."),
+        "the explanation shows: {}",
+        session.text()
+    );
 }
 
 #[test]
