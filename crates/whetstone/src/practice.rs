@@ -393,15 +393,26 @@ impl Practice {
             .filter_map(|(candidate, check)| Some((candidate, check.replied()?)))
             .map(|(candidate, answers)| show_rule(candidate, answers, policy))
             .partition(Result::is_ok);
+        for withheld in withheld.iter().filter_map(|result| result.as_ref().err()) {
+            // Which checks failed, by name only: never the candidate's text.
+            tracing::info!(
+                area = %withheld.id().area(),
+                written = withheld.id().written(),
+                failed = ?withheld.failed(),
+                "withheld a candidate"
+            );
+        }
+        let passed: Vec<_> = passed.into_iter().filter_map(Result::ok).collect();
+        let hints_dropped = passed
+            .iter()
+            .filter(|question| question.hint().is_none())
+            .count();
         let areas: Vec<AreaId> = self.areas.iter().map(|area| area.id().clone()).collect();
-        let picked = pick(
-            passed.into_iter().filter_map(Result::ok).collect(),
-            &areas,
-            self.count,
-        );
+        let picked = pick(passed, &areas, self.count);
         tracing::info!(
             checked,
             withheld = withheld.len(),
+            hints_dropped,
             picked = picked.questions().len(),
             asked_for = self.count.get(),
             "picked the questions that passed their checks"
