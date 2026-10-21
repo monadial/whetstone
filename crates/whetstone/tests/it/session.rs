@@ -18,7 +18,7 @@ use tempfile::TempDir;
 use whetstone::{
     App, Dirs, Environment, Finished, Flow, JobId, JobOutput, Message, Repository, Settings, Theme,
 };
-use whetstone_ai::{Ai, ScriptedAi};
+use whetstone_ai::{Ai, ScriptedAi, Timeouts};
 use whetstone_core::ShowcaseProject;
 
 /// What the app starts from: a global config file, if any, the environment
@@ -52,6 +52,10 @@ pub(crate) struct Setup<'a> {
     /// Whether a key in the variables reaches the real Jev and generator, as
     /// only the ignored live tests ask.
     pub(crate) live: bool,
+    /// The real Jev and generator at a test's own local server, with the
+    /// time limits the test sets, when the variables set a key: the app's
+    /// own requests, which never leave the machine (rule 48).
+    pub(crate) local_openrouter: Option<(&'a str, Timeouts)>,
 }
 
 /// A terminal with colour turned off: snapshots then list only text
@@ -106,13 +110,18 @@ impl Session {
         let settings = Settings::load(&dirs.config, &environment).expect("the config loads");
         let ai: Option<Arc<dyn Ai>> = match setup.ai {
             Some(scripted) => Some(Arc::clone(scripted) as Arc<dyn Ai>),
-            None => settings.openrouter().map(|real| -> Arc<dyn Ai> {
-                if setup.live {
-                    Arc::new(real)
-                } else {
-                    Arc::new(ScriptedAi::new())
-                }
-            }),
+            None => match setup.local_openrouter {
+                Some((base_url, timeouts)) => settings
+                    .openrouter_at(base_url, timeouts)
+                    .map(|local| Arc::new(local) as Arc<dyn Ai>),
+                None => settings.openrouter().map(|real| -> Arc<dyn Ai> {
+                    if setup.live {
+                        Arc::new(real)
+                    } else {
+                        Arc::new(ScriptedAi::new())
+                    }
+                }),
+            },
         };
         let theme = Theme::new(settings.color_support());
         let repository = Repository::open(setup.start.unwrap_or(home.path()));
