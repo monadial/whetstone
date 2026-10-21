@@ -436,6 +436,15 @@ impl Withheld {
         &self.policy
     }
 
+    /// The band of Jev's answer to `check` under the policy that withheld
+    /// it, or none when it went unanswered.
+    #[must_use]
+    pub fn band(&self, check: CandidateCheck) -> Option<Band> {
+        self.answers
+            .get(check)
+            .map(|answer| self.policy.band(check.job(), answer))
+    }
+
     /// The checks that were not as the show rule needs them, in
     /// [`Candidate::checks`] order.
     #[must_use]
@@ -849,6 +858,34 @@ pub(crate) mod tests {
         assert_eq!(withheld.answers(), &answers);
         assert_eq!(withheld.policy(), &higher_bar);
         assert_eq!(withheld.failed(), [CandidateCheck::NoGiveaway]);
+    }
+
+    #[test]
+    fn a_withheld_candidate_bands_each_answer_with_the_policy_that_withheld_it() {
+        let candidate = candidate("domain", 0, OptionLetter::A);
+        let mut answers = passing(&candidate);
+        answers.push((CandidateCheck::NoGiveaway, probability(0.82)));
+        let higher_bar = AssessmentPolicy::with_cut_offs([(
+            Job::QuestionCheck,
+            CutOffs::new(0.85, 0.20).expect("valid"),
+        )]);
+
+        let withheld = show_rule(
+            candidate,
+            QuestionCheckAnswers::new(answers, depth(1.3)),
+            &higher_bar,
+        )
+        .expect_err("withheld");
+
+        assert_eq!(
+            withheld.band(CandidateCheck::NoGiveaway),
+            Some(Band::Unclear)
+        );
+        assert_eq!(
+            withheld.band(CandidateCheck::Option(OptionLetter::B)),
+            Some(Band::ClearNo)
+        );
+        assert_eq!(withheld.band(CandidateCheck::Criterion(2)), None);
     }
 
     #[test]
