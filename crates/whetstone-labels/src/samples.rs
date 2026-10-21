@@ -86,3 +86,23 @@ by = "agent"
 on = 2026-10-21
 labels = { domain = "yes", observability = "no" }
 "#;
+
+/// A learner's vote on `CANDIDATE`, as Whetstone's review of withheld
+/// questions saves one, with `keys` added after its source and only
+/// `labels`, a TOML table's body, as its labels.
+pub(crate) fn vote(keys: &str, labels: &str) -> String {
+    let (candidate, _) = CANDIDATE
+        .split_once("[candidate.labels]")
+        .expect("the sample candidate has labels");
+    format!(
+        "{}[candidate.labels]\n{labels}",
+        candidate
+            .replace(
+                "id = \"retry-key\"\n",
+                &format!(
+                    "id = \"learner-vote-20261021T101502-1\"\nsource = \"learner vote\"\n{keys}"
+                ),
+            )
+            .replace("by = \"agent\"", "by = \"learner\"")
+    )
+}

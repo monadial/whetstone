@@ -20,7 +20,9 @@ OPENROUTER_API_KEY=… cargo run -p whetstone-labels -- measure > report.md
     calls that is. In the first run, over the seeds, a call cost about
     0.0003 USD.
   - `--model` measures a Jev model other than `typesafe/jev-1.14`.
-- **Both** take `--labels DIR` to read another folder.
+- **Both** take `--labels DIR` to read another folder, or `--labels FILE`
+  to read one file, such as a learner's votes (see
+  [Learner votes](#learner-votes)).
 
 Neither command changes the assessment policy. Setting its values is a
 recorded decision that bumps its version (rule 38). How closely Jev must
@@ -125,6 +127,51 @@ Depth isn't labelled. It only orders questions, and has no cut-offs.
 
 Label each one as it is. The tool measures a broken candidate like any
 other.
+
+## Learner votes
+
+Whetstone's **Review withheld questions** saves a learner's votes, one
+candidate example per vote, in `labels.toml` in Whetstone's state folder
+(`$XDG_STATE_HOME/whetstone`, by default `~/.local/state/whetstone`). Each is
+a candidate the generator wrote and the question check withheld, with one
+label: the check voted on. "Rightly withheld" is the answer that withholds
+it, and "Should have passed" the answer the show rule needed. A vote has
+two keys of its own:
+
+- `source = "learner vote"`: it labels only the check voted on, not
+  everything its call asks. Jev is still asked the whole question check, as
+  in Practice, and only that label is measured.
+- `commit_id`: the full ID of a commit of the learner's own repository,
+  when the vote is about one rather than about the showcase project.
+
+```toml
+[[candidate]]
+id = "learner-vote-20261021T101502-1"
+source = "learner vote"
+by = "learner"
+on = 2026-10-21
+note = "The options don't point to the answer."   # the learner's own note, if any
+commit = "Preserve payment retry identity"
+area = "domain"
+# … the candidate as the generator wrote it
+
+[candidate.labels]
+no_giveaway = "yes"
+```
+
+`check` and `measure` read the file with `--labels`, and skip two kinds of
+vote, saying how many and why:
+
+- **A vote about the learner's own repository.** The tool has only the
+  showcase project, and sending that code to Jev again would need a new
+  outbound review. Such a vote also holds the learner's private code, so it
+  stays on their machine.
+- **A vote whose candidate cites lines the tool's evidence doesn't send,**
+  such as connected code (see [What Jev sees](#what-jev-sees)).
+
+Votes about the showcase project hold no private code. Copy the ones worth
+keeping into a file here by hand, for #99. Review each label as you would
+an agent's, and set `by` and `on` to yourself where you agree.
 
 ## Response examples
 

@@ -80,6 +80,7 @@ pub async fn measure(
         cost_not_reported: 0,
         labels: Vec::new(),
         by_agent: prepared.by_agent(),
+        skipped: prepared.skipped().to_vec(),
     };
     for (run, index, reply) in replies {
         let call = &prepared.calls()[index];

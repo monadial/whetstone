@@ -7,6 +7,12 @@
 //! the outbound review would send by default and no connected code: the
 //! showcase's connected code is found inside the app, which doesn't expose
 //! it.
+//!
+//! A learner's vote is measured on the one check it labels. A vote the tool
+//! can't send as Practice sent it is skipped, with its reason, rather than
+//! refused: one about a commit of the learner's own repository, whose code
+//! would go out again without a new outbound review, and one citing lines
+//! this evidence doesn't send, such as connected code.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -27,7 +33,7 @@ use unicode_segmentation::UnicodeSegmentation as _;
 
 use crate::labels::{
     CandidateExample, Example, ExampleId, ExampleParagraph, Expected, ExplanationExample,
-    GateExample, Label, Labeller, Labels, Place, ResponseExample,
+    GateExample, Label, Labeller, Labels, Place, ResponseExample, Source,
 };
 
 /// The longest reasoning a learner can write, in graphemes: the reasoning
@@ -39,6 +45,7 @@ const REASONING_LIMIT: usize = 4_000;
 pub struct Prepared {
     model: ModelId,
     calls: Vec<Call>,
+    skipped: Vec<Skipped>,
 }
 
 impl Prepared {
@@ -67,6 +74,38 @@ impl Prepared {
             .filter(|item| item.label().by() == &Labeller::Agent)
             .count()
     }
+
+    /// The learner votes not measured, in file order, each with why.
+    #[must_use]
+    pub fn skipped(&self) -> &[Skipped] {
+        &self.skipped
+    }
+}
+
+/// A learner's vote the tool can't send to Jev as Practice sent it, so it
+/// isn't measured.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Skipped {
+    /// The vote's ID.
+    pub example: ExampleId,
+    /// Why it isn't measured.
+    pub reason: SkipReason,
+}
+
+/// Why a learner's vote isn't measured.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum SkipReason {
+    /// It is about a commit of the learner's own repository: the tool has
+    /// only the showcase project, and sending that code again would need a
+    /// new outbound review.
+    #[error(
+        "it is about a commit of the learner's own repository, and sending it again would send their code without a new outbound review"
+    )]
+    OwnRepository,
+    /// Its candidate cites lines the tool's evidence doesn't send, such as
+    /// the connected code Practice sent.
+    #[error("it cites lines the tool's evidence does not send, such as connected code")]
+    NotInEvidence,
 }
 
 /// One example's Jev call, and the labels its answers are measured against.
@@ -106,12 +145,11 @@ impl Call {
                 .into_iter()
                 .map(|(_, answer)| answer)
                 .collect()),
-            Reader::QuestionCheck(candidate) => {
+            Reader::QuestionCheck(candidate, checks) => {
                 let answers = question_check_answers(candidate, reply)?;
-                candidate
-                    .checks()
-                    .into_iter()
-                    .map(|check| answers.get(check).ok_or(AiError::InvalidReply))
+                checks
+                    .iter()
+                    .map(|&check| answers.get(check).ok_or(AiError::InvalidReply))
                     .collect()
             }
             Reader::Reasoning(rubric) => reasoning_answers(rubric, reply),
@@ -141,10 +179,43 @@ impl fmt::Debug for Call {
     }
 }
 
+/// What the tool says about the learner votes it `skipped`, if any: how
+/// many, and why, as one sentence.
+pub(crate) fn not_measured(skipped: &[Skipped]) -> Option<String> {
+    if skipped.is_empty() {
+        return None;
+    }
+    let count = |reason| skipped.iter().filter(|vote| vote.reason == reason).count();
+    let reasons: Vec<String> = [
+        (
+            SkipReason::OwnRepository,
+            "about a commit of the learner's own repository, whose code would go out again \
+             without a new outbound review",
+        ),
+        (
+            SkipReason::NotInEvidence,
+            "citing lines the tool's evidence doesn't send, such as connected code",
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(reason, why)| match count(reason) {
+        0 => None,
+        n => Some(format!("{n} {why}")),
+    })
+    .collect();
+    Some(format!(
+        "{} learner {}, which the tool can't send to Jev as Practice sent them: {}.",
+        skipped.len(),
+        if skipped.len() == 1 { "vote" } else { "votes" },
+        reasons.join(", and ")
+    ))
+}
+
 /// How a call's reply is read: what its decoder needs.
 enum Reader {
     Gate(Vec<Area>),
-    QuestionCheck(Box<Candidate>),
+    /// The candidate, and the checks its labels measure, in order.
+    QuestionCheck(Box<Candidate>, Vec<CandidateCheck>),
     Reasoning(Vec<Criterion>),
     ExplanationCheck(Vec<WrittenParagraph>),
 }
@@ -154,7 +225,7 @@ impl fmt::Debug for Reader {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Self::Gate(_) => "Gate",
-            Self::QuestionCheck(_) => "QuestionCheck",
+            Self::QuestionCheck(..) => "QuestionCheck",
             Self::Reasoning(_) => "Reasoning",
             Self::ExplanationCheck(_) => "ExplanationCheck",
         })
@@ -320,7 +391,9 @@ impl Labels {
     ///   question;
     /// - an explanation example, the explanation check of its paragraphs.
     ///
-    /// Each label becomes an [`Item`] of its call's job. Fails on the first
+    /// Each label becomes an [`Item`] of its call's job. A learner's vote the
+    /// tool can't send as Practice sent it is [skipped](Prepared::skipped).
+    /// Fails on the first
     /// example that names a commit, area or candidate there isn't; whose
     /// candidate fails the plain checks; that leaves something its call asks
     /// unlabelled, or labels something it doesn't ask; that is about a
@@ -338,10 +411,19 @@ impl Labels {
             calls.push(gate_call(showcase, model, gate)?);
         }
         let mut questions = BTreeMap::new();
+        let mut skipped = Vec::new();
         for candidate in self.candidates() {
-            let (call, evidence, question) = candidate_call(showcase, model, candidate)?;
-            calls.push(call);
-            questions.insert(candidate.example().id(), (evidence, question));
+            match candidate_call(showcase, model, candidate)? {
+                Candidacy::Call(prepared) => {
+                    let (call, evidence, question) = *prepared;
+                    calls.push(call);
+                    questions.insert(candidate.example().id(), (evidence, question));
+                }
+                Candidacy::Skipped(reason) => skipped.push(Skipped {
+                    example: candidate.example().id().to_owned(),
+                    reason,
+                }),
+            }
         }
         for response in self.responses() {
             calls.push(response_call(&questions, model, response)?);
@@ -352,6 +434,7 @@ impl Labels {
         Ok(Prepared {
             model: model.clone(),
             calls,
+            skipped,
         })
     }
 }
@@ -385,31 +468,66 @@ fn gate_call(
     })
 }
 
+/// What a candidate example makes: its call, or why a learner's vote is
+/// skipped.
+enum Candidacy {
+    /// Its question check, with its evidence and its question as its labels
+    /// judge it, boxed.
+    Call(Box<(Call, Evidence, Result<Question, Withheld>)>),
+    Skipped(SkipReason),
+}
+
 /// The candidate's question check, with its evidence and its question as
-/// its labels judge it.
+/// its labels judge it, or why the tool skips it, a learner's vote.
 fn candidate_call(
     showcase: &ShowcaseProject,
     model: &ModelId,
     candidate: &CandidateExample,
-) -> Result<(Call, Evidence, Result<Question, Withheld>), PrepareError> {
+) -> Result<Candidacy, PrepareError> {
     let example = candidate.example();
+    let vote = candidate.source() == Source::LearnerVote;
+    if vote && candidate.commit_id().is_some() {
+        return Ok(Candidacy::Skipped(SkipReason::OwnRepository));
+    }
     let change = change(showcase, example, candidate.commit())?;
     let area = area(showcase, example, candidate.area().as_str())?;
     let evidence = evidence(change, std::slice::from_ref(&area));
     let checked = plain_checks(area.id(), vec![candidate.written().clone()], &evidence);
     let Some(passed) = checked.passed().first() else {
+        let reason = *checked
+            .dropped()
+            .first()
+            .expect("a candidate the plain checks don't pass is dropped");
+        // A vote's candidate passed Practice's plain checks against the
+        // evidence Practice sent, which may hold connected code.
+        if vote && reason == DropReason::Citation {
+            return Ok(Candidacy::Skipped(SkipReason::NotInEvidence));
+        }
         return Err(PrepareError::PlainChecks {
             place: example.place().clone(),
             id: example.id().to_owned(),
-            reason: *checked
-                .dropped()
-                .first()
-                .expect("a candidate the plain checks don't pass is dropped"),
+            reason,
         });
     };
-    let checks = passed.checks();
-    let keys: Vec<String> = checks.iter().map(|&check| check_key(check)).collect();
-    let labels = labelled(example, &keys)?;
+    let asked = passed.checks();
+    let keys: Vec<String> = asked.iter().map(|&check| check_key(check)).collect();
+    let (checks, keys, labels): (Vec<CandidateCheck>, Vec<String>, Vec<Label>) = if vote {
+        let labels = labelled_only(example, &keys)?;
+        asked
+            .into_iter()
+            .zip(keys)
+            .zip(labels)
+            .filter_map(|((check, key), label)| Some((check, key, label?)))
+            .collect()
+    } else {
+        let labels = labelled(example, &keys)?;
+        asked
+            .into_iter()
+            .zip(keys)
+            .zip(labels)
+            .map(|((check, key), label)| (check, key, label))
+            .collect()
+    };
     let call = Call {
         example: example.id().to_owned(),
         request: question_check_request(model, &evidence, passed),
@@ -419,10 +537,10 @@ fn candidate_call(
             .zip(&labels)
             .map(|((check, key), label)| item(example, key, check.job(), label))
             .collect(),
-        reader: Reader::QuestionCheck(Box::new(passed.clone())),
+        reader: Reader::QuestionCheck(Box::new(passed.clone()), checks.clone()),
     };
     let question = as_labelled(passed.clone(), checks.into_iter().zip(&labels));
-    Ok((call, evidence, question))
+    Ok(Candidacy::Call(Box::new((call, evidence, question))))
 }
 
 fn response_call(
@@ -613,6 +731,22 @@ fn evidence(change: &Change, areas: &[Area]) -> Evidence {
 /// `example`'s labels for `keys`, in their order, when it labels exactly
 /// those.
 fn labelled(example: &Example, keys: &[String]) -> Result<Vec<Label>, PrepareError> {
+    labelled_only(example, keys)?
+        .into_iter()
+        .zip(keys)
+        .map(|(label, key)| {
+            label.ok_or_else(|| PrepareError::MissingLabel {
+                place: example.place().clone(),
+                id: example.id().to_owned(),
+                key: key.clone(),
+            })
+        })
+        .collect()
+}
+
+/// `example`'s label for each of `keys`, in their order, if it has one,
+/// when it labels nothing else.
+fn labelled_only(example: &Example, keys: &[String]) -> Result<Vec<Option<Label>>, PrepareError> {
     if let Some((key, _)) = example.labels().iter().find(|(key, _)| !keys.contains(key)) {
         return Err(PrepareError::UnknownLabel {
             place: example.place().clone(),
@@ -621,20 +755,16 @@ fn labelled(example: &Example, keys: &[String]) -> Result<Vec<Label>, PrepareErr
             asked: listed(keys.iter().map(String::as_str)),
         });
     }
-    keys.iter()
+    Ok(keys
+        .iter()
         .map(|key| {
             example
                 .labels()
                 .iter()
                 .find(|(labelled, _)| labelled == key)
                 .map(|(_, label)| label.clone())
-                .ok_or_else(|| PrepareError::MissingLabel {
-                    place: example.place().clone(),
-                    id: example.id().to_owned(),
-                    key: key.clone(),
-                })
         })
-        .collect()
+        .collect())
 }
 
 fn item(example: &Example, key: &str, job: Job, label: &Label) -> Item {
@@ -729,7 +859,7 @@ fn listed<'a>(names: impl Iterator<Item = &'a str>) -> String {
 mod tests {
     use super::*;
 
-    use crate::samples::{CANDIDATE, EXPLANATION, GATE, RESPONSE, prepared};
+    use crate::samples::{CANDIDATE, EXPLANATION, GATE, RESPONSE, prepared, vote};
 
     fn names(call: &Call) -> Vec<&str> {
         call.items().iter().map(Item::name).collect()
@@ -818,6 +948,71 @@ mod tests {
              option_a, option_b, option_c, rationale_a, rationale_b, rationale_c, \
              why_it_matters, hint_points_to_evidence, hint_hides_answer_key"
         );
+    }
+
+    #[test]
+    fn a_learner_vote_labels_only_the_check_it_voted_on_and_its_call_measures_only_that() {
+        let prepared = prepared(&vote("", "no_giveaway = \"yes\"\noption_b = \"no\"\n")).unwrap();
+
+        let [call] = prepared.calls() else {
+            panic!("expected one call: {prepared:?}");
+        };
+        assert_eq!(
+            names(call),
+            [
+                "learner-vote-20261021T101502-1/no_giveaway",
+                "learner-vote-20261021T101502-1/option_b"
+            ]
+        );
+        assert_eq!(call.items()[0].job(), Job::QuestionCheck);
+        assert_eq!(call.items()[1].job(), Job::OptionRating);
+        assert!(
+            call.request().questions.contains_key("answerable"),
+            "Jev is asked the whole question check, as in Practice"
+        );
+        assert_eq!(prepared.skipped(), []);
+    }
+
+    #[test]
+    fn a_learner_vote_still_labels_only_what_its_call_asks() {
+        let error = prepared(&vote("", "criterion_3 = \"no\"\n")).unwrap_err();
+
+        assert!(
+            matches!(&error, PrepareError::UnknownLabel { key, .. } if key == "criterion_3"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_learner_vote_the_tool_can_t_send_as_practice_did_is_skipped_with_its_reason() {
+        let own = vote(
+            "commit_id = \"0123456789abcdef0123456789abcdef01234567\"\n",
+            "no_giveaway = \"yes\"\n",
+        )
+        .replace("Preserve payment retry identity", "Retry the charge");
+        let connected =
+            vote("", "no_giveaway = \"no\"\n").replace("last_line = 37", "last_line = 999");
+
+        for (votes, reason) in [
+            (
+                own,
+                "it is about a commit of the learner's own repository, and sending it again would \
+                 send their code without a new outbound review",
+            ),
+            (
+                connected,
+                "it cites lines the tool's evidence does not send, such as connected code",
+            ),
+        ] {
+            let prepared = prepared(&votes).unwrap();
+
+            assert_eq!(prepared.calls().len(), 0, "{reason}");
+            let [skipped] = prepared.skipped() else {
+                panic!("expected one vote skipped: {prepared:?}");
+            };
+            assert_eq!(skipped.example.as_str(), "learner-vote-20261021T101502-1");
+            assert_eq!(skipped.reason.to_string(), reason);
+        }
     }
 
     #[test]
