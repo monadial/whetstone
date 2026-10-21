@@ -383,8 +383,8 @@ fn inspect_shows_the_cut_offs_that_banded_each_answer_and_whose_they_are() {
     let check = session.section("Question check");
     for line in [
         "Cut-offs for the question check · upper 0.55, lower 0.2 · from your config",
-        "Cut-offs for option ratings · upper 0.8, lower 0.2 · policy 0's",
-        "Cut-offs for rationale and hint checks · upper 0.8, lower 0.2 · policy 0's",
+        "Cut-offs for the option rating · upper 0.8, lower 0.2 · policy 0's",
+        "Cut-offs for the rationale and hint checks · upper 0.8, lower 0.2 · policy 0's",
         "Needs this change, not general knowledge · 0.6 · clear yes",
     ] {
         assert!(check.contains(&line.to_owned()), "{line}: {check:#?}");
@@ -392,7 +392,7 @@ fn inspect_shows_the_cut_offs_that_banded_each_answer_and_whose_they_are() {
     let reasoning = session.section("Reasoning");
     assert!(
         reasoning.contains(
-            &"Cut-offs for reasoning criteria · upper 0.8, lower 0.2 · policy 0's".to_owned()
+            &"Cut-offs for the reasoning criterion · upper 0.8, lower 0.2 · policy 0's".to_owned()
         ),
         "{reasoning:#?}"
     );

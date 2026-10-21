@@ -58,12 +58,12 @@ fn words(session: &Session) -> String {
 /// Each job's name, as Settings lists the cut-offs the config sets for it,
 /// with its key in `[cut_offs]`.
 const JOBS: [(&str, &str); 6] = [
-    ("Relevance gate", "relevance_gate"),
-    ("Question check", "question_check"),
-    ("Option ratings", "option_rating"),
-    ("Rationale and hint checks", "rationale_and_hint_checks"),
-    ("Reasoning criteria", "reasoning_criterion"),
-    ("Explanation checks", "explanation_check"),
+    ("relevance gate", "relevance_gate"),
+    ("question check", "question_check"),
+    ("option rating", "option_rating"),
+    ("rationale and hint checks", "rationale_and_hint_checks"),
+    ("reasoning criterion", "reasoning_criterion"),
+    ("explanation check", "explanation_check"),
 ];
 
 /// The Cut-offs row when every job has policy 0's.
@@ -103,12 +103,12 @@ fn a_job_the_table_lists_takes_its_cut_offs_and_every_other_keeps_policy_0_s() {
     );
     let text = words(&session);
     assert!(
-        text.contains("Question check: upper 0.55, lower 0.2 (from your config)"),
+        text.contains("question check: upper 0.55, lower 0.2 (from your config)"),
         "{text}"
     );
     for (name, _) in JOBS
         .into_iter()
-        .filter(|&(name, _)| name != "Question check")
+        .filter(|&(name, _)| name != "question check")
     {
         assert!(!text.contains(&format!("{name}:")), "{name}: {text}");
     }

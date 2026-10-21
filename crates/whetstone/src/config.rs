@@ -354,6 +354,7 @@ impl<'de> Deserialize<'de> for CutOffsTable {
 }
 
 /// Reads the entries of `[cut_offs]`.
+#[derive(Debug)]
 struct CutOffsEntries;
 
 impl<'de> Visitor<'de> for CutOffsEntries {

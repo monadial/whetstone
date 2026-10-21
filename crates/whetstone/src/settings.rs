@@ -16,8 +16,7 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{List, Paragraph, Wrap};
 use whetstone_core::{
-    AppliedCutOffs, ConnectedCodeLimitKb, CutOffs, CutOffsOrigin, Job, ModelId, QuestionCount,
-    Validation,
+    ConnectedCodeLimitKb, CutOffs, CutOffsOrigin, Job, ModelId, QuestionCount, Validation,
 };
 
 use crate::columns;
@@ -131,24 +130,14 @@ impl Control {
                 (format!("version {}, {validated}", policy.version()), None)
             }
             Self::CutOffs => {
-                let policy = &settings.assessment_policy;
-                let defaults: Vec<CutOffs> = Job::ALL
-                    .into_iter()
-                    .map(|job| policy.cut_offs(job))
-                    .filter(|applied| applied.origin() == CutOffsOrigin::Default)
-                    .map(AppliedCutOffs::cut_offs)
-                    .collect();
                 // Policy 0 gives every job the same cut-offs.
-                match defaults.first() {
-                    Some(&cut_offs) if defaults.len() == Job::ALL.len() => (
-                        format!("{} for every job", shown_cut_offs(cut_offs)),
-                        Some(" (default)"),
-                    ),
-                    Some(&cut_offs) => (
-                        format!("{} for every other job", shown_cut_offs(cut_offs)),
-                        Some(" (default)"),
-                    ),
-                    None => ("from your config for every job".to_owned(), None),
+                let default = CutOffs::POLICY_0;
+                match settings.assessment_policy.learner_jobs().count() {
+                    0 => (format!("{default} for every job"), Some(" (default)")),
+                    learner if learner == Job::ALL.len() => {
+                        ("from your config for every job".to_owned(), None)
+                    }
+                    _ => (format!("{default} for every other job"), Some(" (default)")),
                 }
             }
             Self::Back => (String::new(), None),
@@ -179,14 +168,12 @@ impl Control {
             }
             Self::CutOffs => {
                 let policy = &settings.assessment_policy;
-                let mut notes: Vec<String> = Job::ALL
-                    .into_iter()
-                    .filter(|&job| policy.cut_offs(job).origin() == CutOffsOrigin::Learner)
+                let mut notes: Vec<String> = policy
+                    .learner_jobs()
                     .map(|job| {
                         format!(
-                            "{}: {} (from your config)",
-                            job_name(job),
-                            shown_cut_offs(policy.cut_offs(job).cut_offs())
+                            "{job}: {} (from your config)",
+                            policy.cut_offs(job).cut_offs()
                         )
                     })
                     .collect();
@@ -263,7 +250,7 @@ impl Control {
                  lower is clear no, and unclear in between. Policy {version}'s are {} for every \
                  job; with your own, outcomes aren't comparable with policy {version}'s. The jobs \
                  are {}. A repository's config can't set them.",
-                shown_cut_offs(CutOffs::POLICY_0),
+                CutOffs::POLICY_0,
                 Job::ALL.map(cut_offs_key).join(", "),
                 version = settings.assessment_policy.version(),
             ),
@@ -300,10 +287,7 @@ impl Control {
             )),
             Self::CutOffs => {
                 let policy = &settings.assessment_policy;
-                let job = Job::ALL
-                    .into_iter()
-                    .find(|&job| policy.cut_offs(job).origin() == CutOffsOrigin::Learner)
-                    .unwrap_or(Job::QuestionCheck);
+                let job = policy.learner_jobs().next().unwrap_or(Job::QuestionCheck);
                 let cut_offs = policy.cut_offs(job).cut_offs();
                 Some(format!(
                     "In config.toml, under [cut_offs]: {} = {{ upper = {}, lower = {} }}",
@@ -407,23 +391,6 @@ impl View for SettingsScreen {
         frame.render_widget(self.control(theme, Control::Back), back);
         frame.render_widget(explanation, about);
     }
-}
-
-/// A job's name, as Settings lists the cut-offs the config sets for it.
-fn job_name(job: Job) -> &'static str {
-    match job {
-        Job::RelevanceGate => "Relevance gate",
-        Job::QuestionCheck => "Question check",
-        Job::OptionRating => "Option ratings",
-        Job::RationaleAndHintChecks => "Rationale and hint checks",
-        Job::ReasoningCriterion => "Reasoning criteria",
-        Job::ExplanationCheck => "Explanation checks",
-    }
-}
-
-/// A job's `cut_offs` as Settings shows them.
-fn shown_cut_offs(cut_offs: CutOffs) -> String {
-    format!("upper {}, lower {}", cut_offs.upper(), cut_offs.lower())
 }
 
 /// A setting's value as Settings shows it, and a note if it is the default.

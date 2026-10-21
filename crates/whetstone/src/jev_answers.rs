@@ -11,8 +11,8 @@
 //! answers show here alone: they are never logged (rules 43 and 44).
 
 use whetstone_core::{
-    AppliedCutOffs, Assessed, AssessmentPolicy, Band, CandidateCheck, CriterionOutcome,
-    CutOffsOrigin, DepthLevel, Job, PolicyVersion, Probability, Provenance, Question, Validation,
+    AppliedCutOffs, Assessed, AssessmentPolicy, Band, CandidateCheck, CutOffsOrigin, DepthLevel,
+    Job, PolicyVersion, Probability, Provenance, Question, Validation,
 };
 
 use crate::feedback::{CheckedParagraph, Evaluation, Feedback};
@@ -87,10 +87,10 @@ fn question_check(question: &Question, requests: &[SentRequest]) -> Section {
             &replied(requests, &Asking::Check(question.id().clone())),
             policy.version(),
         ),
-        cut_offs_line("the question check", policy.cut_offs(Job::QuestionCheck)),
-        cut_offs_line("option ratings", policy.cut_offs(Job::OptionRating)),
+        cut_offs_line(Job::QuestionCheck, policy.cut_offs(Job::QuestionCheck)),
+        cut_offs_line(Job::OptionRating, policy.cut_offs(Job::OptionRating)),
         cut_offs_line(
-            "rationale and hint checks",
+            Job::RationaleAndHintChecks,
             policy.cut_offs(Job::RationaleAndHintChecks),
         ),
     ];
@@ -127,19 +127,14 @@ fn reasoning(question: &Question, evaluation: &Evaluation, requests: &[&Provenan
             );
             let mut lines = vec![
                 models_line(requests, cut_offs.policy()),
-                cut_offs_line("reasoning criteria", cut_offs),
+                cut_offs_line(Job::ReasoningCriterion, cut_offs),
             ];
             lines.extend(question.rubric().iter().zip(outcomes).enumerate().map(
                 |(place, (criterion, assessed))| {
-                    let band = match assessed.outcome() {
-                        CriterionOutcome::Met => Band::ClearYes,
-                        CriterionOutcome::NotMet => Band::ClearNo,
-                        CriterionOutcome::NeedsReview => Band::Unclear,
-                    };
                     answered(
                         &format!("Meets criterion {}: {}", place + 1, criterion.statement()),
                         assessed.answer(),
-                        band,
+                        assessed.cut_offs().band(assessed.answer()),
                     )
                 },
             ));
@@ -158,7 +153,7 @@ fn explanation_check(checks: &[CheckedParagraph], requests: &[&Provenance]) -> S
     let mut lines = Vec::new();
     if let Some(first) = checks.first() {
         lines.push(models_line(requests, first.cut_offs.policy()));
-        lines.push(cut_offs_line("explanation checks", first.cut_offs));
+        lines.push(cut_offs_line(Job::ExplanationCheck, first.cut_offs));
     }
     for (at, checked) in checks.iter().enumerate() {
         let same = |other: &&CheckedParagraph| other.criterion == checked.criterion;
@@ -170,7 +165,7 @@ fn explanation_check(checks: &[CheckedParagraph], requests: &[&Provenance]) -> S
                 checks[..=at].iter().filter(same).count()
             ),
         };
-        let band = |answer| checked.cut_offs.cut_offs().band(answer);
+        let band = |answer| checked.cut_offs.band(answer);
         let answers = checked.answers;
         lines.push(answered(
             &format!("{explanation} is supported by the evidence"),
@@ -228,18 +223,14 @@ fn models_line(requests: &[&Provenance], policy: PolicyVersion) -> String {
     format!("{models} · assessment policy {policy}")
 }
 
-/// The line naming the cut-offs, `applied`, that banded `what`, and whose
-/// they are.
-fn cut_offs_line(what: &str, applied: AppliedCutOffs) -> String {
+/// The line naming the cut-offs, `applied`, that banded `job`'s answers,
+/// and whose they are.
+fn cut_offs_line(job: Job, applied: AppliedCutOffs) -> String {
     let whose = match applied.origin() {
         CutOffsOrigin::Default => format!("policy {}'s", applied.policy()),
         CutOffsOrigin::Learner => "from your config".to_owned(),
     };
-    format!(
-        "Cut-offs for {what} · upper {}, lower {} · {whose}",
-        applied.cut_offs().upper(),
-        applied.cut_offs().lower()
-    )
+    format!("Cut-offs for the {job} · {} · {whose}", applied.cut_offs())
 }
 
 /// One answer's line: its `statement`, Jev's `answer` as returned, and its

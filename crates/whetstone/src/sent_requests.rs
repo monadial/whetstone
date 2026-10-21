@@ -254,6 +254,12 @@ impl SentRequests {
         });
     }
 
+    /// The assessment policy in effect, whose cut-offs band the answers
+    /// to every request it sends.
+    pub(crate) fn policy(&self) -> &AssessmentPolicy {
+        &self.policy
+    }
+
     /// Every request that ended, in the order they ended.
     pub(crate) fn requests(&self) -> &[SentRequest] {
         &self.ended
