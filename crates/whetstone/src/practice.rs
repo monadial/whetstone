@@ -63,10 +63,10 @@ use ratatui::text::Line;
 use ratatui::widgets::{List, Paragraph};
 use whetstone_ai::{Ai, CandidateCount, Pending, QuestionWithoutKey, Reply, RequestFailure, Stamp};
 use whetstone_core::{
-    Area, AreaId, Band, Candidate, CandidateCheck, CandidateId, Change, CommitId,
+    Area, AreaId, Band, Candidate, CandidateCheck, CandidateId, Change, Citation, CommitId,
     ConnectedCodeLimit, Connections, ConnectionsState, DropReason, Evidence, ExcludePatterns, Job,
-    Probability, QuestionCheckAnswers, QuestionCount, RepositoryConfig, ReviewChoices, Role, Side,
-    Withheld, WrittenCandidate, pick, plain_checks, show_rule,
+    Origin, Probability, QuestionCheckAnswers, QuestionCount, RepositoryConfig, ReviewChoices,
+    Role, Side, Withheld, WrittenCandidate, pick, plain_checks, show_rule,
 };
 
 use crate::area_files;
@@ -775,7 +775,16 @@ impl Practice {
             asked_for = self.count.get(),
             "picked the questions that passed their checks"
         );
-        self.stage = match Questions::new(picked, &self.areas, self.failed_requests.clone()) {
+        let Some(evidence) = &self.evidence else {
+            return;
+        };
+        self.stage = match Questions::new(
+            picked,
+            &self.areas,
+            self.failed_requests.clone(),
+            evidence,
+            &self.change_name(),
+        ) {
             Some(questions) => Stage::Shown(Box::new(
                 questions
                     .not_asking_about(self.gate.dropped(&self.areas))
@@ -991,6 +1000,16 @@ impl Practice {
         }
     }
 
+    /// The change, as the code beside each question names it: its title on
+    /// the showcase project, and otherwise its commit's short ID and
+    /// summary.
+    fn change_name(&self) -> String {
+        match self.change.origin() {
+            Origin::Showcase { .. } => self.change.summary().into_owned(),
+            Origin::Commit { id, .. } => format!("{}  {}", id.short(), self.change.summary()),
+        }
+    }
+
     /// The change and the chosen areas, as the screen names them.
     fn subject(&self) -> String {
         let areas: Vec<&str> = self.areas.iter().map(Area::name).collect();
@@ -1011,10 +1030,22 @@ impl Practice {
 
     /// The reader of everything the evidence sent, once it is prepared: the
     /// change's message, what each touched file sends, each area prompt and
-    /// each connection.
-    fn evidence_reader(&self) -> Option<Reader> {
+    /// each connection. It opens at the top, or at the first line of
+    /// `citation` where the evidence sends it: in its touched file's full
+    /// content, or else in the first of its file's connections that holds
+    /// it.
+    fn evidence_reader(&self, citation: Option<&Citation>) -> Option<Reader> {
         let evidence = self.evidence.as_ref()?;
         let mut sections = vec![Section::plain("Message, as it is sent", evidence.message())];
+        // The section and the line in it that the reader opens at, if any.
+        let mut at: Option<(usize, usize)> = None;
+        let cited = |path: &str, first: usize, count: usize| {
+            citation.and_then(|citation| {
+                let line = citation.lines().first();
+                (citation.path() == path && (first..first + count).contains(&line))
+                    .then(|| line - first)
+            })
+        };
         for file in evidence.files() {
             match file.sent() {
                 Some(sent) => {
@@ -1022,6 +1053,11 @@ impl Practice {
                         &format!("{}: diff", file.path()),
                         sent.diff,
                     ));
+                    if at.is_none()
+                        && let Some(line) = cited(file.path(), 1, sent.content.lines().count())
+                    {
+                        at = Some((sections.len(), line));
+                    }
                     sections.push(Section::numbered(
                         &match sent.side {
                             Side::After => format!("{}: full content", file.path()),
@@ -1048,6 +1084,11 @@ impl Practice {
         for connection in evidence.connections() {
             if let Some(sent) = connection.sent() {
                 let id = connection.id();
+                if at.is_none()
+                    && let Some(line) = cited(id.path(), sent.first_line, sent.text.lines().count())
+                {
+                    at = Some((sections.len(), line));
+                }
                 sections.push(Section::numbered_from(
                     &format!(
                         "{}, {}: connected code, as it is sent",
@@ -1059,11 +1100,15 @@ impl Practice {
                 ));
             }
         }
-        Some(Reader::new(
+        let reader = Reader::new(
             Route::Read(Reading::Evidence),
             format!("Evidence: {}", self.change.summary()),
             sections,
-        ))
+        );
+        Some(match at {
+            Some((section, line)) => reader.opening_at(section, line),
+            None => reader,
+        })
     }
 
     /// The review of the candidates withheld when questions were last
@@ -1091,7 +1136,12 @@ impl Practice {
                 ChangeRef::Commit(id) => Some(id),
             },
         };
-        ReviewWithheld::new(candidates, change, self.evidence_reader()?, context.labels)
+        ReviewWithheld::new(
+            candidates,
+            change,
+            self.evidence_reader(None)?,
+            context.labels,
+        )
     }
 }
 
@@ -1246,9 +1296,16 @@ impl View for Practice {
 
     fn open(&self, route: Route, context: &Context<'_>) -> Option<Box<dyn View>> {
         match route {
-            Route::Read(Reading::Evidence) => self
-                .evidence_reader()
-                .map(|reader| Box::new(reader) as Box<dyn View>),
+            // Inspect source opens at the first line the question that
+            // shows cites.
+            Route::Read(Reading::Evidence) => {
+                let citation = match &self.stage {
+                    Stage::Shown(questions) => questions.current_question().citations().first(),
+                    _ => None,
+                };
+                self.evidence_reader(citation)
+                    .map(|reader| Box::new(reader) as Box<dyn View>)
+            }
             Route::Read(Reading::Answer) => match &self.stage {
                 Stage::Shown(questions) => Some(Box::new(questions.answer_reader())),
                 _ => None,

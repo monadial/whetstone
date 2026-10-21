@@ -153,6 +153,11 @@ pub struct Theme {
     /// A stage of Practice not reached yet: dim, so it recedes without
     /// colour too, while staying readable as what comes next.
     pub(crate) upcoming_stage: Style,
+    /// A line a change added, after its `+`, which marks it without colour.
+    pub(crate) added: Style,
+    /// A line a change removed, after its `-`, which marks it without
+    /// colour.
+    pub(crate) removed: Style,
     /// The control that owns keyboard focus.
     focus: Style,
     /// The row of a selected choice.
@@ -213,6 +218,10 @@ struct Palette {
     muted: Color,
     focus: Color,
     selected: Color,
+    /// `supported` in the brand tokens, which marks an added line.
+    added: Color,
+    /// `error` in the brand tokens, which marks a removed line.
+    removed: Color,
     stone: Stone,
 }
 
@@ -224,6 +233,8 @@ impl Palette {
         muted: Color::Rgb(0xB2, 0xBC, 0xBC),
         focus: Color::Rgb(0x9A, 0xAB, 0xFF),
         selected: Color::Rgb(0x30, 0x38, 0x3C),
+        added: Color::Rgb(0x8B, 0xD2, 0xB5),
+        removed: Color::Rgb(0xFF, 0xA6, 0xAD),
         stone: Stone {
             edge: Color::Rgb(0xF5, 0xF3, 0xED),
             body: Color::Rgb(0x9A, 0xAB, 0xFF),
@@ -238,6 +249,8 @@ impl Palette {
         muted: Color::Indexed(250),
         focus: Color::Indexed(111),
         selected: Color::Indexed(237),
+        added: Color::Indexed(115),
+        removed: Color::Indexed(217),
         stone: Stone {
             edge: Color::Indexed(255),
             body: Color::Indexed(111),
@@ -255,6 +268,8 @@ impl Palette {
         muted: Color::Reset,
         focus: Color::LightBlue,
         selected: Color::Reset,
+        added: Color::Green,
+        removed: Color::Red,
         stone: Stone {
             edge: Color::Reset,
             body: Color::LightBlue,
@@ -269,6 +284,8 @@ impl Palette {
         muted: Color::Reset,
         focus: Color::Reset,
         selected: Color::Reset,
+        added: Color::Reset,
+        removed: Color::Reset,
         stone: Stone {
             edge: Color::Reset,
             body: Color::Reset,
@@ -298,6 +315,8 @@ impl Theme {
                 .add_modifier(Modifier::UNDERLINED),
             current_match: Style::new().add_modifier(Modifier::REVERSED | Modifier::BOLD),
             upcoming_stage: Style::new().add_modifier(Modifier::DIM),
+            added: Style::new().fg(palette.added),
+            removed: Style::new().fg(palette.removed),
             focus: Style::new().fg(palette.focus).add_modifier(Modifier::BOLD),
             selected: Style::new().bg(palette.selected),
             disabled: Style::new()
