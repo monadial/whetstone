@@ -6,9 +6,9 @@
 
 use std::fs;
 use std::mem;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -17,8 +17,8 @@ use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use tempfile::TempDir;
 use whetstone::{
     App, Assessment, Dirs, Durability, Environment, Finished, Flow, InMemoryStore, JobId,
-    JobOutput, Message, NewRecord, Repository, SavedResponse, SentRequest, SessionId, SessionStore,
-    Settings, Signal, StoreError, Theme,
+    JobOutput, LabelsFile, Message, NewRecord, Repository, SavedResponse, SentRequest, SessionId,
+    SessionStore, Settings, Signal, StoreError, Theme,
 };
 use whetstone_ai::{Ai, ScriptedAi, Timeouts};
 use whetstone_core::{CandidateId, Response, ShowcaseProject};
@@ -153,6 +153,11 @@ impl SessionStore for TestStore {
 /// attributes, so they stay short.
 pub(crate) const NO_COLOR: &[(&str, &str)] = &[("NO_COLOR", "1")];
 
+/// When every vote a session casts is cast: 2026-10-21 at 10:15:02 UTC.
+pub(crate) fn voted_at() -> SystemTime {
+    UNIX_EPOCH + Duration::from_secs(1_792_577_702)
+}
+
 /// Whetstone's own time limit on finding connected code, which the spec
 /// sets, for the tests that let it run out.
 pub(crate) const TIME_LIMIT: Duration = Duration::from_secs(20);
@@ -177,6 +182,8 @@ pub(crate) struct Session {
     time_limits: Vec<(Duration, JobId)>,
     /// The app's session store, which shares its log with the app's.
     store: TestStore,
+    /// Whetstone's state folder, which holds the labels file.
+    state: PathBuf,
     _home: TempDir,
     _temp: TempDir,
 }
@@ -234,7 +241,13 @@ impl Session {
             None => app,
         };
         let store = setup.store.cloned().unwrap_or_default();
-        let app = app.with_store(Box::new(store.clone()));
+        let app =
+            app.with_store(Box::new(store.clone()))
+                .with_labels_file(LabelsFile::in_state_dir(
+                    &dirs.state,
+                    &environment,
+                    voted_at,
+                ));
         let mut session = Self {
             app: match ai {
                 Some(ai) => app.with_ai(ai),
@@ -246,6 +259,7 @@ impl Session {
             now: Duration::ZERO,
             time_limits: Vec::new(),
             store,
+            state: dirs.state.clone(),
             _home: home,
             _temp: temp,
         };
@@ -375,6 +389,12 @@ impl Session {
     /// order.
     pub(crate) fn store(&self) -> &InMemoryStore {
         &self.store.store
+    }
+
+    /// Whetstone's state folder, in the session's home directory unless the
+    /// variables set `XDG_STATE_HOME`: where the log and the labels file go.
+    pub(crate) fn state_dir(&self) -> &Path {
+        &self.state
     }
 
     /// Draws the current frame. Its debug form lists every style change
