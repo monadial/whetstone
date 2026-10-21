@@ -2,15 +2,20 @@
 //!
 //! Each recording runs the real call through a local server that forwards
 //! the request to `OpenRouter` and saves the reply's body, never its headers,
-//! under `fixtures/`. The tests are ignored, so they run only when asked for,
-//! and need the maintainer's key, which costs a few cents:
+//! under `fixtures/`. The recordings are ignored, so they run only when asked
+//! for, and need the maintainer's key, which costs a few cents:
 //!
 //! ```sh
-//! OPENROUTER_API_KEY=… cargo test -p whetstone-ai record -- --ignored --test-threads 1
+//! OPENROUTER_API_KEY=… cargo test -p whetstone-ai --locked record:: -- --ignored --test-threads 1
 //! ```
 //!
-//! Per-PR tests never call `OpenRouter` (rule 48); this is the stated
-//! exception, with the keyed end-to-end job.
+//! A re-recorded reply changes values the contract tests assert, so update
+//! them in the same change. One check here runs on every PR instead: every
+//! fixture is JSON, with no key or auth header in it.
+//!
+//! Per-PR tests never call `OpenRouter` (rule 48); the recordings are one of
+//! its stated exceptions, with the keyed end-to-end job's live tests
+//! (`live.rs`).
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -102,10 +107,12 @@ async fn recording(name: &'static str, route: &str, key: &str) -> (MockServer, O
     (server, connection)
 }
 
-/// The maintainer's key. Only the recorder reads it: the app reads the
-/// environment in `main.rs` alone (rule 55).
-fn live_key() -> String {
-    std::env::var("OPENROUTER_API_KEY").expect("set OPENROUTER_API_KEY to record the fixtures")
+/// The maintainer's key, or the keyed end-to-end job's. Only the recorder
+/// and the live tests read it: the app reads the environment in `main.rs`
+/// alone (rule 55).
+pub(crate) fn live_key() -> String {
+    std::env::var("OPENROUTER_API_KEY")
+        .expect("set OPENROUTER_API_KEY to record the fixtures or run the live tests")
 }
 
 #[tokio::test]
@@ -208,20 +215,26 @@ async fn record_question_check() {
     assert!(reply.is_ok());
 }
 
-/// The recorded fixtures are JSON, so a failed recording can't save
-/// something else unnoticed.
+/// What the recorder saved: every fixture is JSON, so a failed recording
+/// can't save something else unnoticed, and none holds a key or an auth
+/// header (rule 41). It reads only the fixtures, so it runs on every PR.
 #[test]
-#[ignore = "checks the fixtures after recording"]
-fn recorded_fixtures_are_json() {
-    for name in [
-        "jev-answers",
-        "generator-output",
-        "generator-no-zero-retention",
-        "key-refused",
-        "candidates",
-        "question-check",
-    ] {
-        let text = std::fs::read_to_string(fixture(name)).expect("the fixture exists");
-        serde_json::from_str::<Value>(&text).expect("the fixture is JSON");
+fn every_fixture_is_json_with_no_key_or_auth_header() {
+    let folder = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures");
+    let mut checked = 0;
+    for entry in std::fs::read_dir(&folder).expect("the fixtures folder can be read") {
+        let path = entry.expect("the fixtures folder can be read").path();
+        let text = std::fs::read_to_string(&path).expect("a fixture is text");
+        if let Err(error) = serde_json::from_str::<Value>(&text) {
+            panic!("{} isn't JSON: {error}", path.display());
+        }
+        let text = text.to_lowercase();
+        // A key, OpenRouter's or made up, and an auth header saved with
+        // the body.
+        for never in ["sk-or-", "\"authorization\"", "bearer "] {
+            assert!(!text.contains(never), "{} holds {never:?}", path.display());
+        }
+        checked += 1;
     }
+    assert!(checked > 0, "no fixture in {}", folder.display());
 }

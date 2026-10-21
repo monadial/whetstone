@@ -1,0 +1,122 @@
+//! Live tests: each kind of request the AI port makes, sent through the real
+//! [`OpenRouterAi`] to Jev and the generator, so the recorded replies the
+//! contract tests replay stay true. They call `OpenRouter` with a real key,
+//! so they are ignored and run only when asked for: in the keyed end-to-end
+//! job (`.github/workflows/live.yml`), or locally with the maintainer's own
+//! key, for a few cents:
+//!
+//! ```sh
+//! OPENROUTER_API_KEY=… cargo nextest run --workspace --all-features --locked --no-fail-fast --run-ignored only live_
+//! ```
+//!
+//! Per-PR tests never call `OpenRouter` (rule 48); these are one of its
+//! stated exceptions.
+//!
+//! # One test for each kind of request
+//!
+//! Each kind of request has one test here, named `live_` and the port's
+//! call, such as `live_write_candidates`. It:
+//!
+//! 1. asks [`live_ai`] with the samples its fixture was recorded with
+//!    (`samples.rs`), at the smallest size that still gives the reply's whole
+//!    shape;
+//! 2. asserts the reply holds what the recorded one holds, such as an answer
+//!    to every question asked;
+//! 3. checks its provenance with [`assert_reported`].
+//!
+//! A ticket that adds a kind of request to the port (the relevance gate, the
+//! reasoning evaluation, the explanation or its check) adds its test here
+//! the same way, next to its recorder in `record.rs` and its contract tests.
+//! The job runs every ignored test whose name starts with `live_`, so the
+//! new test needs nothing else.
+
+use whetstone_core::{ModelId, Provenance, QuestionCount};
+
+use crate::record::live_key;
+use crate::samples::{area, candidate, evidence, generator_model, jev_model};
+use crate::{Ai, CandidateCount, Models, OpenRouter, OpenRouterAi, SecretString};
+
+/// The real AI on `OpenRouter`, with the key from `OPENROUTER_API_KEY`, the
+/// models the fixtures were recorded with, and the app's time limits.
+fn live_ai() -> OpenRouterAi {
+    let connection =
+        OpenRouter::new(Some(SecretString::from(live_key()))).expect("the key isn't blank");
+    OpenRouterAi::new(
+        connection,
+        Models {
+            jev: jev_model(),
+            generator: generator_model(),
+        },
+    )
+}
+
+/// Each reply's models, tokens and cost, as the port logs them, go to the
+/// test's output, which is how a run reports what it cost. Nothing sent or
+/// written reaches that log (rules 43 and 44).
+fn log_replies() -> tracing::subscriber::DefaultGuard {
+    tracing::subscriber::set_default(
+        tracing_subscriber::fmt()
+            .with_test_writer()
+            .with_max_level(tracing::Level::INFO)
+            .with_ansi(false)
+            .finish(),
+    )
+}
+
+/// What every recorded reply reports, so every live one must too: an answer
+/// from the model asked for (`OpenRouter` may name a dated version of it,
+/// such as `typesafe/jev-1.14-20261014`), and its tokens and cost.
+fn assert_reported(provenance: &Provenance) {
+    let asked = provenance.requested_model().as_str();
+    let answered = provenance.reported_model().map(ModelId::as_str);
+    assert!(
+        answered.is_some_and(|model| model.starts_with(asked)),
+        "{asked} was asked for, and {answered:?} answered"
+    );
+    let usage = provenance.usage();
+    assert!(
+        usage.input_tokens.is_some() && usage.output_tokens.is_some(),
+        "no token counts reported: {usage:?}"
+    );
+    assert!(provenance.cost().is_some(), "no cost reported");
+}
+
+#[tokio::test]
+#[ignore = "calls OpenRouter with a real key"]
+async fn live_write_candidates() {
+    let _log = log_replies();
+    // One candidate, the fewest the port asks for: 3 questions over 5 areas.
+    let one = CandidateCount::per_area(QuestionCount::try_from(3).expect("from 3 to 5"), 5);
+    assert_eq!(one.get(), 1);
+
+    let reply = live_ai()
+        .write_candidates(&evidence(), &area(), one)
+        .await
+        .expect("the generator writes candidates");
+
+    assert!(
+        !reply.content.is_empty(),
+        "the generator wrote no candidate"
+    );
+    assert_reported(&reply.provenance);
+}
+
+#[tokio::test]
+#[ignore = "calls OpenRouter with a real key"]
+async fn live_check_question() {
+    let _log = log_replies();
+    let candidate = candidate();
+
+    let reply = live_ai()
+        .check_question(&evidence(), &candidate)
+        .await
+        .expect("Jev checks the candidate");
+
+    for check in candidate.checks() {
+        assert!(
+            reply.content.get(check).is_some(),
+            "Jev didn't answer {check:?}"
+        );
+    }
+    assert_reported(&reply.provenance);
+}
