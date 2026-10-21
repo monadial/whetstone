@@ -9,7 +9,7 @@
 
 **Understand the code you ship.**
 
-Whetstone helps you examine your understanding of real code through questions and written reasoning. You take a change (its commit message, its diff and the code it touches), answer a question about it and explain why. The feedback looks at your choice and your reasoning separately.
+Whetstone helps you examine your understanding of real code through questions and written reasoning. You take a change (its commit message, its diff and the code it touches), answer a question about it and, if you choose, explain why. The feedback looks at your choice and your reasoning separately. Writing reasoning is optional: answer with a choice alone, and the feedback shows how your choice fares and what a full answer covers, without assessing reasoning or asking Jev about it.
 
 ## Status
 

@@ -45,8 +45,8 @@ _Avoid_: consent screen; review alone, which **Needs review** uses.
 ## Responding
 
 **Response**:
-The learner's selected choice and written reasoning for a question.
-_Avoid_: treating an answer choice alone as the whole response.
+The learner's selected choice for a question and, optionally, their written reasoning. Reasoning that is blank or only whitespace is not written, and only written reasoning is assessed.
+_Avoid_: treating a response with no reasoning as a failed one.
 
 **Attempt**:
 A learner's work on a particular question.
