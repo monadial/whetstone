@@ -95,7 +95,7 @@ commit and one area. It has these keys:
 - `hint`;
 - three `[[candidate.options]]`, each with a `letter` (`A`, `B` or `C`), a
   `text` and a `rationale`;
-- one to three `[[candidate.rubric]]` criteria, each with a `statement` and
+- one or two `[[candidate.rubric]]` criteria, each with a `statement` and
   what `met` and `not_met` look like;
 - `[[candidate.citations]]`, each with a `path`, a `first_line` and a
   `last_line`.
@@ -110,6 +110,7 @@ Jev sees it. `check` names what fails. The keys that need labels are these:
 | `needs_change` | Question check | General knowledge alone can't pick the right option |
 | `no_giveaway` | Question check | Nothing in the stem or options' wording points to the answer |
 | `criterion_1` and on | Question check | The criterion follows from the evidence and the answer key, and reasoning can show it |
+| `criterion_1_minimum` and on | Question check | The criterion asks only for what a sufficient answer to the stem needs: an idea a learner could give in their own words, without the code's identifiers, quoted conditions or exact values |
 | `option_a`, `option_b`, `option_c` | Option rating | The evidence shows this option answers the stem |
 | `rationale_a`, `rationale_b`, `rationale_c` | Rationale and hint checks | The evidence supports the rationale |
 | `why_it_matters` | Rationale and hint checks | The evidence supports it |
@@ -118,11 +119,18 @@ Jev sees it. `check` names what fails. The keys that need labels are these:
 
 Depth isn't labelled. It only orders questions, and has no cut-offs.
 
+A criterion labelled `criterion_N_minimum = "no"` asks for more than the
+question needs, so the question its labels show leaves it out, as Practice
+drops it: the question's response and explanation examples label only the
+criteria it keeps, numbered from 1 among them. A candidate whose every
+criterion is labelled so is withheld, like any other whose labels fail.
+
 **Generated and hand-made candidates.** #99 asks for both:
 
 - generated candidates, written by the generator and pasted in;
 - hand-made broken ones: two right options, none right, a giveaway,
-  off-area, an ungrounded criterion, and a rationale that contradicts the
+  off-area, an ungrounded criterion, a criterion that asks for more than
+  the question needs, and a rationale that contradicts the
   evidence.
 
 Label each one as it is. The tool measures a broken candidate like any
@@ -176,8 +184,9 @@ an agent's, and set `by` and `on` to yourself where you agree.
 ## Response examples
 
 A response example is a learner's reasoning for a candidate example's
-question. It has one label per criterion of that question's rubric:
-`"yes"` when the reasoning meets it. The question must be one the
+question. It has one label per criterion that question keeps (see
+[Candidate examples](#candidate-examples)): `"yes"` when the reasoning
+meets it, in any words. The question must be one the
 candidate's labels would show to a learner. Jev gets the reasoning with the
 question's stem and options, never the answer key, as in Practice. The
 reasoning can be at most 4,000 characters long, as in Practice's editor.
@@ -191,14 +200,14 @@ on = 2026-10-22
 reasoning = """
 pay no longer generates a key, so the request uses the payment's own.\
 """
-labels = { criterion_1 = "yes", criterion_2 = "no" }
+labels = { criterion_1 = "yes" }
 ```
 
 ## Explanation examples
 
 An explanation example holds paragraphs that explain what a response to a
-candidate example's question missed. Each paragraph explains one criterion,
-counting from 1, with that criterion's outcome: `"not_met"` or
+candidate example's question missed. Each paragraph explains one criterion
+the question keeps, counting from 1, with that criterion's outcome: `"not_met"` or
 `"needs_review"`. Each paragraph takes two labels:
 
 - `criterion_N_supported`: the evidence supports everything it says;
@@ -218,14 +227,14 @@ by = "Tomas"
 on = 2026-10-22
 
 [[explanation.paragraphs]]
-criterion = 2
+criterion = 1
 outcome = "not_met"
-text = "The provider deduplicates charges on the operation key, so …"
-citations = [{ path = "src/provider.rs", first_line = 1, last_line = 5 }]
+text = "The request now copies the key the payment was created with, so …"
+citations = [{ path = "src/provider.rs", first_line = 26, last_line = 37 }]
 
 [explanation.labels]
-criterion_2_supported = "yes"
-criterion_2_agrees = "yes"
+criterion_1_supported = "yes"
+criterion_1_agrees = "yes"
 ```
 
 ## What Jev sees
