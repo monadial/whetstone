@@ -69,31 +69,31 @@ fn the_picker_reads_more_commits_as_the_learner_scrolls_past_the_first_fifty() {
 }
 
 #[test]
-fn slash_searches_the_commits_by_message_and_n_and_capital_n_move_between_the_matches() {
+fn slash_filters_the_commits_by_message_as_the_learner_types() {
     let repo = with_bumps(10);
     let log = git_log(&repo);
     let mut session = started_in(repo.root(), 80, 24);
     session.press("<Enter> /");
     assert_eq!(status(&session), "/", "{}", session.text());
-    assert_eq!(footer(&session), "Enter search  Esc cancel");
+    assert_eq!(footer(&session), "Enter keep  Esc clear");
 
     session.press(&typing("counter to 1"));
-    session.press("<Enter>");
 
     // "to 10" and "to 1" match, newest first.
+    assert_eq!(listed(&session), [log[0].clone(), log[9].clone()]);
+    session.press("<Enter>");
     assert_eq!(focused(&session), log[0]);
-    assert_eq!(status(&session), "Match 1 of 2 for \"counter to 1\"");
-    session.press("n");
+    session.press("j");
     assert_eq!(focused(&session), log[9]);
-    assert_eq!(status(&session), "Match 2 of 2 for \"counter to 1\"");
-    session.press("n");
-    assert_eq!(focused(&session), log[0]);
-    session.press("N");
-    assert_eq!(focused(&session), log[9]);
+    session.press("j");
+    assert_eq!(
+        focused(&session),
+        "Review what will be sent (choose a change)"
+    );
 }
 
 #[test]
-fn a_search_matches_the_whole_message_and_starts_from_the_focused_commit() {
+fn a_filter_matches_the_whole_message() {
     let repo = with_bumps(3);
     repo.write("refund.rs", "");
     repo.commit("Add refunds\n\nA refund returns a payment.");
@@ -105,30 +105,15 @@ fn a_search_matches_the_whole_message_and_starts_from_the_focused_commit() {
     session.press(&typing("/payment"));
     session.press("<Enter>");
 
-    // The first commit's subject, and the newest one's body, match: from
-    // the second, the next match is the first commit, then round to the
-    // newest.
-    assert_eq!(focused(&session), format!("{}  first commit", log[4]));
-    session.press("n");
+    // The newest one's body, and the first commit's subject, match, and
+    // the second commit doesn't, so focus moves to the first match.
+    let first = format!("{}  first commit", log[4]);
+    assert_eq!(listed(&session), [log[0].clone(), first]);
     assert_eq!(focused(&session), log[0]);
 }
 
 #[test]
-fn a_search_reads_further_when_nothing_read_so_far_matches() {
-    let repo = with_bumps(74);
-    let log = git_log(&repo);
-    let mut session = started_in(repo.root(), 120, 32);
-
-    session.press("<Enter>");
-    session.press(&typing("/payments service"));
-    session.press("<Enter>");
-
-    assert_eq!(focused(&session), format!("{}  first commit", log[74]));
-    assert_eq!(status(&session), "Match 1 of 1 for \"payments service\"");
-}
-
-#[test]
-fn a_search_finds_a_commit_by_the_start_of_its_id() {
+fn a_filter_finds_a_commit_by_the_start_of_its_id() {
     let repo = with_bumps(74);
     let log = git_log(&repo);
     let full = repo.git(&["log", "--skip=60", "-1", "--format=%H"]);
@@ -137,26 +122,21 @@ fn a_search_finds_a_commit_by_the_start_of_its_id() {
     session.press("<Enter>");
     let start = full.get(..9).expect("a commit ID has 40 digits");
     session.press(&typing(&format!("/{start}")));
+    // It is past the first fifty read, so older commits are read for it.
+    session.settle();
     session.press("<Enter>");
 
     assert_eq!(focused(&session), log[60]);
 }
 
-#[test]
-fn when_no_commit_matches_the_picker_says_so_and_focus_stays() {
-    let repo = with_bumps(74);
-    let mut session = started_in(repo.root(), 120, 32);
-    session.press("<Enter> j");
-
-    session.press(&typing("/refund"));
-    session.press("<Enter>");
-
-    assert_eq!(status(&session), "No match for \"refund\" in the commits");
-    assert!(
-        focused(&session).starts_with("(x) Infrastructure"),
-        "{}",
-        session.text()
-    );
+/// The commit rows the change list shows, without the focus marker.
+fn listed(session: &Session) -> Vec<String> {
+    session
+        .section(CHANGES)
+        .into_iter()
+        .filter(|row| row.contains("( ) ") || row.contains("(x) "))
+        .map(|row| row.trim_start_matches("> ").to_owned())
+        .collect()
 }
 
 #[test]
@@ -261,7 +241,7 @@ fn the_commit_picker_search_box_at_80x24() {
 }
 
 #[test]
-fn the_palette_on_the_repository_picker_offers_the_search_and_runs_it() {
+fn the_palette_on_the_repository_picker_offers_the_filter_and_runs_it() {
     let repo = with_bumps(10);
     let log = git_log(&repo);
     let mut session = started_in(repo.root(), 120, 32);
@@ -270,15 +250,7 @@ fn the_palette_on_the_repository_picker_offers_the_search_and_runs_it() {
     let rows = session.box_rows("Actions on Practice");
     for (index, (label, does)) in [
         ("> Back", "Return to the screen before"),
-        ("Search", "Search the commits by message or ID"),
-        (
-            "Next match",
-            "Go to the next commit the last search matched",
-        ),
-        (
-            "Previous match",
-            "Go to the previous commit the last search matched",
-        ),
+        ("Search", "Filter the commits by message or ID"),
     ]
     .into_iter()
     .enumerate()
@@ -291,7 +263,18 @@ fn the_palette_on_the_repository_picker_offers_the_search_and_runs_it() {
 
     session.press("j <Enter>");
     assert_eq!(status(&session), "/");
-    session.press(&typing("counter to"));
-    session.press("<Enter> : j j <Enter>");
-    assert_eq!(focused(&session), log[1]);
+    session.press(&typing("counter to 1"));
+    session.press("<Enter> j");
+    assert_eq!(focused(&session), log[9]);
+
+    // With the filter on, the palette offers to clear it, and focus stays.
+    session.press(":");
+    let rows = session.box_rows("Actions on Practice");
+    assert!(
+        rows[2].starts_with("Clear the filter") && rows[2].ends_with("Show every commit again"),
+        "{rows:#?}"
+    );
+    session.press("j j <Enter>");
+    assert_eq!(listed(&session).len(), 11, "{}", session.text());
+    assert_eq!(focused(&session), log[9]);
 }

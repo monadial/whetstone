@@ -17,13 +17,14 @@ use whetstone_core::{Area, CommitId, InvalidAreaFile, ReviewChoices, ShowcasePro
 use crate::columns;
 use crate::connected_code::{Request, ShowcaseTree};
 use crate::entry::TextEntry;
+use crate::job::{JobId, JobOutput, Jobs};
 use crate::keymap::{self, Binding, Command, Input, Keymap, Press};
 use crate::outbound_review::OutboundReview;
 use crate::palette::Action;
 use crate::practice::Practice;
 use crate::reasoning_editor::grouped;
 use crate::repository::{Availability, Commit, History, HistoryEnd, HistoryError, Repository};
-use crate::search::{self, Query};
+use crate::search::Query;
 use crate::theme::{ColorSupport, ControlKind, ControlState, Theme};
 use crate::view::{
     ChangeIndex, ChangeRef, Context, NEEDS_KEY, Project, Route, View, comparison_label,
@@ -88,12 +89,63 @@ const REPOSITORY_KEYMAP: Keymap = &[
         ..keymap::ENDS
     },
     Binding {
-        does: "Search the commits by message or ID",
+        does: "Filter the commits by message or ID",
         ..keymap::SEARCH
     },
-    keymap::MATCHES,
     keymap::BACK,
 ];
+
+/// The repository picker's own keys while a filter is on: as without one,
+/// but Esc clears the filter, and `q` alone goes back.
+const FILTERED_KEYMAP: Keymap = &[
+    keymap::MOVE,
+    SPACE,
+    OPEN,
+    PAGE,
+    HALF_PAGE,
+    Binding {
+        does: "Go to the newest commit, or the oldest read so far",
+        ..keymap::ENDS
+    },
+    Binding {
+        does: "Change the filter",
+        ..keymap::SEARCH
+    },
+    Binding {
+        keys: &[(Press::key(KeyCode::Esc), Command::Cancel)],
+        does: "Clear the filter",
+        hint: None,
+    },
+    Binding {
+        keys: &[(Press::char('q'), Command::Back)],
+        ..keymap::BACK
+    },
+];
+
+/// The keys of the repository picker's search box, while the learner types
+/// a filter. Every other key but the reserved ones types, and the list
+/// narrows as they do.
+const FILTER_BOX: Keymap = &[
+    Binding {
+        keys: &[(Press::key(KeyCode::Enter), Command::Activate)],
+        does: "Keep the filter, and go to the commits",
+        hint: Some("Enter keep"),
+    },
+    Binding {
+        keys: &[(Press::key(KeyCode::Backspace), Command::Erase)],
+        does: "Erase the last character",
+        hint: None,
+    },
+    Binding {
+        keys: &[(Press::key(KeyCode::Esc), Command::Cancel)],
+        does: "Clear the filter",
+        hint: Some("Esc clear"),
+    },
+];
+
+/// How many commits one background read for the filter reads at most, so
+/// the filtered list grows as matches are found on a long history.
+const READ_IN_THE_BACKGROUND: usize = 1_000;
 
 /// How many more commits `G` reads, at most, before it goes to the oldest
 /// commit read: enough to reach the end of most histories at once, and few
@@ -109,23 +161,25 @@ const ACTIONS: &[Action] = &[Action {
 }];
 
 /// The repository picker's own actions in the palette: the picker's, and
-/// searching the commits.
+/// filtering the commits.
 const REPOSITORY_ACTIONS: &[Action] = &[
     ACTIONS[0],
     Action {
         label: "Search",
-        does: "Search the commits by message or ID",
+        does: "Filter the commits by message or ID",
         command: Command::Search,
     },
+];
+
+/// The repository picker's own actions while a filter is on: as without
+/// one, and clearing it.
+const FILTERED_ACTIONS: &[Action] = &[
+    ACTIONS[0],
+    REPOSITORY_ACTIONS[1],
     Action {
-        label: "Next match",
-        does: "Go to the next commit the last search matched",
-        command: Command::NextMatch,
-    },
-    Action {
-        label: "Previous match",
-        does: "Go to the previous commit the last search matched",
-        command: Command::PreviousMatch,
+        label: "Clear the filter",
+        does: "Show every commit again",
+        command: Command::Cancel,
     },
 ];
 
@@ -136,6 +190,9 @@ enum Control {
     Area(usize),
     /// The change at this index.
     Change(usize),
+    /// Clear the filter, in the change list while the filter matches
+    /// nothing.
+    ClearFilter,
     /// Previous page, under the changes: the page before shows.
     PreviousPage,
     /// Next page, under the changes: the page after shows.
@@ -170,6 +227,42 @@ enum Source {
     },
 }
 
+/// A filter of the commits: what it looks for, and which of the commits
+/// read so far match.
+#[derive(Debug)]
+struct Filter {
+    query: Query,
+    /// The indexes of the matching commits, in order.
+    matches: Vec<usize>,
+    /// How many of the commits read so far it has looked at.
+    looked_at: usize,
+    /// How many matches the change list wants: enough for the page in view
+    /// and the one after. Older commits are read in the background until it
+    /// has them or the history ends.
+    wanted: usize,
+}
+
+impl Filter {
+    fn new(query: Query) -> Self {
+        Self {
+            query,
+            matches: Vec::new(),
+            looked_at: 0,
+            wanted: 0,
+        }
+    }
+
+    /// Looks at the `commits` read since it last looked, for matches.
+    fn look_at(&mut self, commits: &[Commit]) {
+        let new = commits.iter().enumerate().skip(self.looked_at);
+        self.matches.extend(
+            new.filter(|(_, commit)| is_match(&self.query, commit))
+                .map(|(index, _)| index),
+        );
+        self.looked_at = commits.len();
+    }
+}
+
 /// The picker's state: which areas are selected, which change is chosen,
 /// and which control has focus.
 #[derive(Debug)]
@@ -188,10 +281,13 @@ pub(crate) struct Picker {
     /// its top. A frame moves it only as far as it must to show the focused
     /// change, so a resize changes nothing here.
     top: usize,
-    /// The search box, while the learner types a search of the commits.
+    /// The search box, while the learner types a filter of the commits.
     search_box: Option<TextEntry>,
-    /// What the last search of the commits looked for.
-    query: Option<Query>,
+    /// The filter of the commits, while one is on.
+    filter: Option<Filter>,
+    /// The background read of older commits for the filter, while one
+    /// runs.
+    reading: Option<JobId>,
     /// The learner's choices on the outbound review of the chosen commit,
     /// kept while it stays chosen, and shared with the review while it is
     /// open.
@@ -214,7 +310,8 @@ impl Picker {
             focus: first_control(showcase.areas().len(), showcase.changes().len()),
             top: 0,
             search_box: None,
-            query: None,
+            filter: None,
+            reading: None,
             review_choices: None,
         }
     }
@@ -241,7 +338,8 @@ impl Picker {
             chosen: None,
             top: 0,
             search_box: None,
-            query: None,
+            filter: None,
+            reading: None,
             review_choices: None,
         }
     }
@@ -348,19 +446,69 @@ impl Picker {
             .collect()
     }
 
-    /// How many rows the changes take: one each, and one for why no more
-    /// commits could be read, if none or not all could.
+    /// How many rows the changes take: one for each listed, one saying no
+    /// commit matches the filter when none does, and Clear the filter after
+    /// it, and one for why no more commits could be read, if none or not
+    /// all could.
     fn change_rows(&self) -> usize {
         match &self.source {
             Source::Showcase { changes, .. } => *changes,
             Source::Repository {
                 history: Ok(history),
             } => {
-                history.commits().len()
-                    + usize::from(matches!(history.end(), HistoryEnd::Failed(_)))
+                let failed = usize::from(matches!(history.end(), HistoryEnd::Failed(_)));
+                let no_match = if self.matches_nothing() {
+                    1 + usize::from(self.offers_clear())
+                } else {
+                    0
+                };
+                self.listed() + no_match + failed
             }
             Source::Repository { history: Err(_) } => 1,
         }
+    }
+
+    /// How many changes the change list lists: every change, or while a
+    /// filter is on, those it matches.
+    fn listed(&self) -> usize {
+        match &self.filter {
+            Some(filter) => filter.matches.len(),
+            None => self.changes(),
+        }
+    }
+
+    /// The change at `position` in the change list, if it lists one there.
+    fn listed_at(&self, position: usize) -> Option<Control> {
+        let index = match &self.filter {
+            Some(filter) => *filter.matches.get(position)?,
+            None => position,
+        };
+        (index < self.changes()).then_some(Control::Change(index))
+    }
+
+    /// Where the focused change is in the change list, if a change has focus
+    /// and the list lists it.
+    fn focused_position(&self) -> Option<usize> {
+        let index = self.focused_change()?;
+        match &self.filter {
+            Some(filter) => filter.matches.binary_search(&index).ok(),
+            None => Some(index),
+        }
+    }
+
+    /// Whether a filter is on that matches none of the commits, with no more
+    /// to read.
+    fn matches_nothing(&self) -> bool {
+        self.filter
+            .as_ref()
+            .is_some_and(|filter| filter.matches.is_empty())
+            && !self.has_more()
+    }
+
+    /// Whether Clear the filter shows: when the filter matches nothing,
+    /// once the learner has stopped typing it.
+    fn offers_clear(&self) -> bool {
+        self.matches_nothing() && self.search_box.is_none()
     }
 
     /// The changes in `window`, by index, as list items `width` cells wide,
@@ -389,17 +537,39 @@ impl Picker {
                 history: Ok(history),
             } => {
                 let commits = history.commits();
-                let mut items: Vec<Text<'a>> = commits
-                    .get(window.start.min(commits.len())..window.end.min(commits.len()))
-                    .unwrap_or_default()
-                    .iter()
-                    .zip(window.start..)
+                let listed = self.listed();
+                let mut items: Vec<Text<'a>> = (window.start.min(listed)..window.end.min(listed))
+                    .filter_map(|position| match self.listed_at(position)? {
+                        Control::Change(index) => Some((commits.get(index)?, index)),
+                        _ => None,
+                    })
                     .map(|(commit, index)| {
                         Text::from(commit_row(context.theme, commit, state(index), width))
                     })
                     .collect();
+                if let Some(filter) = &self.filter
+                    && self.matches_nothing()
+                {
+                    let said = format!("No commits match “{}”", filter.query.text());
+                    items.push(Text::styled(
+                        format!(
+                            "{UNAVAILABLE_INDENT}{}",
+                            columns::truncate(&said, usize::from(width))
+                        ),
+                        context.theme.muted,
+                    ));
+                    if self.offers_clear() {
+                        items.push(Text::from(context.theme.control(
+                            "Clear the filter",
+                            ControlState {
+                                focused: self.focus == Control::ClearFilter,
+                                ..ControlState::default()
+                            },
+                        )));
+                    }
+                }
                 if let HistoryEnd::Failed(error) = history.end()
-                    && window.end > commits.len()
+                    && window.end > listed
                 {
                     items.push(unavailable_row(context.theme, error));
                 }
@@ -418,83 +588,78 @@ impl Picker {
             .collect()
     }
 
-    /// Searches the commits for `query`, from the focused one, or from the
-    /// first if none has focus, and moves focus to the first match. While
-    /// none of the commits read so far matches, it reads further.
-    fn search(&mut self, query: Query) {
-        if let Source::Repository {
-            history: Ok(history),
-        } = &mut self.source
-        {
-            while !history
-                .commits()
-                .iter()
-                .any(|commit| is_match(&query, commit))
-                && matches!(history.end(), HistoryEnd::More)
-            {
-                history.read_page();
-            }
+    /// Filters the change list by `query`, or shows every change again
+    /// without one. A new filter shows its matches from the first, and
+    /// clearing it scrolls back to the focused change, or else the chosen
+    /// one.
+    fn set_filter(&mut self, query: Option<Query>) {
+        if self.filter.as_ref().map(|filter| &filter.query) == query.as_ref() {
+            return;
         }
-        let matches = self.matches(&query);
-        let start = self.focused_change().unwrap_or_default();
-        self.query = Some(query);
-        if let Some(index) = search::first_from(&matches, start) {
-            self.focus_change(index);
+        if let Some(query) = query {
+            let mut filter = Filter::new(query);
+            filter.look_at(self.commits());
+            self.filter = Some(filter);
+            self.top = 0;
+        } else {
+            self.filter = None;
+            if self.focus == Control::ClearFilter {
+                self.focus = self.chosen.map_or(
+                    first_control(self.areas.len(), self.changes()),
+                    Control::Change,
+                );
+            }
+            self.top = self.focused_change().or(self.chosen).unwrap_or_default();
         }
     }
 
-    /// Moves focus to the next or previous match of the last search, as
-    /// `command` asks, wrapping around at either end.
-    fn go_to_match(&mut self, command: Command) {
-        let Some(query) = &self.query else {
+    /// Applies `command` to the search box while the learner types a filter
+    /// and the change list shows `rows` rows: Enter keeps the filter, Esc
+    /// clears it, and anything else edits it, which filters the list anew.
+    fn edit_filter(&mut self, command: Command, rows: usize) {
+        let Some(search_box) = &mut self.search_box else {
             return;
         };
-        let matches = self.matches(query);
-        let current = self.focused_change();
-        let landing = match command {
-            Command::NextMatch => {
-                search::first_from(&matches, current.map_or(0, |index| index + 1))
+        match command {
+            Command::Activate => {
+                self.search_box = None;
+                self.focus_filtered(rows);
             }
-            Command::PreviousMatch => search::last_before(&matches, current.unwrap_or_default()),
-            _ => None,
-        };
-        if let Some(index) = landing {
-            self.focus_change(index);
+            Command::Cancel => {
+                self.search_box = None;
+                self.set_filter(None);
+            }
+            command => {
+                search_box.apply(command);
+                let query = Query::new(search_box.text());
+                self.set_filter(query);
+            }
         }
     }
 
-    /// The indexes of the commits read so far that `query` matches.
-    fn matches(&self, query: &Query) -> Vec<usize> {
-        self.commits()
-            .iter()
-            .enumerate()
-            .filter(|(_, commit)| is_match(query, commit))
-            .map(|(index, _)| index)
-            .collect()
-    }
-
-    /// What the last search found, for the row under the picker.
-    fn search_status(&self) -> Option<String> {
-        let query = self.query.as_ref()?;
-        Some(search::status(
-            query,
-            &self.matches(query),
-            self.focused_change(),
-            "the commits",
-        ))
+    /// Moves focus to the filtered list as the learner stops typing the
+    /// filter: to the first match in view, unless the focused change
+    /// matches, or to Clear the filter when nothing does.
+    fn focus_filtered(&mut self, rows: usize) {
+        if self.filter.is_none() || self.focused_position().is_some() {
+            return;
+        }
+        let first = self.listed_at(self.top_in_view(rows));
+        if let Some(control) = first.or(self.offers_clear().then_some(Control::ClearFilter)) {
+            self.focus = control;
+        }
     }
 
     /// The index of the focused change, if a change has focus.
     fn focused_change(&self) -> Option<usize> {
         match self.focus {
             Control::Change(index) => Some(index),
-            Control::Area(_) | Control::PreviousPage | Control::NextPage | Control::Proceed => None,
+            Control::Area(_)
+            | Control::ClearFilter
+            | Control::PreviousPage
+            | Control::NextPage
+            | Control::Proceed => None,
         }
-    }
-
-    /// Moves focus to the change at `index`.
-    fn focus_change(&mut self, index: usize) {
-        self.focus = Control::Change(index);
     }
 
     /// Whether more commits may follow those read so far.
@@ -520,8 +685,8 @@ impl Picker {
     /// the focused change, and never past the last whole page.
     fn top_in_view(&self, rows: usize) -> usize {
         let top = self.top.min(self.change_rows().saturating_sub(rows));
-        match self.focused_change() {
-            Some(index) => top.max((index + 1).saturating_sub(rows)).min(index),
+        match self.focused_position() {
+            Some(position) => top.max((position + 1).saturating_sub(rows)).min(position),
             None => top,
         }
     }
@@ -533,40 +698,47 @@ impl Picker {
     }
 
     /// Where `command` moves focus while the change list shows `rows` rows.
-    /// `j` and `k` move through the areas, the changes, the paging row and
-    /// the control after them, stopping at either end. Tab and Shift+Tab
-    /// move through the areas, the change list as one stop, Previous page,
-    /// Next page and the control after them, wrapping around. Into the
-    /// change list, they land on the page in view: on its first change from
-    /// above, and on its last from below.
+    /// `j` and `k` move through the areas, the listed changes, the paging
+    /// row and the control after them, stopping at either end. Tab and
+    /// Shift+Tab move through the areas, the change list as one stop,
+    /// Previous page, Next page and the control after them, wrapping around.
+    /// Into the change list, they land on the page in view: on its first
+    /// change from above, and on its last from below. Clear the filter
+    /// stands in for the changes while it shows.
     fn moved(&self, command: Command, rows: usize) -> Control {
         let areas = self.areas.len();
-        let changes = self.changes();
         let top = self.top_in_view(rows);
+        let first_area = (areas > 0).then_some(Control::Area(0));
         let last_area = areas.checked_sub(1).map(Control::Area);
-        let first_in_view = (changes > 0).then_some(Control::Change(top));
+        let clear = self.offers_clear().then_some(Control::ClearFilter);
+        let first_in_view = self.listed_at(top).or(clear);
         let last_in_view = (top + rows)
-            .min(changes)
+            .min(self.listed())
             .checked_sub(1)
-            .map(Control::Change);
+            .and_then(|position| self.listed_at(position))
+            .or(clear);
+        let position = self.focused_position();
         let focus = self.focus;
         match command {
             Command::Down => match focus {
                 Control::Area(index) if index + 1 < areas => Control::Area(index + 1),
                 Control::Area(_) => first_in_view.unwrap_or(Control::Proceed),
-                Control::Change(index) if index + 1 < changes => Control::Change(index + 1),
-                Control::Change(_)
+                Control::Change(_) => position
+                    .and_then(|position| self.listed_at(position + 1))
+                    .unwrap_or(Control::Proceed),
+                Control::ClearFilter
                 | Control::PreviousPage
                 | Control::NextPage
                 | Control::Proceed => Control::Proceed,
             },
             Command::Up => match focus {
                 Control::Area(index) => Control::Area(index.saturating_sub(1)),
-                Control::Change(index) => index
-                    .checked_sub(1)
-                    .map(Control::Change)
+                Control::Change(_) => position
+                    .and_then(|position| position.checked_sub(1))
+                    .and_then(|position| self.listed_at(position))
                     .or(last_area)
                     .unwrap_or(focus),
+                Control::ClearFilter => last_area.unwrap_or(focus),
                 Control::PreviousPage | Control::NextPage | Control::Proceed => {
                     last_in_view.or(last_area).unwrap_or(focus)
                 }
@@ -574,16 +746,18 @@ impl Picker {
             Command::NextControl => match focus {
                 Control::Area(index) if index + 1 < areas => Control::Area(index + 1),
                 Control::Area(_) => first_in_view.unwrap_or(Control::PreviousPage),
-                Control::Change(_) => Control::PreviousPage,
+                Control::Change(_) | Control::ClearFilter => Control::PreviousPage,
                 Control::PreviousPage => Control::NextPage,
                 Control::NextPage => Control::Proceed,
-                Control::Proceed => first_control(areas, changes),
+                Control::Proceed => first_area
+                    .or(first_in_view)
+                    .unwrap_or(Control::PreviousPage),
             },
             Command::PreviousControl => match focus {
                 Control::Area(index) => {
                     index.checked_sub(1).map_or(Control::Proceed, Control::Area)
                 }
-                Control::Change(_) => last_area.unwrap_or(Control::Proceed),
+                Control::Change(_) | Control::ClearFilter => last_area.unwrap_or(Control::Proceed),
                 Control::PreviousPage => last_in_view.or(last_area).unwrap_or(Control::Proceed),
                 Control::NextPage => Control::PreviousPage,
                 Control::Proceed => Control::NextPage,
@@ -596,22 +770,30 @@ impl Picker {
     /// `rows` rows, unless a change has focus already: the paging keys move
     /// focus through the changes from anywhere on the picker.
     fn focus_page_in_view(&mut self, rows: usize) {
-        if self.focused_change().is_none() && self.changes() > 0 {
-            self.focus = Control::Change(self.top_in_view(rows));
+        if self.focused_change().is_none()
+            && let Some(first) = self.listed_at(self.top_in_view(rows))
+        {
+            self.focus = first;
         }
     }
 
     /// Scrolls the change list down `step` changes while it shows `rows`
-    /// rows, and the focused change, if one has focus, with it. It reads
-    /// further first, until the rows it scrolls to are all read, so a page
-    /// never stops short because commits weren't read yet. It stops at the
-    /// last whole page and the last change.
+    /// rows, and the focused change, if one has focus, with it. Unfiltered,
+    /// it reads further first, until the rows it scrolls to are all read, so
+    /// a page never stops short because commits weren't read yet; a filter
+    /// reads in the background instead. It stops at the last whole page and
+    /// the last change.
     fn scroll_down(&mut self, step: usize, rows: usize) {
         let top = self.top_in_view(rows) + step;
-        self.read_until(top + rows);
+        if self.filter.is_none() {
+            self.read_until(top + rows);
+        }
         self.top = top.min(self.change_rows().saturating_sub(rows));
-        if let Control::Change(index) = self.focus {
-            self.focus = Control::Change((index + step).min(self.changes().saturating_sub(1)));
+        if let Some(position) = self.focused_position()
+            && let Some(moved) =
+                self.listed_at((position + step).min(self.listed().saturating_sub(1)))
+        {
+            self.focus = moved;
         }
     }
 
@@ -620,25 +802,46 @@ impl Picker {
     /// first.
     fn scroll_up(&mut self, step: usize, rows: usize) {
         self.top = self.top_in_view(rows).saturating_sub(step);
-        if let Control::Change(index) = self.focus {
-            self.focus = Control::Change(index.saturating_sub(step));
+        if let Some(position) = self.focused_position()
+            && let Some(moved) = self.listed_at(position.saturating_sub(step))
+        {
+            self.focus = moved;
         }
     }
 
-    /// Moves focus to the oldest change, or for a repository to the oldest
-    /// commit read, after reading at most [`READ_FOR_OLDEST`] more.
+    /// Moves focus to the first change listed.
+    fn go_to_first(&mut self) {
+        if let Some(first) = self.listed_at(0) {
+            self.focus = first;
+        }
+    }
+
+    /// Moves focus to the last change listed: the oldest change, or for a
+    /// repository the oldest commit read, after reading at most
+    /// [`READ_FOR_OLDEST`] more unless a filter is on.
     fn go_to_oldest(&mut self) {
-        self.read_until(self.changes() + READ_FOR_OLDEST);
-        if let Some(last) = self.changes().checked_sub(1) {
-            self.focus = Control::Change(last);
+        if self.filter.is_none() {
+            self.read_until(self.changes() + READ_FOR_OLDEST);
+        }
+        if let Some(last) = self
+            .listed()
+            .checked_sub(1)
+            .and_then(|position| self.listed_at(position))
+        {
+            self.focus = last;
         }
     }
 
     /// Reads ahead while more commits may follow, until the page after the
     /// one in view, `rows` rows long, is read too: the page in view is
-    /// whole, and Next page knows whether there is one.
+    /// whole, and Next page knows whether there is one. A filter wants as
+    /// many matches, which a background read finds.
     fn read_ahead(&mut self, rows: usize) {
-        self.read_until(self.top + 2 * rows);
+        let wanted = self.top + 2 * rows;
+        match &mut self.filter {
+            Some(filter) => filter.wanted = wanted,
+            None => self.read_until(wanted),
+        }
     }
 
     /// What comes after choosing, once a change and an area are chosen:
@@ -734,7 +937,39 @@ impl Picker {
 
     /// Where the change list is, at `top` and `rows` rows: "Commits 41–60
     /// of 1,000", with a "+" after the total while more commits may follow.
+    /// Filtered, it says so: "12 matching “retry” · 1–12", with a "+" while
+    /// more may match, and while older commits are read for more matches,
+    /// that they are.
     fn position(&self, top: usize, rows: usize) -> Option<String> {
+        let more = if self.has_more() { "+" } else { "" };
+        if let Some(filter) = &self.filter {
+            let found = filter.matches.len();
+            let mut said = match found.checked_sub(1) {
+                None => String::new(),
+                Some(last_found) => {
+                    let first = top.min(last_found) + 1;
+                    let last = (top + rows).min(found);
+                    let shown = if first == last {
+                        grouped(first)
+                    } else {
+                        format!("{}–{}", grouped(first), grouped(last))
+                    };
+                    format!(
+                        "{}{more} matching “{}” · {shown}",
+                        grouped(found),
+                        filter.query.text()
+                    )
+                }
+            };
+            if self.reading.is_some() {
+                said.push_str(if said.is_empty() {
+                    "Searching older commits…"
+                } else {
+                    " · searching older commits…"
+                });
+            }
+            return Some(said);
+        }
         let changes = self.changes();
         let first = top.min(changes.checked_sub(1)?) + 1;
         let last = (top + rows).min(changes);
@@ -747,15 +982,24 @@ impl Picker {
         } else {
             format!("{many} {}–{}", grouped(first), grouped(last))
         };
-        let more = if self.has_more() { "+" } else { "" };
         Some(format!("{shown} of {}{more}", grouped(changes)))
     }
 
-    /// The row under the change list, `width` cells wide, while the list
-    /// shows `rows` rows: Previous page, where the list is, and Next page.
-    /// Previous page is disabled on the first page, and Next page on the
-    /// last. Where the list is is cut to fit between them.
-    fn paging_row(&self, theme: &Theme, rows: usize, width: u16) -> Line<'static> {
+    /// The heading above the change list, `width` cells wide, while the
+    /// list shows `rows` rows: "Change to practice on", and after it where
+    /// the list is, cut to fit.
+    fn change_heading(&self, rows: usize, width: u16) -> String {
+        let heading = match self.position(self.top_in_view(rows), rows) {
+            Some(position) if !position.is_empty() => format!("{CHANGE_HEADING} · {position}"),
+            _ => CHANGE_HEADING.to_owned(),
+        };
+        columns::truncate(&heading, usize::from(width))
+    }
+
+    /// The row under the change list while it shows `rows` rows: Previous
+    /// page, disabled on the first page, and Next page, disabled on the
+    /// last.
+    fn paging_row(&self, theme: &Theme, rows: usize) -> Line<'static> {
         let top = self.top_in_view(rows);
         let control = |label, control, disabled| {
             theme.control(
@@ -777,17 +1021,6 @@ impl Picker {
             Control::NextPage,
             self.on_last_page(top, rows).then_some(LAST_PAGE),
         );
-        // As far from Previous page as Next page's label is from it: a gap
-        // and a focus marker.
-        let before = columns::GAP + Theme::control_width("", ControlKind::Action);
-        let room =
-            usize::from(width).saturating_sub(row.width() + before + columns::GAP + next.width());
-        let position = self.position(top, rows).unwrap_or_default();
-        row.push_span(" ".repeat(before));
-        row.push_span(Span::styled(
-            columns::truncate(&position, room),
-            theme.muted,
-        ));
         row.push_span(" ".repeat(columns::GAP));
         row.extend(next.spans);
         row
@@ -797,18 +1030,21 @@ impl Picker {
     /// returns what it asks of the app, if anything.
     fn apply_command(&mut self, command: Command, rows: usize) -> Option<Command> {
         if self.search_box.is_some() {
-            if let Some(query) = search::edit(&mut self.search_box, command) {
-                self.search(query);
-            }
+            self.edit_filter(command, rows);
             return None;
         }
         match command {
             Command::Search => {
-                self.search_box = Some(TextEntry::default());
+                // It opens on the filter in place, to change or clear it.
+                let mut search_box = TextEntry::default();
+                if let Some(filter) = &self.filter {
+                    search_box.paste(filter.query.text());
+                }
+                self.search_box = Some(search_box);
                 return None;
             }
-            Command::NextMatch | Command::PreviousMatch => {
-                self.go_to_match(command);
+            Command::Cancel => {
+                self.set_filter(None);
                 return None;
             }
             Command::PageDown => {
@@ -827,7 +1063,7 @@ impl Picker {
                 self.focus_page_in_view(rows);
                 self.scroll_up((rows / 2).max(1), rows);
             }
-            Command::Top if self.changes() > 0 => self.focus = Control::Change(0),
+            Command::Top => self.go_to_first(),
             Command::Bottom => self.go_to_oldest(),
             _ => {
                 // Moving past the last commit read reads further first.
@@ -877,6 +1113,10 @@ impl Picker {
             }
             Control::NextPage => {
                 self.scroll_down(rows, rows);
+                None
+            }
+            Control::ClearFilter => {
+                self.set_filter(None);
                 None
             }
             Control::Proceed => self.next_screen(),
@@ -1132,8 +1372,9 @@ impl View for Picker {
 
     fn keymap(&self) -> Keymap {
         match (&self.source, &self.search_box) {
-            (_, Some(_)) => keymap::SEARCH_BOX,
+            (_, Some(_)) => FILTER_BOX,
             (Source::Showcase { .. }, None) => KEYMAP,
+            (Source::Repository { .. }, None) if self.filter.is_some() => FILTERED_KEYMAP,
             (Source::Repository { .. }, None) => REPOSITORY_KEYMAP,
         }
     }
@@ -1148,13 +1389,70 @@ impl View for Picker {
     fn paste(&mut self, text: &str) {
         if let Some(search_box) = &mut self.search_box {
             search_box.paste(text);
+            let query = Query::new(search_box.text());
+            self.set_filter(query);
         }
     }
 
     fn actions(&self) -> &'static [Action] {
         match self.source {
             Source::Showcase { .. } => ACTIONS,
+            Source::Repository { .. } if self.filter.is_some() => FILTERED_ACTIONS,
             Source::Repository { .. } => REPOSITORY_ACTIONS,
+        }
+    }
+
+    fn start_jobs(&mut self, jobs: &mut Jobs<JobOutput>) {
+        let (Some(filter), None) = (&self.filter, self.reading) else {
+            return;
+        };
+        let mut wanted = filter.wanted.saturating_sub(filter.matches.len());
+        let query = filter.query.clone();
+        let Source::Repository {
+            history: Ok(history),
+        } = &mut self.source
+        else {
+            return;
+        };
+        if wanted == 0 {
+            return;
+        }
+        let Some(reader) = history.take_reader() else {
+            return;
+        };
+        // Off the UI loop (rule 19), until the matches wanted are found, a
+        // batch is read, or the history ends.
+        self.reading = Some(jobs.start(move |token| {
+            let read = reader.read(token, READ_IN_THE_BACKGROUND, |commit| {
+                if is_match(&query, commit) {
+                    wanted -= 1;
+                }
+                wanted == 0
+            })?;
+            Ok(JobOutput::CommitsRead(Box::new(read)))
+        }));
+    }
+
+    fn waits_for(&self, job: JobId) -> bool {
+        self.reading == Some(job)
+    }
+
+    fn finish_job(&mut self, job: JobId, output: JobOutput) {
+        if self.reading != Some(job) {
+            return;
+        }
+        self.reading = None;
+        if let (
+            JobOutput::CommitsRead(read),
+            Source::Repository {
+                history: Ok(history),
+            },
+        ) = (output, &mut self.source)
+        {
+            history.add(*read);
+            if let Some(filter) = &mut self.filter {
+                filter.look_at(history.commits());
+            }
         }
     }
 
@@ -1247,18 +1545,23 @@ impl View for Picker {
         );
         let shown_area = match self.focus {
             Control::Area(index) => Some(index),
-            Control::Change(_) | Control::PreviousPage | Control::NextPage | Control::Proceed => {
-                None
-            }
+            Control::Change(_)
+            | Control::ClearFilter
+            | Control::PreviousPage
+            | Control::NextPage
+            | Control::Proceed => None,
         };
         render_list(frame, parts.area_list, area_items, shown_area);
-        frame.render_widget(
-            Paragraph::new(Line::styled(CHANGE_HEADING, theme.muted)),
-            parts.change_heading,
-        );
         // The change list stays where it was scrolled to, as far as the
         // focused change allows.
         let rows = page_size_of(parts.change_list);
+        frame.render_widget(
+            Paragraph::new(Line::styled(
+                self.change_heading(rows, parts.change_heading.width),
+                theme.muted,
+            )),
+            parts.change_heading,
+        );
         let top = self.top_in_view(rows);
         render_list(
             frame,
@@ -1266,10 +1569,7 @@ impl View for Picker {
             self.change_items(context, area.width, top..top + rows),
             None,
         );
-        frame.render_widget(
-            self.paging_row(theme, rows, parts.paging.width),
-            parts.paging,
-        );
+        frame.render_widget(self.paging_row(theme, rows), parts.paging);
         let (label, disabled) = self.proceed();
         frame.render_widget(
             theme.control(
@@ -1287,8 +1587,6 @@ impl View for Picker {
                 Paragraph::new(search_box.line(theme, "/", usize::from(parts.status.width))),
                 parts.status,
             );
-        } else if let Some(status) = self.search_status() {
-            frame.render_widget(Paragraph::new(status), parts.status);
         }
     }
 }

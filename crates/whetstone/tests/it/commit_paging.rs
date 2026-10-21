@@ -19,7 +19,7 @@ fn long_history() -> TestRepo {
 
 /// A repository called `payments` with a history of `commits` commits,
 /// the first of them "Start the payments service".
-fn history_of(commits: usize) -> TestRepo {
+pub(crate) fn history_of(commits: usize) -> TestRepo {
     let repo = TestRepo::new("payments");
     repo.write("README.md", "# Payments\n");
     repo.commit("Start the payments service");
@@ -29,14 +29,14 @@ fn history_of(commits: usize) -> TestRepo {
 
 /// From home: open the picker, and move from the first area past the
 /// other four onto the newest commit.
-const TO_THE_NEWEST: &str = "<Enter> j j j j j";
+pub(crate) const TO_THE_NEWEST: &str = "<Enter> j j j j j";
 
 /// The heading above the commits.
-const CHANGES: &str = "Change to practice on";
+pub(crate) const CHANGES: &str = "Change to practice on";
 
 /// The commit rows in view, without the focus marker, as [`git_log`]
 /// lists them.
-fn in_view(session: &Session) -> Vec<String> {
+pub(crate) fn in_view(session: &Session) -> Vec<String> {
     session
         .section(CHANGES)
         .into_iter()
@@ -48,7 +48,7 @@ fn in_view(session: &Session) -> Vec<String> {
 /// The rows of `repo`'s commits as the picker lists them unfocused, newest
 /// first: as [`git_log`] lists them, and the first commit, the oldest, saying
 /// so.
-fn listed(repo: &TestRepo) -> Vec<String> {
+pub(crate) fn listed(repo: &TestRepo) -> Vec<String> {
     let mut log = git_log(repo);
     if let Some(first) = log.last_mut() {
         first.push_str("  first commit");
@@ -56,10 +56,19 @@ fn listed(repo: &TestRepo) -> Vec<String> {
     log
 }
 
-/// The row under the commits, with Previous page, where the list is, and
-/// Next page, trimmed.
-fn paging(session: &Session) -> String {
+/// The row under the commits, with Previous page and Next page, trimmed.
+pub(crate) fn paging(session: &Session) -> String {
     session.row_with("Next page")
+}
+
+/// Where the change list is, as its heading says after "Change to practice
+/// on".
+pub(crate) fn position(session: &Session) -> String {
+    let heading = format!("{CHANGES} · ");
+    session
+        .row_with(&heading)
+        .trim_start_matches(&heading)
+        .to_owned()
 }
 
 #[test]
@@ -101,24 +110,18 @@ fn the_line_under_the_commits_says_which_are_in_view_with_a_plus_while_more_rema
     session.press("<Enter>");
 
     // The first 50 commits are read when the picker opens.
-    assert_eq!(
-        paging(&session),
-        "Previous page (first page)    Commits 1–18 of 50+    Next page"
-    );
+    assert_eq!(position(&session), "Commits 1–18 of 50+");
+    assert_eq!(paging(&session), "Previous page (first page)    Next page");
 
     // Each page reads the page after it too, so Next page knows there is
     // one.
     session.press("j j j j j <PageDown>");
-    assert_eq!(
-        paging(&session),
-        "Previous page    Commits 19–36 of 100+    Next page"
-    );
+    assert_eq!(position(&session), "Commits 19–36 of 100+");
+    assert_eq!(paging(&session), "Previous page    Next page");
 
     session.press("G");
-    assert_eq!(
-        paging(&session),
-        "Previous page    Commits 233–250 of 250    Next page (last page)"
-    );
+    assert_eq!(position(&session), "Commits 233–250 of 250");
+    assert_eq!(paging(&session), "Previous page    Next page (last page)");
 }
 
 #[test]
@@ -130,25 +133,19 @@ fn next_page_and_previous_page_page_the_commits_and_keep_focus_for_the_next_ente
     // From the first area, Shift+Tab wraps round to Review what will be
     // sent, and again to Next page.
     session.press("<Enter> <S-Tab> <S-Tab>");
-    assert_eq!(
-        paging(&session),
-        "Previous page (first page)    Commits 1–18 of 50+  > Next page"
-    );
+    assert_eq!(position(&session), "Commits 1–18 of 50+");
+    assert_eq!(paging(&session), "Previous page (first page)  > Next page");
 
     session.press("<Enter>");
     assert_eq!(in_view(&session), log[18..36]);
-    assert_eq!(
-        paging(&session),
-        "Previous page    Commits 19–36 of 100+  > Next page"
-    );
+    assert_eq!(position(&session), "Commits 19–36 of 100+");
+    assert_eq!(paging(&session), "Previous page  > Next page");
     session.press("<Enter>");
     assert_eq!(in_view(&session), log[36..54]);
 
     session.press("<S-Tab>");
-    assert_eq!(
-        paging(&session),
-        "> Previous page    Commits 37–54 of 100+    Next page"
-    );
+    assert_eq!(position(&session), "Commits 37–54 of 100+");
+    assert_eq!(paging(&session), "> Previous page    Next page");
     session.press("<Space>");
     assert_eq!(in_view(&session), log[18..36]);
 
@@ -157,10 +154,8 @@ fn next_page_and_previous_page_page_the_commits_and_keep_focus_for_the_next_ente
     session.press("<S-Tab>");
     assert_eq!(focused(&session), log[35]);
     session.press("<Tab>");
-    assert_eq!(
-        paging(&session),
-        "> Previous page    Commits 19–36 of 100+    Next page"
-    );
+    assert_eq!(position(&session), "Commits 19–36 of 100+");
+    assert_eq!(paging(&session), "> Previous page    Next page");
 }
 
 #[test]
@@ -169,19 +164,18 @@ fn previous_page_and_next_page_are_disabled_on_the_first_and_last_page() {
     let log = listed(&repo);
     let mut session = started_in(repo.root(), 120, 32);
     session.press("<Enter> <S-Tab> <S-Tab> <S-Tab>");
+    assert_eq!(position(&session), "Commits 1–18 of 50+");
     assert_eq!(
         paging(&session),
-        "> Previous page (first page)    Commits 1–18 of 50+    Next page"
+        "> Previous page (first page)    Next page"
     );
     session.press("<Enter>");
     assert_eq!(in_view(&session), log[..18], "nothing moves");
 
     session.press("G");
     session.press("<Tab> <Tab>");
-    assert_eq!(
-        paging(&session),
-        "Previous page    Commits 233–250 of 250  > Next page (last page)"
-    );
+    assert_eq!(position(&session), "Commits 233–250 of 250");
+    assert_eq!(paging(&session), "Previous page  > Next page (last page)");
     session.press("<Enter>");
     assert_eq!(in_view(&session), log[232..], "nothing moves");
 }
@@ -248,10 +242,8 @@ fn a_tall_window_shows_a_whole_page_as_the_picker_opens_and_as_it_grows() {
     let mut session = started_in(repo.root(), 120, 80);
     session.press("<Enter>");
     assert_eq!(in_view(&session), log[..66]);
-    assert_eq!(
-        paging(&session),
-        "Previous page (first page)    Commits 1–66 of 150+    Next page"
-    );
+    assert_eq!(position(&session), "Commits 1–66 of 150+");
+    assert_eq!(paging(&session), "Previous page (first page)    Next page");
 
     // Paged near the end of what is read, then made taller, the list stays
     // where it was.
@@ -322,10 +314,11 @@ fn capital_g_reads_at_most_a_thousand_more_commits_before_going_to_the_oldest_re
     session.press("G");
     assert_eq!(focused(&session), log[1_049]);
     assert_eq!(
-        paging(&session),
-        "Previous page    Commits 1,033–1,050 of 1,050+    Next page",
+        position(&session),
+        "Commits 1,033–1,050 of 1,050+",
         "focus is on the oldest commit read"
     );
+    assert_eq!(paging(&session), "Previous page    Next page");
 
     // Moving past it reads further, as `j` always has.
     session.press("j");
@@ -333,10 +326,8 @@ fn capital_g_reads_at_most_a_thousand_more_commits_before_going_to_the_oldest_re
 
     session.press("G");
     assert_eq!(focused(&session), log[1_199]);
-    assert_eq!(
-        paging(&session),
-        "Previous page    Commits 1,183–1,200 of 1,200    Next page (last page)"
-    );
+    assert_eq!(position(&session), "Commits 1,183–1,200 of 1,200");
+    assert_eq!(paging(&session), "Previous page    Next page (last page)");
 }
 
 #[test]
@@ -425,10 +416,8 @@ fn the_showcase_project_pages_its_changes_too() {
     let mut session = Session::plain(80, 18);
     // Past the five areas, onto the first change.
     session.press("<Enter> j j j j j");
-    assert_eq!(
-        paging(&session),
-        "Previous page (first page)    Changes 1–5 of 10    Next page"
-    );
+    assert_eq!(position(&session), "Changes 1–5 of 10");
+    assert_eq!(paging(&session), "Previous page (first page)    Next page");
 
     session.press("<PageDown>");
     assert!(
@@ -438,10 +427,8 @@ fn the_showcase_project_pages_its_changes_too() {
         "{}",
         session.text()
     );
-    assert_eq!(
-        paging(&session),
-        "Previous page    Changes 6–10 of 10    Next page (last page)"
-    );
+    assert_eq!(position(&session), "Changes 6–10 of 10");
+    assert_eq!(paging(&session), "Previous page    Next page (last page)");
     session.press("g g");
     assert!(
         session
@@ -481,10 +468,8 @@ fn on_the_showcase_project_page_up_half_pages_capital_g_and_the_controls_work_to
 
     // Tab out to Next page, and Enter shows the last page.
     session.press("<Tab> <Tab> <Enter>");
-    assert_eq!(
-        paging(&session),
-        "Previous page    Changes 6–10 of 10  > Next page (last page)"
-    );
+    assert_eq!(position(&session), "Changes 6–10 of 10");
+    assert_eq!(paging(&session), "Previous page  > Next page (last page)");
 }
 
 #[test]

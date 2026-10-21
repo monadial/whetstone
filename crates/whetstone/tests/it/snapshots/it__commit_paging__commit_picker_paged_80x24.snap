@@ -13,7 +13,7 @@ Buffer {
         "    (x) Observability   How you can tell what the work is doing and why         ",
         "    (x) Scalability     How the work holds up as use and data grow              ",
         "    (x) System design   How the parts fit together, and why this way            ",
-        "  Change to practice on                                                         ",
+        "  Change to practice on · Commits 21–30 of 50+                                  ",
         "    ( ) c2997a6  Bump the counter to 229                                        ",
         "    ( ) ac269bf  Bump the counter to 228                                        ",
         "    (x) 5ddb219  Bump the counter to 227                                        ",
@@ -24,7 +24,7 @@ Buffer {
         "    ( ) 7554e66  Bump the counter to 222                                        ",
         "    ( ) 22fef0e  Bump the counter to 221                                        ",
         "    ( ) 2f3fcab  Bump the counter to 220                                        ",
-        "    Previous page    Commits 21–30 of 50+  > Next page                          ",
+        "    Previous page  > Next page                                                  ",
         "    Review what will be sent                                                    ",
         "                                                                                ",
         "  ? keys  : actions  Space toggle  Enter open  PgDn/Up page  / search  q back   ",
@@ -34,7 +34,7 @@ Buffer {
         x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 2, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
         x: 22, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
-        x: 43, y: 19, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
-        x: 54, y: 19, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 19, y: 19, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 30, y: 19, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
     ]
 }

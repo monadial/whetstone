@@ -389,6 +389,7 @@ impl App {
                     screen.finish_job(finished.id, output);
                     screen.keep_record(self.store.as_mut());
                     screen.start_jobs(&mut self.jobs);
+                    self.fit();
                 } else {
                     // The screen that started it has closed, so its result
                     // is for nothing that is open.
@@ -475,6 +476,7 @@ impl App {
         let screen = self.screens.current_mut();
         if screen.input() == Input::Text {
             screen.paste(text);
+            self.fit();
         }
     }
 
@@ -562,10 +564,13 @@ impl App {
         area
     }
 
-    /// Gets the current screen ready to be drawn at the current size.
+    /// Gets the current screen ready to be drawn at the current size, and
+    /// starts any job that needs.
     fn fit(&mut self) {
         let area = self.screen_area();
-        self.screens.current_mut().fit(area);
+        let screen = self.screens.current_mut();
+        screen.fit(area);
+        screen.start_jobs(&mut self.jobs);
     }
 
     /// Draws the current screen. Drawing never changes state.

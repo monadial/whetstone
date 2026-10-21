@@ -470,10 +470,17 @@ impl Session {
             .collect()
     }
 
-    /// The rows under `heading`, trimmed, up to the next blank row.
+    /// The rows under `heading`, trimmed, up to the next blank row. The
+    /// heading may say more after it, past a " · ".
     pub(crate) fn section(&self, heading: &str) -> Vec<String> {
         let rows = self.rows();
-        let start = rows.iter().position(|row| row.trim() == heading);
+        let start = rows.iter().position(|row| {
+            let row = row.trim();
+            row == heading
+                || row
+                    .strip_prefix(heading)
+                    .is_some_and(|rest| rest.starts_with(" · "))
+        });
         assert!(start.is_some(), "no {heading:?} heading:\n{}", self.text());
         rows.iter()
             .skip(start.unwrap_or_default() + 1)

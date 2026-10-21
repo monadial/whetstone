@@ -1342,7 +1342,9 @@ impl View for Practice {
                     }
                 }
             }
-            JobOutput::ConnectedCode { .. } | JobOutput::VoteSaved(_) => {}
+            JobOutput::ConnectedCode { .. }
+            | JobOutput::VoteSaved(_)
+            | JobOutput::CommitsRead(_) => {}
         }
     }
 
