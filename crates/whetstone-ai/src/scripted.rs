@@ -2,18 +2,20 @@
 //! at once, and every request is logged exactly as it was asked.
 //!
 //! The generator's writing is scripted per area, and Jev's question check
-//! per candidate, by its stem. Each reply scripted for one of them answers
-//! one request, in the order scripted, so a test scripts a Retry's reply as
-//! a second one. A request nothing was scripted for is a mistake in the
-//! test, which panics as the request is made.
+//! per candidate, by its stem. A check is scripted as exact answers, or as
+//! answers that pass the show rule for whichever candidate is asked, with
+//! any checks a test answers otherwise. Each reply scripted for one of them
+//! answers one request, in the order scripted, so a test scripts a Retry's
+//! reply as a second one. A request nothing was scripted for is a mistake
+//! in the test, which panics as the request is made.
 
 use std::collections::{HashMap, VecDeque};
 use std::future;
 use std::sync::{Mutex, MutexGuard};
 
 use whetstone_core::{
-    Area, AreaId, Candidate, Evidence, ModelId, Provenance, QuestionCheckAnswers, Role,
-    WrittenCandidate,
+    Area, AreaId, Candidate, CandidateCheck, Evidence, ModelId, Probability, Provenance,
+    QuestionCheckAnswers, Role, WrittenCandidate,
 };
 
 use crate::port::{Ai, CandidateCount, Pending, Reply, RequestFailure};
@@ -30,8 +32,18 @@ struct Script {
     /// The generator's next replies for each area.
     writes: HashMap<AreaId, VecDeque<Result<Vec<WrittenCandidate>, RequestFailure>>>,
     /// Jev's next replies for each candidate, by its stem.
-    checks: HashMap<String, VecDeque<Result<QuestionCheckAnswers, RequestFailure>>>,
+    checks: HashMap<String, VecDeque<CheckReply>>,
     asked: Vec<Asked>,
+}
+
+/// One scripted reply to a question check.
+#[derive(Debug)]
+enum CheckReply {
+    /// These answers, or this failure, whatever the candidate.
+    Exactly(Result<QuestionCheckAnswers, RequestFailure>),
+    /// Answers that pass the show rule for the candidate asked, but for
+    /// these, which answer their checks instead.
+    PassingExcept(Vec<(CandidateCheck, Probability)>),
 }
 
 /// One request the scripted AI was asked, exactly as asked.
@@ -78,8 +90,33 @@ impl ScriptedAi {
     }
 
     /// Scripts Jev's reply to the next request to check the candidate whose
-    /// stem is `stem`: these answers, or a failure.
+    /// stem is `stem`: exactly these answers, or a failure.
     pub fn on_check(&self, stem: &str, reply: Result<QuestionCheckAnswers, RequestFailure>) {
+        self.script_check(stem, CheckReply::Exactly(reply));
+    }
+
+    /// Scripts Jev's reply to the next request to check the candidate whose
+    /// stem is `stem` as answers the show rule passes, made for the
+    /// candidate asked: every one of its checks clear yes, at 0.9, but the
+    /// options that aren't its answer key clear no, at 0.1.
+    pub fn on_check_passing(&self, stem: &str) {
+        self.on_check_passing_except(stem, []);
+    }
+
+    /// The same as [`on_check_passing`](Self::on_check_passing), but Jev
+    /// gives `answers` to their checks instead.
+    pub fn on_check_passing_except(
+        &self,
+        stem: &str,
+        answers: impl IntoIterator<Item = (CandidateCheck, Probability)>,
+    ) {
+        self.script_check(
+            stem,
+            CheckReply::PassingExcept(answers.into_iter().collect()),
+        );
+    }
+
+    fn script_check(&self, stem: &str, reply: CheckReply) {
         self.script()
             .checks
             .entry(stem.to_owned())
@@ -145,7 +182,30 @@ impl Ai for ScriptedAi {
             .get_mut(candidate.stem())
             .and_then(VecDeque::pop_front)
             .unwrap_or_else(|| panic!("no check scripted for {:?}", candidate.stem()));
-        reply_at_once(reply, Role::Jev, JEV_MODEL)
+        reply_at_once(reply.into_reply(candidate), Role::Jev, JEV_MODEL)
+    }
+}
+
+impl CheckReply {
+    /// The reply to the question check of `candidate`.
+    fn into_reply(self, candidate: &Candidate) -> Result<QuestionCheckAnswers, RequestFailure> {
+        match self {
+            Self::Exactly(reply) => reply,
+            Self::PassingExcept(answers) => {
+                let passing = candidate.checks().into_iter().map(|check| {
+                    let answer = match check {
+                        CandidateCheck::Option(letter) if letter != candidate.answer_key() => 0.1,
+                        _ => 0.9,
+                    };
+                    (
+                        check,
+                        Probability::new(answer).expect("0.1 and 0.9 are probabilities"),
+                    )
+                });
+                // A check answered twice keeps its last answer.
+                Ok(QuestionCheckAnswers::new(passing.chain(answers)))
+            }
+        }
     }
 }
 
@@ -223,8 +283,15 @@ mod tests {
         }
     }
 
-    /// A well-formed candidate about the first area, asking `stem`.
+    /// A well-formed candidate about the first area, asking `stem`, whose
+    /// answer key is A and whose rubric has one criterion.
     fn candidate(stem: &str) -> Candidate {
+        candidate_keyed(stem, "A", 1)
+    }
+
+    /// A well-formed candidate about the first area, asking `stem`, whose
+    /// answer key is `answer_key` and whose rubric has `criteria` criteria.
+    fn candidate_keyed(stem: &str, answer_key: &str, criteria: usize) -> Candidate {
         let text = str::to_owned;
         let written = WrittenCandidate {
             options: ["A", "B", "C"]
@@ -234,12 +301,16 @@ mod tests {
                     rationale: text("Why"),
                 })
                 .into(),
+            answer_key: text(answer_key),
             why_it_matters: text("It matters"),
-            rubric: vec![WrittenCriterion {
-                statement: text("Names the retry"),
-                met: text("It does"),
-                not_met: text("It doesn't"),
-            }],
+            rubric: vec![
+                WrittenCriterion {
+                    statement: text("Names the retry"),
+                    met: text("It does"),
+                    not_met: text("It doesn't"),
+                };
+                criteria
+            ],
             hint: text("Look at pay.rs"),
             citations: vec![WrittenCitation {
                 path: text("src/pay.rs"),
@@ -328,6 +399,72 @@ mod tests {
                 evidence: evidence(),
                 candidate: candidate(stem),
             })
+        );
+    }
+
+    #[test]
+    fn a_check_scripted_to_pass_answers_every_check_of_the_candidate_asked_but_those_given() {
+        use CandidateCheck::*;
+        let ai = ScriptedAi::new();
+        let unclear = Probability::new(0.5).expect("from 0 to 1");
+        ai.on_check_passing("Why retry?");
+        ai.on_check_passing_except(
+            "Why retry?",
+            [(NeedsChange, unclear), (Option(OptionLetter::C), unclear)],
+        );
+        let candidate = candidate_keyed("Why retry?", "B", 2);
+
+        let passing = at_once(ai.check_question(&evidence(), &candidate));
+        let except = at_once(ai.check_question(&evidence(), &candidate));
+
+        let answers = |answers: &[(CandidateCheck, f64)]| {
+            QuestionCheckAnswers::new(
+                answers
+                    .iter()
+                    .map(|&(check, value)| (check, Probability::new(value).expect("from 0 to 1"))),
+            )
+        };
+        assert_eq!(
+            passing.map(|reply| reply.content),
+            Ok(answers(&[
+                (Answerable, 0.9),
+                (AboutArea, 0.9),
+                (NeedsChange, 0.9),
+                (NoGiveaway, 0.9),
+                (Criterion(0), 0.9),
+                (Criterion(1), 0.9),
+                (Option(OptionLetter::A), 0.1),
+                (Option(OptionLetter::B), 0.9),
+                (Option(OptionLetter::C), 0.1),
+                (Rationale(OptionLetter::A), 0.9),
+                (Rationale(OptionLetter::B), 0.9),
+                (Rationale(OptionLetter::C), 0.9),
+                (WhyItMatters, 0.9),
+                (HintPointsToEvidence, 0.9),
+                (HintHidesAnswerKey, 0.9),
+            ])),
+            "every check clear yes, but the options that aren't the answer key clear no"
+        );
+        assert_eq!(
+            except.map(|reply| reply.content),
+            Ok(answers(&[
+                (Answerable, 0.9),
+                (AboutArea, 0.9),
+                (NeedsChange, 0.5),
+                (NoGiveaway, 0.9),
+                (Criterion(0), 0.9),
+                (Criterion(1), 0.9),
+                (Option(OptionLetter::A), 0.1),
+                (Option(OptionLetter::B), 0.9),
+                (Option(OptionLetter::C), 0.5),
+                (Rationale(OptionLetter::A), 0.9),
+                (Rationale(OptionLetter::B), 0.9),
+                (Rationale(OptionLetter::C), 0.9),
+                (WhyItMatters, 0.9),
+                (HintPointsToEvidence, 0.9),
+                (HintHidesAnswerKey, 0.9),
+            ])),
+            "the same, but the answers given"
         );
     }
 
