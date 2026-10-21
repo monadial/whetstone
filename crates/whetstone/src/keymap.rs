@@ -60,6 +60,10 @@ pub(crate) enum Command {
     Palette,
     /// Go to a screen.
     Go(Route),
+    /// Go to a screen in place of the current one, which closes, so that
+    /// going back from it skips the current one: Send on the outbound
+    /// review opens Practice this way, as the approval is given.
+    Replace(Route),
     /// Start typing a search.
     Search,
     /// Move to the next match of the last search.

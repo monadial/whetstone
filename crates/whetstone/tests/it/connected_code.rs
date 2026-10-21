@@ -482,7 +482,7 @@ fn a_secret_in_a_caller_blocks_send_until_it_is_left_out_or_marked_as_not_a_secr
     let repo = with_a_secret_in_a_caller();
     let mut session = started_in(repo.root(), 120, 60);
     session.press(REVIEW_NEWEST);
-    assert_eq!(send(&session), "Send (arrives with Jev)");
+    assert_eq!(send(&session), "Send (needs OPENROUTER_API_KEY)");
 
     session.settle();
 
@@ -505,14 +505,14 @@ fn a_secret_in_a_caller_blocks_send_until_it_is_left_out_or_marked_as_not_a_secr
     );
     session.press("<Space>");
     assert_eq!(connected_rows(&session)[1][3], "left out by you");
-    assert_eq!(send(&session), "Send (arrives with Jev)");
+    assert_eq!(send(&session), "Send (needs OPENROUTER_API_KEY)");
 
     // Bring it back from its row, then mark the match as not a secret.
     session.press("k k k k k k <Space>");
     assert_eq!(send(&session), "Send (resolve the possible secrets)");
     session.press("k k k <S-Tab> k k <Space>");
     assert_eq!(session.section("Secret check")[2], "> (x) Not a secret");
-    assert_eq!(send(&session), "Send (arrives with Jev)");
+    assert_eq!(send(&session), "Send (needs OPENROUTER_API_KEY)");
 }
 
 #[test]
@@ -608,7 +608,7 @@ fn when_the_analysis_fails_the_review_says_connected_code_is_not_available() {
         connected_code(&session),
         ["Connected code isn't available for this change: the analysis failed."]
     );
-    assert_eq!(send(&session), "Send (arrives with Jev)");
+    assert_eq!(send(&session), "Send (needs OPENROUTER_API_KEY)");
 }
 
 #[test]

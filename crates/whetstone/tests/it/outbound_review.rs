@@ -370,7 +370,7 @@ fn leaving_out_the_file_or_marking_the_match_as_not_a_secret_resolves_a_finding(
 
     session.press("k <Space>");
     assert_eq!(session.section("Secret check")[1], "> (x) Not a secret");
-    assert_eq!(send(&session), "Send (arrives with Jev)");
+    assert_eq!(send(&session), "Send (needs OPENROUTER_API_KEY)");
 
     session.press("<Space>");
     assert_eq!(session.section("Secret check")[1], "> ( ) Not a secret");
@@ -586,7 +586,7 @@ fn send_says_why_it_is_disabled_secrets_first_then_size_then_nothing_to_send_the
     assert_eq!(send(&session), "Send (nothing left to send)");
 
     session.press("<Space>");
-    assert_eq!(send(&session), "Send (arrives with Jev)");
+    assert_eq!(send(&session), "Send (needs OPENROUTER_API_KEY)");
 }
 
 /// The rows of the reader's text, trimmed, under its title.

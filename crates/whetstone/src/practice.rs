@@ -2,7 +2,11 @@
 //!
 //! On the showcase project, Generate questions opens it. Preparing
 //! questions finds the change's connected code the way the outbound review
-//! finds a commit's, and prepares the evidence from it. Then Jev's
+//! finds a commit's, and prepares the evidence from it. On the learner's
+//! repository, Send on the outbound review opens it in the review's place
+//! with the evidence the learner approved there, and every request carries
+//! exactly that evidence: a Retry or an Ask anyway needs no new review. Then
+//! Jev's
 //! relevance gate decides, in one call, which chosen areas the change is
 //! worth asking about: an unclear verdict lets an area through, and only a
 //! clear no drops it. The generator writes candidates, one request per area
@@ -34,7 +38,7 @@ use ratatui::text::Line;
 use ratatui::widgets::{List, Paragraph};
 use whetstone_ai::{Ai, CandidateCount, Pending, Reply, RequestFailure};
 use whetstone_core::{
-    Area, AreaId, AssessmentPolicy, Band, Candidate, CandidateCheck, CandidateId, Change,
+    Area, AreaId, AssessmentPolicy, Band, Candidate, CandidateCheck, CandidateId, Change, CommitId,
     ConnectedCodeLimit, Connections, ConnectionsState, Evidence, ExcludePatterns, Job, Probability,
     QuestionCheckAnswers, QuestionCount, RepositoryConfig, ReviewChoices, Withheld,
     WrittenCandidate, pick, plain_checks, show_rule,
@@ -363,6 +367,49 @@ impl Practice {
         })
     }
 
+    /// Practice on the commit `id` from the learner's repository, which is
+    /// `change`, with `evidence`, exactly as the learner approved it in the
+    /// outbound review, about the areas it holds, if Practice can ask Jev
+    /// and the generator in `context`. Jev's relevance gate is asked first.
+    pub(crate) fn on_repository(
+        id: CommitId,
+        change: Change,
+        evidence: Evidence,
+        context: &Context<'_>,
+    ) -> Option<Self> {
+        let ai = Arc::clone(context.ai?);
+        tracing::info!(
+            commit = id.full(),
+            areas = evidence.areas().len(),
+            files = evidence
+                .files()
+                .iter()
+                .filter(|file| file.sent().is_some())
+                .count(),
+            connections = evidence
+                .connections()
+                .iter()
+                .filter(|connection| connection.sent().is_some())
+                .count(),
+            bytes = evidence.size(),
+            "opened Preparing questions on a commit, with the evidence approved"
+        );
+        Some(Self {
+            change_ref: ChangeRef::Commit(id),
+            change,
+            areas: evidence.areas().to_vec(),
+            count: context.settings.questions.value,
+            ai,
+            connected_code_limit: evidence.connected_code_limit(),
+            time_limit: context.time_limit,
+            evidence: Some(evidence),
+            gate: Gate::Undecided,
+            stage: Stage::CheckingAreas(Request::Unsent),
+            waiting: Waiting::new(),
+            focus: Position::default(),
+        })
+    }
+
     /// Ends finding connected code with `connections`, or why there are
     /// none, and prepares the evidence from them, for the generator to
     /// write from.
@@ -630,23 +677,28 @@ impl Practice {
             .unwrap_or(Control::Cancel)
     }
 
-    /// Where finding connected code stands.
+    /// Where finding connected code stands. Evidence still finding it was
+    /// sent from the outbound review before it was found, so it is passed
+    /// over, as when it isn't available.
     fn finding_connected_code(&self) -> StageState {
         if let Stage::FindingConnectedCode(_) = self.stage {
             return StageState::Current;
         }
         match self.evidence.as_ref().map(Evidence::connections_state) {
-            None | Some(ConnectionsState::Finding) => StageState::Current,
+            None => StageState::Current,
             Some(ConnectionsState::Found | ConnectionsState::NoneFound) => StageState::Done,
-            Some(ConnectionsState::TookTooLong | ConnectionsState::AnalysisFailed) => {
-                StageState::Skipped
-            }
+            Some(
+                ConnectionsState::Finding
+                | ConnectionsState::TookTooLong
+                | ConnectionsState::AnalysisFailed,
+            ) => StageState::Skipped,
         }
     }
 
     /// Practice's stages as it stands, drawn with `theme`, with the current
-    /// stage's spinner at its frame for `ticks`. The showcase project has no
-    /// outbound review.
+    /// stage's spinner at its frame for `ticks`. On the learner's repository
+    /// the outbound review is done, as Send started Practice; the showcase
+    /// project has none.
     fn stage_row(&self, theme: &Theme, ticks: usize) -> StageRow<'static> {
         let finding = self.finding_connected_code();
         let failed = self.failure().is_some();
@@ -683,7 +735,10 @@ impl Practice {
                     PracticeStage::ReadingTheChange | PracticeStage::PreparingEvidence => {
                         StageState::Done
                     }
-                    PracticeStage::OutboundReview => return None,
+                    PracticeStage::OutboundReview => match self.change_ref {
+                        ChangeRef::Showcase(_) => return None,
+                        ChangeRef::Commit(_) => StageState::Done,
+                    },
                     PracticeStage::CheckingAreas => gate,
                     PracticeStage::WritingQuestions => writing,
                     PracticeStage::CheckingQuestions => checking,

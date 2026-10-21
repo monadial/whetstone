@@ -146,7 +146,7 @@ const LEVELS: [ColorSupport; 4] = [
     ColorSupport::NoColor,
 ];
 
-const UNAVAILABLE: Option<&str> = Some("arrives with Jev");
+const UNAVAILABLE: Option<&str> = Some("needs OPENROUTER_API_KEY");
 
 /// Every state a control can be in.
 fn all_states() -> Vec<ControlState<'static>> {
@@ -248,7 +248,10 @@ fn without_colour_markers_and_attributes_show_focus_selection_and_disabled() {
                 disabled: UNAVAILABLE,
                 ..action
             },
-            vec![run("  ", none), run("Domain (arrives with Jev)", disabled)],
+            vec![
+                run("  ", none),
+                run("Domain (needs OPENROUTER_API_KEY)", disabled),
+            ],
         ),
         (
             ControlState {
@@ -258,7 +261,7 @@ fn without_colour_markers_and_attributes_show_focus_selection_and_disabled() {
             },
             vec![
                 run("> ", Modifier::BOLD),
-                run("Domain (arrives with Jev)", disabled),
+                run("Domain (needs OPENROUTER_API_KEY)", disabled),
             ],
         ),
     ] {

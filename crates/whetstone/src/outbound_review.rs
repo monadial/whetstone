@@ -17,6 +17,11 @@
 //! connected code as current until then. If the time limit runs out first,
 //! the review carries on without connected code, and stays that way while
 //! the job runs on and caches its graph for the commit's next review.
+//!
+//! Send, once the evidence can be sent and an `OpenRouter` key was found,
+//! starts Practice in the review's place, with exactly the evidence the
+//! review shows: what the learner approves. Going back from Practice
+//! returns to the picker, which keeps the choices for the change.
 
 use std::cell::RefCell;
 use std::mem;
@@ -43,10 +48,11 @@ use crate::focus::Position;
 use crate::job::{JobId, JobOutput, Jobs};
 use crate::keymap::{self, Binding, Command, Keymap, Press};
 use crate::palette::Action;
+use crate::practice::Practice;
 use crate::reader::{Reader, Section};
 use crate::stage_row::{PracticeStage, Stage, StageRow, StageState};
 use crate::theme::{ColorSupport, ControlKind, ControlState, Theme};
-use crate::view::{ARRIVES_WITH_JEV, Context, Reading, Route, View, comparison_label};
+use crate::view::{ChangeRef, Context, NEEDS_KEY, Reading, Route, View, comparison_label};
 
 /// The review's own keys.
 const KEYMAP: Keymap = &[
@@ -163,7 +169,11 @@ pub(crate) struct OutboundReview {
     lookup: Lookup,
     /// How long the review waits for its connected code, from when it opens.
     time_limit: Duration,
-    /// What the change, areas, patterns, connected code and choices make.
+    /// Whether Practice can ask Jev and the generator: whether an
+    /// `OpenRouter` key was found.
+    ai_available: bool,
+    /// What the change, areas, patterns, connected code and choices make:
+    /// exactly what Send sends.
     evidence: Evidence,
     focus: Position,
     /// The line at the top of the screen.
@@ -297,6 +307,7 @@ impl OutboundReview {
             choices,
             lookup,
             time_limit: context.time_limit,
+            ai_available: context.ai.is_some(),
             evidence,
             focus: Position::default(),
             top: 0,
@@ -443,15 +454,25 @@ impl OutboundReview {
         self.rebuild();
     }
 
-    /// Why Send is disabled: the evidence's reason, or else that it
-    /// arrives with Jev.
-    fn send_disabled(&self) -> &'static str {
+    /// Why Send is disabled, if it is: the evidence's reason, or else that
+    /// no `OpenRouter` key was found.
+    fn send_disabled(&self) -> Option<&'static str> {
         match self.evidence.unsendable() {
-            Some(Unsendable::UnresolvedFindings) => "resolve the possible secrets",
-            Some(Unsendable::TooLarge) => "over the size limit",
-            Some(Unsendable::NothingToSend) => "nothing left to send",
-            None => ARRIVES_WITH_JEV,
+            Some(Unsendable::UnresolvedFindings) => Some("resolve the possible secrets"),
+            Some(Unsendable::TooLarge) => Some("over the size limit"),
+            Some(Unsendable::NothingToSend) => Some("nothing left to send"),
+            None if self.ai_available => None,
+            None => Some(NEEDS_KEY),
         }
+    }
+
+    /// Send, unless it is disabled: Practice on the change, in the review's
+    /// place, with exactly the evidence the review shows.
+    fn send(&self) -> Option<Command> {
+        let practice = Route::Practice(ChangeRef::Commit(self.id));
+        self.send_disabled()
+            .is_none()
+            .then_some(Command::Replace(practice))
     }
 
     /// How the control `control` shows its focus.
@@ -512,7 +533,7 @@ impl OutboundReview {
                     StageState::Done
                 }
                 PracticeStage::OutboundReview => StageState::Current,
-                // Jev and the generator arrive with the AI Practice spec.
+                // Jev and the generator are asked once the learner sends.
                 PracticeStage::CheckingAreas
                 | PracticeStage::WritingQuestions
                 | PracticeStage::CheckingQuestions => StageState::Upcoming,
@@ -656,7 +677,7 @@ impl OutboundReview {
             theme.control(
                 "Send",
                 ControlState {
-                    disabled: Some(self.send_disabled()),
+                    disabled: self.send_disabled(),
                     ..self.state(Control::Send)
                 },
             ),
@@ -1204,11 +1225,17 @@ impl View for OutboundReview {
         );
     }
 
-    fn open(&self, route: Route, _context: &Context<'_>) -> Option<Box<dyn View>> {
+    fn open(&self, route: Route, context: &Context<'_>) -> Option<Box<dyn View>> {
         match route {
             Route::Read(reading) => self
                 .reader(reading)
                 .map(|reader| Box::new(reader) as Box<dyn View>),
+            Route::Practice(ChangeRef::Commit(id))
+                if id == self.id && self.send_disabled().is_none() =>
+            {
+                Practice::on_repository(id, self.change.clone(), self.evidence.clone(), context)
+                    .map(|practice| Box::new(practice) as Box<dyn View>)
+            }
             _ => None,
         }
     }
@@ -1217,6 +1244,7 @@ impl View for OutboundReview {
         let next = match command {
             Command::Activate | Command::Open => match self.focused() {
                 Control::Back => Some(Command::Back),
+                Control::Send => self.send(),
                 Control::Change if command == Command::Open => {
                     Some(Command::Go(Route::Read(Reading::Change)))
                 }
