@@ -84,7 +84,7 @@ use ratatui::Frame;
 use ratatui::crossterm::event::KeyCode;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, List, Padding, Paragraph};
+use ratatui::widgets::{Block, List, Padding, Paragraph, Wrap};
 use whetstone_ai::{ParagraphCheck, RequestFailure, WrittenParagraph};
 use whetstone_core::{
     Area, CandidateId, CriterionOutcome, Evidence, OptionLetter, Picked, Probability, Question,
@@ -1614,7 +1614,7 @@ impl Questions {
         let [text, _, editor, _, buttons] = Layout::vertical([
             Constraint::Max(rows(lines.len())),
             Constraint::Length(1),
-            Constraint::Length(editor_rows.max(EDITOR_ROWS)),
+            Constraint::Length(editor_rows.max(EDITOR_SQUEEZED)),
             Constraint::Length(1),
             Constraint::Length(rows(controls.len())),
         ])
@@ -1641,7 +1641,8 @@ impl Questions {
                 Paragraph::new(vec![
                     Line::styled(OPTIONAL_NOTE, theme.muted),
                     Line::styled("Press i to write your reasoning.", theme.muted),
-                ]),
+                ])
+                .wrap(Wrap { trim: true }),
                 inside,
             );
         } else {
@@ -1729,8 +1730,14 @@ fn packed(controls: Vec<Line<'static>>, width: usize) -> Vec<Line<'static>> {
     rows
 }
 
-/// The fewest rows the reasoning editor's box takes, its border included.
-const EDITOR_ROWS: u16 = 3;
+/// The fewest rows the reasoning editor's box takes, its border included:
+/// room for the empty editor's two lines, that reasoning is optional and
+/// how to write it.
+const EDITOR_ROWS: u16 = 4;
+
+/// The rows the reasoning editor's box keeps, its border included, when the
+/// text above it leaves it no more: one row inside.
+const EDITOR_SQUEEZED: u16 = 3;
 
 /// The rows the reasoning editor's box starts at, its border included,
 /// while it hasn't focus and the screen has room.

@@ -19,12 +19,12 @@ Buffer {
         "    ( ) C  Opti│ drafts are kept only while Practice is open.   │               ",
         "               │                                                │               ",
         "  ┌   Your reas│ > Keep answering                               │────────────┐  ",
-        "  │ Press i to │   Go back, and lose the draft                  │            │  ",
-        "  │            └ Enter answer  Esc stay ────────────────────────┘            │  ",
+        "  │ Optional: e│   Go back, and lose the draft                  │            │  ",
+        "  │ Press i to └ Enter answer  Esc stay ────────────────────────┘            │  ",
         "  │                                                                          │  ",
         "  └──────────────────────────────────────────────────────────────────────────┘  ",
         "                                                                                ",
-        "    Submit response (write your reasoning)                                      ",
+        "    Submit response                                                             ",
         "    Inspect source                                                              ",
         "    Hint    Show answer    Skip    Cannot answer from this context    Report    ",
         "  ? keys  : actions  a/b/c choose  i write  h hint  z code  q back              ",
@@ -42,7 +42,5 @@ Buffer {
         x: 15, y: 10, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 17, y: 13, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
         x: 33, y: 13, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
-        x: 4, y: 19, fg: Reset, bg: Reset, underline: Reset, modifier: DIM | ITALIC,
-        x: 42, y: 19, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
     ]
 }

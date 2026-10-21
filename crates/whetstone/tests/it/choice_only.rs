@@ -127,18 +127,21 @@ fn submit_is_enabled_once_an_option_is_chosen_with_reasoning_optional() {
     let ai = writing();
     let mut session = answering(&ai, 80, 24);
     assert_eq!(
-        session.row_with("Submit response"),
+        session.question().row_with("Submit response"),
         "Submit response (choose an option)"
     );
     assert_eq!(reasoning(&session)[..2], EMPTY_EDITOR);
 
     session.press("b");
-    assert_eq!(session.row_with("Submit response"), "Submit response");
+    assert_eq!(
+        session.question().row_with("Submit response"),
+        "Submit response"
+    );
     assert_eq!(reasoning(&session)[..2], EMPTY_EDITOR, "the note stays");
 
     session.press("i <Tab> <Enter>");
     assert_eq!(
-        session.section("Choice · Not supported"),
+        session.question().section("Choice · Not supported"),
         ["Jev doesn't support B, the option you chose. It supports A, the answer key."]
     );
     assert_eq!(
@@ -157,32 +160,37 @@ fn a_choice_alone_shows_its_outcome_and_the_rubric_and_asks_jev_nothing() {
     session.settle();
 
     assert_eq!(
-        session.section("Choice · Not supported"),
-        ["Jev doesn't support B, the option you chose. It supports A, the answer key."]
+        session.question().section_text("Choice · Not supported"),
+        "Jev doesn't support B, the option you chose. It supports A, the answer key."
     );
     assert_eq!(
-        session.section("You chose B: Option B of the question"),
+        session
+            .question()
+            .section("You chose B: Option B of the question"),
         ["The rationale for B, which stays hidden"]
     );
     assert_eq!(
-        session.section("The answer key is A: Option A of the question"),
+        session
+            .question()
+            .section("The answer key is A: Option A of the question"),
         ["The rationale for A, which stays hidden"]
     );
     assert_eq!(
-        session.section("Why it matters"),
+        session.question().section("Why it matters"),
         ["Why it matters, which stays hidden"]
     );
-    assert_eq!(session.section("Cited").len(), 1);
+    assert_eq!(session.question().section("Cited").len(), 1);
     assert_eq!(
-        session.row_with("Reasoning not written"),
+        session.question().row_with("Reasoning not written"),
         "Reasoning not written: not assessed"
     );
     assert_eq!(
-        session.section("What a full answer covers"),
+        session.question().section_text("What a full answer covers"),
         [
             "Criterion 1 · Names the key the retry reuses",
             "Criterion 2 · Says why the retry can't charge twice",
         ]
+        .join(" ")
     );
     let text = session.text();
     for absent in [
@@ -217,11 +225,11 @@ fn reasoning_of_only_whitespace_counts_as_not_written() {
     session.settle();
 
     assert_eq!(
-        session.section("Choice · Supported"),
+        session.question().section("Choice · Supported"),
         ["Jev supports A, the option you chose."]
     );
     assert_eq!(
-        session.row_with("Reasoning not written"),
+        session.question().row_with("Reasoning not written"),
         "Reasoning not written: not assessed"
     );
     assert_eq!(about_responses(&ai), []);
@@ -238,17 +246,19 @@ fn with_reasoning_jev_assesses_it_as_before() {
 
     submit(&mut session, "a", "Retries reuse the key.");
     assert_eq!(
-        session.section("Reasoning · Awaiting evaluation"),
-        ["Jev is assessing it against each criterion. Your response is submitted."]
+        session
+            .question()
+            .section_text("Reasoning · Awaiting evaluation"),
+        "Jev is assessing it against each criterion. Your response is submitted."
     );
     session.settle();
 
     assert_eq!(
-        session.section("Your reasoning"),
+        session.question().section("Your reasoning"),
         ["Retries reuse the key."]
     );
     assert_eq!(
-        session.section("Reasoning"),
+        session.question().section("Reasoning"),
         [
             "Met · Names the key the retry reuses",
             "Met · Says why the retry can't charge twice",
@@ -272,7 +282,7 @@ fn with_reasoning_jev_assesses_it_as_before() {
 
 /// The number the summary counts beside `label`.
 fn count(session: &Session, label: &str) -> usize {
-    let row = session.row_with(label);
+    let row = session.question().row_with(label);
     let number = row.strip_prefix(label).map(str::trim_start);
     assert!(
         number.is_some(),
@@ -304,7 +314,7 @@ fn the_summary_counts_answers_with_reasoning_and_choices_only_separately() {
     assert_eq!(count(&session, "Skipped"), 0);
     assert_eq!(count(&session, "Awaiting evaluation"), 0);
     assert_eq!(
-        session.section("Question 1 · Domain"),
+        session.question().section("Question 1 · Domain"),
         [
             FIRST,
             "Choice · Not supported",
@@ -312,7 +322,7 @@ fn the_summary_counts_answers_with_reasoning_and_choices_only_separately() {
         ]
     );
     assert_eq!(
-        session.section("Question 2 · Domain"),
+        session.question().section("Question 2 · Domain"),
         [
             SECOND,
             "Choice · Supported",
@@ -320,7 +330,7 @@ fn the_summary_counts_answers_with_reasoning_and_choices_only_separately() {
         ]
     );
     assert_eq!(
-        session.section("Question 3 · Domain"),
+        session.question().section("Question 3 · Domain"),
         [
             THIRD,
             "Choice · Supported",
@@ -328,7 +338,7 @@ fn the_summary_counts_answers_with_reasoning_and_choices_only_separately() {
         ]
     );
     assert_eq!(
-        session.section("Question 4 · Domain"),
+        session.question().section("Question 4 · Domain"),
         [
             "Domain question 4?",
             "Choice · Not supported",
@@ -352,16 +362,16 @@ fn an_assisted_choice_alone_is_marked_assisted_and_sends_nothing_more() {
     session.settle();
 
     assert_eq!(
-        session.section("Choice · Supported · Assisted"),
+        session.question().section("Choice · Supported · Assisted"),
         ["Jev supports A, the option you chose."]
     );
     assert_eq!(
-        session.row_with("Reasoning not written"),
+        session.question().row_with("Reasoning not written"),
         "Reasoning not written: not assessed"
     );
     activate(&mut session, "Inspect Jev's answers");
     assert_eq!(
-        session.section("Reasoning"),
+        session.question().section("Reasoning"),
         ["Reasoning not written: Jev wasn't asked about it."]
     );
     session.press("q");
@@ -371,7 +381,7 @@ fn an_assisted_choice_alone_is_marked_assisted_and_sends_nothing_more() {
     assert_eq!(count(&session, "Choice only"), 1);
     assert_eq!(count(&session, "Assisted"), 1);
     assert_eq!(
-        session.section("Question 1 · Domain · Assisted"),
+        session.question().section("Question 1 · Domain · Assisted"),
         [
             FIRST,
             "Choice · Supported · Assisted",
@@ -430,7 +440,7 @@ fn choice_only_feedback_scrolled_to_the_rubric_at_80x24() {
     session.press("G");
 
     assert_eq!(
-        session.section("What a full answer covers"),
+        session.question().section("What a full answer covers"),
         [
             "Criterion 1 · Names the key the retry reuses",
             "Criterion 2 · Says why the retry can't charge twice",
