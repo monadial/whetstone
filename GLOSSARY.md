@@ -103,11 +103,11 @@ Jev's decision, for each chosen area, whether a change is worth asking about.
 Jev's check of a generated question before it is shown, including its option ratings; only questions that pass are shown.
 _Avoid_: question review, which clashes with **Needs review** and **Outbound review**.
 
-**Giveaway check**:
-The part of a question check that asks whether a question's stem and options give its answer away; the assessment policy gives it cut-offs of its own.
-
 **Option rating**:
 Supported, Not supported or Needs review for one option of a question, decided in its question check before the learner sees it.
+
+**Giveaway check**:
+The part of a question check that asks whether a question's stem and options give its answer away; the assessment policy gives it cut-offs of its own.
 
 ## AI roles
 
