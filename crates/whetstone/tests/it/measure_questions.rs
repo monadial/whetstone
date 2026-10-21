@@ -11,7 +11,7 @@
 //!   measured after Ask anyway;
 //! - the candidates written, and how many the plain checks dropped;
 //! - for each check, how many candidates it withheld, by band;
-//! - the questions shown, and what the run cost.
+//! - the questions shown, the generator's tokens, and what the run cost.
 //!
 //! Each pair calls `OpenRouter` with a real key, about 0.08 USD a run, so
 //! every test here is ignored and runs only when asked:
@@ -168,7 +168,8 @@ fn withheld_by_check(withheld: &[&String]) -> BTreeMap<String, BTreeMap<String, 
 /// Measures `area` on the showcase change `subject`, as one Markdown row:
 /// the change, the area, the gate, the candidates written, the plain-check
 /// drops, the candidates withheld, each check's withheld count by band, the
-/// questions shown and the cost in USD.
+/// questions shown, the generator's input and output tokens, and the cost
+/// of every request in USD.
 fn measure(subject: &str, area: &str) -> String {
     let (gate, lines) = generate_live(subject, area);
     let with = |message: &str| -> Vec<&String> {
@@ -197,7 +198,24 @@ fn measure(subject: &str, area: &str) -> String {
         .last()
         .map(|line| count(line, "picked"))
         .expect("the app picked questions, or none");
-    let cost: f64 = with("OpenRouter replied")
+    let replies = with("OpenRouter replied");
+    let generator = replies
+        .iter()
+        .filter(|line| field(line, "role") == Some("Generator"));
+    let tokens = |name: &str| -> usize {
+        generator
+            .clone()
+            .filter_map(|line| field(line, name))
+            .filter_map(|value| {
+                value
+                    .trim_start_matches("Some(")
+                    .trim_end_matches(')')
+                    .parse::<usize>()
+                    .ok()
+            })
+            .sum()
+    };
+    let cost: f64 = replies
         .iter()
         .filter_map(|line| field(line, "cost_usd"))
         .filter_map(|value| {
@@ -209,9 +227,11 @@ fn measure(subject: &str, area: &str) -> String {
         })
         .sum();
     format!(
-        "| {subject} | {area} | {gate} | {written} | {dropped} | {} | {} | {shown} | {cost:.4} |",
+        "| {subject} | {area} | {gate} | {written} | {dropped} | {} | {} | {shown} | {} / {} | {cost:.4} |",
         withheld.len(),
         checks.join("; "),
+        tokens("input_tokens"),
+        tokens("output_tokens"),
     )
 }
 
