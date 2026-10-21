@@ -24,12 +24,17 @@ use whetstone_core::{
 /// plain checks dropped one for each of `dropped`, and the show rule
 /// withheld `withheld`, each banded with its own policy.
 ///
-/// First comes the count written and withheld, and whose cut-offs decided;
+/// First comes the count written, passed and withheld, and whose cut-offs
+/// decided;
 /// then each reason a candidate was withheld, with how many it withheld,
 /// most first, then in the order the checks are asked; then the plain
 /// checks' drops, counted apart.
 pub(crate) fn reasons(passed: usize, dropped: &[DropReason], withheld: &[Withheld]) -> Vec<String> {
-    let mut lines = vec![count(passed + dropped.len() + withheld.len(), withheld)];
+    let mut lines = vec![count(
+        passed,
+        dropped.len() + passed + withheld.len(),
+        withheld,
+    )];
     let mut counts = BTreeMap::new();
     for reason in withheld.iter().flat_map(each_reason) {
         *counts.entry(reason).or_insert(0) += 1;
@@ -53,11 +58,15 @@ pub(crate) fn reasons(passed: usize, dropped: &[DropReason], withheld: &[Withhel
     lines
 }
 
-/// How many were `written` and `withheld`, and whose cut-offs withheld
-/// them.
-fn count(written: usize, withheld: &[Withheld]) -> String {
+/// How many were `written`, how many `passed`, if any did, and how many
+/// were `withheld`, if any were, and whose cut-offs withheld them.
+fn count(passed: usize, written: usize, withheld: &[Withheld]) -> String {
+    let mut counts = vec![format!("{written} written")];
+    if passed > 0 {
+        counts.push(format!("{passed} passed"));
+    }
     let Some(first) = withheld.first() else {
-        return format!("{written} written");
+        return counts.join(" · ");
     };
     let (mut defaults, mut learners) = (false, false);
     for withheld in withheld {
@@ -74,10 +83,8 @@ fn count(written: usize, withheld: &[Withheld]) -> String {
         (true, false) => "your cut-offs from config".to_owned(),
         (true, true) => format!("your cut-offs from config and policy {version}'s"),
     };
-    format!(
-        "{written} written · {} withheld, using {whose}",
-        withheld.len()
-    )
+    counts.push(format!("{} withheld, using {whose}", withheld.len()));
+    counts.join(" · ")
 }
 
 /// Each reason `withheld` was withheld, once, in order.
@@ -87,13 +94,9 @@ fn each_reason(withheld: &Withheld) -> BTreeSet<Reason> {
         .failed()
         .iter()
         .filter_map(|&check| {
-            let band = withheld
-                .answers()
-                .get(check)
-                .map(|answer| withheld.policy().band(check.job(), answer));
             Some(Reason {
                 asks: Asks::of(check, answer_key)?,
-                answered: Answered::of(band),
+                answered: Answered::of(withheld.band(check)),
             })
         })
         .collect()

@@ -362,13 +362,7 @@ fn log_withheld(withheld: &Withheld) {
     let failed: Vec<(CandidateCheck, Option<Band>)> = withheld
         .failed()
         .iter()
-        .map(|&check| {
-            let band = withheld
-                .answers()
-                .get(check)
-                .map(|answer| withheld.policy().band(check.job(), answer));
-            (check, band)
-        })
+        .map(|&check| (check, withheld.band(check)))
         .collect();
     tracing::info!(
         area = %withheld.id().area(),
@@ -983,16 +977,11 @@ impl Practice {
     /// asked for, all of which are the `questions` shown: the same reasons
     /// No questions passed checks gives.
     fn why_withheld_reader(&self, questions: &Questions) -> Reader {
-        let mut lines =
-            withheld::reasons(questions.len(), &self.dropped, &self.withheld).into_iter();
-        let count = lines.next().unwrap_or_default();
+        let reasons = withheld::reasons(questions.len(), &self.dropped, &self.withheld);
         Reader::new(
             Route::Read(Reading::WhyWithheld),
             "Why fewer passed checks".to_owned(),
-            vec![Section::plain(
-                &count,
-                &lines.collect::<Vec<_>>().join("\n"),
-            )],
+            vec![Section::plain("The questions written", &reasons.join("\n"))],
         )
     }
 

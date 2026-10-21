@@ -16,7 +16,7 @@ use whetstone_core::{
 use crate::answering::submit;
 use crate::preparing_questions::{
     DOMAIN, PAYMENT_LIFECYCLE, answer, area_id, candidate, generate, generate_in, reasoning_met,
-    stems, touched_path,
+    stems, touched_path, writing_about_the_domain,
 };
 use crate::session::{NO_COLOR, Session, Setup};
 
@@ -532,7 +532,7 @@ fn see_why_fewer_passed_gives_the_same_reasons_and_back_returns_to_the_question(
     let text = session.text();
     assert!(text.contains("Why fewer passed checks"), "{text}");
     for reason in [
-        "6 written · 2 withheld, using policy 0's cut-offs",
+        "6 written · 3 passed · 2 withheld, using policy 0's cut-offs",
         "all 2: Jev couldn't tell whether the options give the answer away",
         "1 dropped: it was missing its hint",
     ] {
@@ -591,4 +591,16 @@ fn see_why_fewer_passed_at_80x24() {
     session.press(": j <Enter>");
 
     insta::assert_debug_snapshot!("see_why_fewer_passed_80x24", session.frame());
+}
+
+#[test]
+fn see_why_fewer_passed_says_when_the_generator_wrote_fewer_than_were_asked_for() {
+    let ai = writing_about_the_domain(3, PAYMENT_LIFECYCLE);
+    let mut session = prepared(&ai, 80, 24);
+
+    session.press(": j <Enter>");
+
+    let text = session.text();
+    assert!(text.contains("3 written · 3 passed"), "{text}");
+    assert!(!text.contains("withheld"), "{text}");
 }
