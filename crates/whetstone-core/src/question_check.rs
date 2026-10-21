@@ -1127,7 +1127,7 @@ pub(crate) mod tests {
     fn a_withheld_candidate_keeps_itself_jev_s_answers_and_the_policy_that_banded_them() {
         let candidate = candidate("domain", 0, OptionLetter::C);
         let mut answers = passing(&candidate);
-        answers.push((CandidateCheck::NoGiveaway, probability(0.82)));
+        answers.push((CandidateCheck::NeedsChange, probability(0.82)));
         let answers = QuestionCheckAnswers::new(answers, depth(1.3));
         let higher_bar = AssessmentPolicy::with_cut_offs([(
             Job::QuestionCheck,
@@ -1141,8 +1141,8 @@ pub(crate) mod tests {
         assert_eq!(withheld.candidate().answer_key(), OptionLetter::C);
         assert_eq!(withheld.answers(), &answers);
         assert_eq!(withheld.policy(), &higher_bar);
-        assert_eq!(withheld.failed(), [CandidateCheck::NoGiveaway]);
-        assert_eq!(withheld.needed(CandidateCheck::NoGiveaway), Band::ClearYes);
+        assert_eq!(withheld.failed(), [CandidateCheck::NeedsChange]);
+        assert_eq!(withheld.needed(CandidateCheck::NeedsChange), Band::ClearYes);
         assert_eq!(
             withheld.needed(CandidateCheck::Option(OptionLetter::C)),
             Band::ClearYes,
@@ -1158,7 +1158,7 @@ pub(crate) mod tests {
     fn a_withheld_candidate_bands_each_answer_with_the_policy_that_withheld_it() {
         let candidate = candidate("domain", 0, OptionLetter::A);
         let mut answers = passing(&candidate);
-        answers.push((CandidateCheck::NoGiveaway, probability(0.82)));
+        answers.push((CandidateCheck::NeedsChange, probability(0.82)));
         let higher_bar = AssessmentPolicy::with_cut_offs([(
             Job::QuestionCheck,
             CutOffs::new(0.85, 0.20).expect("valid"),
@@ -1172,7 +1172,7 @@ pub(crate) mod tests {
         .expect_err("withheld");
 
         assert_eq!(
-            withheld.band(CandidateCheck::NoGiveaway),
+            withheld.band(CandidateCheck::NeedsChange),
             Some(Band::Unclear)
         );
         assert_eq!(

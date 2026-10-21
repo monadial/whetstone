@@ -927,7 +927,7 @@ mod tests {
                 "learner-vote-20261021T101502-1/option_b"
             ]
         );
-        assert_eq!(call.items()[0].job(), Job::QuestionCheck);
+        assert_eq!(call.items()[0].job(), Job::GiveawayCheck);
         assert_eq!(call.items()[1].job(), Job::OptionRating);
         assert!(
             call.request().questions.contains_key("answerable"),

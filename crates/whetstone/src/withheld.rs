@@ -14,9 +14,9 @@
 //! withhold the candidate only when every criterion is dropped. So they give
 //! one reason, as unclear as the least clear of them: that Jev said every
 //! criterion asks for more, or, if it left one unanswered, that it didn't
-//! answer. The reasons say whose cut-offs decided, policy 0's or the
-//! learner's own from config, and never a probability or a cut-off:
-//! Settings and Inspect hold the numbers.
+//! answer. The reasons say whose cut-offs decided, the policy's, by its
+//! version, or the learner's own from config, and never a probability or a
+//! cut-off: Settings and Inspect hold the numbers.
 
 use std::collections::{BTreeMap, BTreeSet};
 

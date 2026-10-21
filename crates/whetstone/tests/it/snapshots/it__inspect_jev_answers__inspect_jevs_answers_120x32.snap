@@ -35,7 +35,6 @@ Buffer {
         "  The hint points to the evidence · 0.9 · clear yes                                                                     ",
         "  The hint doesn't reveal the answer key · 0.9 · clear yes                                                              ",
         "  Depth · 0.1 one line, 0.8 the change, 0.1 the code around it · expected level 1 · not banded                          ",
-        "                                                                                                                        ",
         "  ? keys  : actions  q back                                                                                             ",
         "                                                                                                                        ",
     ],
