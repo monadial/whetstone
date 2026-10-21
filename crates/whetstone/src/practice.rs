@@ -639,7 +639,7 @@ impl Practice {
             asked_for = self.count.get(),
             "picked the questions that passed their checks"
         );
-        self.stage = match Questions::new(picked, &self.areas) {
+        self.stage = match Questions::new(picked, &self.areas, self.failed_requests.clone()) {
             Some(questions) => {
                 Stage::Shown(questions.not_asking_about(self.gate.dropped(&self.areas)))
             }
@@ -1086,6 +1086,9 @@ impl View for Practice {
                 if self.waiting.accept(job, &Asking::Evaluate(saved.clone()))
                     && let Stage::Shown(questions) = &mut self.stage
                 {
+                    if let Err(failure) = &reply {
+                        self.failed_requests.note_refusal(Role::Jev, *failure);
+                    }
                     questions.evaluated(&saved, reply.map(|reply| reply.content));
                 }
             }
