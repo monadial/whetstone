@@ -30,11 +30,11 @@ Buffer {
         "  │                                                                                                                  │  ",
         "  │                                                                                                                  │  ",
         "  │                                                                                                                  │  ",
-        "  │                                                                                                                  │  ",
         "  └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  ",
         "                                                                                                                        ",
         "    Submit response (choose an option and write your reasoning)                                                         ",
         "    Inspect source                                                                                                      ",
+        "    Hint    Show answer    Skip    Cannot answer from this context    Report                                            ",
         "  ? keys  : actions  a/b/c choose  i write  q back                                                                      ",
         "                                                                                                                        ",
     ],
@@ -44,7 +44,7 @@ Buffer {
         x: 17, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 2, y: 5, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
         x: 35, y: 5, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
-        x: 4, y: 28, fg: Reset, bg: Reset, underline: Reset, modifier: DIM | ITALIC,
-        x: 63, y: 28, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 4, y: 27, fg: Reset, bg: Reset, underline: Reset, modifier: DIM | ITALIC,
+        x: 63, y: 27, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
     ]
 }

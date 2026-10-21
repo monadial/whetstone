@@ -463,7 +463,7 @@ fn each_result_applies_to_its_own_response_even_once_another_question_shows() {
     let ai = writing(&CRITERIA[..1], vec![Ok(probabilities(&[0.9]))]);
     ai.on_assess(SECOND, Ok(probabilities(&[0.1])));
     ai.on_explain(SECOND, Err(RequestFailure::TimedOut));
-    let mut session = submitted(&ai, "a", 120, 32);
+    let mut session = submitted(&ai, "a", 120, TALL);
 
     session.press("<Enter>");
     submit(&mut session, "b", "The key is reused.");
