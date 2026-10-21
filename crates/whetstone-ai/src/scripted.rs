@@ -286,12 +286,12 @@ mod tests {
     /// A well-formed candidate about the first area, asking `stem`, whose
     /// answer key is A and whose rubric has one criterion.
     fn candidate(stem: &str) -> Candidate {
-        candidate_keyed(stem, "A", 1)
+        candidate_with(stem, "A", 1)
     }
 
     /// A well-formed candidate about the first area, asking `stem`, whose
     /// answer key is `answer_key` and whose rubric has `criteria` criteria.
-    fn candidate_keyed(stem: &str, answer_key: &str, criteria: usize) -> Candidate {
+    fn candidate_with(stem: &str, answer_key: &str, criteria: usize) -> Candidate {
         let text = str::to_owned;
         let written = WrittenCandidate {
             options: ["A", "B", "C"]
@@ -412,7 +412,7 @@ mod tests {
             "Why retry?",
             [(NeedsChange, unclear), (Option(OptionLetter::C), unclear)],
         );
-        let candidate = candidate_keyed("Why retry?", "B", 2);
+        let candidate = candidate_with("Why retry?", "B", 2);
 
         let passing = at_once(ai.check_question(&evidence(), &candidate));
         let except = at_once(ai.check_question(&evidence(), &candidate));
