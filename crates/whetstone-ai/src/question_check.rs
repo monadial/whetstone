@@ -271,7 +271,7 @@ mod tests {
                 [probability(0.11), probability(0.3), probability(0.59)],
                 1.47
             )
-            .expect("the recorded depth is one")
+            .expect("the recorded expected depth is from 0 to 2")
         );
     }
 

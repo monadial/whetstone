@@ -37,8 +37,7 @@ impl<'a> Answers<'a> {
     }
 
     /// The depth Jev scored the score question `name` with: its probability
-    /// for each of the three levels and their expected position, as
-    /// returned.
+    /// for each of the three levels and its expected value, as returned.
     pub(crate) fn depth(&mut self, name: &str) -> Result<Depth, AiError> {
         let Some(JevAnswer::Score {
             probabilities,
