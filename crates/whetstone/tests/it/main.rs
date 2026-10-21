@@ -21,6 +21,7 @@ mod explanation;
 mod feedback;
 mod graph_cache;
 mod help_and_signals;
+mod inspect_jev_answers;
 mod jobs;
 mod links_and_mentions;
 mod live_practice;
