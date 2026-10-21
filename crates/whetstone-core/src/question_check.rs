@@ -889,6 +889,26 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_withheld_candidate_s_debug_output_never_shows_its_text() {
+        let withheld = show(
+            OptionLetter::A,
+            vec![(CandidateCheck::NoGiveaway, probability(0.46))],
+        )
+        .expect_err("withheld");
+        let debug = format!("{withheld:?}");
+
+        for text in [
+            "retry reuse",
+            "Option A",
+            "Rationale A",
+            "charge twice",
+            "Look at",
+        ] {
+            assert!(!debug.contains(text), "{debug}");
+        }
+    }
+
+    #[test]
     fn debug_output_never_shows_a_questions_text() {
         let question = show(OptionLetter::A, Vec::new()).expect("shown");
         let debug = format!("{question:?}");
