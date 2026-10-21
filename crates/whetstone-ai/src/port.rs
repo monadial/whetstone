@@ -121,12 +121,14 @@ pub trait Ai: fmt::Debug + Send + Sync {
     ) -> Pending<Vec<ParagraphCheck>>;
 }
 
-/// A session store's acknowledgement that it saved a response, which gives
-/// the response's reasoning as saved. A reasoning evaluation is built from
-/// one, so it is never paid for while the response could still be lost
-/// (rule 39), and it sends exactly what was saved. The app's
-/// `SavedResponse`, which only its session store makes, is the only one;
-/// nothing else implements this outside tests.
+/// A session store's acknowledgement that it saved a response whose
+/// reasoning is written, which gives that reasoning as saved. A reasoning
+/// evaluation is built from one, so it is never paid for while the response
+/// could still be lost, or for a response with no reasoning written (rule
+/// 39), and it sends exactly what was saved. The app's `SavedReasoning`,
+/// which only a `SavedResponse` from its session store makes, and only when
+/// the reasoning is written, is the only one; nothing else implements this
+/// outside tests.
 pub trait Saved: fmt::Debug + Send + Sync {
     /// The learner's reasoning, as the store saved it.
     fn reasoning(&self) -> &str;

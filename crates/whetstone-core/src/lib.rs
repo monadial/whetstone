@@ -28,7 +28,7 @@ mod toml_error;
 
 pub use crate::area::{Area, AreaFileError, AreaId, AreaSource, InvalidAreaFile, InvalidAreaId};
 pub use crate::assessment::{
-    Assessed, ChoiceOutcome, CriterionOutcome, MissingReasoning, OptionRating, Response,
+    Assessed, ChoiceOutcome, CriterionOutcome, OptionRating, Reasoning, Response, WrittenReasoning,
 };
 pub use crate::assessment_policy::{
     AppliedCutOffs, AssessmentPolicy, Band, CutOffs, CutOffsOrigin, InvalidCutOffs, Job,

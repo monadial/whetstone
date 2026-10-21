@@ -403,42 +403,52 @@ fn ask_about_responses(
             sent.cancelled(&asking);
         }
     }
-    questions.evaluate(|saved, question| {
+    questions.evaluate(|reasoning, question| {
+        let saved = reasoning.saved();
         let key = saved.clone();
         send(
             jobs,
             waiting,
             sent,
             Asking::Evaluate(saved.clone()),
-            |stamp| ai.assess_reasoning(stamp, saved, evidence, QuestionWithoutKey::from(question)),
+            |stamp| {
+                ai.assess_reasoning(
+                    stamp,
+                    &reasoning,
+                    evidence,
+                    QuestionWithoutKey::from(question),
+                )
+            },
             |reply| JobOutput::Evaluated {
                 saved: Box::new(key),
                 reply,
             },
         );
     });
-    questions.explain(|saved, question, criteria| {
+    questions.explain(|reasoning, question, criteria| {
+        let saved = reasoning.saved();
         let key = saved.clone();
         send(
             jobs,
             waiting,
             sent,
             Asking::Explain(saved.clone()),
-            |stamp| ai.explain(stamp, saved, evidence, question, criteria),
+            |stamp| ai.explain(stamp, &reasoning, evidence, question, criteria),
             |reply| JobOutput::Explained {
                 saved: Box::new(key),
                 reply,
             },
         );
     });
-    questions.check_explanations(|saved, question, paragraphs| {
+    questions.check_explanations(|reasoning, question, paragraphs| {
+        let saved = reasoning.saved();
         let key = saved.clone();
         send(
             jobs,
             waiting,
             sent,
             Asking::CheckExplanation(saved.clone()),
-            |stamp| ai.check_explanation(stamp, saved, evidence, question, paragraphs),
+            |stamp| ai.check_explanation(stamp, &reasoning, evidence, question, paragraphs),
             |reply| JobOutput::ExplanationChecked {
                 saved: Box::new(key),
                 reply,

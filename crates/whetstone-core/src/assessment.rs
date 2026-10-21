@@ -2,8 +2,10 @@
 //! ratings they rest on.
 //!
 //! A response is assessed twice, separately, with no combined grade: its
-//! choice from the question's option ratings, at once, and its reasoning
-//! criterion by criterion from Jev's answers. Every outcome carries the Jev
+//! choice from the question's option ratings, at once, and its reasoning,
+//! if the learner wrote any, criterion by criterion from Jev's answers.
+//! Reasoning is optional: a response with none is a choice alone, whose
+//! reasoning isn't assessed. Every outcome carries the Jev
 //! answer it came from and the cut-offs that banded it: the policy's
 //! version, the job's cut-offs, and whether they are the policy's defaults
 //! or the learner's own. An outcome is always one of its enum's states,
@@ -59,19 +61,33 @@ pub enum CriterionOutcome {
 }
 
 /// The learner's response to a question: their selected choice and their
-/// written reasoning. Once submitted, it is final.
+/// reasoning, written or not written. Once submitted, it is final.
 ///
-/// Its `Debug` output shows the reasoning's length, never its text.
-#[derive(Clone, PartialEq, Eq)]
+/// Its `Debug` output shows whether the reasoning is written, and its
+/// length, never its text.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Response {
     choice: OptionLetter,
-    reasoning: String,
+    reasoning: Reasoning,
 }
 
-/// A response without written reasoning: there is none, or only whitespace.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("a response needs written reasoning")]
-pub struct MissingReasoning;
+/// A response's reasoning: writing it is optional.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Reasoning {
+    /// The learner wrote reasoning, which Jev assesses against each
+    /// criterion of the rubric.
+    Written(WrittenReasoning),
+    /// The learner wrote none, or only whitespace: the response is a choice
+    /// alone, and nothing assesses its reasoning.
+    NotWritten,
+}
+
+/// Reasoning the learner wrote, as they wrote it: never empty or only
+/// whitespace.
+///
+/// Its `Debug` output shows its length, never its text.
+#[derive(Clone, PartialEq, Eq)]
+pub struct WrittenReasoning(String);
 
 impl<T: Copy> Assessed<T> {
     /// The outcome.
@@ -181,13 +197,16 @@ impl Question {
 }
 
 impl Response {
-    /// The response choosing `choice`, with `reasoning`, if the learner wrote
-    /// any.
-    pub fn new(choice: OptionLetter, reasoning: String) -> Result<Self, MissingReasoning> {
-        if reasoning.trim().is_empty() {
-            return Err(MissingReasoning);
-        }
-        Ok(Self { choice, reasoning })
+    /// The response choosing `choice`, with `reasoning` as the learner wrote
+    /// it: not written when it is empty or only whitespace.
+    #[must_use]
+    pub fn new(choice: OptionLetter, reasoning: String) -> Self {
+        let reasoning = if reasoning.trim().is_empty() {
+            Reasoning::NotWritten
+        } else {
+            Reasoning::Written(WrittenReasoning(reasoning))
+        };
+        Self { choice, reasoning }
     }
 
     /// The selected choice.
@@ -196,19 +215,37 @@ impl Response {
         self.choice
     }
 
-    /// The written reasoning, as the learner wrote it.
+    /// The reasoning, written or not written.
     #[must_use]
-    pub fn reasoning(&self) -> &str {
+    pub fn reasoning(&self) -> &Reasoning {
         &self.reasoning
     }
 }
 
-/// Shows the choice and the reasoning's length, never the reasoning.
-impl fmt::Debug for Response {
+impl Reasoning {
+    /// The reasoning, if the learner wrote it.
+    #[must_use]
+    pub fn written(&self) -> Option<&WrittenReasoning> {
+        match self {
+            Self::Written(reasoning) => Some(reasoning),
+            Self::NotWritten => None,
+        }
+    }
+}
+
+impl WrittenReasoning {
+    /// The reasoning, as the learner wrote it.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Shows the reasoning's length, never the reasoning.
+impl fmt::Debug for WrittenReasoning {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Response")
-            .field("choice", &self.choice)
-            .field("reasoning_bytes", &self.reasoning.len())
+        f.debug_struct("WrittenReasoning")
+            .field("bytes", &self.0.len())
             .finish()
     }
 }
@@ -360,28 +397,42 @@ mod tests {
     }
 
     #[test]
-    fn a_response_is_a_choice_and_written_reasoning() {
-        let response = Response::new(OptionLetter::A, "The key dedupes.".to_owned())
-            .expect("reasoning is written");
+    fn a_response_is_a_choice_and_its_reasoning_as_written() {
+        let response = Response::new(OptionLetter::A, " The key dedupes.\n".to_owned());
 
         assert_eq!(response.choice(), OptionLetter::A);
-        assert_eq!(response.reasoning(), "The key dedupes.");
-        for reasoning in ["", " \n\t"] {
+        let Reasoning::Written(reasoning) = response.reasoning() else {
+            panic!("reasoning is written: {response:?}");
+        };
+        assert_eq!(reasoning.as_str(), " The key dedupes.\n");
+        assert_eq!(response.reasoning().written(), Some(reasoning));
+    }
+
+    #[test]
+    fn blank_or_whitespace_only_reasoning_is_not_written() {
+        for reasoning in ["", " ", " \n\t\r\n"] {
+            let response = Response::new(OptionLetter::B, reasoning.to_owned());
+
+            assert_eq!(response.choice(), OptionLetter::B);
             assert_eq!(
-                Response::new(OptionLetter::A, reasoning.to_owned()),
-                Err(MissingReasoning)
+                response.reasoning(),
+                &Reasoning::NotWritten,
+                "{reasoning:?}"
             );
+            assert_eq!(response.reasoning().written(), None);
         }
     }
 
     #[test]
     fn debug_output_never_shows_the_reasoning() {
-        let response = Response::new(OptionLetter::C, "The key dedupes.".to_owned())
-            .expect("reasoning is written");
+        let response = Response::new(OptionLetter::C, "The key dedupes.".to_owned());
 
         let debug = format!("{response:?}");
 
         assert!(!debug.contains("dedupes"), "{debug}");
         assert!(debug.contains("choice: C"), "{debug}");
+        assert!(debug.contains("Written"), "{debug}");
+        let debug = format!("{:?}", Response::new(OptionLetter::C, String::new()));
+        assert!(debug.contains("NotWritten"), "{debug}");
     }
 }

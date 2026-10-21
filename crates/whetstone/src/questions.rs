@@ -11,9 +11,10 @@
 //! reasoning, starts editing the reasoning, and Esc stops, keeping the
 //! draft. Tab moves to the next control, and from the editor to Submit
 //! response, where Enter submits, with no dialog (rules 30 and 58). Submit
-//! stays disabled, saying what's missing, until an option is chosen and
-//! reasoning is written. Each question's draft stays in memory until it is
-//! submitted.
+//! stays disabled, saying what's missing, until an option is chosen.
+//! Writing reasoning is optional, and the empty editor says so: only
+//! written reasoning is assessed. Each question's draft stays in memory
+//! until it is submitted.
 //!
 //! The help controls and signals are reached by focus, like the rest, never
 //! by a letter, so every key in the editor stays text (rule 29). None is
@@ -51,8 +52,8 @@
 //! ends, before the outcomes it gives. Submit saves the response to it
 //! first. Then the
 //! choice outcome shows at once on the question's feedback, the response is
-//! final, and Jev is asked about its reasoning with the store's
-//! acknowledgement (rule 39). Its result applies to the response it names,
+//! final, and, if its reasoning is written, Jev is asked about it with the
+//! store's acknowledgement (rule 39). Its result applies to the response it names,
 //! even once another question shows, and its outcomes are saved to the
 //! record. So are the generator's explanation of what the reasoning missed
 //! and Jev's check of it, asked with the same acknowledgement.
@@ -94,7 +95,8 @@ use crate::reasoning_editor::{self, Caret, Editing, ReasoningEditor};
 use crate::report::{self, ReportForm, Reporting};
 use crate::sent_requests::{SentRequest, SentRequests};
 use crate::session_record::{
-    Assessment, NewRecord, SavedResponse, SessionId, SessionStore, Signal, StoreError,
+    Assessment, NewRecord, SavedReasoning, SavedResponse, SessionId, SessionStore, Signal,
+    StoreError,
 };
 use crate::summary::{Ended, Listed};
 use crate::theme::{ControlKind, ControlState, Theme};
@@ -281,24 +283,13 @@ enum Mode {
     Editing,
 }
 
-/// What a draft lacks to be submitted.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Missing {
-    Choice,
-    Reasoning,
-    Both,
-}
+/// What Submit says a draft lacks, until an option is chosen: reasoning
+/// is optional.
+const NO_CHOICE: &str = "choose an option";
 
-impl Missing {
-    /// What Submit says is missing.
-    fn reason(self) -> &'static str {
-        match self {
-            Self::Choice => "choose an option",
-            Self::Reasoning => "write your reasoning",
-            Self::Both => "choose an option and write your reasoning",
-        }
-    }
-}
+/// What the empty reasoning editor says first: writing reasoning is
+/// optional.
+const OPTIONAL: &str = "Optional: explain why, to have your reasoning assessed.";
 
 /// The learner's draft response to one question, kept in memory until it
 /// is submitted.
@@ -323,20 +314,13 @@ impl Draft {
         self.choice.is_some() || !self.reasoning.text().is_empty()
     }
 
-    /// The response the draft makes, or what it lacks.
-    fn response(&self) -> Result<Response, Missing> {
-        // Whether reasoning is written is the response's own rule, whatever
-        // the choice.
-        let response = Response::new(
-            self.choice.unwrap_or(OptionLetter::A),
+    /// The response the draft makes, once an option is chosen. Whether its
+    /// reasoning is written is the response's own rule.
+    fn response(&self) -> Option<Response> {
+        Some(Response::new(
+            self.choice?,
             self.reasoning.text().to_owned(),
-        );
-        match (self.choice, response) {
-            (Some(_), Ok(response)) => Ok(response),
-            (Some(_), Err(_)) => Err(Missing::Reasoning),
-            (None, Ok(_)) => Err(Missing::Choice),
-            (None, Err(_)) => Err(Missing::Both),
-        }
+        ))
     }
 
     fn choose(&mut self, letter: OptionLetter) {
@@ -733,10 +717,10 @@ impl Questions {
     }
 
     /// Hands `evaluate` each evaluation of the reasoning that waits to be
-    /// asked for: the store's acknowledgement of the response, which holds
-    /// the reasoning as saved, and its question. Each then awaits its
-    /// result.
-    pub(crate) fn evaluate(&mut self, mut evaluate: impl FnMut(&SavedResponse, &Question)) {
+    /// asked for: the store's acknowledgement of the response, with the
+    /// reasoning as saved, and its question. Each then awaits its result. A
+    /// response with no reasoning written has none.
+    pub(crate) fn evaluate(&mut self, mut evaluate: impl FnMut(SavedReasoning<'_>, &Question)) {
         for entry in &mut self.picked {
             if let Attempt::Submitted(feedback) = &mut entry.attempt
                 && let Some(saved) = feedback.take_evaluation()
@@ -766,12 +750,12 @@ impl Questions {
     }
 
     /// Hands `explain` each explanation of the reasoning that waits to be
-    /// asked for: the store's acknowledgement of the response, its
-    /// question, and the criteria to explain, each with its outcome. They
-    /// are then being written.
+    /// asked for: the store's acknowledgement of the response, with its
+    /// reasoning, its question, and the criteria to explain, each with its
+    /// outcome. They are then being written.
     pub(crate) fn explain(
         &mut self,
-        mut explain: impl FnMut(&SavedResponse, &Question, &[(usize, CriterionOutcome)]),
+        mut explain: impl FnMut(SavedReasoning<'_>, &Question, &[(usize, CriterionOutcome)]),
     ) {
         for entry in &mut self.picked {
             if let Attempt::Submitted(feedback) = &mut entry.attempt
@@ -783,11 +767,11 @@ impl Questions {
     }
 
     /// Hands `check` each explanation that waits for Jev's check: the
-    /// store's acknowledgement of the response, its question, and the
-    /// paragraphs to check. They are then being checked.
+    /// store's acknowledgement of the response, with its reasoning, its
+    /// question, and the paragraphs to check. They are then being checked.
     pub(crate) fn check_explanations(
         &mut self,
-        mut check: impl FnMut(&SavedResponse, &Question, &[WrittenParagraph]),
+        mut check: impl FnMut(SavedReasoning<'_>, &Question, &[WrittenParagraph]),
     ) {
         for entry in &mut self.picked {
             if let Attempt::Submitted(feedback) = &mut entry.attempt
@@ -884,7 +868,7 @@ impl Questions {
         if let Record::NotStarted = self.record {
             return Some("the session record didn't start");
         }
-        draft.response().err().map(Missing::reason)
+        draft.response().is_none().then_some(NO_CHOICE)
     }
 
     /// Applies `command` to the screen drawn in `area`, and returns what it
@@ -1031,7 +1015,7 @@ impl Questions {
                 Control::Reasoning => draft.edit(),
                 Control::Submit => {
                     if submit_disabled.is_none()
-                        && let Ok(response) = draft.response()
+                        && let Some(response) = draft.response()
                     {
                         draft.unsaved = None;
                         self.submitted = Some(response);
@@ -1375,10 +1359,10 @@ impl Questions {
         );
         if draft.mode == Mode::Moving && draft.reasoning.text().is_empty() {
             frame.render_widget(
-                Paragraph::new(Line::styled(
-                    "Press i to write your reasoning.",
-                    theme.muted,
-                )),
+                Paragraph::new(vec![
+                    Line::styled(OPTIONAL, theme.muted),
+                    Line::styled("Press i to write your reasoning.", theme.muted),
+                ]),
                 inside,
             );
         } else {

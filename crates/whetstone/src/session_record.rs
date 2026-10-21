@@ -5,9 +5,10 @@
 //!
 //! A response is saved before anything else is done with it, and the store
 //! acknowledges it with a [`SavedResponse`], which only a store can make. A
-//! paid evaluation of the reasoning takes that acknowledgement, so the
-//! compiler keeps an evaluation from being requested for a response that
-//! could still be lost (rule 39).
+//! paid evaluation of the reasoning takes that acknowledgement with the
+//! reasoning written ([`SavedReasoning`]), so the compiler keeps an
+//! evaluation from being requested for a response that could still be lost,
+//! or that has no reasoning to assess (rule 39).
 //!
 //! [`InMemoryStore`] keeps records for as long as Whetstone runs: for tests,
 //! and for the app until the durable store arrives (#6). It is not durable,
@@ -19,7 +20,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use whetstone_ai::{ParagraphCheck, WrittenParagraph};
 use whetstone_core::{
     AppliedCutOffs, Assessed, CandidateId, ChoiceOutcome, CriterionOutcome, Evidence, Question,
-    Response,
+    Response, WrittenReasoning,
 };
 
 use crate::sent_requests::SentRequest;
@@ -102,11 +103,12 @@ pub struct AttemptId(u32);
 
 /// A store's acknowledgement that it saved a response: which session record
 /// holds it, which question it responds to, which attempt at that question
-/// it is, and the response, as saved.
+/// it is, and the response, as saved, its reasoning written or not.
 ///
 /// Only a store makes one, in [`SessionStore::save_response`], so a
-/// reasoning evaluation, which takes one and sends the reasoning it holds,
-/// can be requested only for a saved response (rule 39). It also names that
+/// reasoning evaluation, which takes one with its reasoning written
+/// ([`SavedReasoning`]) and sends that reasoning, can be requested only for
+/// a saved response (rule 39). It also names that
 /// evaluation's result, so a result for another session, question or
 /// attempt is never applied (rule 24): it can be the key a screen waits for
 /// the result with.
@@ -134,6 +136,33 @@ pub struct SavedResponse {
     question: CandidateId,
     attempt: AttemptId,
     response: Response,
+}
+
+/// A store's acknowledgement of a saved response whose reasoning is
+/// written, and that reasoning: what a reasoning evaluation, the
+/// explanation of what the reasoning missed and its check are asked with
+/// (rule 39). A response with no reasoning written has none, so nothing is
+/// ever asked about its reasoning.
+///
+/// Only [`SavedResponse::written_reasoning`] makes one.
+///
+/// Its `Debug` output is the acknowledgement's: its identities, never the
+/// response.
+///
+/// Nothing else can make one:
+///
+/// ```compile_fail,E0451
+/// use whetstone::{SavedReasoning, SavedResponse};
+/// use whetstone_core::WrittenReasoning;
+///
+/// fn forge<'a>(saved: &'a SavedResponse, reasoning: &'a WrittenReasoning) -> SavedReasoning<'a> {
+///     SavedReasoning { saved, reasoning }
+/// }
+/// ```
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct SavedReasoning<'a> {
+    saved: &'a SavedResponse,
+    reasoning: &'a WrittenReasoning,
 }
 
 /// An outcome of a saved response. Each kind of outcome a later slice
@@ -417,9 +446,16 @@ impl SessionStore for InMemoryStore {
 
 /// The acknowledgement a reasoning evaluation is asked with, and the
 /// reasoning it sends (rule 39).
-impl whetstone_ai::Saved for SavedResponse {
+impl whetstone_ai::Saved for SavedReasoning<'_> {
     fn reasoning(&self) -> &str {
-        self.response.reasoning()
+        self.reasoning.as_str()
+    }
+}
+
+/// Shows the acknowledgement's identities, never the response.
+impl fmt::Debug for SavedReasoning<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.saved.fmt(f)
     }
 }
 
@@ -458,6 +494,25 @@ impl SavedResponse {
     #[must_use]
     pub fn response(&self) -> &Response {
         &self.response
+    }
+
+    /// The acknowledgement with the response's reasoning, if it is written:
+    /// what Jev is asked about the reasoning with. A response with no
+    /// reasoning written has none.
+    #[must_use]
+    pub fn written_reasoning(&self) -> Option<SavedReasoning<'_>> {
+        Some(SavedReasoning {
+            saved: self,
+            reasoning: self.response.reasoning().written()?,
+        })
+    }
+}
+
+impl<'a> SavedReasoning<'a> {
+    /// The acknowledgement of the response the reasoning is in.
+    #[must_use]
+    pub fn saved(&self) -> &'a SavedResponse {
+        self.saved
     }
 }
 
@@ -607,7 +662,7 @@ mod tests {
     }
 
     fn response(reasoning: &str) -> Response {
-        Response::new(OptionLetter::A, reasoning.to_owned()).expect("reasoning is written")
+        Response::new(OptionLetter::A, reasoning.to_owned())
     }
 
     #[test]
@@ -645,6 +700,30 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn only_a_saved_response_with_reasoning_written_can_have_its_reasoning_assessed() {
+        use whetstone_ai::Saved;
+
+        let asked = questions("domain", &["Why reuse the key?"]);
+        let mut store = InMemoryStore::new();
+        let session = store.start(record(asked.clone())).expect("started");
+        let mut save = |reasoning| {
+            store
+                .save_response(session, asked[0].id(), response(reasoning))
+                .expect("saved")
+        };
+        let written = save("The key dedupes.");
+        let not_written = save(" \n\t");
+
+        let reasoning = written
+            .written_reasoning()
+            .expect("its reasoning is written");
+        assert_eq!(reasoning.reasoning(), "The key dedupes.");
+        assert_eq!(reasoning.saved(), &written);
+        assert_eq!(format!("{reasoning:?}"), format!("{written:?}"));
+        assert!(not_written.written_reasoning().is_none());
     }
 
     #[test]

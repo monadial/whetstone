@@ -69,7 +69,8 @@ pub use crate::repository::{Repository, Unavailable};
 pub use crate::sent_requests::{Asking, RequestEnded, SentRequest};
 pub use crate::session_record::{
     Assessment, AttemptId, Durability, ExplanationCheck, InMemoryStore, NewRecord, Report,
-    ReportKind, SavedResponse, SessionId, SessionStore, Signal, StoreEntry, StoreError,
+    ReportKind, SavedReasoning, SavedResponse, SessionId, SessionStore, Signal, StoreEntry,
+    StoreError,
 };
 pub use crate::showcase::embedded_showcase;
 pub use crate::terminal::{ModeSwitch, TerminalGuard, TerminalMode};

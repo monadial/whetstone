@@ -1,13 +1,16 @@
 //! The summary, once the learner finishes a Practice: what happened to its
 //! questions, each question's outcomes, and what the session cost.
 //!
-//! It counts the questions answered, skipped and that can't be answered
-//! from this context, and those whose reasoning awaits evaluation, that
-//! were assisted attempts and that were reported. A question still
+//! It counts the questions answered with reasoning and those answered with
+//! a choice only, separately, the questions skipped and that can't be
+//! answered from this context, and those whose reasoning awaits evaluation,
+//! that were assisted attempts and that were reported. A question still
 //! unattempted when the learner finished counts as skipped, whether Skip
 //! moved past it or Finish came first; one skipped and answered later
 //! counts as answered. Each question is listed with its choice outcome and
-//! each criterion's outcome, separately: there is no combined grade.
+//! each criterion's outcome, separately: there is no combined grade. A
+//! question answered with a choice only has no criterion outcomes: its
+//! reasoning wasn't written, so it wasn't assessed.
 //!
 //! The cost, under the counts, is what each reply reported, added up for
 //! Jev, for the generator and for both. A request whose reply reported no
@@ -113,7 +116,8 @@ impl Summary {
         let counts = summary.counts();
         tracing::info!(
             questions = counts.questions,
-            answered = counts.answered,
+            answered_with_reasoning = counts.answered_with_reasoning,
+            choice_only = counts.choice_only,
             skipped = counts.skipped,
             cannot_answer = counts.cannot_answer,
             awaiting_evaluation = counts.awaiting_evaluation,
@@ -139,7 +143,20 @@ impl Summary {
         let count = |counted: fn(&Listed<'_>) -> bool| listed.iter().filter(|q| counted(q)).count();
         Counts {
             questions: listed.len(),
-            answered: count(|listed| matches!(listed.attempt, Ended::Answered(_))),
+            answered_with_reasoning: count(|listed| {
+                matches!(
+                    listed.attempt,
+                    Ended::Answered(feedback)
+                        if !matches!(feedback.evaluation(), Evaluation::NotWritten)
+                )
+            }),
+            choice_only: count(|listed| {
+                matches!(
+                    listed.attempt,
+                    Ended::Answered(feedback)
+                        if matches!(feedback.evaluation(), Evaluation::NotWritten)
+                )
+            }),
             skipped: count(|listed| matches!(listed.attempt, Ended::Skipped)),
             cannot_answer: count(|listed| matches!(listed.attempt, Ended::CannotAnswer)),
             awaiting_evaluation: count(|listed| {
@@ -196,7 +213,8 @@ impl Summary {
         lines.push(Line::default());
         let counts = self.counts();
         let rows = [
-            ("Answered", counts.answered),
+            ("Answered with reasoning", counts.answered_with_reasoning),
+            ("Choice only", counts.choice_only),
             ("Skipped", counts.skipped),
             ("Cannot answer from this context", counts.cannot_answer),
             ("Awaiting evaluation", counts.awaiting_evaluation),
@@ -283,6 +301,9 @@ fn question_lines(
             };
             indented(&mut lines, &format!("Choice · {choice}{assisted}"));
             match feedback.evaluation() {
+                Evaluation::NotWritten => {
+                    indented(&mut lines, "Reasoning not written: not assessed");
+                }
                 Evaluation::Unsent | Evaluation::Awaiting => {
                     indented(&mut lines, "Reasoning · Awaiting evaluation");
                 }
@@ -380,7 +401,10 @@ const INDENT: usize = 2;
 #[derive(Debug, Clone, Copy)]
 struct Counts {
     questions: usize,
-    answered: usize,
+    /// Answered with reasoning written.
+    answered_with_reasoning: usize,
+    /// Answered with a choice alone, so its reasoning isn't assessed.
+    choice_only: usize,
     skipped: usize,
     cannot_answer: usize,
     awaiting_evaluation: usize,
