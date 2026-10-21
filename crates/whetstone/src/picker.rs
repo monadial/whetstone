@@ -597,7 +597,7 @@ impl Picker {
                         size: self
                             .sizes
                             .as_ref()
-                            .map_or(commit_rows::Size::Finding, |sizes| sizes.of(commit.id())),
+                            .map_or(commit_rows::Sizing::Finding, |sizes| sizes.of(commit.id())),
                     })
                     .collect();
                 let mut items: Vec<Text<'a>> =

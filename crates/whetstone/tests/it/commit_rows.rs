@@ -281,7 +281,19 @@ fn the_columns_stay_where_they_are_as_the_sizes_are_found() {
 }
 
 #[test]
-fn at_80_columns_the_date_shortens_and_the_size_goes() {
+fn at_80_columns_the_date_shortens_and_the_size_goes_and_the_author_too_for_a_label() {
+    // Without a label in view, the author stays.
+    let bumps = history_of(30);
+    let mut session = started_in(bumps.root(), 80, 24);
+    session.press("<Enter>");
+    session.settle();
+    assert_eq!(
+        texts(&session)[0][1..],
+        ["Jan 1", "Ada Learner", "Bump the counter to 29"],
+        "{}",
+        session.text()
+    );
+
     let repo = payments();
     let ids = short_ids(&repo);
     let mut session = started_in(repo.root(), 80, 24);
@@ -291,33 +303,26 @@ fn at_80_columns_the_date_shortens_and_the_size_goes() {
     session.settle();
     assert_eq!(texts(&session), finding, "{}", session.text());
 
-    // The first commit keeps its label after its summary.
+    // The first commit keeps its label after its summary, so the author
+    // goes too, before a summary is squeezed below 30 cells.
     assert_eq!(
         texts(&session),
         [
-            row(&[
-                &format!("( ) {}", ids[0]),
-                "now",
-                "Ada Learner",
-                "Bump the counter to 1",
-            ]),
+            row(&[&format!("( ) {}", ids[0]), "now", "Bump the counter to 1"]),
             row(&[
                 &format!("( ) {}", ids[1]),
                 "2h",
-                "Tomas M.",
-                "Retry a timed-out charge with its ori…",
+                "Retry a timed-out charge with its original key",
             ]),
             row(&[
                 &format!("( ) {}", ids[2]),
                 "Oct 14",
-                "Jana K.",
                 "Cache payments per tenant",
             ]),
             row(&[
                 &format!("( ) {}", ids[3]),
                 "Oct 2025",
-                "Ada Learner",
-                "Start the payments serv…",
+                "Start the payments service",
                 "first commit",
             ]),
         ],
@@ -331,12 +336,14 @@ fn narrower_terminals_shorten_the_date_then_drop_the_size_then_the_author() {
     let repo = payments();
     // How many cells the newest commit's row has at each width: the
     // marker and ID, the date, the author, the summary, and the size in
-    // two.
+    // two. The first commit's label, which stays after its summary once
+    // the size goes, counts towards the summary's 30 cells.
     for (width, dates, cells) in [
         (120, "just now", 6),
         (100, "just now", 6),
         (90, "now", 6),
-        (80, "now", 4),
+        (86, "now", 4),
+        (80, "now", 3),
         (60, "now", 3),
     ] {
         let mut session = started_in(repo.root(), width, 24);
@@ -346,6 +353,9 @@ fn narrower_terminals_shorten_the_date_then_drop_the_size_then_the_author() {
         let newest = &texts(&session)[0];
         assert_eq!(newest[1], dates, "at {width}:\n{}", session.text());
         assert_eq!(newest.len(), cells, "at {width}:\n{}", session.text());
+        if cells == 4 {
+            assert_eq!(newest[2], "Ada Learner", "at {width}:\n{}", session.text());
+        }
         assert_eq!(
             newest.last().map(String::as_str),
             Some(if cells == 6 {
@@ -417,7 +427,9 @@ fn the_id_date_author_and_size_are_muted_and_the_summary_reads_as_text() {
         120,
         32,
     );
+    // Focus on the newest commit, with the one after it chosen.
     session.press(TO_THE_NEWEST);
+    session.press("j <Space> k");
     session.settle();
     let frame = session.frame();
     let rows = session.rows();
@@ -431,27 +443,91 @@ fn the_id_date_author_and_size_are_muted_and_the_summary_reads_as_text() {
         let x = u16::try_from(x.unwrap_or_default()).expect("a column fits");
         let y = u16::try_from(y).expect("a row fits");
         let cell = &frame[(x, y)];
-        (cell.fg, cell.modifier)
+        (cell.fg, cell.bg, cell.modifier)
     };
     let row_of = |text: &str| {
         rows.iter()
             .position(|row| row.contains(text))
             .unwrap_or_default()
     };
-    let muted = (Color::Indexed(250), Modifier::empty());
-    let text = (Color::Indexed(255), Modifier::empty());
-    let focus = (Color::Indexed(111), Modifier::BOLD);
+    let canvas = Color::Indexed(234);
+    let selected = Color::Indexed(237);
+    let muted = Color::Indexed(250);
+    let text = Color::Indexed(255);
+    let focus = (Color::Indexed(111), canvas, Modifier::BOLD);
 
+    let cache = row_of("Cache payments");
+    for column in ["Oct 14", "Jana K.", "2 files", "+5 −0"] {
+        assert_eq!(
+            style_of(cache, column),
+            (muted, canvas, Modifier::empty()),
+            "{column}"
+        );
+    }
+    assert_eq!(
+        style_of(cache, "Cache payments"),
+        (text, canvas, Modifier::empty())
+    );
+    // The chosen row keeps its highlight under every column.
     let retry = row_of("Retry a timed-out");
     for column in ["2 hours ago", "Tomas M.", "3 files", "+7 −1"] {
-        assert_eq!(style_of(retry, column), muted, "{column}");
+        assert_eq!(
+            style_of(retry, column),
+            (muted, selected, Modifier::empty()),
+            "{column}"
+        );
     }
-    assert_eq!(style_of(retry, "Retry a timed-out"), text);
+    assert_eq!(
+        style_of(retry, "Retry a timed-out"),
+        (text, selected, Modifier::empty())
+    );
     // The focused row keeps the focus style throughout.
     let newest = row_of("Bump the counter");
     for column in ["just now", "Ada Learner", "Bump the counter", "1 file"] {
         assert_eq!(style_of(newest, column), focus, "{column}");
     }
+}
+
+#[test]
+fn an_authors_name_too_long_for_its_column_is_shortened() {
+    let repo = TestRepo::new("payments");
+    repo.write("README.md", "# Payments\n");
+    repo.commit_by("Start", "github-actions[bot]", "@1760432400 +0000");
+    repo.write("README.md", "# Payments, by tenant\n");
+    repo.commit_by(
+        "Cache per tenant",
+        "Jean-Baptiste Emmanuel Zorg",
+        "@1760432400 +0000",
+    );
+    repo.write("README.md", "# Payments, by tenant and day\n");
+    repo.commit_by("Cache per day", "Tomas Mihalicka", "@1760432400 +0000");
+    let mut session = started_in(repo.root(), 120, 32);
+    session.press("<Enter>");
+
+    let authors: Vec<String> = texts(&session).iter().map(|row| row[2].clone()).collect();
+    // As its first name and initial if that fits, and otherwise cut.
+    assert_eq!(
+        authors,
+        ["Tomas M.", "Jean-Baptis…", "github-acti…"],
+        "{}",
+        session.text()
+    );
+}
+
+#[test]
+fn sizes_are_found_a_few_at_a_time() {
+    let repo = history_of(30);
+    let mut session = started_in(repo.root(), 120, 32);
+    session.press("<Enter>");
+
+    // The first four, then the next four as those come.
+    session.settle_once();
+    let found = |session: &Session| ends(session).iter().filter(|end| *end != "…").count();
+    assert_eq!(found(&session), 4, "{}", session.text());
+    session.settle_once();
+    assert_eq!(found(&session), 8, "{}", session.text());
+    session.settle();
+    assert_eq!(found(&session), 18, "{}", session.text());
 }
 
 #[test]

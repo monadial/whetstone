@@ -132,7 +132,7 @@ fn a_filter_matches_the_whole_message() {
     repo.write("refund.rs", "");
     repo.commit("Add refunds\n\nA refund returns a payment.");
     let log = git_log(&repo);
-    let mut session = started_in(repo.root(), 80, 24);
+    let mut session = started_in(repo.root(), 120, 32);
     // Onto the second commit.
     session.press("<Enter> j j j j j j");
 

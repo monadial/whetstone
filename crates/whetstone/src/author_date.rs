@@ -7,6 +7,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const MINUTE: i64 = 60;
 const HOUR: i64 = 60 * MINUTE;
 const DAY: i64 = 24 * HOUR;
+/// How long ago a date is still yesterday: up to two days.
+const YESTERDAY: i64 = 2 * DAY;
 /// How long ago a date is worded relative to now, rather than as a date:
 /// up to six days.
 const RELATIVE: i64 = 7 * DAY;
@@ -40,23 +42,16 @@ impl AuthorDate {
     pub(crate) fn worded(self, now: SystemTime, wording: Wording) -> String {
         let now = seconds_since_epoch(now);
         let ago = now.saturating_sub(self.0.seconds);
-        let (count, unit, short_unit) = if !(0..RELATIVE).contains(&ago) {
-            return self.calendar_date(now, wording);
-        } else if ago < MINUTE {
-            return match wording {
-                Wording::Full => "just now",
-                Wording::Short => "now",
-            }
-            .to_owned();
-        } else if ago < HOUR {
-            (ago / MINUTE, "minute", 'm')
-        } else if ago < DAY {
-            (ago / HOUR, "hour", 'h')
-        } else {
-            (ago / DAY, "day", 'd')
+        let (count, unit, short_unit) = match (ago, wording) {
+            (..0 | RELATIVE.., _) => return self.calendar_date(now, wording),
+            (0..MINUTE, Wording::Full) => return "just now".to_owned(),
+            (0..MINUTE, Wording::Short) => return "now".to_owned(),
+            (MINUTE..HOUR, _) => (ago / MINUTE, "minute", 'm'),
+            (HOUR..DAY, _) => (ago / HOUR, "hour", 'h'),
+            (DAY..YESTERDAY, Wording::Full) => return "yesterday".to_owned(),
+            _ => (ago / DAY, "day", 'd'),
         };
         match wording {
-            Wording::Full if unit == "day" && count == 1 => "yesterday".to_owned(),
             Wording::Full if count == 1 => format!("1 {unit} ago"),
             Wording::Full => format!("{count} {unit}s ago"),
             Wording::Short => format!("{count}{short_unit}"),
@@ -106,9 +101,6 @@ mod tests {
 
     /// 2026-10-21 10:15:02 UTC.
     const NOW: i64 = 1_792_577_702;
-    const MINUTE: i64 = 60;
-    const HOUR: i64 = 60 * MINUTE;
-    const DAY: i64 = 24 * HOUR;
 
     fn now() -> SystemTime {
         UNIX_EPOCH + Duration::from_secs(NOW.unsigned_abs())

@@ -258,7 +258,12 @@ impl Reader {
     fn commit(&self, info: &gix::traverse::commit::Info) -> Result<Commit, HistoryError> {
         let found = self.git.find_commit(info.id)?;
         let message = found.message()?;
-        let author = found.author()?;
+        // An author Git can't read has no name, and a date it can't read is
+        // the Unix epoch, as `git log` shows it.
+        let (author, date) = found.author().map_or_else(
+            |_| (String::new(), gix::date::Time::default()),
+            |author| (author.name.to_string(), author.time().unwrap_or_default()),
+        );
         // Only the first parent is compared with, so only it must be there.
         let availability = if info
             .parent_ids
@@ -277,9 +282,8 @@ impl Reader {
             id: commit_id(info.id, self.short_len),
             summary: message.summary().to_string(),
             message: found.message_raw_sloppy().to_string(),
-            author: author.name.to_string(),
-            // A date Git can't read is the Unix epoch, as `git log` shows it.
-            date: AuthorDate::new(author.time().unwrap_or_default()),
+            author,
+            date: AuthorDate::new(date),
             availability,
         })
     }

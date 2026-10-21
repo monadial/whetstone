@@ -1,7 +1,8 @@
 //! The repository picker's commit rows: each commit's choice marker, short
 //! ID, author date, author, summary and size, in aligned columns that fit
-//! the width. Each commit's size is found in the background, only while its
-//! row is on screen, and kept once found, so paging stays instant.
+//! the width. Sizes are found in the background, a few at a time, for the
+//! commits on screen, and kept for each commit once found, so paging stays
+//! instant.
 
 use std::collections::HashMap;
 use std::time::SystemTime;
@@ -25,13 +26,18 @@ const SUMMARY: usize = 30;
 /// The most cells an author's name takes.
 const AUTHOR: usize = 12;
 
+/// How many sizes are found at once, at most: enough to fill a page
+/// quickly, and few enough that paging fast never piles up work. The rest
+/// wait their turn while they stay on screen.
+const AT_ONCE: usize = 4;
+
 /// Why a commit whose parent is missing, as at a shallow clone's boundary,
 /// cannot be chosen.
 const PARENT_MISSING: &str = "parent not in this clone";
 
 /// The fewest cells a size takes, as "1 file  +0 −0" does. The size's
-/// column keeps that much room while sizes are still found, so the columns
-/// stay where they are once they are.
+/// column keeps that much room while sizes are still found, so sizes as
+/// small as that move no column when they come.
 const SMALLEST_SIZE: usize = 13;
 
 /// What the size's column shows while a size is being found.
@@ -46,25 +52,17 @@ const UNREADABLE: &str = "unreadable";
 pub(crate) struct Sizes {
     /// The repository, for each job to open on its own thread.
     handle: RepositoryHandle,
-    /// The size of each commit found so far, or that it can't be read.
-    found: HashMap<CommitId, Found>,
+    /// What finding each commit's size found so far.
+    found: HashMap<CommitId, Sizing>,
     /// The jobs finding sizes, each with the commit it sizes.
     finding: Waiting<CommitId>,
-    /// The commits on screen whose sizes are wanted.
+    /// The commits on screen whose sizes are wanted, in the order shown.
     wanted: Vec<CommitId>,
 }
 
-/// What finding a commit's size found.
+/// Where finding a commit's size is, as its row shows it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Found {
-    Size(ChangeSize),
-    /// The commit can't be read, so it has no size to show.
-    Unreadable,
-}
-
-/// What a commit's row shows of its size.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Size {
+pub(crate) enum Sizing {
     /// It is still being found.
     Finding,
     /// The files the change touches, and the lines it adds and removes.
@@ -97,10 +95,14 @@ impl Sizes {
     }
 
     /// Starts a job with `jobs` for each commit wanted whose size is not
-    /// found or being found: off the UI loop (rule 19), one commit each, so
-    /// each row's size shows as soon as it is found.
+    /// found or being found, while fewer than [`AT_ONCE`] are: off the UI
+    /// loop (rule 19), one commit each, so each row's size shows as soon as
+    /// it is found.
     pub(crate) fn start_jobs(&mut self, jobs: &mut Jobs<JobOutput>) {
         for &commit in &self.wanted {
+            if self.finding.len() >= AT_ONCE {
+                break;
+            }
             if self.found.contains_key(&commit) || self.finding.waits_with(&commit) {
                 continue;
             }
@@ -132,38 +134,38 @@ impl Sizes {
         listed: bool,
     ) {
         if self.finding.accept(job, &commit) && listed {
-            let found = size.map_or(Found::Unreadable, Found::Size);
+            let found = size.map_or(Sizing::Unreadable, Sizing::Found);
             self.found.insert(commit, found);
         }
     }
 
-    /// What the row of `commit` shows of its size.
-    pub(crate) fn of(&self, commit: CommitId) -> Size {
-        match self.found.get(&commit) {
-            None => Size::Finding,
-            Some(Found::Size(size)) => Size::Found(*size),
-            Some(Found::Unreadable) => Size::Unreadable,
-        }
+    /// Where finding the size of `commit` is.
+    pub(crate) fn of(&self, commit: CommitId) -> Sizing {
+        self.found.get(&commit).copied().unwrap_or(Sizing::Finding)
     }
 }
 
-/// A commit's row to lay out: the commit, its choice's state, and what it
-/// shows of its size.
+/// A commit's row to lay out.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Row<'a> {
+    /// The commit it shows.
     pub(crate) commit: &'a Commit,
+    /// Its choice's state: whether it has focus, and is chosen.
     pub(crate) state: ControlState<'a>,
-    pub(crate) size: Size,
+    /// Where finding its size is.
+    pub(crate) size: Sizing,
 }
 
 /// What ends a row, in the size's column.
 #[derive(Debug)]
 enum End {
-    /// The size, as the files the change touches, and the lines it adds
+    /// The size: the `files` the change touches, and the `lines` it adds
     /// and removes.
     Size { files: String, lines: String },
-    /// A size still being found, or one that can't be.
-    Pending(&'static str),
+    /// A size still being found.
+    Finding,
+    /// No size, as the commit can't be read.
+    Unreadable,
     /// What a merge or a first commit is compared with, in place of a size.
     Label(&'static str),
     /// Why the commit can't be chosen, in place of a size.
@@ -177,21 +179,72 @@ impl End {
         match self {
             Self::Label(label) => Some(label),
             Self::Disabled(reason) => Some(reason),
-            Self::Size { .. } | Self::Pending(_) => None,
+            Self::Size { .. } | Self::Finding | Self::Unreadable => None,
+        }
+    }
+
+    /// Whether it is a size, or stands in for one.
+    fn is_size(&self) -> bool {
+        matches!(self, Self::Size { .. } | Self::Finding | Self::Unreadable)
+    }
+
+    /// How many cells it takes, with the files of a size `files` cells
+    /// wide.
+    fn width(&self, files: usize) -> usize {
+        match self {
+            Self::Size { lines, .. } => files + GAP + width_of(lines),
+            Self::Finding => width_of(FINDING),
+            Self::Unreadable => width_of(UNREADABLE),
+            Self::Label(label) => width_of(label),
+            Self::Disabled(reason) => width_of(reason),
+        }
+    }
+
+    /// Its text, with the files of a size padded to `files` cells, so the
+    /// lines added and removed line up.
+    fn text(self, files: usize) -> String {
+        match self {
+            Self::Size {
+                files: touched,
+                lines,
+            } => {
+                let pad = files.saturating_sub(width_of(&touched)) + GAP;
+                format!("{touched}{}{lines}", " ".repeat(pad))
+            }
+            Self::Finding => FINDING.to_owned(),
+            Self::Unreadable => UNREADABLE.to_owned(),
+            Self::Label(label) => label.to_owned(),
+            Self::Disabled(reason) => reason,
         }
     }
 }
 
 /// A commit's row with its columns' text.
 #[derive(Debug)]
-struct Cells<'a> {
+struct RowText<'a> {
     state: ControlState<'a>,
     id: String,
-    /// The date worded in full, and short.
-    dates: [String; 2],
+    date: Dates,
     author: String,
     summary: &'a str,
     end: End,
+}
+
+/// A date worded both ways.
+#[derive(Debug)]
+struct Dates {
+    full: String,
+    short: String,
+}
+
+impl Dates {
+    /// The date as `wording` words it.
+    fn worded(&self, wording: Wording) -> &str {
+        match wording {
+            Wording::Full => &self.full,
+            Wording::Short => &self.short,
+        }
+    }
 }
 
 /// Which columns a row shows, and how its date is worded.
@@ -203,8 +256,8 @@ struct Layout {
 }
 
 /// The layouts a width can take, from the widest. The first that leaves
-/// the summary [`SUMMARY`] cells or more is used, or the last: the date
-/// shortens first, then the size's column goes, then the author's.
+/// every summary [`SUMMARY`] cells or more is used, or else the last: the
+/// date shortens first, then the size's column goes, then the author's.
 const LAYOUTS: [Layout; 4] = [
     Layout {
         date: Wording::Full,
@@ -228,6 +281,82 @@ const LAYOUTS: [Layout; 4] = [
     },
 ];
 
+/// How wide each column of some rows is: as wide as its widest text.
+#[derive(Debug)]
+struct Widths {
+    id: usize,
+    full_date: usize,
+    short_date: usize,
+    author: usize,
+    /// The files of a size.
+    files: usize,
+    /// The size's column.
+    end: usize,
+    /// What stays at the end of a row once the size's column goes.
+    kept: usize,
+}
+
+impl Widths {
+    /// The widths of the columns of `rows`.
+    fn of(rows: &[RowText<'_>]) -> Self {
+        let widest = |width: &dyn Fn(&RowText<'_>) -> usize| {
+            rows.iter().map(width).max().unwrap_or_default()
+        };
+        let files = widest(&|row| match &row.end {
+            End::Size { files, .. } => width_of(files),
+            _ => 0,
+        });
+        let has_sizes = rows.iter().any(|row| row.end.is_size());
+        Self {
+            id: widest(&|row| width_of(&row.id)),
+            full_date: widest(&|row| width_of(&row.date.full)),
+            short_date: widest(&|row| width_of(&row.date.short)),
+            author: widest(&|row| width_of(&row.author)),
+            files,
+            end: widest(&|row| row.end.width(files)).max(if has_sizes { SMALLEST_SIZE } else { 0 }),
+            kept: widest(&|row| row.end.kept().map_or(0, width_of)),
+        }
+    }
+
+    /// The date's width, worded as `wording` says.
+    fn date(&self, wording: Wording) -> usize {
+        match wording {
+            Wording::Full => self.full_date,
+            Wording::Short => self.short_date,
+        }
+    }
+
+    /// Where the summary starts, as `layout` lays a row out.
+    fn summary_column(&self, layout: Layout) -> usize {
+        let author_column = self.id + GAP + self.date(layout.date) + GAP;
+        if layout.author {
+            author_column + self.author + GAP
+        } else {
+            author_column
+        }
+    }
+
+    /// The summary's column, as `layout` lays a row `width` cells wide out.
+    fn summary(&self, layout: Layout, width: usize) -> usize {
+        let marker = Theme::control_width("", ControlKind::Choice { selected: false });
+        width
+            .saturating_sub(marker + self.summary_column(layout))
+            .saturating_sub(if layout.size { GAP + self.end } else { 0 })
+    }
+
+    /// The fewest cells `layout` leaves any summary in a row `width` cells
+    /// wide: the summary's column, less what a row keeps after its summary
+    /// once the size's column goes.
+    fn least_summary(&self, layout: Layout, width: usize) -> usize {
+        let summary = self.summary(layout, width);
+        if layout.size || self.kept == 0 {
+            summary
+        } else {
+            summary.saturating_sub(GAP + self.kept)
+        }
+    }
+}
+
 /// `rows` as lines `width` cells wide, in aligned columns: the choice
 /// marker, short ID, date worded as of `now`, author and summary, and the
 /// size at the end. The summary takes the width the others leave, cut to
@@ -240,107 +369,65 @@ pub(crate) fn lines<'a>(
     now: SystemTime,
     width: u16,
 ) -> Vec<Line<'a>> {
-    let rows: Vec<Cells<'a>> = rows.into_iter().map(|row| cells(row, now)).collect();
-    let widest = |width: &dyn Fn(&Cells<'a>) -> usize| rows.iter().map(width).max();
-    let id = widest(&|row| cells_in(&row.id)).unwrap_or_default();
-    let full_date = widest(&|row| cells_in(&row.dates[0])).unwrap_or_default();
-    let short_date = widest(&|row| cells_in(&row.dates[1])).unwrap_or_default();
-    let author = widest(&|row| cells_in(&row.author)).unwrap_or_default();
-    let files = widest(&|row| match &row.end {
-        End::Size { files, .. } => cells_in(files),
-        _ => 0,
-    })
-    .unwrap_or_default();
-    let end_width = |end: &End| match end {
-        End::Size { lines, .. } => files + GAP + cells_in(lines),
-        End::Pending(text) | End::Label(text) => cells_in(text),
-        End::Disabled(reason) => cells_in(reason),
-    };
-    let has_sizes = rows
-        .iter()
-        .any(|row| matches!(row.end, End::Size { .. } | End::Pending(_)));
-    let end = widest(&|row| end_width(&row.end))
-        .unwrap_or_default()
-        .max(if has_sizes { SMALLEST_SIZE } else { 0 });
-    let marker = Theme::control_width("", ControlKind::Choice { selected: false });
-    // What a layout leaves the summary.
-    let room = |layout: Layout| {
-        let date = match layout.date {
-            Wording::Full => full_date,
-            Wording::Short => short_date,
-        };
-        usize::from(width)
-            .saturating_sub(marker + id + GAP + date + GAP)
-            .saturating_sub(if layout.author { author + GAP } else { 0 })
-            .saturating_sub(if layout.size { GAP + end } else { 0 })
-    };
+    let rows: Vec<RowText<'a>> = rows.into_iter().map(|row| row_text(row, now)).collect();
+    let widths = Widths::of(&rows);
+    let width = usize::from(width);
     let layout = LAYOUTS
         .into_iter()
-        .find(|&layout| room(layout) >= SUMMARY)
+        .find(|&layout| widths.least_summary(layout, width) >= SUMMARY)
         .unwrap_or(LAYOUTS[LAYOUTS.len() - 1]);
-    let summary_room = room(layout);
-    let date_column = id + GAP;
-    let author_column = date_column
-        + GAP
-        + match layout.date {
-            Wording::Full => full_date,
-            Wording::Short => short_date,
-        };
-    let summary_column = if layout.author {
-        author_column + author + GAP
-    } else {
-        author_column
-    };
-    let end_column = summary_column + summary_room + GAP;
     rows.into_iter()
-        .map(|row| {
-            let mut line = Line::from(Span::styled(row.id, theme.muted));
-            columns::pad_to(&mut line, date_column);
-            let [full, short] = row.dates;
-            line.push_span(Span::styled(
-                match layout.date {
-                    Wording::Full => full,
-                    Wording::Short => short,
-                },
-                theme.muted,
-            ));
-            if layout.author {
-                columns::pad_to(&mut line, author_column);
-                line.push_span(Span::styled(row.author, theme.muted));
-            }
-            columns::pad_to(&mut line, summary_column);
-            let kept = if layout.size { None } else { row.end.kept() };
-            let room = kept.map_or(summary_room, |kept| {
-                summary_room.saturating_sub(GAP + cells_in(kept))
-            });
-            line.push_span(Span::raw(columns::truncate(row.summary, room)));
-            if let Some(kept) = kept {
-                line.push_span(" ".repeat(GAP));
-                line.push_span(Span::styled(kept.to_owned(), theme.muted));
-            } else if layout.size {
-                columns::pad_to(&mut line, end_column);
-                line.push_span(Span::styled(
-                    match row.end {
-                        End::Size {
-                            files: size_files,
-                            lines,
-                        } => {
-                            let pad = files.saturating_sub(cells_in(&size_files)) + GAP;
-                            format!("{size_files}{}{lines}", " ".repeat(pad))
-                        }
-                        End::Pending(text) | End::Label(text) => text.to_owned(),
-                        End::Disabled(reason) => reason,
-                    },
-                    theme.muted,
-                ));
-            }
-            theme.control_in_columns(line.spans, row.state)
-        })
+        .map(|row| line(theme, row, &widths, layout, width))
         .collect()
 }
 
+/// `row` as a line `width` cells wide, with columns `widths` wide, laid out
+/// as `layout` says. What it keeps after its summary once the size's column
+/// goes takes room from its summary, and never goes past its end.
+fn line<'a>(
+    theme: &Theme,
+    row: RowText<'a>,
+    widths: &Widths,
+    layout: Layout,
+    width: usize,
+) -> Line<'a> {
+    let room = widths.summary(layout, width);
+    let summary_column = widths.summary_column(layout);
+    let mut line = Line::from(Span::styled(row.id, theme.muted));
+    columns::pad_to(&mut line, widths.id + GAP);
+    line.push_span(Span::styled(
+        row.date.worded(layout.date).to_owned(),
+        theme.muted,
+    ));
+    if layout.author {
+        columns::pad_to(&mut line, summary_column - widths.author - GAP);
+        line.push_span(Span::styled(row.author, theme.muted));
+    }
+    columns::pad_to(&mut line, summary_column);
+    let kept = if layout.size {
+        None
+    } else {
+        row.end
+            .kept()
+            .map(|kept| columns::truncate(kept, room.saturating_sub(GAP)))
+    };
+    if let Some(kept) = kept {
+        let room = room.saturating_sub(GAP + width_of(&kept));
+        line.push_span(Span::raw(columns::truncate(row.summary, room)));
+        line.push_span(" ".repeat(GAP));
+        line.push_span(Span::styled(kept, theme.muted));
+    } else {
+        line.push_span(Span::raw(columns::truncate(row.summary, room)));
+        if layout.size {
+            columns::pad_to(&mut line, summary_column + room + GAP);
+            line.push_span(Span::styled(row.end.text(widths.files), theme.muted));
+        }
+    }
+    theme.control_in_columns(line.spans, row.state)
+}
+
 /// The columns' text of `row`, with its date worded as of `now`.
-fn cells(row: Row<'_>, now: SystemTime) -> Cells<'_> {
+fn row_text(row: Row<'_>, now: SystemTime) -> RowText<'_> {
     let Row {
         commit,
         state,
@@ -358,9 +445,9 @@ fn cells(row: Row<'_>, now: SystemTime) -> Cells<'_> {
             state,
             match (comparison_label(comparison), size) {
                 (Some(label), _) => End::Label(label),
-                (None, Size::Finding) => End::Pending(FINDING),
-                (None, Size::Unreadable) => End::Pending(UNREADABLE),
-                (None, Size::Found(size)) => End::Size {
+                (None, Sizing::Finding) => End::Finding,
+                (None, Sizing::Unreadable) => End::Unreadable,
+                (None, Sizing::Found(size)) => End::Size {
                     files: match size.files() {
                         1 => "1 file".to_owned(),
                         files => format!("{} files", grouped(files)),
@@ -371,13 +458,13 @@ fn cells(row: Row<'_>, now: SystemTime) -> Cells<'_> {
         ),
     };
     let date = commit.date();
-    Cells {
+    RowText {
         state,
         id: commit.id().short().to_owned(),
-        dates: [
-            date.worded(now, Wording::Full),
-            date.worded(now, Wording::Short),
-        ],
+        date: Dates {
+            full: date.worded(now, Wording::Full),
+            short: date.worded(now, Wording::Short),
+        },
         author: author_name(commit.author()),
         summary: commit.summary(),
         end,
@@ -388,7 +475,7 @@ fn cells(row: Row<'_>, now: SystemTime) -> Cells<'_> {
 /// whole if it fits, or else its first word and its last word's initial,
 /// as "Tomas M.", if that fits, or else cut to fit.
 fn author_name(name: &str) -> String {
-    if cells_in(name) <= AUTHOR {
+    if width_of(name) <= AUTHOR {
         return name.to_owned();
     }
     let words: Vec<&str> = name.split_whitespace().collect();
@@ -396,7 +483,7 @@ fn author_name(name: &str) -> String {
         && let Some(initial) = last.graphemes(true).next()
     {
         let short = format!("{first} {initial}.");
-        if cells_in(&short) <= AUTHOR {
+        if width_of(&short) <= AUTHOR {
             return short;
         }
     }
@@ -404,6 +491,6 @@ fn author_name(name: &str) -> String {
 }
 
 /// How many cells `text` takes.
-fn cells_in(text: &str) -> usize {
+fn width_of(text: &str) -> usize {
     Line::raw(text).width()
 }
