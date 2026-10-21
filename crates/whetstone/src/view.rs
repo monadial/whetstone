@@ -187,6 +187,9 @@ pub(crate) enum Reading {
     /// Everything Practice sent as the evidence its questions rest on,
     /// which the questions screen and feedback let the learner inspect.
     Evidence,
+    /// The answer key, the rationales, "why it matters" and the rubric of
+    /// the question Practice shows, which Show answer reveals.
+    Answer,
 }
 
 /// A change the viewer can show.

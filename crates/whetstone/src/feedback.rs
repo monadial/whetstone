@@ -22,7 +22,8 @@
 //! A submitted response is final, so feedback offers no way back to it. Its
 //! controls are the evaluation's, while it awaits or failed, and the
 //! explanation's, once Retry explanation is offered, then Next question,
-//! Inspect source and Finish.
+//! Inspect source, Report and Finish. An assisted attempt's outcomes are
+//! each marked Assisted.
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -70,13 +71,20 @@ enum Control {
     RetryExplanation,
     NextQuestion,
     InspectSource,
+    /// Reports the question, which changes no outcome.
+    Report,
     Finish,
 }
 
 impl Control {
     /// The controls feedback always has, in focus order, after the
     /// evaluation's.
-    const ALWAYS: [Self; 3] = [Self::NextQuestion, Self::InspectSource, Self::Finish];
+    const ALWAYS: [Self; 4] = [
+        Self::NextQuestion,
+        Self::InspectSource,
+        Self::Report,
+        Self::Finish,
+    ];
 
     fn label(self) -> &'static str {
         match self {
@@ -85,6 +93,7 @@ impl Control {
             Self::RetryExplanation => "Retry explanation",
             Self::NextQuestion => "Next question",
             Self::InspectSource => "Inspect source",
+            Self::Report => "Report",
             Self::Finish => "Finish",
         }
     }
@@ -110,6 +119,8 @@ pub(crate) enum Step {
     NextQuestion,
     /// Read the evidence the question rests on.
     InspectSource,
+    /// Report the question.
+    Report,
     /// End the Practice.
     Finish,
     /// Stop the evaluation of the reasoning, which awaits.
@@ -120,16 +131,30 @@ pub(crate) enum Step {
 /// there is a next one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Place {
-    /// Another question follows it.
+    /// Another question follows it: the next, or after the last, the first,
+    /// while another question is still unattempted.
     BeforeTheLast,
-    /// It is the last.
+    /// It is the last, and no other question is unattempted.
     Last,
+}
+
+/// Whose work an attempt is.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum AttemptKind {
+    /// The learner's own, with or without the hint.
+    #[default]
+    Own,
+    /// An assisted attempt: the learner chose Show answer first, so its
+    /// assessment is not independent, and its outcomes are marked Assisted.
+    Assisted,
 }
 
 /// Feedback on one submitted response.
 #[derive(Debug)]
 pub(crate) struct Feedback {
     outcome: Assessed<ChoiceOutcome>,
+    /// Whether the attempt is the learner's own or assisted.
+    kind: AttemptKind,
     /// The store's acknowledgement of the response, which names its
     /// session, question and attempt and holds the response as saved: Jev
     /// is asked about the reasoning with it, and its result is waited for
@@ -157,11 +182,13 @@ pub(crate) struct Feedback {
 
 impl Feedback {
     /// Feedback on the response a store of `durability` saved as `saved`,
-    /// whose choice's outcome is `outcome`, for a question at `place`. Focus
-    /// starts on Next question, or on Finish after the last.
+    /// whose choice's outcome is `outcome`, in an attempt of `kind`, for a
+    /// question at `place`. Focus starts on Next question, or on Finish
+    /// after the last.
     pub(crate) fn new(
         outcome: Assessed<ChoiceOutcome>,
         saved: SavedResponse,
+        kind: AttemptKind,
         durability: Durability,
         place: Place,
     ) -> Self {
@@ -171,6 +198,7 @@ impl Feedback {
         };
         Self {
             outcome,
+            kind,
             saved,
             durability,
             evaluation: Evaluation::Unsent,
@@ -381,6 +409,7 @@ impl Feedback {
                     }
                     Control::NextQuestion => Some(Step::NextQuestion),
                     Control::InspectSource => Some(Step::InspectSource),
+                    Control::Report => Some(Step::Report),
                     Control::Finish => Some(Step::Finish),
                 };
             }
@@ -425,6 +454,18 @@ impl Feedback {
         };
         wrapped(&mut lines, question.stem());
         lines.push(Line::default());
+        if self.kind == AttemptKind::Assisted {
+            lines.extend(
+                columns::wrap(
+                    "Assisted attempt: you chose Show answer before submitting, so its \
+                     outcomes aren't independent.",
+                    width,
+                )
+                .into_iter()
+                .map(|line| Line::styled(line, theme.muted)),
+            );
+            lines.push(Line::default());
+        }
         let chosen = self.saved.response().choice();
         let answer_key = question.answer_key();
         lines.push(Line::from(vec![
@@ -436,6 +477,7 @@ impl Feedback {
                 },
                 theme.title,
             ),
+            Span::styled(self.assisted_mark(), theme.title),
         ]));
         wrapped(
             &mut lines,
@@ -536,19 +578,23 @@ impl Feedback {
                 for (place, (criterion, assessed)) in
                     question.rubric().iter().zip(outcomes).enumerate()
                 {
-                    let outcome = match assessed.outcome() {
-                        CriterionOutcome::Met => "Met",
-                        CriterionOutcome::NotMet => "Not met",
-                        CriterionOutcome::NeedsReview => "Needs review",
-                    };
+                    let outcome = format!(
+                        "{}{}",
+                        match assessed.outcome() {
+                            CriterionOutcome::Met => "Met",
+                            CriterionOutcome::NotMet => "Not met",
+                            CriterionOutcome::NeedsReview => "Needs review",
+                        },
+                        self.assisted_mark()
+                    );
                     for (index, text) in
                         columns::wrap(&format!("{outcome} · {}", criterion.statement()), width)
                             .into_iter()
                             .enumerate()
                     {
-                        lines.push(match text.strip_prefix(outcome) {
+                        lines.push(match text.strip_prefix(outcome.as_str()) {
                             Some(rest) if index == 0 => Line::from(vec![
-                                Span::styled(outcome, theme.title),
+                                Span::styled(outcome.clone(), theme.title),
                                 Span::raw(rest.to_owned()),
                             ]),
                             _ => Line::raw(text),
@@ -567,6 +613,14 @@ impl Feedback {
                     lines.extend(self.explanation.lines(place, theme, width, failed));
                 }
             }
+        }
+    }
+
+    /// What follows each outcome of an assisted attempt.
+    fn assisted_mark(&self) -> &'static str {
+        match self.kind {
+            AttemptKind::Own => "",
+            AttemptKind::Assisted => " · Assisted",
         }
     }
 

@@ -1096,6 +1096,10 @@ impl View for Practice {
             Route::Read(Reading::Evidence) => self
                 .evidence_reader()
                 .map(|reader| Box::new(reader) as Box<dyn View>),
+            Route::Read(Reading::Answer) => match &self.stage {
+                Stage::Shown(questions) => Some(Box::new(questions.answer_reader())),
+                _ => None,
+            },
             _ => None,
         }
     }
