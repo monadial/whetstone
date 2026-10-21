@@ -41,6 +41,7 @@ fn asked_for(ai: &ScriptedAi) -> Vec<String> {
 /// The text of every row, trimmed, without the blank ones.
 fn rows(session: &Session) -> Vec<String> {
     session
+        .question()
         .rows()
         .iter()
         .map(|row| row.trim().to_owned())
@@ -143,7 +144,10 @@ fn a_clear_no_drops_its_area_and_only_the_areas_that_passed_are_written_about() 
         [("domain".to_owned(), 6)],
         "only the domain area is written about, for all 4 questions and 2 more"
     );
-    assert_eq!(session.row_with("Question 1"), "Question 1 of 4 · Domain");
+    assert_eq!(
+        session.question().row_with("Question 1"),
+        "Question 1 of 4 · Domain"
+    );
 }
 
 #[test]
@@ -165,7 +169,7 @@ fn an_unclear_verdict_lets_its_area_through() {
     submit(&mut session, "a", "Because.");
     session.press("<Enter>");
     assert_eq!(
-        session.row_with("Question 2"),
+        session.question().row_with("Question 2"),
         "Question 2 of 4 · Infrastructure"
     );
 }
@@ -183,9 +187,10 @@ fn below_the_first_question_one_line_names_the_chosen_areas_not_asked_about() {
         .iter()
         .position(|row| row.starts_with("( ) C  "))
         .expect("the first question's options show");
-    assert_eq!(
-        rows[options + 1],
-        "Not asked about: Infrastructure (not worth asking about in this change)",
+    assert!(
+        rows[options + 1..]
+            .join(" ")
+            .starts_with("Not asked about: Infrastructure (not worth asking about in this change)"),
         "{rows:#?}"
     );
 
@@ -387,9 +392,13 @@ fn retry_when_no_question_passed_keeps_the_gates_result() {
         !again.contains(&"write infrastructure".to_owned()),
         "and the area it dropped stays dropped: {again:#?}"
     );
-    assert_eq!(
-        session.row_with("Not asked about"),
-        "Not asked about: Infrastructure (not worth asking about in this change)"
+    assert!(
+        session
+            .question()
+            .words()
+            .contains("Not asked about: Infrastructure (not worth asking about in this change)"),
+        "{}",
+        session.text()
     );
 }
 
@@ -457,7 +466,10 @@ fn a_failed_gate_names_its_stage_and_retry_asks_it_again_and_nothing_else() {
         ],
         "Retry asks the gate again, and its answer decides what is written"
     );
-    assert_eq!(session.row_with("Question 1"), "Question 1 of 4 · Domain");
+    assert_eq!(
+        session.question().row_with("Question 1"),
+        "Question 1 of 4 · Domain"
+    );
 }
 
 #[test]

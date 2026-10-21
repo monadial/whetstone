@@ -115,7 +115,7 @@ fn the_help_controls_follow_submit_and_inspect_source_and_tab_reaches_them_from_
     let ai = writing_about_the_domain(6, PAYMENT_LIFECYCLE);
     let mut session = answering(&ai, 80, 24);
     assert_eq!(
-        session.row_with("Hint"),
+        session.question().row_with("Hint"),
         "Hint    Show answer    Skip    Cannot answer from this context    Report"
     );
 
@@ -125,7 +125,7 @@ fn the_help_controls_follow_submit_and_inspect_source_and_tab_reaches_them_from_
     session.press("<Tab> <Tab> <Tab>");
 
     assert_eq!(
-        session.row_with("Hint"),
+        session.question().row_with("Hint"),
         "> Hint    Show answer    Skip    Cannot answer from this context    Report"
     );
     assert!(signals(&session).is_empty(), "nothing is signalled yet");
@@ -144,12 +144,15 @@ fn hint_shows_the_questions_checked_hint_and_records_that_it_was_used() {
     activate(&mut session, "Hint");
 
     assert_eq!(
-        session.row_with("The hint"),
+        session.question().row_with("The hint"),
         "Hint: The hint, which stays hidden"
     );
     assert_eq!(signals(&session), [(FIRST.to_owned(), Signal::HintUsed)]);
     assert!(
-        !session.row_with("Question 1").contains("Assisted"),
+        !session
+            .question()
+            .row_with("Question 1")
+            .contains("Assisted"),
         "the attempt stays the learner's own:\n{}",
         session.text()
     );
@@ -165,7 +168,10 @@ fn a_question_whose_hint_failed_its_check_says_no_hint_for_this_question() {
 
     activate(&mut session, "Hint");
 
-    assert_eq!(session.row_with("No hint"), "No hint for this question");
+    assert_eq!(
+        session.question().row_with("No hint"),
+        "No hint for this question"
+    );
     assert!(
         !session.text().contains("The hint, which stays hidden"),
         "{}",
@@ -184,25 +190,27 @@ fn show_answer_reveals_the_answer_key_the_rationales_and_the_rubric_and_makes_th
     activate(&mut session, "Show answer");
 
     assert_eq!(
-        session.row_with("Answer to question"),
+        session.question().row_with("Answer to question"),
         "Answer to question 1 of 4"
     );
     assert_eq!(
-        session.section("Answer key"),
+        session.question().section("Answer key"),
         ["A: Option A of the question"]
     );
     for letter in ["A", "B", "C"] {
         assert_eq!(
-            session.section(&format!("Rationale for {letter}")),
+            session
+                .question()
+                .section(&format!("Rationale for {letter}")),
             [format!("The rationale for {letter}, which stays hidden")]
         );
     }
     assert_eq!(
-        session.section("Why it matters"),
+        session.question().section("Why it matters"),
         ["Why it matters, which stays hidden"]
     );
     assert_eq!(
-        session.section("Rubric, criterion 1 of 1"),
+        session.question().section("Rubric, criterion 1 of 1"),
         [
             "The rubric's criterion, which stays hidden",
             "Met: What meeting it looks like",
@@ -213,11 +221,11 @@ fn show_answer_reveals_the_answer_key_the_rationales_and_the_rubric_and_makes_th
 
     session.press("q");
     assert_eq!(
-        session.row_with("Question 1"),
+        session.question().row_with("Question 1"),
         "Question 1 of 4 · Domain · Assisted"
     );
     assert_eq!(
-        session.row_with("Option B"),
+        session.question().row_with("Option B"),
         "(x) B  Option B of the question",
         "the draft stays"
     );
@@ -230,7 +238,8 @@ fn show_answer_reveals_the_answer_key_the_rationales_and_the_rubric_and_makes_th
 #[test]
 fn an_assisted_attempt_is_still_submitted_and_assessed_with_both_outcomes_marked_assisted() {
     let ai = writing_about_the_domain(6, PAYMENT_LIFECYCLE);
-    let mut session = answering(&ai, 120, 32);
+    // Tall enough for the whole feedback beside the code the question cites.
+    let mut session = answering(&ai, 120, 40);
     session.press("a");
     activate(&mut session, "Show answer");
     session.press("q");
@@ -238,18 +247,21 @@ fn an_assisted_attempt_is_still_submitted_and_assessed_with_both_outcomes_marked
     write_and_submit(&mut session, "The key dedupes retries.");
     session.settle();
 
-    assert_eq!(
-        session.row_with("Assisted attempt"),
-        "Assisted attempt: you chose Show answer before submitting, so its outcomes aren't \
-         independent."
+    assert!(
+        session.question().words().contains(
+            "Assisted attempt: you chose Show answer before submitting, so its outcomes aren't \
+             independent."
+        ),
+        "{}",
+        session.text()
     );
     assert_eq!(
-        session.section("Choice · Supported · Assisted"),
+        session.question().section("Choice · Supported · Assisted"),
         ["Jev supports A, the option you chose."]
     );
     assert_eq!(
-        session.section("Reasoning"),
-        ["Met · Assisted · The rubric's criterion, which stays hidden"]
+        session.question().section_text("Reasoning"),
+        "Met · Assisted · The rubric's criterion, which stays hidden"
     );
     let log = session.store().log();
     assert!(
@@ -289,7 +301,7 @@ fn an_attempt_with_a_hint_alone_is_not_marked_assisted() {
 
     assert!(!session.text().contains("Assisted"), "{}", session.text());
     assert_eq!(
-        session.section("Reasoning"),
+        session.question().section("Reasoning"),
         ["Met · The rubric's criterion, which stays hidden"]
     );
 }
@@ -297,6 +309,7 @@ fn an_attempt_with_a_hint_alone_is_not_marked_assisted() {
 /// The question that shows: its place, from "Question 1 of 4 · Domain".
 fn showing(session: &Session) -> String {
     session
+        .question()
         .row_with("Question ")
         .split(" · ")
         .next()
@@ -316,7 +329,7 @@ fn skip_keeps_the_draft_and_the_skipped_question_comes_round_again_after_the_las
 
     assert_eq!(showing(&session), "Question 2 of 4");
     assert_eq!(
-        session.row_with("Option B"),
+        session.question().row_with("Option B"),
         "( ) B  Option B of the question",
         "the next question has its own draft"
     );
@@ -338,7 +351,7 @@ fn skip_keeps_the_draft_and_the_skipped_question_comes_round_again_after_the_las
         }
     }
     assert_eq!(
-        session.row_with("Next question"),
+        session.question().row_with("Next question"),
         "> Next question",
         "the skipped question is still to come round"
     );
@@ -346,7 +359,7 @@ fn skip_keeps_the_draft_and_the_skipped_question_comes_round_again_after_the_las
 
     assert_eq!(showing(&session), "Question 1 of 4");
     assert_eq!(
-        session.row_with("Option B"),
+        session.question().row_with("Option B"),
         "(x) B  Option B of the question"
     );
     assert_eq!(reasoning(&session)[0], "Half a thought");
@@ -433,11 +446,11 @@ fn cannot_answer_counts_as_neither_incorrect_nor_skipped() {
     }
 
     assert_eq!(
-        session.row_with("Next question"),
+        session.question().row_with("Next question"),
         "Next question (this is the last)",
         "it doesn't come round as a skipped question would"
     );
-    assert_eq!(session.row_with("Finish"), "> Finish");
+    assert_eq!(session.question().row_with("Finish"), "> Finish");
     session.settle();
     let outcomes = session
         .store()
@@ -472,12 +485,18 @@ fn a_question_that_cannot_be_answered_says_so_when_it_comes_round() {
 
     assert_eq!(showing(&session), "Question 1 of 4");
     assert_eq!(
-        session.section("Cannot answer from this context").join(" "),
+        session
+            .question()
+            .section("Cannot answer from this context")
+            .join(" "),
         "You said the evidence isn't enough to answer this question. It needs no response, \
          and counts as neither incorrect nor skipped."
     );
     assert!(!session.text().contains("Submit response"));
-    assert_eq!(session.row_with("Next question"), "> Next question");
+    assert_eq!(
+        session.question().row_with("Next question"),
+        "> Next question"
+    );
     session.press("<Enter>");
     assert_eq!(showing(&session), "Question 2 of 4", "the skipped one");
 }
@@ -491,13 +510,15 @@ fn the_last_question_left_that_cannot_be_answered_stays_with_finish() {
 
     assert_eq!(showing(&session), "Question 1 of 1");
     assert_eq!(
-        session.row_with("Next question"),
+        session.question().row_with("Next question"),
         "Next question (this is the last)"
     );
-    assert_eq!(session.row_with("Finish"), "> Finish");
+    assert_eq!(session.question().row_with("Finish"), "> Finish");
     session.press("<Enter>");
     assert_eq!(
-        session.row_with("Cannot answer from this context  "),
+        session
+            .question()
+            .row_with("Cannot answer from this context  "),
         "Cannot answer from this context  1",
         "no question is unattempted, so the summary shows at once"
     );
@@ -567,11 +588,11 @@ fn report_from_the_question_takes_a_kind_and_a_note_and_changes_nothing_else() {
         )]
     );
     assert_eq!(
-        session.row_with("Question 1"),
+        session.question().row_with("Question 1"),
         "Question 1 of 4 · Domain · Reported"
     );
     assert_eq!(
-        session.row_with("Option B"),
+        session.question().row_with("Option B"),
         "(x) B  Option B of the question",
         "the draft stays"
     );
@@ -632,7 +653,12 @@ fn esc_or_cancel_closes_the_report_keeping_nothing() {
     session.press("<Enter>");
     assert!(!session.text().contains("Report this question"));
     assert_eq!(signals(&session), []);
-    assert!(!session.row_with("Question 1").contains("Reported"));
+    assert!(
+        !session
+            .question()
+            .row_with("Question 1")
+            .contains("Reported")
+    );
 }
 
 #[test]
@@ -663,11 +689,12 @@ fn a_paste_into_the_note_goes_in_on_one_line() {
 #[test]
 fn report_from_feedback_changes_no_outcome() {
     let ai = writing_about_the_domain(6, PAYMENT_LIFECYCLE);
-    let mut session = answering(&ai, 120, 32);
+    // Tall enough for the whole feedback beside the code the question cites.
+    let mut session = answering(&ai, 120, 40);
     submit(&mut session, "c", "Because.");
     session.settle();
-    let choice = session.section("Choice · Not supported");
-    let reasoning = session.section("Reasoning");
+    let choice = session.question().section("Choice · Not supported");
+    let reasoning = session.question().section("Reasoning");
     let saved = session.store().log();
 
     activate(&mut session, "Report");
@@ -675,8 +702,8 @@ fn report_from_feedback_changes_no_outcome() {
     type_text(&mut session, "C is right too");
     session.press("<Tab> <Enter>");
 
-    assert_eq!(session.section("Choice · Not supported"), choice);
-    assert_eq!(session.section("Reasoning"), reasoning);
+    assert_eq!(session.question().section("Choice · Not supported"), choice);
+    assert_eq!(session.question().section("Reasoning"), reasoning);
     let log = session.store().log();
     assert_eq!(log[..saved.len()], saved, "nothing saved is changed");
     assert!(
@@ -690,10 +717,13 @@ fn report_from_feedback_changes_no_outcome() {
         "only the report is added: {log:#?}"
     );
     assert_eq!(
-        session.row_with("Question 1"),
+        session.question().row_with("Question 1"),
         "Question 1 of 4 · Domain · Reported"
     );
-    assert_eq!(session.row_with("Next question"), "Next question");
+    assert_eq!(
+        session.question().row_with("Next question"),
+        "Next question"
+    );
 }
 
 #[test]
@@ -852,7 +882,7 @@ fn a_submitted_question_that_comes_round_shows_its_feedback_with_retry_for_a_fai
     session.settle();
 
     assert_eq!(
-        session.section("Reasoning"),
+        session.question().section("Reasoning"),
         ["Met · The rubric's criterion, which stays hidden"]
     );
     assert_eq!(asked_about(&ai, FIRST), (2, 0));

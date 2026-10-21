@@ -139,7 +139,7 @@ fn each_paragraph_that_passes_its_checks_shows_under_its_criterions_outcome_as_t
 
     let cited = format!("Cited {}, line 1", touched_path(PAYMENT_LIFECYCLE));
     assert_eq!(
-        session.section("Reasoning"),
+        session.question().section_text("Reasoning"),
         [
             "Met · Names the key the retry reuses",
             "Not met · Says why the retry can't charge twice",
@@ -152,6 +152,7 @@ fn each_paragraph_that_passes_its_checks_shows_under_its_criterions_outcome_as_t
             NEEDS_REVIEW,
             &cited,
         ]
+        .join(" ")
     );
     let [
         Asked::Explain {
@@ -195,16 +196,20 @@ fn a_paragraph_jev_isnt_clear_about_is_withheld_with_retry() {
     let session = explained(&ai, 120, TALL);
 
     assert_eq!(
-        session.section("Reasoning"),
+        session.question().section_text("Reasoning"),
         [
             "Met · Names the key the retry reuses",
             "Not met · Says why the retry can't charge twice",
             "Explanation withheld: it didn't pass checks",
             "Met · Says what the timed-out charge may already have done",
-        ],
+        ]
+        .join(" "),
         "the outcomes stay, and the paragraph never shows"
     );
-    assert_eq!(session.row_with("Retry explanation"), "Retry explanation");
+    assert_eq!(
+        session.question().row_with("Retry explanation"),
+        "Retry explanation"
+    );
     assert!(!session.text().contains(NOT_MET), "{}", session.text());
 }
 
@@ -219,15 +224,19 @@ fn a_paragraph_citing_lines_the_evidence_doesnt_send_is_withheld_before_jev_is_a
 
     let session = explained(&ai, 120, TALL);
 
-    assert_eq!(
-        session.section("Reasoning")[..5],
-        [
-            "Not met · Names the key the retry reuses",
-            "Explanation withheld: it didn't pass checks",
-            "Not met · Says why the retry can't charge twice",
-            "Explanation · generator",
-            NOT_MET,
-        ]
+    let reasoning = session.question().section_text("Reasoning");
+    assert!(
+        reasoning.starts_with(
+            &[
+                "Not met · Names the key the retry reuses",
+                "Explanation withheld: it didn't pass checks",
+                "Not met · Says why the retry can't charge twice",
+                "Explanation · generator",
+                NOT_MET,
+            ]
+            .join(" ")
+        ),
+        "{reasoning}"
     );
     let checked: Vec<Vec<WrittenParagraph>> = explaining(&ai)
         .into_iter()
@@ -251,7 +260,7 @@ fn an_explanation_that_fails_to_arrive_is_unavailable_and_the_assessment_stays()
     let session = explained(&ai, 120, TALL);
 
     assert_eq!(
-        session.section("Reasoning"),
+        session.question().section_text("Reasoning"),
         [
             "Met · Names the key the retry reuses",
             "Not met · Says why the retry can't charge twice",
@@ -264,8 +273,12 @@ fn an_explanation_that_fails_to_arrive_is_unavailable_and_the_assessment_stays()
             "OpenRouter had too many requests from your key too quickly. Wait a moment, then \
              Retry.",
         ]
+        .join(" ")
     );
-    assert_eq!(session.row_with("Retry explanation"), "Retry explanation");
+    assert_eq!(
+        session.question().row_with("Retry explanation"),
+        "Retry explanation"
+    );
     assert_eq!(
         explaining(&ai).len(),
         1,
@@ -284,13 +297,17 @@ fn a_check_that_fails_leaves_the_explanation_unavailable() {
 
     let session = explained(&ai, 120, TALL);
 
-    assert_eq!(
-        session.section("Reasoning")[1..4],
-        [
-            "Not met · Says why the retry can't charge twice",
-            "Explanation unavailable: Jev's check failed: timed out.",
-            "Jev didn't reply in time. Retry, or try again later.",
-        ]
+    let reasoning = session.question().section_text("Reasoning");
+    assert!(
+        reasoning.contains(
+            &[
+                "Not met · Says why the retry can't charge twice",
+                "Explanation unavailable: Jev's check failed: timed out.",
+                "Jev didn't reply in time. Retry, or try again later.",
+            ]
+            .join(" ")
+        ),
+        "{reasoning}"
     );
     assert!(!session.text().contains(NOT_MET), "{}", session.text());
 }
@@ -303,7 +320,7 @@ fn a_generator_model_refused_while_explaining_is_named_and_marked_in_settings() 
     let mut session = explained(&ai, 120, TALL);
 
     // Its rows as one line, so a sentence is found wherever it wraps.
-    let reasoning = session.section("Reasoning").join(" ");
+    let reasoning = session.question().section("Reasoning").join(" ");
     for said in [
         "Explanation unavailable: the generator's request failed: no zero-retention endpoint for \
          the model (refused by OpenRouter).",
@@ -339,9 +356,13 @@ fn an_explanation_of_other_criteria_than_asked_is_unavailable_never_shown() {
 
     let session = explained(&ai, 120, TALL);
 
-    assert_eq!(
-        session.section("Reasoning")[2],
-        "Explanation unavailable: the generator's request failed: the reply couldn't be read."
+    let reasoning = session.question().section_text("Reasoning");
+    assert!(
+        reasoning.contains(
+            "Not met · Says why the retry can't charge twice Explanation unavailable: the \
+             generator's request failed: the reply couldn't be read."
+        ),
+        "{reasoning}"
     );
     assert!(!session.text().contains(NOT_MET), "{}", session.text());
 }
@@ -371,7 +392,8 @@ fn retry_asks_again_only_for_what_didnt_show_and_what_showed_stays() {
     session.press("k <Enter>");
     assert!(
         session
-            .text()
+            .question()
+            .section_text("Reasoning")
             .contains("The generator is explaining this. Jev checks it before it shows."),
         "{}",
         session.text()
@@ -383,19 +405,23 @@ fn retry_asks_again_only_for_what_didnt_show_and_what_showed_stays() {
     session.settle();
 
     let cited = format!("Cited {}, line 1", touched_path(PAYMENT_LIFECYCLE));
-    assert_eq!(
-        session.section("Reasoning")[1..],
-        [
-            "Not met · Says why the retry can't charge twice",
-            "Explanation · generator",
-            NOT_MET,
-            &cited,
-            "Needs review · Says what the timed-out charge may already have done",
-            "Jev couldn't tell whether your reasoning covers this.",
-            "Explanation · generator",
-            NEEDS_REVIEW,
-            &cited,
-        ]
+    let reasoning = session.question().section_text("Reasoning");
+    assert!(
+        reasoning.ends_with(
+            &[
+                "Not met · Says why the retry can't charge twice",
+                "Explanation · generator",
+                NOT_MET,
+                &cited,
+                "Needs review · Says what the timed-out charge may already have done",
+                "Jev couldn't tell whether your reasoning covers this.",
+                "Explanation · generator",
+                NEEDS_REVIEW,
+                &cited,
+            ]
+            .join(" ")
+        ),
+        "{reasoning}"
     );
     let asked = explaining(&ai);
     let Asked::Explain { criteria, .. } = &asked[2] else {
@@ -416,8 +442,10 @@ fn there_is_no_explanation_when_every_criterion_is_met() {
     let session = explained(&ai, 120, TALL);
 
     assert_eq!(
-        session.section("Reasoning"),
-        CRITERIA.map(|criterion| format!("Met · {criterion}"))
+        session.question().section_text("Reasoning"),
+        CRITERIA
+            .map(|criterion| format!("Met · {criterion}"))
+            .join(" ")
     );
     assert_eq!(explaining(&ai), [], "no explanation call");
     assert!(
@@ -601,18 +629,22 @@ fn retry_after_a_failed_check_asks_jev_again_and_never_pays_for_the_writing_twic
 
     session.press("k <Enter>");
     assert_eq!(
-        session.section("Reasoning")[2],
+        session.question().section("Reasoning")[2],
         "Jev is checking the generator's explanation."
     );
     session.settle();
 
-    assert_eq!(
-        session.section("Reasoning")[1..4],
-        [
-            "Not met · Says why the retry can't charge twice",
-            "Explanation · generator",
-            NOT_MET,
-        ]
+    let reasoning = session.question().section_text("Reasoning");
+    assert!(
+        reasoning.contains(
+            &[
+                "Not met · Says why the retry can't charge twice",
+                "Explanation · generator",
+                NOT_MET,
+            ]
+            .join(" ")
+        ),
+        "{reasoning}"
     );
     let asked = explaining(&ai);
     assert!(
@@ -645,12 +677,9 @@ fn retry_after_the_explanation_failed_to_arrive_asks_the_generator_again() {
     session.press("k <Enter>");
     session.settle();
 
-    let reasoning = session.section("Reasoning");
-    assert!(reasoning.contains(&NOT_MET.to_owned()), "{reasoning:#?}");
-    assert!(
-        reasoning.contains(&NEEDS_REVIEW.to_owned()),
-        "{reasoning:#?}"
-    );
+    let reasoning = session.question().section_text("Reasoning");
+    assert!(reasoning.contains(NOT_MET), "{reasoning}");
+    assert!(reasoning.contains(NEEDS_REVIEW), "{reasoning}");
     let explains: Vec<Vec<(usize, CriterionOutcome)>> = explaining(&ai)
         .into_iter()
         .filter_map(|asked| match asked {

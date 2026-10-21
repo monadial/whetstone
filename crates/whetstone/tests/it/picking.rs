@@ -81,7 +81,7 @@ fn depth_never_withholds_a_question_so_the_shallowest_still_fill_the_set() {
     let mut session = prepared(&ai, &[DOMAIN]);
 
     assert_eq!(
-        session.rows()[1].trim(),
+        session.question().rows()[1].trim(),
         "3 passed checks, 4 asked for · see why in actions"
     );
     assert_eq!(

@@ -143,17 +143,22 @@ fn activate_the_evaluations_control(session: &mut Session) {
 #[test]
 fn after_submit_the_reasoning_awaits_evaluation_and_the_choice_outcome_already_shows() {
     let ai = writing(&CRITERIA[..1], vec![Ok(probabilities(&[0.9]))]);
-    let session = submitted(&ai, "a", 120, 32);
+    let session = submitted(&ai, "a", 120, TALL);
 
     assert_eq!(
-        session.section("Choice · Supported"),
-        ["Jev supports A, the option you chose."]
+        session.question().section_text("Choice · Supported"),
+        ["Jev supports A, the option you chose."].join(" ")
     );
     assert_eq!(
-        session.section("Reasoning · Awaiting evaluation"),
-        ["Jev is assessing it against each criterion. Your response is submitted."]
+        session
+            .question()
+            .section_text("Reasoning · Awaiting evaluation"),
+        ["Jev is assessing it against each criterion. Your response is submitted."].join(" ")
     );
-    assert_eq!(session.row_with("Cancel evaluation"), "Cancel evaluation");
+    assert_eq!(
+        session.question().row_with("Cancel evaluation"),
+        "Cancel evaluation"
+    );
     assert_eq!(assessments(&ai).len(), 1, "one Jev call per response");
 }
 
@@ -162,7 +167,7 @@ fn each_criterion_shows_met_not_met_or_needs_review_in_words_only() {
     let session = assessed(&[0.9, 0.1, 0.5], 120, TALL);
 
     assert_eq!(
-        session.section("Reasoning"),
+        session.question().section_text("Reasoning"),
         [
             "Met · Names the key the retry reuses",
             "Not met · Says why the retry can't charge twice",
@@ -171,6 +176,7 @@ fn each_criterion_shows_met_not_met_or_needs_review_in_words_only() {
             "Jev couldn't tell whether your reasoning covers this.",
             EXPLAINING,
         ]
+        .join(" ")
     );
     let text = session.text();
     assert!(!text.contains("Awaiting evaluation"), "{text}");
@@ -185,7 +191,7 @@ fn the_cut_offs_decide_met_and_not_met_and_anything_between_needs_review() {
     let session = assessed(&[0.80, 0.20, 0.79], 120, TALL);
 
     assert_eq!(
-        session.section("Reasoning"),
+        session.question().section_text("Reasoning"),
         [
             "Met · Names the key the retry reuses",
             "Not met · Says why the retry can't charge twice",
@@ -194,6 +200,7 @@ fn the_cut_offs_decide_met_and_not_met_and_anything_between_needs_review() {
             "Jev couldn't tell whether your reasoning covers this.",
             EXPLAINING,
         ]
+        .join(" ")
     );
 }
 
@@ -325,17 +332,20 @@ fn every_criterion_outcome_is_saved_to_the_session_record_after_the_choice_outco
 #[test]
 fn cancel_stops_the_evaluation_and_keeps_the_response_submitted() {
     let ai = writing(&CRITERIA, vec![Ok(probabilities(&[0.9, 0.9, 0.9]))]);
-    let mut session = submitted(&ai, "a", 120, 32);
+    let mut session = submitted(&ai, "a", 120, TALL);
 
     activate_the_evaluations_control(&mut session);
     session.settle();
 
     assert_eq!(
-        session.section("Reasoning · Evaluation unavailable"),
+        session
+            .question()
+            .section_text("Reasoning · Evaluation unavailable"),
         [
             "You cancelled the evaluation.",
             "Your response stays submitted. Retry evaluation asks Jev again.",
         ]
+        .join(" ")
     );
     assert!(
         session
@@ -346,8 +356,8 @@ fn cancel_stops_the_evaluation_and_keeps_the_response_submitted() {
         session.text()
     );
     assert_eq!(
-        session.section("Choice · Supported"),
-        ["Jev supports A, the option you chose."]
+        session.question().section_text("Choice · Supported"),
+        ["Jev supports A, the option you chose."].join(" ")
     );
     let log = session.store().log();
     assert_eq!(saved_responses(&log).len(), 1, "still submitted");
@@ -370,26 +380,33 @@ fn a_failure_shows_evaluation_unavailable_and_retry_asks_jev_again() {
     let mut session = submitted(&ai, "a", 120, TALL);
     session.settle();
     assert_eq!(
-        session.section("Reasoning · Evaluation unavailable"),
+        session
+            .question()
+            .section_text("Reasoning · Evaluation unavailable"),
         [
             "Jev's evaluation failed: rate limited.",
             "OpenRouter had too many requests from your key too quickly. Wait a moment, then \
              Retry.",
             "Your response stays submitted. Retry evaluation asks Jev again.",
         ]
+        .join(" ")
     );
     assert_eq!(criterion_outcomes(&session.store().log()), []);
 
     activate_the_evaluations_control(&mut session);
     assert_eq!(
-        session.section("Reasoning · Awaiting evaluation"),
-        ["Jev is assessing it against each criterion. Your response is submitted."]
+        session
+            .question()
+            .section_text("Reasoning · Awaiting evaluation"),
+        ["Jev is assessing it against each criterion. Your response is submitted."].join(" ")
     );
     session.settle();
 
     assert_eq!(
-        session.section("Reasoning"),
-        CRITERIA.map(|criterion| format!("Met · {criterion}"))
+        session.question().section_text("Reasoning"),
+        CRITERIA
+            .map(|criterion| format!("Met · {criterion}"))
+            .join(" ")
     );
     let asked = assessments(&ai);
     assert_eq!(asked.len(), 2, "the Retry asked once more: {asked:#?}");
@@ -406,12 +423,15 @@ fn a_reply_that_doesnt_answer_each_criterion_is_unavailable_never_needs_review()
     session.settle();
 
     assert_eq!(
-        session.section("Reasoning · Evaluation unavailable"),
+        session
+            .question()
+            .section_text("Reasoning · Evaluation unavailable"),
         [
             "Jev's evaluation failed: the reply couldn't be read.",
             "Nothing in Jev's reply is used, and none of it is shown as a judgement.",
             "Your response stays submitted. Retry evaluation asks Jev again.",
         ]
+        .join(" ")
     );
     assert_eq!(criterion_outcomes(&session.store().log()), []);
 }
@@ -432,10 +452,11 @@ fn a_result_from_a_cancelled_request_is_ignored_once_retry_asks_again() {
     session.settle_once();
 
     assert_eq!(
-        session.section("Reasoning"),
+        session.question().section_text("Reasoning"),
         CRITERIA
             .map(|criterion| [format!("Not met · {criterion}"), EXPLAINING.to_owned()])
-            .concat(),
+            .concat()
+            .join(" "),
         "only the current request's result applies"
     );
     let outcomes: Vec<CriterionOutcome> = criterion_outcomes(&session.store().log())
@@ -470,11 +491,12 @@ fn each_result_applies_to_its_own_response_even_once_another_question_shows() {
     session.settle_once();
 
     assert_eq!(
-        session.section("Reasoning"),
+        session.question().section_text("Reasoning"),
         [
             "Not met · The rubric's criterion, which stays hidden",
             EXPLAINING
         ]
+        .join(" ")
     );
     let log = session.store().log();
     let [first, second] = &saved_responses(&log)[..] else {

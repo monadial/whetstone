@@ -518,7 +518,7 @@ fn the_shortfall_line_offers_why_fewer_passed() {
     let session = a_shortfall(80, 24);
 
     assert_eq!(
-        session.rows()[1].trim(),
+        session.question().row_with("passed checks"),
         "3 passed checks, 4 asked for · see why in actions"
     );
 }
@@ -539,7 +539,10 @@ fn see_why_fewer_passed_gives_the_same_reasons_and_back_returns_to_the_question(
         assert!(text.contains(reason), "{reason}: {text}");
     }
     session.press("q");
-    assert_eq!(session.row_with("Question 1"), "Question 1 of 3 · Domain");
+    assert_eq!(
+        session.question().row_with("Question 1"),
+        "Question 1 of 3 · Domain"
+    );
 }
 
 #[test]

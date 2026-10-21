@@ -131,7 +131,7 @@ fn examples(session: &Session) -> Vec<toml::Table> {
 /// The rows under the heading "Checks that withheld it", trimmed, up to the
 /// next blank row.
 fn checks(session: &Session) -> Vec<String> {
-    session.section("Checks that withheld it")
+    session.question().section("Checks that withheld it")
 }
 
 #[test]
@@ -165,7 +165,7 @@ fn review_withheld_questions_is_offered_on_no_questions_passed_checks() {
     let text = session.text();
     assert!(text.contains("Withheld: not shown in Practice"), "{text}");
     assert_eq!(
-        session.row_with("Withheld question"),
+        session.question().row_with("Withheld question"),
         "Withheld question 1 of 2 · Domain · Model the payment lifecycle"
     );
 }
@@ -193,7 +193,7 @@ fn it_shows_one_withheld_candidate_at_a_time_with_every_part_and_each_check_with
         assert!(text.contains(part), "{part:?} is missing:\n{text}");
     }
     assert_eq!(
-        session.section("Cited"),
+        session.question().section("Cited"),
         [format!("{}, line 1", touched_path(PAYMENT_LIFECYCLE))]
     );
     assert!(!text.contains(SECOND), "one at a time:\n{text}");
@@ -212,7 +212,7 @@ fn it_shows_one_withheld_candidate_at_a_time_with_every_part_and_each_check_with
 
     activate(&mut session, "Next withheld question");
     assert_eq!(
-        session.row_with("Withheld question"),
+        session.question().row_with("Withheld question"),
         "Withheld question 2 of 2 · Domain · Model the payment lifecycle"
     );
     assert!(session.text().contains(SECOND));
@@ -237,7 +237,7 @@ fn the_evidence_can_be_inspected_from_the_review() {
     activate(&mut session, "Inspect source");
 
     assert_eq!(
-        session.rows()[1].trim(),
+        session.question().rows()[1].trim(),
         "Evidence: Model the payment lifecycle"
     );
     session.press("q");
@@ -403,7 +403,7 @@ fn a_vote_saved_is_final_and_shows_when_the_review_opens_again() {
 
     assert_eq!(checks(&session)[3], "Your vote: Rightly withheld · saved");
     assert_eq!(
-        session.row_with("Vote on check 1"),
+        session.question().row_with("Vote on check 1"),
         "> Vote on check 1 (voted)    Vote on check 2"
     );
     session.press("<Enter>");
@@ -446,7 +446,7 @@ fn voting_never_changes_an_outcome_or_brings_a_question_into_practice() {
     activate(&mut session, "Retry");
     session.settle();
     assert_eq!(
-        session.row_with("Question 1 of"),
+        session.question().row_with("Question 1 of"),
         "Question 1 of 2 · Domain"
     );
     for stem in [FIRST, SECOND] {
@@ -572,7 +572,7 @@ fn review_withheld_questions_is_offered_in_the_palette_where_the_shortfall_shows
     session.settle();
 
     assert_eq!(
-        session.row_with("passed checks"),
+        session.question().row_with("passed checks"),
         "2 passed checks, 4 asked for · see why in actions"
     );
     session.press(":");
@@ -596,13 +596,13 @@ fn review_withheld_questions_is_offered_in_the_palette_where_the_shortfall_shows
     session.press("j j <Enter>");
 
     assert_eq!(
-        session.row_with("Withheld question"),
+        session.question().row_with("Withheld question"),
         "Withheld question 1 of 1 · Domain · Model the payment lifecycle"
     );
     assert!(session.text().contains(&stems[2]));
     session.press("q");
     assert_eq!(
-        session.row_with("Question 1 of"),
+        session.question().row_with("Question 1 of"),
         "Question 1 of 2 · Domain"
     );
 }

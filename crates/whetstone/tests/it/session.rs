@@ -423,7 +423,31 @@ impl Session {
 
     /// The current frame's text as one string.
     pub(crate) fn text(&self) -> String {
-        self.rows().join("\n")
+        Screen::new(self.rows()).text()
+    }
+
+    /// What shows beside the code a question cites: each row from the
+    /// column where the question's place ("Question 2 of 4") starts, or
+    /// every row whole where no question's place shows.
+    pub(crate) fn question(&self) -> Screen {
+        let rows: Vec<Vec<char>> = self
+            .rows()
+            .iter()
+            .map(|row| row.chars().collect())
+            .collect();
+        let column = rows.iter().find_map(|row| {
+            (0..row.len()).find(|&x| {
+                let rest: String = row[x..].iter().collect();
+                rest.strip_prefix("Question ")
+                    .and_then(|rest| rest.split_once(" of "))
+                    .is_some_and(|(place, _)| place.parse::<usize>().is_ok())
+            })
+        });
+        Screen::new(
+            rows.iter()
+                .map(|row| row.iter().skip(column.unwrap_or_default()).collect())
+                .collect(),
+        )
     }
 
     /// The rows inside the overlay's box, between its side borders, trimmed.
@@ -475,8 +499,40 @@ impl Session {
     /// The rows under `heading`, trimmed, up to the next blank row. The
     /// heading may say more after it, past a " · ".
     pub(crate) fn section(&self, heading: &str) -> Vec<String> {
-        let rows = self.rows();
-        let start = rows.iter().position(|row| {
+        Screen::new(self.rows()).section(heading)
+    }
+
+    /// The row showing `needle`, trimmed.
+    pub(crate) fn row_with(&self, needle: &str) -> String {
+        Screen::new(self.rows()).row_with(needle)
+    }
+}
+
+/// Rows of a frame, or of part of one, to read.
+#[derive(Debug)]
+pub(crate) struct Screen {
+    rows: Vec<String>,
+}
+
+impl Screen {
+    fn new(rows: Vec<String>) -> Self {
+        Self { rows }
+    }
+
+    /// Its rows.
+    pub(crate) fn rows(&self) -> &[String] {
+        &self.rows
+    }
+
+    /// Its text as one string.
+    pub(crate) fn text(&self) -> String {
+        self.rows.join("\n")
+    }
+
+    /// The rows under `heading`, trimmed, up to the next blank row. The
+    /// heading may say more after it, past a " · ".
+    pub(crate) fn section(&self, heading: &str) -> Vec<String> {
+        let start = self.rows.iter().position(|row| {
             let row = row.trim();
             row == heading
                 || row
@@ -484,17 +540,34 @@ impl Session {
                     .is_some_and(|rest| rest.starts_with(" · "))
         });
         assert!(start.is_some(), "no {heading:?} heading:\n{}", self.text());
-        rows.iter()
+        self.rows
+            .iter()
             .skip(start.unwrap_or_default() + 1)
             .map(|row| row.trim().to_owned())
             .take_while(|row| !row.is_empty())
             .collect()
     }
 
+    /// The rows under `heading`, as [`Screen::section`] gives them, as one
+    /// line, so a sentence reads whole wherever it wraps.
+    pub(crate) fn section_text(&self, heading: &str) -> String {
+        self.section(heading).join(" ")
+    }
+
+    /// Its rows, trimmed, as one line, so a sentence reads whole wherever
+    /// it wraps.
+    pub(crate) fn words(&self) -> String {
+        self.rows
+            .iter()
+            .map(|row| row.trim())
+            .filter(|row| !row.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
     /// The row showing `needle`, trimmed.
     pub(crate) fn row_with(&self, needle: &str) -> String {
-        let rows = self.rows();
-        let found = rows.iter().find(|row| row.contains(needle));
+        let found = self.rows.iter().find(|row| row.contains(needle));
         assert!(found.is_some(), "no row shows {needle:?}:\n{}", self.text());
         found.map(|row| row.trim().to_owned()).unwrap_or_default()
     }
