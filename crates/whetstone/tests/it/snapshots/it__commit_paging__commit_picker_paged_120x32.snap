@@ -13,7 +13,7 @@ Buffer {
         "    (x) Observability   How you can tell what the work is doing and why                                                 ",
         "    (x) Scalability     How the work holds up as use and data grow                                                      ",
         "    (x) System design   How the parts fit together, and why this way                                                    ",
-        "  Change to practice on                                                                                                 ",
+        "  Change to practice on · Commits 37–54 of 100+                                                                         ",
         "    ( ) bdfc37e  Bump the counter to 213                                                                                ",
         "    ( ) 140c069  Bump the counter to 212                                                                                ",
         "    (x) 0c5b52a  Bump the counter to 211                                                                                ",
@@ -32,7 +32,7 @@ Buffer {
         "    ( ) a36ed78  Bump the counter to 198                                                                                ",
         "    ( ) 4d39b97  Bump the counter to 197                                                                                ",
         "    ( ) 7e5ef58  Bump the counter to 196                                                                                ",
-        "    Previous page    Commits 37–54 of 100+  > Next page                                                                 ",
+        "    Previous page  > Next page                                                                                          ",
         "    Review what will be sent                                                                                            ",
         "                                                                                                                        ",
         "  ? keys  : actions  Space toggle  Enter open  PgDn/Up page  / search  q back                                           ",
@@ -42,7 +42,7 @@ Buffer {
         x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 2, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
         x: 22, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
-        x: 44, y: 27, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
-        x: 55, y: 27, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 19, y: 27, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 30, y: 27, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
     ]
 }

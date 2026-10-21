@@ -48,9 +48,12 @@ futures-util = { version = "0.3", default-features = false }
 # diffs, in pure Rust and built without network or transport features.
 # `sha1` is the only hash it needs, and gix will not build without one.
 # `blob-diff` is the smallest feature with tree diffs that track renames
-# and unified line diffs. gix makes a breaking 0.x release about monthly, so
-# the minor version is pinned and upgraded on purpose.
-gix = { version = "0.89", default-features = false, features = ["sha1", "blob-diff"] }
+# and unified line diffs. `parallel` makes its repositories `Send`, so the
+# picker's background read of older commits can take the history walk to a
+# blocking thread; it adds no crate to the tree. gix makes a breaking 0.x
+# release about monthly, so the minor version is pinned and upgraded on
+# purpose.
+gix = { version = "0.89", default-features = false, features = ["sha1", "blob-diff", "parallel"] }
 # Reads the links in touched Markdown as CommonMark defines them, with
 # reference links resolved and source positions for each. Without default
 # features it is the parser alone, with no HTML renderer and no command-line

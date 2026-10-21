@@ -25,7 +25,7 @@ mod load;
 pub(crate) mod test_repo;
 mod tree;
 
-pub(crate) use history::{Availability, Commit, History, HistoryEnd};
+pub(crate) use history::{Availability, Commit, History, HistoryEnd, Read};
 pub(crate) use tree::{CommitTree, TreeEntryKind};
 
 /// The repository's Whetstone config, relative to the Git root.

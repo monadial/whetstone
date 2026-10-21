@@ -889,8 +889,7 @@ fn key_help_on_the_repository_picker_says_enter_opens_a_change_and_slash_searche
     let rows = session.overlay_rows();
     for (key, does) in [
         ("Enter", "Toggle an area, or choose and open a change"),
-        ("/", "Search the commits by message or ID"),
-        ("n, N", "Next or previous match"),
+        ("/", "Filter the commits by message or ID"),
     ] {
         assert!(
             rows.iter()
@@ -898,4 +897,6 @@ fn key_help_on_the_repository_picker_says_enter_opens_a_change_and_slash_searche
             "{key}: {rows:#?}"
         );
     }
+    // The list shows only the matches, so `n` and `N` have nothing to do.
+    assert!(!rows.iter().any(|row| row.starts_with("n, N")), "{rows:#?}");
 }

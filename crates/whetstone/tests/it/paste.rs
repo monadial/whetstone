@@ -114,10 +114,13 @@ fn a_pasted_search_of_the_commits_finds_the_commit_as_one_line() {
 
     paste(&mut session, "failed\r\npayments\r\n");
     assert_eq!(status(&session), "/failed payments", "{}", session.text());
-    assert_eq!(footer(&session), SEARCH_BOX_FOOTER, "still searching");
+    assert_eq!(footer(&session), "Enter keep  Esc clear", "still filtering");
 
     session.press("<BS> <Enter>");
-    assert_eq!(status(&session), "Match 1 of 1 for \"failed payments\"");
+    assert_eq!(
+        session.row_with("matching"),
+        "Change to practice on · 1 matching “failed payments” · 1"
+    );
 }
 
 /// Asserts that pasting text full of keys changes nothing in `session`:
