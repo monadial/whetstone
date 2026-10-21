@@ -117,18 +117,11 @@ pub struct AppliedCutOffs {
     origin: CutOffsOrigin,
 }
 
-/// The example cut-offs in Jev's documentation, which policy 0 applies to
-/// every job.
-const EXAMPLE_CUT_OFFS: CutOffs = CutOffs {
-    upper: 0.80,
-    lower: 0.20,
-};
-
 /// Policy 0: unvalidated, with every job at 0.80 and 0.20.
 static POLICY_0: AssessmentPolicy = AssessmentPolicy {
     version: PolicyVersion(0),
     validation: Validation::Unvalidated,
-    cut_offs: [(EXAMPLE_CUT_OFFS, CutOffsOrigin::Default); Job::ALL.len()],
+    cut_offs: [(CutOffs::POLICY_0, CutOffsOrigin::Default); Job::ALL.len()],
 };
 
 impl AssessmentPolicy {
@@ -142,8 +135,9 @@ impl AssessmentPolicy {
     }
 
     /// Policy 0 with the `learner`'s own cut-offs for the jobs they list.
-    /// Every other job keeps policy 0's, and so does a job listed at policy
-    /// 0's own values. A job listed twice takes the last.
+    /// Every other job keeps policy 0's, and so does a job listed at its
+    /// policy 0 values, so the policy is the learner's exactly where a
+    /// cut-off differs. A job listed twice takes the last.
     ///
     /// ```
     /// use whetstone_core::{AssessmentPolicy, Band, CutOffs, CutOffsOrigin, Job, Probability};
@@ -161,7 +155,8 @@ impl AssessmentPolicy {
     pub fn with_cut_offs(learner: impl IntoIterator<Item = (Job, CutOffs)>) -> Self {
         let mut policy = POLICY_0.clone();
         for (job, cut_offs) in learner {
-            let origin = if cut_offs == EXAMPLE_CUT_OFFS {
+            let (default, _) = POLICY_0.cut_offs[job.index()];
+            let origin = if cut_offs == default {
                 CutOffsOrigin::Default
             } else {
                 CutOffsOrigin::Learner
@@ -198,15 +193,19 @@ impl AssessmentPolicy {
     /// own, and then its outcomes aren't comparable with the policy's.
     #[must_use]
     pub fn origin(&self) -> CutOffsOrigin {
-        if self
-            .cut_offs
-            .iter()
-            .any(|&(_, origin)| origin == CutOffsOrigin::Learner)
-        {
+        if self.learner_jobs().next().is_some() {
             CutOffsOrigin::Learner
         } else {
             CutOffsOrigin::Default
         }
+    }
+
+    /// The jobs whose cut-offs are the learner's own, in [`Job::ALL`]
+    /// order.
+    pub fn learner_jobs(&self) -> impl Iterator<Item = Job> + '_ {
+        Job::ALL
+            .into_iter()
+            .filter(|&job| self.cut_offs(job).origin == CutOffsOrigin::Learner)
     }
 
     /// The band of Jev's `answer` to a check of `job`: clear yes at or above
@@ -231,8 +230,12 @@ impl AssessmentPolicy {
 }
 
 impl CutOffs {
-    /// Policy 0's cut-offs for every job: 0.80 and 0.20.
-    pub const POLICY_0: Self = EXAMPLE_CUT_OFFS;
+    /// The example cut-offs in Jev's documentation, 0.80 and 0.20, which
+    /// policy 0 applies to every job.
+    pub const POLICY_0: Self = Self {
+        upper: 0.80,
+        lower: 0.20,
+    };
 
     /// The cut-offs `upper` and `lower`, if each is a number from 0 to 1 and
     /// `lower` is below `upper`.
@@ -296,6 +299,19 @@ impl AppliedCutOffs {
     pub fn origin(self) -> CutOffsOrigin {
         self.origin
     }
+
+    /// The band of Jev's `answer` under them.
+    #[must_use]
+    pub fn band(self, answer: Probability) -> Band {
+        self.cut_offs.band(answer)
+    }
+}
+
+/// As Settings and Inspect show them: `upper 0.55, lower 0.2`.
+impl fmt::Display for CutOffs {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "upper {}, lower {}", self.upper, self.lower)
+    }
 }
 
 impl PolicyVersion {
@@ -303,6 +319,20 @@ impl PolicyVersion {
     #[must_use]
     pub fn get(self) -> u32 {
         self.0
+    }
+}
+
+/// Its name, as Settings and Inspect show it: `question check`.
+impl fmt::Display for Job {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::RelevanceGate => "relevance gate",
+            Self::QuestionCheck => "question check",
+            Self::OptionRating => "option rating",
+            Self::RationaleAndHintChecks => "rationale and hint checks",
+            Self::ReasoningCriterion => "reasoning criterion",
+            Self::ExplanationCheck => "explanation check",
+        })
     }
 }
 
@@ -411,6 +441,7 @@ mod tests {
 
         assert_eq!(&policy, AssessmentPolicy::current());
         assert_eq!(policy.origin(), CutOffsOrigin::Default);
+        assert_eq!(policy.learner_jobs().count(), 0);
         for job in Job::ALL {
             let applied = policy.cut_offs(job);
             assert_eq!(applied.cut_offs(), cut_offs(0.80, 0.20), "{job:?}");
@@ -426,6 +457,10 @@ mod tests {
         assert_eq!(policy.version().get(), 0);
         assert_eq!(policy.validation(), Validation::Unvalidated);
         assert_eq!(policy.origin(), CutOffsOrigin::Learner);
+        assert_eq!(
+            policy.learner_jobs().collect::<Vec<_>>(),
+            [Job::QuestionCheck]
+        );
         assert_eq!(
             policy.band(Job::QuestionCheck, probability(0.6)),
             Band::ClearYes

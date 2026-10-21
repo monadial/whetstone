@@ -125,10 +125,6 @@ pub(crate) struct Practice {
     areas: Vec<Area>,
     /// How many questions the learner asked for.
     count: QuestionCount,
-    /// The assessment policy that bands Jev's answers: policy 0, with the
-    /// cut-offs the learner's config sets. A question keeps the one it was
-    /// checked with, and its outcomes are banded with it.
-    policy: AssessmentPolicy,
     ai: Arc<dyn Ai>,
     /// What the learner can do about a failed request, and the models
     /// `OpenRouter` refused.
@@ -467,7 +463,6 @@ impl Practice {
             change,
             areas,
             count: settings.questions.value,
-            policy: settings.assessment_policy.clone(),
             ai,
             failed_requests: FailedRequests::new(settings.models(), context.refused_models),
             // The showcase project's config sets nothing, which its tests
@@ -529,7 +524,6 @@ impl Practice {
             change,
             areas: evidence.areas().to_vec(),
             count: context.settings.questions.value,
-            policy: context.settings.assessment_policy.clone(),
             ai,
             failed_requests: FailedRequests::new(context.settings.models(), context.refused_models),
             connected_code_limit: evidence.connected_code_limit(),
@@ -580,7 +574,9 @@ impl Practice {
             Ok(answers) => {
                 let bands: Vec<(AreaId, Band)> = answers
                     .into_iter()
-                    .map(|(area, answer)| (area, self.policy.band(Job::RelevanceGate, answer)))
+                    .map(|(area, answer)| {
+                        (area, self.sent.policy().band(Job::RelevanceGate, answer))
+                    })
                     .collect();
                 tracing::info!(bands = ?bands, "the relevance gate decided");
                 self.gate = Gate::decided(&self.areas, &bands);
@@ -709,7 +705,9 @@ impl Practice {
         {
             return;
         }
-        let policy = &self.policy;
+        // The policy the checks went out with: each shown question keeps
+        // it, and its outcomes are banded with it.
+        let policy = self.sent.policy();
         let checks = mem::take(checks);
         let checked = checks.len();
         let (passed, withheld): (Vec<_>, Vec<_>) = checks

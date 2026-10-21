@@ -18,7 +18,7 @@ Buffer {
         "    Questions             4 (default)                                                                                   ",
         "    Assessment policy     version 0, not validated                                                                      ",
         "    Cut-offs              upper 0.8, lower 0.2 for every other job (default)                                            ",
-        "                          Question check: upper 0.55, lower 0.2 (from your config)                                      ",
+        "                          question check: upper 0.55, lower 0.2 (from your config)                                      ",
         "                          Cut-offs changed in your config: outcomes aren't comparable with policy 0                     ",
         "                                                                                                                        ",
         "    Back                                                                                                                ",
