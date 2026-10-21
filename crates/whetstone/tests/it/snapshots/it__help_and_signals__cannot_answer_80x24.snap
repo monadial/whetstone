@@ -1,0 +1,42 @@
+---
+source: crates/whetstone/tests/it/help_and_signals.rs
+expression: session.frame()
+---
+Buffer {
+    area: Rect { x: 0, y: 0, width: 80, height: 24 },
+    content: [
+        "                                                                                ",
+        "  Question 1 of 4 · Domain                                                      ",
+        "                                                                                ",
+        "  Domain question 1?                                                            ",
+        "                                                                                ",
+        "  Cannot answer from this context                                               ",
+        "  You said the evidence isn't enough to answer this question. It needs no       ",
+        "  response, and counts as neither incorrect nor skipped.                        ",
+        "                                                                                ",
+        "  > Next question                                                               ",
+        "    Inspect source                                                              ",
+        "    Report                                                                      ",
+        "    Finish                                                                      ",
+        "                                                                                ",
+        "                                                                                ",
+        "                                                                                ",
+        "                                                                                ",
+        "                                                                                ",
+        "                                                                                ",
+        "                                                                                ",
+        "                                                                                ",
+        "                                                                                ",
+        "  ? keys  : actions  q back                                                     ",
+        "                                                                                ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 17, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 5, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 33, y: 5, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 9, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 17, y: 9, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+    ]
+}

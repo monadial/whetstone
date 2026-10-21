@@ -943,8 +943,7 @@ impl Questions {
         );
         let id = self.picked[at].question.id().clone();
         self.signals.push((id, Signal::CannotAnswer));
-        // Its place is known once it is no longer unattempted.
-        self.picked[at].attempt = Attempt::CannotAnswer(CannotAnswer::new(Place::Last));
+        // Whether a question follows it doesn't hang on its own attempt.
         let place = self.place();
         self.picked[at].attempt = Attempt::CannotAnswer(CannotAnswer::new(place));
         if let Some(next) = self.next_unattempted(at).or(self.next_question(at)) {
@@ -1021,7 +1020,7 @@ impl Questions {
             Span::styled(format!(" · {}", entry.area_name), theme.muted),
         ];
         if entry.kind == AttemptKind::Assisted {
-            place.push(Span::styled(" · Assisted", theme.muted));
+            place.push(Span::styled(feedback::ASSISTED, theme.muted));
         }
         if entry.reports > 0 {
             place.push(Span::styled(" · Reported", theme.muted));

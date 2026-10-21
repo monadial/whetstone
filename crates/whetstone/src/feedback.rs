@@ -138,6 +138,10 @@ pub(crate) enum Place {
     Last,
 }
 
+/// What follows the question's place, and each outcome, of an assisted
+/// attempt.
+pub(crate) const ASSISTED: &str = " · Assisted";
+
 /// Whose work an attempt is.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) enum AttemptKind {
@@ -620,7 +624,7 @@ impl Feedback {
     fn assisted_mark(&self) -> &'static str {
         match self.kind {
             AttemptKind::Own => "",
-            AttemptKind::Assisted => " · Assisted",
+            AttemptKind::Assisted => ASSISTED,
         }
     }
 
