@@ -419,9 +419,8 @@ mod tests {
         assert_eq!(reply.content.len(), 2);
         assert_eq!(
             reply.content[0].stem,
-            "Before this change, the retry after a `Timeout` generated a fresh `OperationKey`. \
-             Given how the provider treats keys, what could go wrong with that behaviour that \
-             the change prevents?"
+            "A charge request times out, but the provider had already recorded it before the \
+             response was lost. What does charge_with_retry return after its second request?"
         );
         assert_eq!(
             *reply.provenance,
@@ -432,14 +431,14 @@ mod tests {
                 versions()
             )
             .with_generation(GenerationId::new(
-                "gen-1792537070-YoyTT3rXqgdB9TwPdG1K".to_owned()
+                "gen-1792574742-6mTYp6eLYi65k1QVjIP4".to_owned()
             ))
             .with_reported_model(ModelId::new("anthropic/claude-sonnet-5.5".to_owned()))
             .with_usage(Usage {
-                input_tokens: Some(3364),
-                output_tokens: Some(1580),
+                input_tokens: Some(4818),
+                output_tokens: Some(2713),
             })
-            .with_cost(Cost::new(0.022_528).expect("0.022528 is a cost"))
+            .with_cost(Cost::new(0.036_766).expect("0.036766 is a cost"))
         );
         let (_, body) = received(&server).await;
         assert_eq!(body["model"], generator_model().as_str());
@@ -460,8 +459,8 @@ mod tests {
             .await
             .expect("the recorded reply decodes");
 
-        // The recorded reply's second candidate has its correct option at B;
-        // the shuffle moves it to C, and the other two up.
+        // The recorded reply's second candidate has its correct option at A;
+        // the shuffle moves it to C, and the option written at C to A.
         let second = &reply.content[1];
         assert_eq!(second.answer_key, "C");
         let options: Vec<(&str, &str, &str)> = second
@@ -470,7 +469,7 @@ mod tests {
             .map(|option| {
                 (
                     option.letter.as_str(),
-                    option.text.split(',').next().unwrap_or_default(),
+                    option.text.as_str(),
                     option.rationale.split('.').next().unwrap_or_default(),
                 )
             })
@@ -478,13 +477,17 @@ mod tests {
         assert_eq!(
             options,
             [
-                ("A", "The retry is limited to a single attempt", "Wrong"),
                 (
-                    "B",
-                    "The retry code checks the provider for an existing charge before retrying",
+                    "A",
+                    "It confirms that the retry returns first receipt",
                     "Wrong"
                 ),
-                ("C", "The retry reuses the same key", "Correct"),
+                ("B", "It confirms that both requests carry one key", "Wrong"),
+                (
+                    "C",
+                    "It confirms that two charge requests are made",
+                    "Correct"
+                ),
             ]
         );
     }
@@ -1319,14 +1322,14 @@ mod tests {
         let log = log.text();
         assert!(log.contains("OpenRouter replied"), "{log}");
         assert!(
-            log.contains("cost_usd=0.022528"),
+            log.contains("cost_usd=0.036766"),
             "the generator's cost: {log}"
         );
         assert!(log.contains("cost_usd=0.000129192"), "Jev's cost: {log}");
         assert!(log.contains("cost_usd=5.1828e-5"), "the gate's cost: {log}");
         assert!(log.contains("request=1"), "Whetstone's identity: {log}");
         assert!(
-            log.contains("gen-1792537070-YoyTT3rXqgdB9TwPdG1K"),
+            log.contains("gen-1792574742-6mTYp6eLYi65k1QVjIP4"),
             "OpenRouter's generation ID: {log}"
         );
         for never in [
@@ -1348,7 +1351,8 @@ mod tests {
             "let key = original.key.clone();",
             // A candidate sent to Jev, and one the generator wrote.
             "Why does the retry in `charge_with_retry`",
-            "Before this change, the retry after a `Timeout`",
+            "A charge request times out, but the provider had already recorded it",
+            "It confirms that two charge requests are made",
             // The learner's reasoning, and the explanation of it.
             REASONING,
             &explained[0].text,

@@ -190,9 +190,8 @@ mod tests {
         let first = &written[0];
         assert_eq!(
             first.stem,
-            "Before this change, the retry after a `Timeout` generated a fresh `OperationKey`. \
-             Given how the provider treats keys, what could go wrong with that behaviour that \
-             the change prevents?"
+            "A charge request times out, but the provider had already recorded it before the \
+             response was lost. What does charge_with_retry return after its second request?"
         );
         assert_eq!(
             first
@@ -203,23 +202,23 @@ mod tests {
             ["A", "B", "C"]
         );
         assert_eq!(first.answer_key, "A");
-        assert_eq!(first.rubric.len(), 2);
+        assert_eq!(first.rubric.len(), 1);
         assert_eq!(
             first.citations,
             [
+                WrittenCitation {
+                    path: "src/payments/retry.rs".to_owned(),
+                    first_line: 1,
+                    last_line: 9,
+                },
                 WrittenCitation {
                     path: "src/payments/client.rs".to_owned(),
                     first_line: 12,
                     last_line: 16,
                 },
-                WrittenCitation {
-                    path: "src/payments/retry.rs".to_owned(),
-                    first_line: 3,
-                    last_line: 6,
-                },
             ]
         );
-        assert_eq!(written[1].answer_key, "B");
+        assert_eq!(written[1].answer_key, "A");
         let checked = plain_checks(area().id(), written, &evidence());
         assert_eq!(checked.passed().len(), 2);
     }
