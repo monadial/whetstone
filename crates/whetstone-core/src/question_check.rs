@@ -451,6 +451,13 @@ impl Withheld {
     pub fn failed(&self) -> &[CandidateCheck] {
         &self.failed
     }
+
+    /// The band the show rule needed for its `check`: clear no for an
+    /// option rating that isn't the answer key's, and clear yes otherwise.
+    #[must_use]
+    pub fn needed(&self, check: CandidateCheck) -> Band {
+        needed(&self.candidate, check)
+    }
 }
 
 #[cfg(test)]
@@ -858,6 +865,16 @@ pub(crate) mod tests {
         assert_eq!(withheld.answers(), &answers);
         assert_eq!(withheld.policy(), &higher_bar);
         assert_eq!(withheld.failed(), [CandidateCheck::NoGiveaway]);
+        assert_eq!(withheld.needed(CandidateCheck::NoGiveaway), Band::ClearYes);
+        assert_eq!(
+            withheld.needed(CandidateCheck::Option(OptionLetter::C)),
+            Band::ClearYes,
+            "its answer key"
+        );
+        assert_eq!(
+            withheld.needed(CandidateCheck::Option(OptionLetter::A)),
+            Band::ClearNo
+        );
     }
 
     #[test]

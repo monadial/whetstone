@@ -21,7 +21,7 @@ use crate::sent_requests::{Asking, RequestEnded, SentRequest};
 use crate::view::{Reading, Route};
 
 /// What labels Jev's numbers.
-const LABEL: &str = "Jev's probability, not a measure of correctness";
+pub(crate) const LABEL: &str = "Jev's probability, not a measure of correctness";
 
 /// The reader of Jev's answers about `question`, the one at `place`, as
 /// "question 2 of 4" names it, whose feedback is `feedback`, with the models
@@ -240,7 +240,7 @@ fn answered(statement: &str, answer: Probability, band: Band) -> String {
 }
 
 /// What a question check's `check` asks Jev, as the learner reads it.
-fn statement(check: CandidateCheck) -> String {
+pub(crate) fn statement(check: CandidateCheck) -> String {
     match check {
         CandidateCheck::Answerable => "Answerable from the evidence sent".to_owned(),
         CandidateCheck::AboutArea => "About its area".to_owned(),
@@ -272,7 +272,7 @@ fn level_name(level: DepthLevel) -> &'static str {
 }
 
 /// A band's name.
-fn band_name(band: Band) -> &'static str {
+pub(crate) fn band_name(band: Band) -> &'static str {
     match band {
         Band::ClearYes => "clear yes",
         Band::Unclear => "unclear",

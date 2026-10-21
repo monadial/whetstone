@@ -17,6 +17,7 @@ use crate::failures::RefusedModels;
 use crate::home::Home;
 use crate::job::{JobId, JobOutput, Jobs};
 use crate::keymap::{Command, Input, Keymap};
+use crate::labels_file::LabelsFile;
 use crate::palette::Action;
 use crate::picker::Picker;
 use crate::repository::{Repository, Unavailable};
@@ -144,6 +145,9 @@ pub(crate) struct Context<'a> {
     pub(crate) refused_models: &'a Arc<RefusedModels>,
     /// Whetstone's identities for the requests sent during this run.
     pub(crate) request_ids: &'a Arc<RequestIds>,
+    /// Where the learner's votes on withheld questions are kept, with the
+    /// votes cast during this run.
+    pub(crate) labels: &'a Arc<LabelsFile>,
 }
 
 /// What Practice runs on.
@@ -199,6 +203,9 @@ pub(crate) enum Reading {
     /// Why fewer questions passed their checks than were asked for, which
     /// See why fewer passed opens.
     WhyWithheld,
+    /// The candidates the question check withheld, to review and vote on,
+    /// which Review withheld questions opens.
+    Withheld,
 }
 
 /// A change the viewer can show.

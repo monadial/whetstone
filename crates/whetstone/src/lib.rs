@@ -23,6 +23,7 @@ mod home;
 mod jev_answers;
 mod job;
 mod keymap;
+mod labels_file;
 mod leave;
 mod logging;
 mod mark;
@@ -38,6 +39,7 @@ mod reader;
 mod reasoning_editor;
 mod report;
 mod repository;
+mod review_withheld;
 mod search;
 mod sent_requests;
 mod session_record;
@@ -50,6 +52,7 @@ mod theme;
 mod tui;
 mod view;
 mod viewer;
+mod vote;
 mod withheld;
 
 pub use crate::app::{App, Flow, Message};
@@ -59,6 +62,7 @@ pub use crate::environment::{Dirs, Environment, NoHome};
 pub use crate::job::{
     Cancelled, Finished, Job, JobId, JobOutcome, JobOutput, Jobs, TimeLimit, Waiting, Workers,
 };
+pub use crate::labels_file::LabelsFile;
 pub use crate::repository::{Repository, Unavailable};
 pub use crate::sent_requests::{Asking, RequestEnded, SentRequest};
 pub use crate::session_record::{
@@ -129,7 +133,12 @@ fn launch(environment: &Environment) -> anyhow::Result<ExitCode> {
         repository,
         temp_dir,
         &dirs.cache,
-    );
+    )
+    .with_labels_file(LabelsFile::in_state_dir(
+        &dirs.state,
+        environment,
+        SystemTime::now,
+    ));
     let app = match ai {
         Some(ai) => app.with_ai(Arc::new(ai)),
         None => app,
