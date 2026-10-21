@@ -19,8 +19,8 @@
 //!    to every question asked;
 //! 3. checks its provenance with [`assert_reported`].
 //!
-//! A ticket that adds a kind of request to the port (the relevance gate, the
-//! reasoning evaluation, the explanation or its check) adds its test here
+//! A ticket that adds a kind of request to the port (the reasoning
+//! evaluation, the explanation or its check) adds its test here
 //! the same way, next to its recorder in `record.rs` and its contract tests.
 //! The job runs every ignored test whose name starts with `live_`, so the
 //! new test needs nothing else.
@@ -28,7 +28,7 @@
 use whetstone_core::{DepthLevel, ModelId, Provenance, QuestionCount};
 
 use crate::replay::live_key;
-use crate::samples::{area, candidate, evidence, generator_model, jev_model};
+use crate::samples::{area, candidate, evidence, generator_model, jev_model, observability};
 use crate::{Ai, CandidateCount, Models, OpenRouter, OpenRouterAi};
 
 /// The real AI on `OpenRouter`, with the key from `OPENROUTER_API_KEY`, the
@@ -73,6 +73,41 @@ fn assert_reported(provenance: &Provenance) {
         "no token counts reported: {usage:?}"
     );
     assert!(provenance.cost().is_some(), "no cost reported");
+}
+
+#[tokio::test]
+#[ignore = "calls OpenRouter with a real key"]
+async fn live_check_areas() {
+    let _log = log_replies();
+    // Two areas, as recorded: one the sample change is about, and one it
+    // hardly touches.
+    let areas = [area(), observability()];
+
+    let reply = live_ai()
+        .check_areas(&evidence(), &areas)
+        .await
+        .expect("Jev checks the areas");
+
+    let answered: Vec<&str> = reply
+        .content
+        .iter()
+        .map(|(area, _)| area.as_str())
+        .collect();
+    assert_eq!(
+        answered,
+        ["domain", "observability"],
+        "one per area, in order"
+    );
+    let [(_, domain), (_, observability)] = reply.content.as_slice() else {
+        unreachable!("two answers, as just asserted");
+    };
+    assert!(
+        domain.get() > observability.get(),
+        "yes means worth asking: the change is about its domain ({}), not its observability ({})",
+        domain.get(),
+        observability.get()
+    );
+    assert_reported(&reply.provenance);
 }
 
 #[tokio::test]
