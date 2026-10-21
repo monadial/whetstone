@@ -263,7 +263,7 @@ impl ExcerptLine {
     }
 }
 
-/// Shows its source and how many lines it has, never their text.
+/// Shows its source and each line's number and mark, never their text.
 impl fmt::Debug for Excerpt {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Excerpt")
@@ -316,7 +316,7 @@ impl<'a> Diff<'a> {
                 }
                 Some(b'-') => read
                     .removed
-                    .push((*number - 1, line.get(1..).unwrap_or_default())),
+                    .push((*number - 1, line.strip_prefix('-').unwrap_or_default())),
                 // `\ No newline at end of file` belongs to the line before it.
                 Some(b'\\') => {}
                 // Context, which a tool that trims trailing spaces may leave

@@ -10,6 +10,7 @@ mod async_jobs;
 #[path = "../../build/areas.rs"]
 mod build_areas;
 mod choice_only;
+mod cited_code;
 mod cli;
 mod colors;
 mod commit_filter;
@@ -53,7 +54,6 @@ mod pty_paste;
 mod pty_suspend;
 mod pty_terminal;
 mod question_check;
-mod question_context;
 mod questions_screen;
 mod questions_setting;
 mod reasoning_evaluation;

@@ -56,6 +56,37 @@ pub(crate) fn wrap(text: &str, width: usize) -> Vec<String> {
     lines
 }
 
+/// `text` cut into pieces at most `width` cells wide, as code is wrapped:
+/// after the last space that fits, past the line's indent, or else between
+/// graphemes. Every character stays, spaces included, so joining the
+/// pieces gives `text` back. Text that fits is one piece, and so is empty
+/// text.
+pub(crate) fn cut(text: &str, width: usize) -> Vec<String> {
+    let width = width.max(1);
+    let mut pieces = vec![String::new()];
+    for grapheme in text.graphemes(true) {
+        let piece = pieces
+            .last_mut()
+            .expect("there is always a piece to add to");
+        if piece.is_empty()
+            || Line::raw(piece.as_str()).width() + Line::raw(grapheme).width() <= width
+        {
+            piece.push_str(grapheme);
+            continue;
+        }
+        // The word being written moves down whole, unless it is all the
+        // piece has after its indent.
+        let indent = piece.len() - piece.trim_start().len();
+        let mut next = match piece.rfind(' ') {
+            Some(space) if space > indent => piece.split_off(space + 1),
+            _ => String::new(),
+        };
+        next.push_str(grapheme);
+        pieces.push(next);
+    }
+    pieces
+}
+
 /// `text` cut to at most `width` cells, ending in `…` when it is cut, a
 /// whole grapheme at a time.
 pub(crate) fn truncate(text: &str, width: usize) -> String {
@@ -74,4 +105,36 @@ pub(crate) fn truncate(text: &str, width: usize) -> String {
         cut.push('…');
     }
     cut
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn code_is_cut_after_the_last_space_that_fits_and_keeps_every_character() {
+        let code = "    let key = IdempotencyKey::parse(raw)?;";
+
+        let pieces = cut(code, 20);
+
+        assert_eq!(
+            pieces,
+            ["    let key = ", "IdempotencyKey::pars", "e(raw)?;"]
+        );
+        assert_eq!(pieces.concat(), code);
+    }
+
+    #[test]
+    fn an_indent_is_never_a_place_to_cut() {
+        assert_eq!(
+            cut("        operation_key,", 12),
+            ["        oper", "ation_key,"]
+        );
+    }
+
+    #[test]
+    fn text_that_fits_is_one_piece() {
+        assert_eq!(cut("Self {", 6), ["Self {"]);
+        assert_eq!(cut("", 6), [""]);
+    }
 }

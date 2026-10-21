@@ -1,5 +1,5 @@
 ---
-source: crates/whetstone/tests/it/question_context.rs
+source: crates/whetstone/tests/it/cited_code.rs
 expression: session.frame()
 ---
 Buffer {
@@ -10,9 +10,9 @@ Buffer {
         "  src/provider.rs, line 29                                                      ",
         "  26   impl ChargeRequest {                                                     ",
         "     -     pub fn new(payment: &Payment, operation_key: OperationKey) -> Self   ",
-        "  {                                                                             ",
+        "       {                                                                        ",
         "  27 +     /// Builds the charge for a payment. It always carries the           ",
-        "  operation key                                                                 ",
+        "       operation key                                                            ",
         "  28 +     /// the payment was created with, so every retry is the same         ",
         "                                                                                ",
         "  Question 1 of 4 · Domain                                                      ",

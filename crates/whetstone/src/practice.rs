@@ -775,9 +775,10 @@ impl Practice {
             asked_for = self.count.get(),
             "picked the questions that passed their checks"
         );
-        let Some(evidence) = &self.evidence else {
-            return;
-        };
+        let evidence = self
+            .evidence
+            .as_ref()
+            .expect("candidates are checked only once the evidence is prepared");
         self.stage = match Questions::new(
             picked,
             &self.areas,

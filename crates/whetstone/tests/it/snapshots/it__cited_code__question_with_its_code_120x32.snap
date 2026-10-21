@@ -1,5 +1,5 @@
 ---
-source: crates/whetstone/tests/it/question_context.rs
+source: crates/whetstone/tests/it/cited_code.rs
 expression: session.frame()
 ---
 Buffer {
@@ -10,11 +10,11 @@ Buffer {
         "  src/provider.rs, line 29                                                                                              ",
         "  26   impl ChargeRequest {                                         Domain question 1?                                  ",
         "     -     pub fn new(payment: &Payment, operation_key:                                                                 ",
-        "  OperationKey) -> Self {                                           > ( ) A  Option A of the question                   ",
+        "       OperationKey) -> Self {                                      > ( ) A  Option A of the question                   ",
         "  27 +     /// Builds the charge for a payment. It always carries     ( ) B  Option B of the question                   ",
-        "  the operation key                                                   ( ) C  Option C of the question                   ",
-        "  28 +     /// the payment was created with, so every retry is the                                                      ",
-        "  same charge.                                                      ┌   Your reasoning ──────────────────────────────┐  ",
+        "       the operation key                                              ( ) C  Option C of the question                   ",
+        "  28 +     /// the payment was created with, so every retry is                                                          ",
+        "       the same charge.                                             ┌   Your reasoning ──────────────────────────────┐  ",
         "  29 +     pub fn new(payment: &Payment) -> Self {                  │ Optional: explain why, to have your reasoning  │  ",
         "  30           Self {                                               │ assessed.                                      │  ",
         "     -             operation_key,                                   │ Press i to write your reasoning.               │  ",
@@ -22,15 +22,15 @@ Buffer {
         "  32               reference: payment.id().to_string(),             │                                                │  ",
         "                                                                    │                                                │  ",
         "  src/http.rs, lines 60–61 · calls `pay`                            └────────────────────────────────────────────────┘  ",
-        "  57     headers: HeaderMap,                                                                                            ",
-        "  58     Json(body): Json<CreatePayment>,                             Submit response (choose an option)                ",
-        "  59 ) -> Result<Json<PaymentView>, ServiceError> {                   Inspect source                                    ",
-        "  60     let tenant = TenantId::parse(&tenant)?;                      Hint    Show answer    Skip                       ",
-        "  61     let key = headers                                            Cannot answer from this context    Report         ",
-        "  62         .get("idempotency-key")                                                                                    ",
-        "  63         .and_then(|value| value.to_str().ok());                                                                    ",
-        "  64     let key =                                                                                                      ",
-        "  IdempotencyKey::parse(key.unwrap_or_default())?;                                                                      ",
+        "  57       headers: HeaderMap,                                                                                          ",
+        "  58       Json(body): Json<CreatePayment>,                           Submit response (choose an option)                ",
+        "  59   ) -> Result<Json<PaymentView>, ServiceError> {                 Inspect source                                    ",
+        "  60       let tenant = TenantId::parse(&tenant)?;                    Hint    Show answer    Skip                       ",
+        "  61       let key = headers                                          Cannot answer from this context    Report         ",
+        "  62           .get("idempotency-key")                                                                                  ",
+        "  63           .and_then(|value| value.to_str().ok());                                                                  ",
+        "  64       let key =                                                                                                    ",
+        "       IdempotencyKey::parse(key.unwrap_or_default())?;                                                                 ",
         "                                                                                                                        ",
         "                                                                                                                        ",
         "                                                                                                                        ",

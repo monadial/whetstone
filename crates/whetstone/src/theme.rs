@@ -14,6 +14,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use serde::Deserialize;
 
+use crate::columns;
 use crate::environment::Environment;
 
 /// How much colour the terminal can show.
@@ -393,6 +394,44 @@ impl Theme {
                 None => column,
             }));
         line
+    }
+
+    /// A control, as [`Theme::control`] draws it, in rows `width` cells
+    /// wide: one row if it fits, or else its label, then why it is disabled,
+    /// wrapped below it, under the label.
+    #[must_use]
+    pub(crate) fn control_rows<'a>(
+        &self,
+        label: &'a str,
+        state: ControlState<'a>,
+        width: usize,
+    ) -> Vec<Line<'a>> {
+        let whole = self.control(label, state);
+        let Some(reason) = state.disabled.filter(|_| whole.width() > width) else {
+            return vec![whole];
+        };
+        let mut rows = vec![self.control(
+            label,
+            ControlState {
+                disabled: None,
+                ..state
+            },
+        )];
+        if let Some(label) = rows[0].spans.last_mut() {
+            label.style = self.disabled;
+        }
+        let indent = Line::raw(FOCUSED).width();
+        rows.extend(
+            columns::wrap(&format!("({reason})"), width.saturating_sub(indent))
+                .into_iter()
+                .map(|row| {
+                    Line::from(vec![
+                        Span::raw(" ".repeat(indent)),
+                        Span::styled(row, self.disabled),
+                    ])
+                }),
+        );
+        rows
     }
 
     /// How many cells [`Theme::control`] takes for a control of `kind`
