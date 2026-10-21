@@ -1,0 +1,46 @@
+---
+source: crates/whetstone/tests/it/inspect_jev_answers.rs
+expression: session.frame()
+---
+Buffer {
+    area: Rect { x: 0, y: 0, width: 120, height: 32 },
+    content: [
+        "                                                                                                                        ",
+        "  Jev's answers about question 1 of 4                                                                                   ",
+        "                                                                                                                        ",
+        "  Jev's probability, not a measure of correctness                                                                       ",
+        "  Each number is Jev's probability that the statement beside it holds, exactly as Jev returned it: it is not a score    ",
+        "  of your answer. Assessment policy 0, unvalidated, bands each one clear yes, unclear or clear no, and feedback says    ",
+        "  only what the bands lead to.                                                                                          ",
+        "                                                                                                                        ",
+        "  Question check                                                                                                        ",
+        "  Asked scripted/jev, answered by scripted/jev · assessment policy 0                                                    ",
+        "  Answerable from the evidence sent · 0.9731 · clear yes                                                                ",
+        "  About its area · 0.9 · clear yes                                                                                      ",
+        "  Needs this change, not general knowledge · 0.8462 · clear yes                                                         ",
+        "  The stem and options don't give the answer away · 0.9 · clear yes                                                     ",
+        "  Criterion 1 follows from the evidence and the answer key · 0.9 · clear yes                                            ",
+        "  Option A answers the question correctly · 0.9 · clear yes                                                             ",
+        "  Option B answers the question correctly · 0.1 · clear no                                                              ",
+        "  Option C answers the question correctly · 0.1 · clear no                                                              ",
+        "  The rationale for A is supported by the evidence · 0.9 · clear yes                                                    ",
+        "  The rationale for B is supported by the evidence · 0.9 · clear yes                                                    ",
+        "  The rationale for C is supported by the evidence · 0.9 · clear yes                                                    ",
+        "  "Why it matters" is supported by the evidence · 0.9 · clear yes                                                       ",
+        "  The hint points to the evidence · 0.9 · clear yes                                                                     ",
+        "  The hint doesn't reveal the answer key · 0.9 · clear yes                                                              ",
+        "  Depth · 0.1 one line, 0.8 the change, 0.1 the code around it · expected level 1 · not banded                          ",
+        "                                                                                                                        ",
+        "  Reasoning                                                                                                             ",
+        "  Asked scripted/jev, answered by scripted/jev · assessment policy 0                                                    ",
+        "  Meets criterion 1: The rubric's criterion, which stays hidden · 0.6214 · unclear                                      ",
+        "                                                                                                                        ",
+        "  ? keys  : actions  q back                                                                                             ",
+        "                                                                                                                        ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 37, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+    ]
+}
