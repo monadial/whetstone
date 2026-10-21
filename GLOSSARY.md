@@ -91,10 +91,10 @@ The form a question takes, such as a single choice from A, B and C with optional
 The option the generator marks as a question's correct answer.
 
 **Rubric**:
-The criteria a question's written reasoning is assessed against, written with the question.
+The one or two criteria a question's written reasoning is assessed against, written with the question. The question check drops a criterion that asks for more than the question needs.
 
 **Criterion**:
-One point of a rubric, with what meeting it and not meeting it look like.
+One point of a rubric, with what meeting it and not meeting it look like. It asks for the minimum a sufficient explanation of the answer key needs: an idea, met in any words, even by implication, never particular names, quoted conditions or exact values.
 
 **Relevance gate**:
 Jev's decision, for each chosen area, whether a change is worth asking about.
