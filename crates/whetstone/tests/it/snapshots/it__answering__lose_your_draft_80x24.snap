@@ -22,11 +22,11 @@ Buffer {
         "  │            │   Go back, and lose the draft                  │            │  ",
         "  │            └ Enter answer  Esc stay ────────────────────────┘            │  ",
         "  │                                                                          │  ",
-        "  │                                                                          │  ",
         "  └──────────────────────────────────────────────────────────────────────────┘  ",
         "                                                                                ",
         "    Submit response (write your reasoning)                                      ",
         "    Inspect source                                                              ",
+        "    Hint    Show answer    Skip    Cannot answer from this context    Report    ",
         "  ? keys  : actions  a/b/c choose  i write  q back                              ",
         "                                                                                ",
     ],
@@ -40,7 +40,7 @@ Buffer {
         x: 34, y: 9, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 17, y: 13, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
         x: 33, y: 13, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
-        x: 4, y: 20, fg: Reset, bg: Reset, underline: Reset, modifier: DIM | ITALIC,
-        x: 42, y: 20, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 4, y: 19, fg: Reset, bg: Reset, underline: Reset, modifier: DIM | ITALIC,
+        x: 42, y: 19, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
     ]
 }

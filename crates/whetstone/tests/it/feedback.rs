@@ -3,7 +3,7 @@
 //! citations, the chosen option's rationale, the answer key's rationale and
 //! "why it matters". The reasoning shows as it was submitted, then its
 //! outcome (`reasoning_evaluation.rs`). A submitted response is final, and
-//! feedback offers Next question, Inspect source and Finish.
+//! feedback offers Next question, Inspect source, Report and Finish.
 
 use whetstone::Durability;
 
@@ -167,7 +167,7 @@ fn after_the_last_question_next_question_is_disabled_and_finish_has_focus() {
         "Next question (this is the last)"
     );
     assert_eq!(session.row_with("Finish"), "> Finish");
-    session.press("k k <Enter>");
+    session.press("k k k <Enter>");
     assert_eq!(session.row_with("Question 3"), "Question 3 of 3 · Domain");
 }
 
@@ -175,7 +175,7 @@ fn after_the_last_question_next_question_is_disabled_and_finish_has_focus() {
 fn finish_returns_home() {
     let mut session = submitted("a", 80, 24);
 
-    session.press("j j <Enter>");
+    session.press("j j j <Enter>");
 
     assert!(
         session.text().contains("Practice on the showcase project"),
@@ -217,7 +217,7 @@ fn feedback_too_long_for_the_screen_scrolls_above_its_controls() {
     let scrolled = "Reasoning · Awaiting evaluation";
     assert!(!session.text().contains(scrolled), "{}", session.text());
 
-    session.press("<C-d>");
+    session.press("<C-d> <C-d>");
     assert!(session.text().contains(scrolled), "{}", session.text());
     assert_eq!(session.row_with("Next question"), "> Next question");
 
