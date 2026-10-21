@@ -215,11 +215,16 @@ fn the_summary_counts_answered_skipped_cannot_answer_awaiting_evaluation_assiste
 #[test]
 fn an_evaluation_still_awaited_as_the_learner_finished_comes_into_the_summary() {
     let mut session = finished_every_way(120, 32);
+    assert_eq!(
+        session.row_with("still running"),
+        "1 request is still running: its cost is added when it replies."
+    );
 
     session.settle();
 
     assert_eq!(count(&session, "Awaiting evaluation"), 0);
     assert_eq!(count(&session, "Answered"), 2);
+    assert!(!session.text().contains("still running"));
 }
 
 /// Tall enough for the whole summary of four questions.
@@ -332,10 +337,9 @@ fn the_cost_says_how_many_requests_reported_none_a_failed_one_too_and_never_esti
     assert_eq!(
         cost(&session),
         [
-            vec!["Jev", "$0.000072"],
-            vec!["Generator", "$0.00"],
-            vec!["Total", "$0.000072"],
-            vec!["Not reported for 2 requests"],
+            ["Jev", "$0.000072 · not reported for 1 request"],
+            ["Generator", "$0.00 · not reported for 1 request"],
+            ["Total", "$0.000072 · not reported for 2 requests"],
         ]
     );
     assert_eq!(
@@ -363,10 +367,9 @@ fn an_evaluation_the_learner_cancelled_counts_as_a_request_that_reported_no_cost
     assert_eq!(
         cost(&session),
         [
-            vec!["Jev", "$1.50"],
-            vec!["Generator", "$1.50"],
-            vec!["Total", "$3.00"],
-            vec!["Not reported for 1 request"],
+            ["Jev", "$1.50 · not reported for 1 request"],
+            ["Generator", "$1.50"],
+            ["Total", "$3.00 · not reported for 1 request"],
         ]
     );
 }
@@ -405,11 +408,12 @@ fn finishing_sends_no_new_request_but_one_still_running_comes_in() {
     );
 }
 
-/// [`finished_every_way`], with every reply reporting its cost.
+/// [`finished_every_way`], with each of Jev's replies reporting its cost,
+/// and the generator's none.
 fn summary_with_its_cost(width: u16, height: u16) -> Session {
     let ai = writing_about_the_domain(6, PAYMENT_LIFECYCLE);
     costing(&ai, Role::Jev, Some(0.000_012));
-    costing(&ai, Role::Generator, Some(0.0774));
+    costing(&ai, Role::Generator, None);
     finished_every_way_with(&ai, width, height)
 }
 
@@ -428,13 +432,16 @@ fn the_summary_at_80x24() {
 }
 
 #[test]
-fn the_summary_scrolled_to_its_cost_at_80x24() {
+fn the_summary_scrolled_to_its_end_at_80x24() {
     let mut session = summary_with_its_cost(80, 24);
 
     session.press("G");
 
-    assert_eq!(session.row_with("Total"), "Total      $0.077496");
-    insta::assert_debug_snapshot!("summary_scrolled_to_its_cost_80x24", session.frame());
+    assert_eq!(
+        session.row_with("Reasoning"),
+        "Reasoning · Awaiting evaluation"
+    );
+    insta::assert_debug_snapshot!("summary_scrolled_to_its_end_80x24", session.frame());
 }
 
 /// A session asking whether to finish, `width` by `height`, with the first

@@ -9,14 +9,17 @@
 //! counts as answered. Each question is listed with its choice outcome and
 //! each criterion's outcome, separately: there is no combined grade.
 //!
-//! The cost is what each reply reported, added up for Jev and for the
-//! generator. A request whose reply reported no cost, or that failed or was
-//! cancelled, is counted instead, as "not reported for *n* requests": the
-//! cost is never estimated.
+//! The cost, under the counts, is what each reply reported, added up for
+//! Jev, for the generator and for both. A request whose reply reported no
+//! cost, or that failed or was cancelled, is counted instead, as "not
+//! reported for *n* requests", beside its role and the total: the cost is
+//! never estimated, so a role whose requests reported none never looks
+//! free.
 //!
 //! Finishing sends no new request. One still running when the learner
-//! finished runs on, and once it replies, the summary shows its outcome and
-//! its cost. Home leads back to home, which stops any still running.
+//! finished runs on: the summary says how many still run, and once one
+//! replies, it shows its outcome and its cost. Home leads back to home,
+//! which stops any still running.
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -29,6 +32,7 @@ use crate::feedback::{self, AttemptKind, Evaluation, Feedback};
 use crate::focus::Position;
 use crate::keymap::{self, Binding, Command, Keymap};
 use crate::questions::Questions;
+use crate::sent_requests::Spending;
 use crate::theme::{ColorSupport, ControlState, Theme};
 use crate::view::Route;
 
@@ -99,8 +103,8 @@ pub(crate) struct Summary {
 
 impl Summary {
     /// The summary of `questions`, about `subject`, the change and the
-    /// chosen areas, whose requests cost `cost` so far.
-    pub(crate) fn new(questions: Questions, subject: String, cost: SessionCost) -> Self {
+    /// chosen areas, whose requests cost what `spending` says so far.
+    pub(crate) fn new(questions: Questions, subject: String, spending: Spending) -> Self {
         let summary = Self {
             questions,
             subject,
@@ -115,9 +119,10 @@ impl Summary {
             awaiting_evaluation = counts.awaiting_evaluation,
             assisted = counts.assisted,
             reported = counts.reported,
-            jev_usd = cost.jev().usd(),
-            generator_usd = cost.generator().usd(),
-            not_reported = cost.not_reported(),
+            jev_usd = spending.total.jev().usd(),
+            generator_usd = spending.total.generator().usd(),
+            not_reported = spending.total.not_reported(),
+            running = spending.running,
             "finished the Practice"
         );
         summary
@@ -149,14 +154,14 @@ impl Summary {
         }
     }
 
-    /// Applies `command` to the summary drawn in `area`, with the session's
-    /// `cost`, and returns what it asks of the app, if anything: Home goes
-    /// home.
+    /// Applies `command` to the summary drawn in `area`, with what the
+    /// session's requests cost so far, `spending`, and returns what it asks
+    /// of the app, if anything: Home goes home.
     pub(crate) fn apply(
         &mut self,
         command: Command,
         area: Rect,
-        cost: SessionCost,
+        spending: Spending,
     ) -> Option<Command> {
         match command {
             Command::Activate => return Some(Command::Go(Route::Home)),
@@ -167,7 +172,7 @@ impl Summary {
             | Command::Top
             | Command::Bottom => {
                 // Styles do not change how the text wraps.
-                let lines = self.lines(&Theme::new(ColorSupport::NoColor), area.width, cost);
+                let lines = self.lines(&Theme::new(ColorSupport::NoColor), area.width, spending);
                 let [body, ..] = layout(lines.len(), area);
                 let last = lines.len().saturating_sub(usize::from(body.height));
                 self.top = self.top.scrolled(command, last, usize::from(body.height));
@@ -177,9 +182,10 @@ impl Summary {
         None
     }
 
-    /// The summary's text, drawn with `theme`, `width` cells wide, with the
-    /// session's `cost`.
-    fn lines(&self, theme: &Theme, width: u16, cost: SessionCost) -> Vec<Line<'static>> {
+    /// The summary's text, drawn with `theme`, `width` cells wide, with what
+    /// the session's requests cost so far, `spending`: the counts, the cost,
+    /// then each question.
+    fn lines(&self, theme: &Theme, width: u16, spending: Spending) -> Vec<Line<'static>> {
         let width = usize::from(width);
         let mut lines = vec![Line::styled("Summary", theme.title)];
         lines.extend(
@@ -197,31 +203,28 @@ impl Summary {
             ("Assisted", counts.assisted),
             ("Reported", counts.reported),
         ];
-        let label_width = rows
-            .iter()
-            .map(|(label, _)| label.len())
-            .max()
-            .unwrap_or_default()
-            + 2;
-        lines.extend(rows.map(|(label, count)| Line::raw(format!("{label:<label_width$}{count}"))));
+        lines.extend(in_columns(
+            rows.map(|(label, count)| (label, count.to_string())),
+        ));
+        lines.push(Line::default());
+        lines.extend(cost_lines(spending, theme, width));
         for (place, listed) in self.questions.listed().iter().enumerate() {
             lines.push(Line::default());
             lines.extend(question_lines(place, listed, theme, width));
         }
-        lines.push(Line::default());
-        lines.extend(cost_lines(cost, theme));
         lines
     }
 
-    /// Draws the summary in `area` with `theme`, with the session's `cost`.
+    /// Draws the summary in `area` with `theme`, with what the session's
+    /// requests cost so far, `spending`.
     pub(crate) fn render(
         &self,
         theme: &Theme,
         frame: &mut Frame<'_>,
         area: Rect,
-        cost: SessionCost,
+        spending: Spending,
     ) {
-        let lines = self.lines(theme, area.width, cost);
+        let lines = self.lines(theme, area.width, spending);
         let [body, _, buttons] = layout(lines.len(), area);
         let last = lines.len().saturating_sub(usize::from(body.height));
         let top = self.top.index().min(last);
@@ -264,9 +267,9 @@ fn question_lines(
     let mut lines = vec![Line::styled(heading, theme.title)];
     let indented = |lines: &mut Vec<Line<'static>>, text: &str| {
         lines.extend(
-            columns::wrap(text, width.saturating_sub(INDENT.len()))
+            columns::wrap(text, width.saturating_sub(INDENT))
                 .into_iter()
-                .map(|line| Line::raw(format!("{INDENT}{line}"))),
+                .map(|line| Line::raw(format!("{}{line}", " ".repeat(INDENT)))),
         );
     };
     indented(&mut lines, listed.question.stem());
@@ -305,30 +308,54 @@ fn question_lines(
     lines
 }
 
-/// The lines giving the session's `cost`, drawn with `theme`: what Jev's
-/// replies and the generator's reported, and the two together.
-fn cost_lines(cost: SessionCost, theme: &Theme) -> Vec<Line<'static>> {
-    let rows = [
-        ("Jev", cost.jev()),
-        ("Generator", cost.generator()),
-        ("Total", cost.total()),
-    ];
-    let label_width = rows
-        .iter()
-        .map(|(label, _)| label.len())
-        .max()
-        .unwrap_or_default()
-        + 2;
+/// The lines giving what the session's requests cost so far, `spending`,
+/// drawn with `theme`, `width` cells wide: what Jev's replies and the
+/// generator's reported, and both together, each with how many of its
+/// requests reported none, then how many requests still run.
+fn cost_lines(spending: Spending, theme: &Theme, width: usize) -> Vec<Line<'static>> {
+    let row = |cost: Cost, of: SessionCost| match of.not_reported() {
+        0 => dollars(cost),
+        1 => format!("{} · not reported for 1 request", dollars(cost)),
+        requests => format!("{} · not reported for {requests} requests", dollars(cost)),
+    };
     let mut lines = vec![Line::styled("Cost, as each reply reported it", theme.title)];
-    lines.extend(
-        rows.map(|(label, cost)| Line::raw(format!("{label:<label_width$}{}", dollars(cost)))),
-    );
-    match cost.not_reported() {
-        0 => {}
-        1 => lines.push(Line::raw("Not reported for 1 request")),
-        requests => lines.push(Line::raw(format!("Not reported for {requests} requests"))),
+    lines.extend(in_columns([
+        ("Jev", row(spending.jev.jev(), spending.jev)),
+        (
+            "Generator",
+            row(spending.generator.generator(), spending.generator),
+        ),
+        ("Total", row(spending.total.total(), spending.total)),
+    ]));
+    let running = match spending.running {
+        0 => None,
+        1 => Some("1 request is still running: its cost is added when it replies.".to_owned()),
+        requests => Some(format!(
+            "{requests} requests are still running: their cost is added when they reply."
+        )),
+    };
+    if let Some(running) = running {
+        lines.extend(
+            columns::wrap(&running, width)
+                .into_iter()
+                .map(|line| Line::styled(line, theme.muted)),
+        );
     }
     lines
+}
+
+/// Each of `rows`, a label and what it labels, in two columns: what each
+/// label labels starts in one column, past the widest label.
+fn in_columns<const N: usize>(rows: [(&str, String); N]) -> Vec<Line<'static>> {
+    let column = columns::next_column(rows.iter().map(|(label, _)| *label));
+    rows.into_iter()
+        .map(|(label, text)| {
+            let mut line = Line::raw(label.to_owned());
+            columns::pad_to(&mut line, column);
+            line.push_span(text);
+            line
+        })
+        .collect()
 }
 
 /// `cost` in dollars, to the millionth of a dollar, without the zeros that
@@ -346,8 +373,8 @@ fn dollars(cost: Cost) -> String {
     format!("${whole}.{fraction:0<2}")
 }
 
-/// What the lines under each question's heading start with.
-const INDENT: &str = "  ";
+/// How many cells the lines under each question's heading are indented.
+const INDENT: usize = 2;
 
 /// How many questions ended each way, and how many there are.
 #[derive(Debug, Clone, Copy)]

@@ -456,6 +456,12 @@ impl<K> Waiting<K> {
         self.keys.is_empty()
     }
 
+    /// How many jobs it waits for.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.keys.len()
+    }
+
     /// Rule 24: whether a result from job `job` carrying `key` is to be
     /// applied, which it is only if it waits for that job with that key. It
     /// no longer waits for the job either way, since its report has come.
@@ -486,7 +492,7 @@ impl<K> Waiting<K> {
     where
         K: PartialEq,
     {
-        let waited = self.keys.len();
+        let before = self.keys.len();
         self.keys.retain(|(job, waited)| {
             let cancelled = waited == key;
             if cancelled {
@@ -494,7 +500,7 @@ impl<K> Waiting<K> {
             }
             !cancelled
         });
-        waited - self.keys.len()
+        before - self.keys.len()
     }
 }
 

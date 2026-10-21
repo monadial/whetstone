@@ -77,7 +77,7 @@ use crate::cannot_answer::{self, CannotAnswer};
 use crate::columns;
 use crate::failures::FailedRequests;
 use crate::feedback::{self, AttemptKind, Feedback, Place, Step};
-use crate::finish::{self, Drafts, FinishCheck, Finishing};
+use crate::finish::{self, ConfirmFinish, Drafts, Finishing};
 use crate::focus::Position;
 use crate::keymap::{self, Binding, Command, Input, Keymap, Press};
 use crate::palette::Action;
@@ -393,7 +393,7 @@ pub(crate) struct Questions {
     reporting: Option<Box<ReportForm>>,
     /// Asking whether to finish while questions are still unattempted, if
     /// the learner chose Finish then.
-    finishing: Option<Box<FinishCheck>>,
+    finishing: Option<Box<ConfirmFinish>>,
     /// The saved responses whose evaluation the learner cancelled, for the
     /// screen to stop.
     cancelled: Vec<SavedResponse>,
@@ -886,9 +886,9 @@ impl Questions {
         let drafts = if self.holds_draft() {
             Drafts::Started
         } else {
-            Drafts::None
+            Drafts::NotStarted
         };
-        self.finishing = Some(Box::new(FinishCheck::new(
+        self.finishing = Some(Box::new(ConfirmFinish::new(
             unattempted,
             self.picked.len(),
             drafts,
