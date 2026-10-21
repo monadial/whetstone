@@ -18,8 +18,9 @@ use whetstone_core::{
 use crate::candidates::{CandidatesOutput, candidates_request};
 use crate::connection::OpenRouter;
 use crate::gate::{gate_answers, gate_request};
-use crate::port::{Ai, CandidateCount, Pending, Reply};
+use crate::port::{Ai, CandidateCount, Pending, Reply, Saved};
 use crate::question_check::{question_check_answers, question_check_request};
+use crate::reasoning::{QuestionWithoutKey, reasoning_answers, reasoning_request};
 use crate::usage::Usage;
 
 /// The models Practice asks: Jev's, as `[jev] model` names it, and the
@@ -136,6 +137,33 @@ impl Ai for OpenRouterAi {
             })
         })
     }
+
+    fn assess_reasoning(
+        &self,
+        _saved: &dyn Saved,
+        evidence: &Evidence,
+        question: QuestionWithoutKey<'_>,
+        reasoning: &str,
+    ) -> Pending<Vec<Probability>> {
+        let request = reasoning_request(&self.models.jev, evidence, question, reasoning);
+        let rubric = question.rubric().to_vec();
+        let connection = self.connection.clone();
+        let model = self.models.jev.clone();
+        Box::pin(async move {
+            let reply = connection.evaluate(&request, &never_cancelled()).await?;
+            let content = reasoning_answers(&rubric, &reply)?;
+            let provenance = provenance(
+                Provenance::new(Role::Jev, model),
+                Some(reply.model),
+                reply.usage,
+            );
+            log_reply(&provenance);
+            Ok(Reply {
+                content,
+                provenance,
+            })
+        })
+    }
 }
 
 /// `requested` with what the reply reports: the model that answered, and its
@@ -180,16 +208,24 @@ mod tests {
     use whetstone_core::{CandidateCheck, Depth, OptionLetter, Probability, QuestionCount, Usage};
 
     use super::*;
-    use crate::port::RequestFailure;
+    use crate::port::{RequestFailure, Saved};
     use crate::replay::{connection, received, server};
     use crate::samples::{
-        area, area_file, candidate, evidence, generator_model, jev_model, observability,
+        REASONING, area, area_file, candidate, evidence, generator_model, jev_model, observability,
+        question,
     };
-    use crate::{AiError, Timeouts};
+    use crate::{AiError, QuestionWithoutKey, Timeouts};
 
     const CANDIDATES: &str = include_str!("../fixtures/candidates.json");
     const QUESTION_CHECK: &str = include_str!("../fixtures/question-check.json");
     const GATE: &str = include_str!("../fixtures/gate.json");
+    const REASONING_REPLY: &str = include_str!("../fixtures/reasoning.json");
+
+    /// A session store's acknowledgement, as the app's store gives one.
+    #[derive(Debug)]
+    struct Acknowledged;
+
+    impl Saved for Acknowledged {}
 
     fn models() -> Models {
         Models {
@@ -409,6 +445,79 @@ mod tests {
             ai.check_areas(&evidence(), &[area(), observability(), security])
                 .await
                 .err(),
+            Some(RequestFailure::InvalidReply)
+        );
+    }
+
+    #[tokio::test]
+    async fn jev_assesses_the_reasoning_per_criterion_with_the_model_it_was_asked_and_what_it_cost()
+    {
+        let (server, ai) = ai("/systemone", 200, REASONING_REPLY).await;
+        let question = question();
+
+        let reply = ai
+            .assess_reasoning(
+                &Acknowledged,
+                &evidence(),
+                QuestionWithoutKey::from(&question),
+                REASONING,
+            )
+            .await
+            .expect("the recorded reply decodes");
+
+        assert_eq!(
+            reply.content,
+            [0.75, 0.96].map(|answer| Probability::new(answer).expect("a probability"))
+        );
+        assert_eq!(
+            reply.provenance,
+            Provenance::new(Role::Jev, jev_model())
+                .with_reported_model(ModelId::new("typesafe/jev-1.14-20261014".to_owned()))
+                .with_usage(Usage {
+                    input_tokens: Some(1475),
+                    output_tokens: Some(44),
+                })
+                .with_cost(Cost::new(0.000_061_95).expect("0.00006195 is a cost"))
+        );
+        let (_, body) = received(&server).await;
+        assert_eq!(body["model"], jev_model().as_str());
+        assert_eq!(body.get("provider"), None::<&Value>);
+        let keys = |value: &Value| -> Vec<String> {
+            value
+                .as_object()
+                .expect("an object")
+                .keys()
+                .cloned()
+                .collect()
+        };
+        assert_eq!(keys(&body["state"]), ["evidence", "question", "reasoning"]);
+        assert_eq!(keys(&body["state"]["question"]), ["stem", "options"]);
+        assert_eq!(body["state"]["reasoning"], REASONING);
+        assert_eq!(keys(&body["questions"]), ["criterion_1", "criterion_2"]);
+        let sent = body.to_string();
+        for letter in OptionLetter::ALL {
+            assert!(
+                !sent.contains(question.rationale(letter)),
+                "the rationale for {letter}, which names the answer key, isn't sent"
+            );
+        }
+        assert!(!sent.contains("answer_key"));
+    }
+
+    #[tokio::test]
+    async fn a_reasoning_reply_that_answers_other_questions_is_an_invalid_reply() {
+        let (_server, ai) = ai("/systemone", 200, QUESTION_CHECK).await;
+        let question = question();
+
+        assert_eq!(
+            ai.assess_reasoning(
+                &Acknowledged,
+                &evidence(),
+                QuestionWithoutKey::from(&question),
+                REASONING,
+            )
+            .await
+            .err(),
             Some(RequestFailure::InvalidReply)
         );
     }

@@ -39,6 +39,23 @@ impl<'a> From<&'a Question> for QuestionWithoutKey<'a> {
     }
 }
 
+impl<'a> QuestionWithoutKey<'a> {
+    /// The question's stem.
+    pub(crate) fn stem(&self) -> &'a str {
+        self.stem
+    }
+
+    /// Options A, B and C's text, in that order.
+    pub(crate) fn options(&self) -> [&'a str; 3] {
+        self.options
+    }
+
+    /// Its rubric's criteria, in order.
+    pub(crate) fn rubric(&self) -> &'a [Criterion] {
+        self.rubric
+    }
+}
+
 /// Shows the text's lengths, never the text.
 impl fmt::Debug for QuestionWithoutKey<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
