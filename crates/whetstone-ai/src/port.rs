@@ -14,12 +14,24 @@ use std::num::NonZeroUsize;
 use std::pin::Pin;
 
 use whetstone_core::{
-    Area, Candidate, Evidence, Provenance, QuestionCheckAnswers, QuestionCount, WrittenCandidate,
+    Area, AreaId, Candidate, Evidence, Probability, Provenance, QuestionCheckAnswers,
+    QuestionCount, WrittenCandidate,
 };
 
 /// What Practice asks of Jev and the generator. The real implementation
 /// calls `OpenRouter`; a scripted one stands in for it in tests.
 pub trait Ai: fmt::Debug + Send + Sync {
+    /// Jev's relevance gate, in one call, before any question is written:
+    /// for each of `areas`, the chosen areas, the probability that the
+    /// change in `evidence` is worth asking about in it, in their order, as
+    /// returned. Jev judges each area by its name and description; area
+    /// prompts never reach it.
+    fn check_areas(
+        &self,
+        evidence: &Evidence,
+        areas: &[Area],
+    ) -> Pending<Vec<(AreaId, Probability)>>;
+
     /// The generator writes `count` candidate questions about `area` from
     /// `evidence`, as it wrote them, before any check.
     fn write_candidates(
