@@ -11,6 +11,7 @@ mod async_jobs;
 mod build_areas;
 mod cli;
 mod colors;
+mod commit_filter;
 mod commit_paging;
 mod commit_viewer;
 mod commits;
