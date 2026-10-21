@@ -28,6 +28,14 @@ const SECOND: &str = "Domain question 2?";
 /// The reasoning the tests submit.
 const REASONING: &str = "Retries reuse the key, so the provider dedupes them.";
 
+/// A terminal height that fits all of the feedback, for the tests that
+/// read the outcomes whole.
+const TALL: u16 = 40;
+
+/// What shows under a criterion not met or needing review while the
+/// generator writes its explanation, which these tests never deliver.
+const EXPLAINING: &str = "The generator is explaining this. Jev checks it before it shows.";
+
 /// The first question's rubric, in order.
 const CRITERIA: [&str; 3] = [
     "Names the key the retry reuses",
@@ -46,8 +54,9 @@ fn probabilities(values: &[f64]) -> Vec<Probability> {
 
 /// A scripted AI writing four questions about the domain area of the
 /// payment lifecycle change, each passing every check, its answer key A, the
-/// first with `criteria` as its rubric. Jev assesses the reasoning written for the
-/// first as `assessments`, one per request, in turn.
+/// first with `criteria` as its rubric. Jev assesses the reasoning written
+/// for the first as `assessments`, one per request, in turn. An explanation
+/// of it is scripted, for outcomes that ask for one, but never delivered.
 fn writing(criteria: &[&str], assessments: Vec<Assessing>) -> Arc<ScriptedAi> {
     let ai = Arc::new(ScriptedAi::new());
     let stems = stems("Domain", 4);
@@ -70,6 +79,7 @@ fn writing(criteria: &[&str], assessments: Vec<Assessing>) -> Arc<ScriptedAi> {
     for assessment in assessments {
         ai.on_assess(FIRST, assessment);
     }
+    ai.on_explain(FIRST, Err(RequestFailure::TimedOut));
     ai
 }
 
@@ -83,11 +93,12 @@ fn submitted(ai: &Arc<ScriptedAi>, choice: &str, width: u16, height: u16) -> Ses
 }
 
 /// The same as [`submitted`], with Jev's assessment of the three
-/// [`CRITERIA`] scripted as `answers` and delivered.
+/// [`CRITERIA`] scripted as `answers` and delivered. The explanation it
+/// asks for, if it asks for one, is being written.
 fn assessed(answers: &[f64], width: u16, height: u16) -> Session {
     let ai = writing(&CRITERIA, vec![Ok(probabilities(answers))]);
     let mut session = submitted(&ai, "a", width, height);
-    session.settle();
+    session.settle_once();
     session
 }
 
@@ -148,15 +159,17 @@ fn after_submit_the_reasoning_awaits_evaluation_and_the_choice_outcome_already_s
 
 #[test]
 fn each_criterion_shows_met_not_met_or_needs_review_in_words_only() {
-    let session = assessed(&[0.9, 0.1, 0.5], 120, 32);
+    let session = assessed(&[0.9, 0.1, 0.5], 120, TALL);
 
     assert_eq!(
         session.section("Reasoning"),
         [
             "Met · Names the key the retry reuses",
             "Not met · Says why the retry can't charge twice",
+            EXPLAINING,
             "Needs review · Says what the timed-out charge may already have done",
             "Jev couldn't tell whether your reasoning covers this.",
+            EXPLAINING,
         ]
     );
     let text = session.text();
@@ -169,15 +182,17 @@ fn each_criterion_shows_met_not_met_or_needs_review_in_words_only() {
 
 #[test]
 fn the_cut_offs_decide_met_and_not_met_and_anything_between_needs_review() {
-    let session = assessed(&[0.80, 0.20, 0.79], 120, 32);
+    let session = assessed(&[0.80, 0.20, 0.79], 120, TALL);
 
     assert_eq!(
         session.section("Reasoning"),
         [
             "Met · Names the key the retry reuses",
             "Not met · Says why the retry can't charge twice",
+            EXPLAINING,
             "Needs review · Says what the timed-out charge may already have done",
             "Jev couldn't tell whether your reasoning covers this.",
+            EXPLAINING,
         ]
     );
 }
@@ -410,15 +425,17 @@ fn a_result_from_a_cancelled_request_is_ignored_once_retry_asks_again() {
             Ok(probabilities(&[0.1, 0.1, 0.1])),
         ],
     );
-    let mut session = submitted(&ai, "a", 120, 32);
+    let mut session = submitted(&ai, "a", 120, TALL);
 
     activate_the_evaluations_control(&mut session);
     activate_the_evaluations_control(&mut session);
-    session.settle();
+    session.settle_once();
 
     assert_eq!(
         session.section("Reasoning"),
-        CRITERIA.map(|criterion| format!("Not met · {criterion}")),
+        CRITERIA
+            .map(|criterion| [format!("Not met · {criterion}"), EXPLAINING.to_owned()])
+            .concat(),
         "only the current request's result applies"
     );
     let outcomes: Vec<CriterionOutcome> = criterion_outcomes(&session.store().log())
@@ -445,15 +462,19 @@ fn a_result_after_leaving_the_practice_changes_nothing() {
 fn each_result_applies_to_its_own_response_even_once_another_question_shows() {
     let ai = writing(&CRITERIA[..1], vec![Ok(probabilities(&[0.9]))]);
     ai.on_assess(SECOND, Ok(probabilities(&[0.1])));
+    ai.on_explain(SECOND, Err(RequestFailure::TimedOut));
     let mut session = submitted(&ai, "a", 120, 32);
 
     session.press("<Enter>");
     submit(&mut session, "b", "The key is reused.");
-    session.settle();
+    session.settle_once();
 
     assert_eq!(
         session.section("Reasoning"),
-        ["Not met · The rubric's criterion, which stays hidden"]
+        [
+            "Not met · The rubric's criterion, which stays hidden",
+            EXPLAINING
+        ]
     );
     let log = session.store().log();
     let [first, second] = &saved_responses(&log)[..] else {
