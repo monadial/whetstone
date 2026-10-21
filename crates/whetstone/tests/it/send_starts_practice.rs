@@ -28,7 +28,7 @@ use crate::session::{NO_COLOR, Session, Setup, columns};
 
 /// From home: open the repository's picker, select only the domain area,
 /// choose the newest commit, and open its outbound review.
-const REVIEW_ABOUT_THE_DOMAIN: &str =
+pub(crate) const REVIEW_ABOUT_THE_DOMAIN: &str =
     "<Enter> j <Space> j <Space> j <Space> j <Space> j <Space> k k k k k <S-Tab> <Enter>";
 /// From the change on the outbound review: down to `plan.txt`, the second
 /// touched file, and leave it out.
@@ -78,7 +78,7 @@ fn setup<'a>(repo: &'a TestRepo, ai: &'a Arc<ScriptedAi>) -> Setup<'a> {
 /// A session `width` by `height`, started in `repo` with `ai`, on the
 /// outbound review of its newest commit, reached with the keys `review`,
 /// once connected code is found.
-fn reviewing(
+pub(crate) fn reviewing(
     repo: &TestRepo,
     ai: &Arc<ScriptedAi>,
     review: &str,
@@ -93,7 +93,7 @@ fn reviewing(
 
 /// Presses Send on the outbound review, from wherever focus is: up to the
 /// change, round to Back, then up to Send.
-fn press_send(session: &mut Session) {
+pub(crate) fn press_send(session: &mut Session) {
     session.press(TO_THE_CHANGE);
     session.press("<S-Tab> k");
     assert_eq!(session.row_with("> Send"), "> Send", "Send is enabled");

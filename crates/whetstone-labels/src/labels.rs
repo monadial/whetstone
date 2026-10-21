@@ -29,8 +29,8 @@ use serde::de::{self, Deserializer, IntoDeserializer, MapAccess, Visitor};
 use toml::Spanned;
 use toml::value::Datetime;
 use whetstone_core::{
-    AreaId, CriterionOutcome, InvalidAreaId, QuestionType, WrittenCandidate, WrittenCitation,
-    WrittenCriterion, WrittenOption,
+    AreaId, CommitId, CriterionOutcome, InvalidAreaId, InvalidCommitId, QuestionType,
+    WrittenCandidate, WrittenCitation, WrittenCriterion, WrittenOption,
 };
 
 /// What a label says Jev should answer.
@@ -229,7 +229,7 @@ pub struct CandidateExample {
     example: Example,
     source: Source,
     commit: String,
-    commit_id: Option<String>,
+    commit_id: Option<CommitId>,
     area: AreaId,
     written: WrittenCandidate,
 }
@@ -254,11 +254,11 @@ impl CandidateExample {
         &self.commit
     }
 
-    /// The full ID of the commit of the learner's own repository a learner's
+    /// The ID of the commit of the learner's own repository a learner's
     /// vote is about, or none when it is about the showcase project.
     #[must_use]
-    pub fn commit_id(&self) -> Option<&str> {
-        self.commit_id.as_deref()
+    pub fn commit_id(&self) -> Option<&CommitId> {
+        self.commit_id.as_ref()
     }
 
     /// The ID of the area it is about.
@@ -396,6 +396,13 @@ pub enum LabelError {
         "{place}: `commit_id` names a commit of a learner's own repository, which only a learner vote (`source = \"learner vote\"`) is about"
     )]
     NotAVote { place: Place },
+    /// A learner's vote's `commit_id` isn't a commit's full ID.
+    #[error("{place}: the vote's `commit_id` is not a commit's full ID")]
+    NotACommitId {
+        place: Place,
+        #[source]
+        source: InvalidCommitId,
+    },
 }
 
 impl Labels {
@@ -763,7 +770,14 @@ impl RawCandidate {
             source,
             commit: non_empty(commit, place, "commit")?,
             commit_id: commit_id
-                .map(|id| non_empty(id, place, "commit_id"))
+                .map(|id| {
+                    // The short form is never shown: a vote names the commit
+                    // by its full ID.
+                    CommitId::new(&id, 7).map_err(|source| LabelError::NotACommitId {
+                        place: place.clone(),
+                        source,
+                    })
+                })
                 .transpose()?,
             area: AreaId::from_str(&area).map_err(|source| LabelError::NotAnAreaId {
                 place: place.clone(),
@@ -1176,8 +1190,17 @@ labels = { option_a = "yes" }
         ))
         .unwrap();
         assert_eq!(
-            own.candidates()[0].commit_id(),
+            own.candidates()[0].commit_id().map(CommitId::full),
             Some("0123456789abcdef0123456789abcdef01234567")
+        );
+        let short = parse(&crate::samples::vote(
+            "commit_id = \"0123456\"\n",
+            "no_giveaway = \"yes\"\n",
+        ))
+        .unwrap_err();
+        assert_eq!(
+            short.to_string(),
+            "seeds.toml, line 2: the vote's `commit_id` is not a commit's full ID"
         );
 
         let labelled = parse(crate::samples::CANDIDATE).unwrap();

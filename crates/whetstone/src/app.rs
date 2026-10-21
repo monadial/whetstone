@@ -14,7 +14,8 @@
 //! text entry as one insertion, and anywhere else it does nothing.
 //!
 //! A background job's result enters the same way, and is applied only if
-//! the app still waits for that job. So does the end of a job's time limit,
+//! the app still waits for that job: to the screen that waits for it, or,
+//! for a vote on a withheld question, to the labels file the app keeps. So does the end of a job's time limit,
 //! after which the app no longer waits for it. Once the screen has applied a
 //! command, a result or a time limit, it saves what its state now holds for
 //! the session record, then starts any job its state now needs.
@@ -379,6 +380,9 @@ impl App {
             return;
         };
         match finished.outcome {
+            // A vote is saved whichever screen shows, and the labels file
+            // the app keeps remembers it for the run.
+            JobOutcome::Done(JobOutput::VoteSaved(saved)) => self.labels.saved(*saved),
             JobOutcome::Done(output) => {
                 if let Some(screen) = self.screens.waiting_for(finished.id) {
                     screen.finish_job(finished.id, output);

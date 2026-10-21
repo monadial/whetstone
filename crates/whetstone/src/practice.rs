@@ -1078,7 +1078,7 @@ impl Practice {
             subject: self.change.summary().into_owned(),
             commit_id: match self.change_ref {
                 ChangeRef::Showcase(_) => None,
-                ChangeRef::Commit(id) => Some(id.full().to_owned()),
+                ChangeRef::Commit(id) => Some(id),
             },
         };
         ReviewWithheld::new(candidates, change, self.evidence_reader()?, context.labels)
@@ -1342,7 +1342,7 @@ impl View for Practice {
                     }
                 }
             }
-            JobOutput::ConnectedCode { .. } | JobOutput::VoteSaved => {}
+            JobOutput::ConnectedCode { .. } | JobOutput::VoteSaved(_) => {}
         }
     }
 

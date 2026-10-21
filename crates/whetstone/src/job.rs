@@ -31,6 +31,7 @@ use whetstone_core::{
 };
 
 use crate::connected_code::GraphOrigin;
+use crate::labels_file::SavedVote;
 use crate::session_record::SavedResponse;
 
 /// A job's identity, unique among the jobs one [`Jobs`] starts.
@@ -112,9 +113,10 @@ pub enum JobOutput {
         /// why the request failed.
         reply: Result<Reply<Vec<ParagraphCheck>>, RequestFailure>,
     },
-    /// A vote on a withheld question was appended to the labels file, or
-    /// couldn't be, which the labels file itself keeps.
-    VoteSaved,
+    /// Whether a vote on a withheld question was appended to the labels
+    /// file, boxed, as it holds why it wasn't, to keep the app's messages
+    /// small. The app applies it to the labels file, whichever screen shows.
+    VoteSaved(Box<SavedVote>),
 }
 
 /// How a job ended.

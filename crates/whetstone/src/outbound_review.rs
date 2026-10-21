@@ -1228,7 +1228,7 @@ impl View for OutboundReview {
             | JobOutput::Evaluated { .. }
             | JobOutput::Explained { .. }
             | JobOutput::ExplanationChecked { .. }
-            | JobOutput::VoteSaved => {}
+            | JobOutput::VoteSaved(_) => {}
         }
     }
 
