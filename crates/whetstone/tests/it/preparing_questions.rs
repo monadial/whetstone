@@ -230,6 +230,7 @@ fn one_generator_call_per_chosen_area_goes_out_at_once_then_one_check_per_candid
         );
         for stem in stems {
             ai.on_check_passing(stem);
+            reasoning_met(&ai, stem);
         }
     }
     let mut session = generate(&ai, &[DOMAIN, INFRASTRUCTURE], SERVE_OVER_HTTP, 120, 32);
@@ -294,7 +295,8 @@ fn one_generator_call_per_chosen_area_goes_out_at_once_then_one_check_per_candid
 }
 
 /// A scripted AI that writes `count` candidates about the domain area, each
-/// passing every check, for the change at `change`.
+/// passing every check, and its reasoning, once submitted, meeting its
+/// criterion, for the change at `change`.
 pub(crate) fn writing_about_the_domain(count: usize, change: usize) -> Arc<ScriptedAi> {
     let ai = Arc::new(ScriptedAi::new());
     write_about_the_domain(&ai, count, change);
@@ -302,7 +304,8 @@ pub(crate) fn writing_about_the_domain(count: usize, change: usize) -> Arc<Scrip
 }
 
 /// Scripts `ai` to write `count` candidates about the domain area once
-/// more, each passing every check, for the change at `change`.
+/// more, each passing every check, and its reasoning, once submitted,
+/// meeting its criterion, for the change at `change`.
 fn write_about_the_domain(ai: &ScriptedAi, count: usize, change: usize) {
     let stems = stems("Domain", count);
     ai.on_write(
@@ -314,7 +317,14 @@ fn write_about_the_domain(ai: &ScriptedAi, count: usize, change: usize) {
     );
     for stem in &stems {
         ai.on_check_passing(stem);
+        reasoning_met(ai, stem);
     }
+}
+
+/// Scripts Jev to find the reasoning written for the question `stem`,
+/// whose one criterion is [`candidate`]'s, meeting it, once submitted.
+pub(crate) fn reasoning_met(ai: &ScriptedAi, stem: &str) {
+    ai.on_assess(stem, Ok(vec![Probability::new(0.9).expect("from 0 to 1")]));
 }
 
 #[test]
@@ -654,6 +664,7 @@ fn retry_after_a_failed_write_asks_again_only_for_the_area_that_failed() {
     );
     for stem in domain.iter().chain(&infrastructure) {
         ai.on_check_passing(stem);
+        reasoning_met(&ai, stem);
     }
     let mut session = generate(&ai, &[DOMAIN, INFRASTRUCTURE], SERVE_OVER_HTTP, 120, 32);
     session.settle();

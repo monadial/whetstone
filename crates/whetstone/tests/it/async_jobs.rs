@@ -316,3 +316,38 @@ fn quitting_drops_a_running_async_job_where_it_waits_without_waiting_for_it() {
 
     assert!(flag.dropped(), "its body was dropped where it waited");
 }
+
+#[test]
+fn cancelling_one_key_stops_only_its_job_and_the_others_run_on() {
+    on_a_runtime(async {
+        let mut jobs = Jobs::new();
+        let mut workers = Workers::new();
+        let mut waiting = Waiting::new();
+        let flag = DropFlag::default();
+        let (running, has_started) = oneshot::channel();
+        let evaluation = jobs.start_async(waits_for_ever(running, flag.clone()));
+        let other = jobs.start_async(async { 2 });
+        waiting.wait_for(evaluation, "response 1");
+        waiting.wait_for(other, "response 2");
+        run_started(&mut jobs, &workers);
+        has_started.await.expect("the body runs");
+
+        waiting.cancel_for(&"response 1", &mut jobs);
+        let mut applied = Vec::new();
+        for _ in 0..2 {
+            let finished = time::timeout(PATIENCE, workers.finished())
+                .await
+                .expect("both jobs end");
+            if let Some(finished) = jobs.accept(finished)
+                && let JobOutcome::Done(output) = finished.outcome
+                && waiting.accept(finished.id, &"response 2")
+            {
+                applied.push(output);
+            }
+        }
+
+        assert_eq!(applied, [2], "only the other job's result applies");
+        assert!(waiting.is_empty());
+        assert!(flag.dropped(), "the cancelled body stopped");
+    });
+}

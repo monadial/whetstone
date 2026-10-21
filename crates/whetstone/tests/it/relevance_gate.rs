@@ -11,7 +11,8 @@ use whetstone_core::{CandidateCheck, Probability};
 
 use crate::answering::submit;
 use crate::preparing_questions::{
-    DOMAIN, INFRASTRUCTURE, SERVE_OVER_HTTP, answer, area_id, candidate, generate, stems,
+    DOMAIN, INFRASTRUCTURE, SERVE_OVER_HTTP, answer, area_id, candidate, generate, reasoning_met,
+    stems,
 };
 use crate::session::Session;
 
@@ -66,8 +67,9 @@ fn written_counts(ai: &ScriptedAi) -> Vec<(String, usize)> {
 }
 
 /// Scripts `ai` to write `count` candidates about the area at `place`,
-/// named `name`, each passing every check, for the change "Serve payments
-/// over HTTP".
+/// named `name`, each passing every check, and its reasoning, once
+/// submitted, meeting its criterion, for the change "Serve payments over
+/// HTTP".
 fn writing(ai: &ScriptedAi, place: usize, name: &str, count: usize) {
     let stems = stems(name, count);
     ai.on_write(
@@ -79,6 +81,7 @@ fn writing(ai: &ScriptedAi, place: usize, name: &str, count: usize) {
     );
     for stem in &stems {
         ai.on_check_passing(stem);
+        reasoning_met(ai, stem);
     }
 }
 
