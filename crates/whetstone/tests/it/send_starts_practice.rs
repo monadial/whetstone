@@ -11,11 +11,11 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 use whetstone_ai::{
-    Asked, ParagraphCheck, QuestionCheckCall, RequestFailure, ScriptedAi, WrittenParagraph,
-    candidates_request, question_check_request,
+    Asked, CandidateCount, GeneratorRequest, ParagraphCheck, QuestionCheckCall, RequestFailure,
+    ScriptedAi, WrittenParagraph, candidates_request, question_check_request,
 };
 use whetstone_core::{
-    ConnectionGroup, CriterionOutcome, Evidence, ModelId, Probability, WrittenCandidate,
+    Area, ConnectionGroup, CriterionOutcome, Evidence, ModelId, Probability, WrittenCandidate,
     WrittenCitation,
 };
 
@@ -454,12 +454,10 @@ fn requests_sent(ai: &ScriptedAi) -> Vec<(&'static str, Value, String)> {
                 area,
                 count,
             } => {
-                let sent = candidates_request(&model, &evidence, &area, count.into());
+                let (sent, mut input) = candidates_sent(&evidence, &area, count);
                 (
                     "write",
-                    serde_json::from_str::<Value>(&sent.input).expect("the input is JSON")
-                        ["evidence"]
-                        .take(),
+                    input["evidence"].take(),
                     format!("{} {}", sent.preamble, sent.input),
                 )
             }
@@ -487,6 +485,19 @@ fn requests_sent(ai: &ScriptedAi) -> Vec<(&'static str, Value, String)> {
             }
         })
         .collect()
+}
+
+/// The candidates request the real AI builds from what the scripted one
+/// was asked to write with, and its input as JSON.
+fn candidates_sent(
+    evidence: &Evidence,
+    area: &Area,
+    count: CandidateCount,
+) -> (GeneratorRequest, Value) {
+    let model = ModelId::new("scripted".to_owned());
+    let sent = candidates_request(&model, evidence, area, count.into());
+    let input = serde_json::from_str(&sent.input).expect("the input is JSON");
+    (sent, input)
 }
 
 /// Whether `evidence` sends nothing of `plan.txt`, as the learner left it
@@ -622,8 +633,10 @@ fn every_request_carries_exactly_the_evidence_the_outbound_review_showed() {
     );
 }
 
+/// The reader wraps the prompt, so it is compared with every run of white
+/// space as one space.
 #[test]
-fn the_outbound_review_shows_the_area_prompt_exactly_as_the_generator_receives_it() {
+fn the_outbound_review_shows_the_area_prompt_the_generator_receives() {
     let repo = doubling_the_charge();
     let ai = writing_one_about_the_domain();
     let mut session = reviewing(&repo, &ai, REVIEW_ABOUT_THE_DOMAIN, 120, 60);
@@ -632,7 +645,6 @@ fn the_outbound_review_shows_the_area_prompt_exactly_as_the_generator_receives_i
     press_send(&mut session);
     session.settle();
 
-    let model = ModelId::new("scripted".to_owned());
     let written: Vec<Value> = ai
         .asked()
         .into_iter()
@@ -641,13 +653,7 @@ fn the_outbound_review_shows_the_area_prompt_exactly_as_the_generator_receives_i
                 evidence,
                 area,
                 count,
-            } => Some(
-                serde_json::from_str::<Value>(
-                    &candidates_request(&model, &evidence, &area, count.into()).input,
-                )
-                .expect("the input is JSON")["area"]
-                    .take(),
-            ),
+            } => Some(candidates_sent(&evidence, &area, count).1["area"].take()),
             _ => None,
         })
         .collect();

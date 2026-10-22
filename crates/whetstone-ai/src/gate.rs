@@ -17,26 +17,29 @@ use crate::prompts::GATE;
 /// is worth asking about in each of `areas`, the chosen areas, each once.
 ///
 /// It asks one yes/no question per area, named by the area's ID, from the
-/// base prompts' template filled with that ID alone, a validated file name,
-/// with the same meanings of yes and no for every area. Its state is the
+/// base prompts' template filled with that ID alone, which is only
+/// lowercase letters, digits and hyphens, with the same meanings of yes and
+/// no for every area. Its state is the
 /// evidence as sent, as `evidence`, and each area's name and description,
 /// under its ID, as `areas`: no text from an area file is ever part of a
 /// question. Area prompts are never sent: the gate judges the change
 /// against each area's description.
 #[must_use]
 pub fn gate_request(model: &ModelId, evidence: &Evidence, areas: &[Area]) -> JevRequest {
-    let described: Map<String, Value> = areas
-        .iter()
-        .map(|area| {
-            (
-                area.id().as_str().to_owned(),
-                json!({ "name": area.name(), "description": area.description() }),
-            )
-        })
-        .collect();
     JevRequest {
         model: model.as_str().to_owned(),
-        state: json!({ "evidence": evidence_as_sent(evidence), "areas": described }),
+        state: json!({
+            "evidence": evidence_as_sent(evidence),
+            "areas": areas
+                .iter()
+                .map(|area| {
+                    (
+                        area.id().as_str().to_owned(),
+                        json!({ "name": area.name(), "description": area.description() }),
+                    )
+                })
+                .collect::<Map<String, Value>>(),
+        }),
         questions: areas
             .iter()
             .map(|area| {

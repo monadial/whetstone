@@ -122,12 +122,13 @@ mod tests {
     use crate::generator::GeneratorRequest;
     use crate::samples::{area, evidence, generator_model};
 
-    /// The request that writes candidates from `evidence`, whose input is
-    /// the evidence as sent.
+    /// The request that writes candidates from `evidence`, whose input
+    /// holds the evidence as sent, as `evidence`.
     fn request(evidence: &Evidence) -> GeneratorRequest {
         candidates_request(&generator_model(), evidence, &area(), NonZeroUsize::MIN)
     }
 
+    /// The evidence as sent, as `evidence`'s request's input holds it.
     fn sent(evidence: &Evidence) -> Value {
         serde_json::from_str::<Value>(&request(evidence).input).expect("the input is JSON")
             ["evidence"]
@@ -263,7 +264,7 @@ mod tests {
         let input = request(&evidence).input;
 
         assert_eq!(
-            sent(&evidence)["connected_code"],
+            serde_json::from_str::<Value>(&input).expect("the input is JSON")["evidence"]["connected_code"],
             json!([{
                 "path": "src/read.rs",
                 "relations": ["called by `load`, changed in src/config.rs"],
