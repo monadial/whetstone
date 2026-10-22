@@ -223,6 +223,13 @@ fn row(subject: &str, area: &str, gate: &str, lines: &[String]) -> String {
         checks.push(format!("{check} {total} ({})", bands.join(", ")));
     }
     let picked = lines_with("picked the questions");
+    // When a request failed before the questions were picked, its log line
+    // names it and how it failed.
+    assert!(
+        !picked.is_empty(),
+        "the app picked no questions: {:#?}",
+        lines_with(" failed")
+    );
     let picked = picked.last().expect("the app picked questions, or none");
     let (shown, criteria_dropped) = (count(picked, "picked"), count(picked, "criteria_dropped"));
     let replies = lines_with("OpenRouter replied");
