@@ -44,9 +44,11 @@ pub enum QuestionCheckCall {
 /// calls' answers one [`QuestionCheckAnswers`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct CheckCallAnswers {
+    /// The call answered.
     call: QuestionCheckCall,
+    /// Each check the call asked, with Jev's answer, in the order asked.
     checks: Vec<(CandidateCheck, Probability)>,
-    /// The depth, which only the candidate call scores.
+    /// The depth, for the call that scores it ([`QuestionCheckCall::scores_depth`]).
     depth: Option<Depth>,
 }
 
@@ -68,6 +70,16 @@ impl QuestionCheckCall {
             | CandidateCheck::Rationale(_)
             | CandidateCheck::WhyItMatters
             | CandidateCheck::HintPointsToEvidence => Self::Candidate,
+        }
+    }
+
+    /// Whether this call also scores the candidate's depth: only the
+    /// candidate call does.
+    #[must_use]
+    pub fn scores_depth(self) -> bool {
+        match self {
+            Self::Candidate => true,
+            Self::OptionRatings | Self::Hint => false,
         }
     }
 
@@ -141,7 +153,7 @@ impl CheckCallAnswers {
                 .iter()
                 .filter(|&(check, _)| QuestionCheckCall::of(check) == call)
                 .collect(),
-            depth: (call == QuestionCheckCall::Candidate).then(|| answers.depth()),
+            depth: call.scores_depth().then(|| answers.depth()),
         }
     }
 }
@@ -195,7 +207,8 @@ pub fn question_check_request(
             "candidate": candidate_state(evidence, candidate),
         }),
     };
-    let depth = (call == QuestionCheckCall::Candidate)
+    let depth = call
+        .scores_depth()
         .then(|| (DEPTH.to_owned(), QUESTION_CHECK.depth.question()));
     JevRequest {
         model: model.as_str().to_owned(),
@@ -229,9 +242,10 @@ pub fn question_check_answers(
         .into_iter()
         .map(|check| Ok((check, answers.yes_no(&name(check))?)))
         .collect::<Result<Vec<_>, AiError>>()?;
-    let depth = match call {
-        QuestionCheckCall::Candidate => Some(answers.depth(DEPTH)?),
-        QuestionCheckCall::OptionRatings | QuestionCheckCall::Hint => None,
+    let depth = if call.scores_depth() {
+        Some(answers.depth(DEPTH)?)
+    } else {
+        None
     };
     answers.done()?;
     Ok(CheckCallAnswers {
@@ -373,15 +387,9 @@ pub(crate) fn criterion_name(index: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use whetstone_core::{Depth, Probability};
-
     use super::*;
     use crate::jev::JevAnswer;
-    use crate::samples::{candidate, evaluated, evidence, jev_model, pretty};
-
-    const OPTION_RATINGS: &str = include_str!("../fixtures/question-check-option-ratings.json");
-    const HINT: &str = include_str!("../fixtures/question-check-hint.json");
-    const CANDIDATE: &str = include_str!("../fixtures/question-check-candidate.json");
+    use crate::samples::{candidate, evaluated, evidence, jev_model, pretty, recorded_check};
 
     fn request(call: QuestionCheckCall) -> JevRequest {
         question_check_request(&jev_model(), &evidence(), &candidate(), call)
@@ -406,14 +414,14 @@ mod tests {
     fn keys(value: &Value) -> Vec<&str> {
         value
             .as_object()
-            .expect("an object")
+            .expect("the state and the candidate in it are objects")
             .keys()
             .map(String::as_str)
             .collect()
     }
 
     /// The sample candidate's options' text, by letter.
-    fn options_text() -> Value {
+    fn sample_options_text() -> Value {
         let candidate = candidate();
         json!({
             "A": candidate.option(OptionLetter::A),
@@ -444,7 +452,7 @@ mod tests {
         assert_eq!(keys(&body["state"]), ["evidence", "candidate"]);
         assert_eq!(
             body["state"]["candidate"],
-            json!({ "stem": candidate().stem(), "options": options_text() })
+            json!({ "stem": candidate().stem(), "options": sample_options_text() })
         );
         let text = body.to_string();
         let candidate = candidate();
@@ -488,7 +496,7 @@ mod tests {
             json!({
                 "candidate": {
                     "stem": candidate.stem(),
-                    "options": options_text(),
+                    "options": sample_options_text(),
                     "hint": candidate.hint().text(),
                 },
             }),
@@ -573,12 +581,7 @@ mod tests {
 
     /// The recorded reply to `call` of the sample candidate's check.
     async fn recorded(call: QuestionCheckCall) -> JevReply {
-        let recorded = match call {
-            QuestionCheckCall::OptionRatings => OPTION_RATINGS,
-            QuestionCheckCall::Hint => HINT,
-            QuestionCheckCall::Candidate => CANDIDATE,
-        };
-        evaluated(&request(call), recorded)
+        evaluated(&request(call), recorded_check(call).1)
             .await
             .0
             .expect("the recorded reply decodes")
@@ -600,8 +603,13 @@ mod tests {
         for call in QuestionCheckCall::ALL {
             calls.push(recorded_answers(call).await);
         }
-        let depths: Vec<bool> = calls.iter().map(|call| call.depth().is_some()).collect();
-        assert_eq!(depths, [false, false, true], "only the candidate call's");
+        for answers in &calls {
+            assert_eq!(
+                answers.depth().is_some(),
+                answers.call().scores_depth(),
+                "only the candidate call's"
+            );
+        }
 
         let answers = CheckCallAnswers::merged(calls).expect("each call's answers once");
 

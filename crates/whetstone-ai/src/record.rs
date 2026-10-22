@@ -29,7 +29,7 @@ use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 use crate::replay::{API, SampleQuestion, live_key, sample_generator_request, sample_jev_request};
 use crate::samples::{
     OUTCOMES, REASONING, area, candidate, evidence, generator_model, jev_model, observability,
-    paragraphs, question,
+    paragraphs, question, recorded_check,
 };
 use crate::{
     AiError, CandidatesOutput, ExplanationOutput, GeneratorRequest, OpenRouter, QuestionCheckCall,
@@ -224,14 +224,8 @@ async fn record_candidates() {
 #[tokio::test]
 #[ignore = "calls OpenRouter with the maintainer's key"]
 async fn record_question_check() {
-    for (call, name) in [
-        (
-            QuestionCheckCall::OptionRatings,
-            "question-check-option-ratings",
-        ),
-        (QuestionCheckCall::Hint, "question-check-hint"),
-        (QuestionCheckCall::Candidate, "question-check-candidate"),
-    ] {
+    for call in QuestionCheckCall::ALL {
+        let (name, _) = recorded_check(call);
         let (_server, connection) = recording(name, "/systemone", live_key()).await;
         let request = question_check_request(&jev_model(), &evidence(), &candidate(), call);
 

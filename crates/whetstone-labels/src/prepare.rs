@@ -68,8 +68,8 @@ impl Prepared {
         &self.calls
     }
 
-    /// How many examples the calls measure: a candidate example's calls
-    /// count as one.
+    /// How many examples the calls measure: a candidate example's calls,
+    /// which sit together, count as one.
     #[must_use]
     pub fn examples(&self) -> usize {
         let mut examples: Vec<&ExampleId> = self.calls.iter().map(Call::example).collect();
@@ -406,7 +406,7 @@ impl Labels {
         let mut questions = BTreeMap::new();
         let mut skipped = Vec::new();
         for candidate in self.candidates() {
-            match candidate_call(showcase, model, candidate)? {
+            match candidate_calls(showcase, model, candidate)? {
                 Candidacy::Calls(prepared) => {
                     let (checks, evidence, question) = *prepared;
                     calls.extend(checks);
@@ -473,7 +473,7 @@ enum Candidacy {
 /// The calls of the candidate's question check that ask a check it labels,
 /// with its evidence and its question as its labels judge it, or why the
 /// tool skips it, a learner's vote.
-fn candidate_call(
+fn candidate_calls(
     showcase: &ShowcaseProject,
     model: &ModelId,
     candidate: &CandidateExample,

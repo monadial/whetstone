@@ -328,16 +328,11 @@ mod tests {
     use crate::replay::{connection, received, server};
     use crate::samples::{
         Acknowledged, REASONING, area, area_file, candidate, evidence, generator_model, jev_model,
-        observability, paragraphs, question, stamp, versions, with_output,
+        observability, paragraphs, question, recorded_check, stamp, versions, with_output,
     };
     use crate::{AiError, ParagraphCheck, QuestionWithoutKey, Timeouts};
 
     const CANDIDATES: &str = include_str!("../fixtures/candidates.json");
-    const QUESTION_CHECK_OPTION_RATINGS: &str =
-        include_str!("../fixtures/question-check-option-ratings.json");
-    const QUESTION_CHECK_HINT: &str = include_str!("../fixtures/question-check-hint.json");
-    const QUESTION_CHECK_CANDIDATE: &str =
-        include_str!("../fixtures/question-check-candidate.json");
     const GATE: &str = include_str!("../fixtures/gate.json");
     const REASONING_REPLY: &str = include_str!("../fixtures/reasoning.json");
     const EXPLANATION: &str = include_str!("../fixtures/explanation.json");
@@ -506,22 +501,23 @@ mod tests {
             input_tokens: Some(input),
             output_tokens: Some(output),
         };
+        let recorded = |call| recorded_check(call).1;
         [
             (
                 QuestionCheckCall::OptionRatings,
-                QUESTION_CHECK_OPTION_RATINGS,
+                recorded(QuestionCheckCall::OptionRatings),
                 usage(1563, 74),
                 0.000_065_646,
             ),
             (
                 QuestionCheckCall::Hint,
-                QUESTION_CHECK_HINT,
+                recorded(QuestionCheckCall::Hint),
                 usage(512, 24),
                 0.000_021_504,
             ),
             (
                 QuestionCheckCall::Candidate,
-                QUESTION_CHECK_CANDIDATE,
+                recorded(QuestionCheckCall::Candidate),
                 usage(2952, 250),
                 0.000_123_984,
             ),
@@ -549,7 +545,7 @@ mod tests {
                 Provenance::new(stamp().request, Role::Jev, jev_model(), versions())
                     .with_reported_model(ModelId::new("typesafe/jev-1.14-20261014".to_owned()))
                     .with_usage(usage)
-                    .with_cost(Cost::new(cost).expect("a recorded cost")),
+                    .with_cost(Cost::new(cost).expect("a recorded cost is never negative")),
                 "{call:?}"
             );
             let (_, body) = received(&server).await;
@@ -605,7 +601,7 @@ mod tests {
             assert_kept_as_sent(exchanges, &body);
             assert_eq!(
                 exchanges.len(),
-                call.checks(&candidate()).len() + usize::from(call == QuestionCheckCall::Candidate),
+                call.checks(&candidate()).len() + usize::from(call.scores_depth()),
                 "every question the {call:?} call sent, and only those"
             );
             kept.extend(exchanges.iter().cloned());
@@ -782,7 +778,12 @@ mod tests {
 
     #[tokio::test]
     async fn a_reasoning_reply_that_answers_other_questions_is_an_invalid_reply() {
-        let (_server, ai) = ai("/systemone", 200, QUESTION_CHECK_CANDIDATE).await;
+        let (_server, ai) = ai(
+            "/systemone",
+            200,
+            recorded_check(QuestionCheckCall::Candidate).1,
+        )
+        .await;
         let question = question();
 
         assert_eq!(
@@ -1326,7 +1327,12 @@ mod tests {
             .write_candidates(stamp(), &evidence(), &area(), two_per_area())
             .await
             .expect("the recorded reply decodes");
-        let (_jev, jev) = ai("/systemone", 200, QUESTION_CHECK_OPTION_RATINGS).await;
+        let (_jev, jev) = ai(
+            "/systemone",
+            200,
+            recorded_check(QuestionCheckCall::OptionRatings).1,
+        )
+        .await;
         jev.check_question(
             stamp(),
             QuestionCheckCall::OptionRatings,

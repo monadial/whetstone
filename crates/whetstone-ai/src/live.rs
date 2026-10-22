@@ -156,7 +156,7 @@ async fn live_check_question() {
         assert_eq!(answered, call.checks(&candidate), "{call:?}");
         assert_eq!(
             reply.content.depth().is_some(),
-            call == QuestionCheckCall::Candidate,
+            call.scores_depth(),
             "only the candidate call scores the depth"
         );
         assert_reported(&reply.provenance);
