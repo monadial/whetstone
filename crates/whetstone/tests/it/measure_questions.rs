@@ -11,6 +11,9 @@
 //!   measured after Ask anyway;
 //! - the candidates written, and how many the plain checks dropped;
 //! - for each check, how many candidates it withheld, by band;
+//! - the answer probe's probability on each candidate's answer key, in the
+//!   order written, which the app never logs (rules 43, 44): the test
+//!   records it as the AI replies ([`Probes`]);
 //! - the questions shown, and how many criteria the show rule dropped from
 //!   the questions that passed, as asking for more than they need;
 //! - the generator's tokens, how many calls Jev answered, and what the run
@@ -26,21 +29,28 @@
 //!
 //! None is named `live_…`, so the keyed end-to-end job never runs them.
 //! Per-PR tests never call `OpenRouter` (rule 48): the one test here that
-//! isn't ignored reads a row from what the app logs while a scripted AI
-//! answers, so a change to those log lines shows.
+//! isn't ignored reads a row from what the app logs, and the answer probes
+//! recorded, while a scripted AI answers, so a change to those log lines
+//! shows.
 
 use std::collections::BTreeMap;
 use std::io;
 use std::sync::{Arc, Mutex};
 
-use whetstone_ai::ScriptedAi;
-use whetstone_core::CandidateCheck;
+use whetstone_ai::{
+    Ai, CandidateCount, CheckCallAnswers, ParagraphCheck, Pending, QuestionCheckCall,
+    QuestionWithoutKey, Saved, ScriptedAi, Stamp, WrittenParagraph,
+};
+use whetstone_core::{
+    Area, AreaId, Candidate, CandidateCheck, CandidateId, CriterionOutcome, Evidence, Probability,
+    Question, WrittenCandidate,
+};
 
 use crate::live_practice::live_key;
 use crate::preparing_questions::{
-    DOMAIN, PAYMENT_LIFECYCLE, answer, area_id, candidate, generate, generate_in, stems,
+    DOMAIN, PAYMENT_LIFECYCLE, answer, area_id, candidate, generate_in, stems,
 };
-use crate::session::Setup;
+use crate::session::{NO_COLOR, Setup};
 
 /// The log lines the app writes while a test runs, as text.
 #[derive(Debug, Clone, Default)]
@@ -71,6 +81,122 @@ impl Captured {
         .lines()
         .map(str::to_owned)
         .collect()
+    }
+}
+
+/// The answer probe's probability on each candidate's answer key, as the
+/// AI Practice asks replied to it, by candidate.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct Probes(Arc<Mutex<Vec<(CandidateId, Probability)>>>);
+
+impl Probes {
+    /// `ai`, recording here each answer probe it replies to.
+    pub(crate) fn recording(&self, ai: Arc<dyn Ai>) -> Arc<dyn Ai> {
+        Arc::new(Probing {
+            ai,
+            probes: self.clone(),
+        })
+    }
+
+    /// Each probability recorded, in the order the candidates were written,
+    /// area by area.
+    fn on_keys(&self) -> Vec<Probability> {
+        let mut recorded = self
+            .0
+            .lock()
+            .expect("no test thread panics while recording")
+            .clone();
+        recorded.sort_by(|(first, _), (second, _)| first.cmp(second));
+        recorded.into_iter().map(|(_, on_key)| on_key).collect()
+    }
+}
+
+/// An AI that asks `ai` and records in `probes` each answer probe it replies
+/// to: its probability on the candidate's answer key.
+#[derive(Debug)]
+struct Probing {
+    ai: Arc<dyn Ai>,
+    probes: Probes,
+}
+
+impl Ai for Probing {
+    fn check_areas(
+        &self,
+        stamp: Stamp,
+        evidence: &Evidence,
+        areas: &[Area],
+    ) -> Pending<Vec<(AreaId, Probability)>> {
+        self.ai.check_areas(stamp, evidence, areas)
+    }
+
+    fn write_candidates(
+        &self,
+        stamp: Stamp,
+        evidence: &Evidence,
+        area: &Area,
+        count: CandidateCount,
+    ) -> Pending<Vec<WrittenCandidate>> {
+        self.ai.write_candidates(stamp, evidence, area, count)
+    }
+
+    fn check_question(
+        &self,
+        stamp: Stamp,
+        call: QuestionCheckCall,
+        evidence: &Evidence,
+        candidate: &Candidate,
+    ) -> Pending<CheckCallAnswers> {
+        let pending = self.ai.check_question(stamp, call, evidence, candidate);
+        let probes = self.probes.clone();
+        let (id, answer_key) = (candidate.id().clone(), candidate.answer_key());
+        Box::pin(async move {
+            let reply = pending.await;
+            if let Some(on_key) = reply.as_ref().ok().and_then(|reply| {
+                reply
+                    .content
+                    .answer(CandidateCheck::AnswerProbe, answer_key)
+            }) {
+                probes
+                    .0
+                    .lock()
+                    .expect("no test thread panics while recording")
+                    .push((id, on_key));
+            }
+            reply
+        })
+    }
+
+    fn assess_reasoning(
+        &self,
+        stamp: Stamp,
+        saved: &dyn Saved,
+        evidence: &Evidence,
+        question: QuestionWithoutKey<'_>,
+    ) -> Pending<Vec<Probability>> {
+        self.ai.assess_reasoning(stamp, saved, evidence, question)
+    }
+
+    fn explain(
+        &self,
+        stamp: Stamp,
+        saved: &dyn Saved,
+        evidence: &Evidence,
+        question: &Question,
+        criteria: &[(usize, CriterionOutcome)],
+    ) -> Pending<Vec<WrittenParagraph>> {
+        self.ai.explain(stamp, saved, evidence, question, criteria)
+    }
+
+    fn check_explanation(
+        &self,
+        stamp: Stamp,
+        saved: &dyn Saved,
+        evidence: &Evidence,
+        question: &Question,
+        paragraphs: &[WrittenParagraph],
+    ) -> Pending<Vec<ParagraphCheck>> {
+        self.ai
+            .check_explanation(stamp, saved, evidence, question, paragraphs)
     }
 }
 
@@ -108,9 +234,10 @@ fn capture<T>(run: impl FnOnce() -> T) -> (T, Vec<String>) {
 }
 
 /// Generates questions about `area` on the showcase change `subject`, with
-/// the fewest questions, so that one generator call writes five candidates.
-/// Returns whether the relevance gate passed the area, and the log lines.
-fn generate_live(subject: &str, area: &str) -> (&'static str, Vec<String>) {
+/// the fewest questions, so that one generator call writes five candidates,
+/// recording the answer probe in `probes`. Returns whether the relevance
+/// gate passed the area, and the log lines.
+fn generate_live(subject: &str, area: &str, probes: &Probes) -> (&'static str, Vec<String>) {
     let key = live_key();
     let (change, place) = places(subject, area);
     capture(|| {
@@ -119,6 +246,7 @@ fn generate_live(subject: &str, area: &str) -> (&'static str, Vec<String>) {
                 config: Some("questions = 3\n"),
                 variables: &[("NO_COLOR", "1"), ("OPENROUTER_API_KEY", &key)],
                 live: true,
+                probes: Some(probes),
                 ..Setup::default()
             },
             &[place],
@@ -189,17 +317,20 @@ fn withheld_by_check(withheld: &[&String]) -> BTreeMap<String, BTreeMap<String, 
 
 /// Measures `area` on the showcase change `subject`, as one [`row`].
 fn measure(subject: &str, area: &str) -> String {
-    let (gate, lines) = generate_live(subject, area);
-    row(subject, area, gate, &lines)
+    let probes = Probes::default();
+    let (gate, lines) = generate_live(subject, area, &probes);
+    row(subject, area, gate, &lines, &probes)
 }
 
 /// One Markdown row from the log `lines` of Generate questions about `area`
-/// on the change `subject`: the change, the area, the `gate`, the
-/// candidates written, the plain-check drops, the candidates withheld, each
-/// check's withheld count by band, the questions shown, the criteria dropped
-/// from the questions that passed, the generator's input and output tokens,
-/// the calls Jev answered, and the cost of every request in USD.
-fn row(subject: &str, area: &str, gate: &str, lines: &[String]) -> String {
+/// on the change `subject`, and the answer probes recorded in `probes`: the
+/// change, the area, the `gate`, the candidates written, the plain-check
+/// drops, the candidates withheld, each check's withheld count by band, the
+/// answer probe's probability on each candidate's answer key, the questions
+/// shown, the criteria dropped from the questions that passed, the
+/// generator's input and output tokens, the calls Jev answered, and the cost
+/// of every request in USD.
+fn row(subject: &str, area: &str, gate: &str, lines: &[String], probes: &Probes) -> String {
     let lines_with = |message: &str| -> Vec<&String> {
         lines.iter().filter(|line| line.contains(message)).collect()
     };
@@ -251,10 +382,16 @@ fn row(subject: &str, area: &str, gate: &str, lines: &[String]) -> String {
         .iter()
         .filter_map(|line| number::<f64>(line, "cost_usd"))
         .fold(0.0, |total, cost| total + cost);
+    let on_keys: Vec<String> = probes
+        .on_keys()
+        .into_iter()
+        .map(|on_key| on_key.get().to_string())
+        .collect();
     format!(
-        "| {subject} | {area} | {gate} | {written} | {dropped} | {} | {} | {shown} | {criteria_dropped} | {} / {} | {jev_calls} | {cost:.4} |",
+        "| {subject} | {area} | {gate} | {written} | {dropped} | {} | {} | {} | {shown} | {criteria_dropped} | {} / {} | {jev_calls} | {cost:.4} |",
         withheld.len(),
         checks.join("; "),
+        on_keys.join(" "),
         tokens("input_tokens"),
         tokens("output_tokens"),
     )
@@ -326,14 +463,36 @@ fn a_row_reads_what_the_app_logs_about_each_candidate() {
     );
     ai.on_check_passing_except(&stems[2], [answer(CandidateCheck::AnswerProbe, 0.6)]);
 
+    let probes = Probes::default();
+
     let ((), lines) = capture(|| {
-        generate(&ai, &[DOMAIN], PAYMENT_LIFECYCLE, 120, 32).settle();
+        generate_in(
+            Setup {
+                variables: NO_COLOR,
+                ai: Some(&ai),
+                probes: Some(&probes),
+                ..Setup::default()
+            },
+            &[DOMAIN],
+            PAYMENT_LIFECYCLE,
+            120,
+            32,
+        )
+        .settle();
     });
 
     // A scripted AI logs none of its replies: no tokens, Jev calls or cost.
+    // The first candidate's answer probe passes it, at 0.1 on its answer
+    // key.
     assert_eq!(
-        row("Model the payment lifecycle", "domain", "passed", &lines),
+        row(
+            "Model the payment lifecycle",
+            "domain",
+            "passed",
+            &lines,
+            &probes
+        ),
         "| Model the payment lifecycle | domain | passed | 4 | 1 | 2 | AboutArea 1 (ClearNo 1); \
-         AnswerProbe 2 (ClearYes 2) | 1 | 1 | 0 / 0 | 0 | 0.0000 |"
+         AnswerProbe 2 (ClearYes 2) | 0.1 0.7 0.6 | 1 | 1 | 0 / 0 | 0 | 0.0000 |"
     );
 }

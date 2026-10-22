@@ -23,6 +23,8 @@ use whetstone::{
 use whetstone_ai::{Ai, ScriptedAi, Timeouts};
 use whetstone_core::{CandidateId, Response, ShowcaseProject};
 
+use crate::measure_questions::Probes;
+
 /// What the app starts from: a global config file, if any, the environment
 /// variables besides `HOME`, the showcase project, the directory Whetstone
 /// starts in, the time limit on finding connected code, the AI Practice
@@ -54,6 +56,10 @@ pub(crate) struct Setup<'a> {
     /// Whether a key in the variables reaches the real Jev and generator, as
     /// only the ignored live tests ask.
     pub(crate) live: bool,
+    /// Where the answer probe's probability on each candidate's answer key
+    /// is recorded as the AI replies, when a measuring test asks: the app
+    /// never logs it.
+    pub(crate) probes: Option<&'a Probes>,
     /// The real Jev and generator at a test's own local server, with the
     /// time limits the test sets, when the variables set a key: the app's
     /// own requests, which never leave the machine (rule 48).
@@ -224,6 +230,10 @@ impl Session {
                 }),
             },
         };
+        let ai = ai.map(|ai| match setup.probes {
+            Some(probes) => probes.recording(ai),
+            None => ai,
+        });
         let theme = Theme::new(settings.color_support());
         let repository = Repository::open(setup.start.unwrap_or(home.path()));
         let app = App::new(
