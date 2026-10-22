@@ -350,7 +350,8 @@ fn ask_anyway_writes_about_every_chosen_area_without_the_gate_and_still_checks_e
 
 /// Scripts `ai` to write `count` candidates about the area at `place`,
 /// named `name`, for the change "Serve payments over HTTP", none of which
-/// passes its question check: Jev can't tell whether each needs the change.
+/// passes its question check: Jev can't tell whether each can be answered
+/// from the evidence.
 fn writing_none_passing(ai: &ScriptedAi, place: usize, name: &str, count: usize) {
     let stems = stems(&format!("{name} failing"), count);
     ai.on_write(
@@ -361,7 +362,7 @@ fn writing_none_passing(ai: &ScriptedAi, place: usize, name: &str, count: usize)
             .collect()),
     );
     for stem in &stems {
-        ai.on_check_passing_except(stem, [answer(CandidateCheck::AboutArea, 0.5)]);
+        ai.on_check_passing_except(stem, [answer(CandidateCheck::Answerable, 0.5)]);
     }
 }
 

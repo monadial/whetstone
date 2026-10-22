@@ -1,11 +1,12 @@
 //! The full question check, against a scripted AI: a candidate is shown
 //! only when Jev answers clear yes to every yes/no check apart from its
-//! hint's (answerable from the evidence that was sent, about its area, each
-//! criterion, each rationale and "why it matters"), its option ratings pick
-//! out its answer key alone, and the answer probe isn't clear yes on its
-//! answer key: Jev can't confidently choose the answer without reading the
-//! change. Anything else unclear withholds it. A hint that fails its checks
-//! never withholds its question.
+//! hint's and its area's (answerable from the evidence that was sent, each
+//! criterion, each rationale and "why it matters"), doesn't clearly say it
+//! is off its area, its option ratings pick out its answer key alone, and
+//! the answer probe isn't clear yes on its answer key: Jev can't
+//! confidently choose the answer without reading the change. Anything else
+//! unclear withholds it. A hint that fails its checks never withholds its
+//! question.
 
 use std::sync::Arc;
 
@@ -65,7 +66,14 @@ fn is_shown(session: &mut Session) -> bool {
 /// check passes: only the three others are shown, and the shortfall says
 /// so.
 fn assert_withheld_unless_clear_yes(tested: &WrittenCandidate, check: CandidateCheck) {
-    for value in [0.79, 0.5, 0.21, 0.1] {
+    assert_withheld_at(tested, check, &[0.79, 0.5, 0.21, 0.1]);
+}
+
+/// Asserts that `tested` is withheld when Jev's answer to `check` is each
+/// of `values`, and every other check passes: only the three others are
+/// shown, and the shortfall says so.
+fn assert_withheld_at(tested: &WrittenCandidate, check: CandidateCheck, values: &[f64]) {
+    for &value in values {
         let mut session = prepared(tested.clone(), [answer(check, value)]);
 
         assert_eq!(
@@ -95,8 +103,25 @@ fn a_question_not_answerable_from_the_evidence_that_was_sent_is_withheld() {
 }
 
 #[test]
-fn a_question_not_about_its_area_is_withheld() {
-    assert_withheld_unless_clear_yes(&tested(), CandidateCheck::AboutArea);
+fn a_question_jev_clearly_says_is_off_its_area_is_withheld() {
+    // Clear no from 0.20 down.
+    assert_withheld_at(&tested(), CandidateCheck::AboutArea, &[0.20, 0.19, 0.0]);
+}
+
+#[test]
+fn a_question_whose_only_unclear_check_is_about_its_area_is_shown() {
+    // Unclear from 0.79 down to 0.21: whether a question fits its area is a
+    // matter of focus, so only a clear no withholds it.
+    for value in [0.79, 0.5, 0.21] {
+        let mut session = prepared(tested(), [answer(CandidateCheck::AboutArea, value)]);
+
+        assert!(is_shown(&mut session), "about its area at {value}");
+        assert!(
+            !session.text().contains("asked for"),
+            "no shortfall: {}",
+            session.text()
+        );
+    }
 }
 
 #[test]
@@ -159,7 +184,7 @@ fn a_question_whose_checks_are_all_at_the_cut_offs_is_shown() {
         tested(),
         [
             (Answerable, 0.80),
-            (AboutArea, 0.80),
+            (AboutArea, 0.21),
             (AnswerProbe, 0.59),
             (Criterion(0), 0.80),
             (Option(OptionLetter::A), 0.80),

@@ -9,13 +9,15 @@
 //! sentence for each way Jev can answer it against the show rule: "Jev
 //! said …" for a clear answer, or for the answer probe "Jev chose the
 //! answer without reading the change", and "Jev couldn't tell whether …"
-//! for an unclear one. The hint's checks never withhold a candidate, so they are
-//! never a reason. A criterion is dropped only when Jev clearly says it asks
-//! for more than the question needs, or doesn't answer, and those checks
-//! withhold the candidate only when every criterion is dropped. So they give
-//! one reason, as unclear as the least clear of them: that Jev said every
-//! criterion asks for more, or, if it left one unanswered, that it didn't
-//! answer. The reasons say whose cut-offs decided, the policy's or the
+//! for an unclear one. Whether the question is about its area withholds a
+//! candidate only on a clear no, as the answer probe does only on a clear
+//! yes, so neither gives an unclear reason. The hint's checks never
+//! withhold a candidate, so they are never a reason. A criterion is dropped
+//! only when Jev clearly says it asks for more than the question needs, or
+//! doesn't answer, and those checks withhold the candidate only when every
+//! criterion is dropped. So they give one reason, as unclear as the least
+//! clear of them: that Jev said every criterion asks for more, or, if it
+//! left one unanswered, that it didn't answer. The reasons say whose cut-offs decided, the policy's or the
 //! learner's own from config, and never a probability or a cut-off:
 //! Settings and Inspect hold the numbers.
 
