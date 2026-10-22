@@ -17,7 +17,7 @@ use crate::change::{Change, FileContent, TouchedFile};
 use crate::connected_code_limit::ConnectedCodeLimit;
 use crate::connection::{Connection, ConnectionGroup, ConnectionId, Connections, Relation, Tier};
 use crate::exclusion::{DefaultExclusion, ExcludePattern, ExcludePatterns};
-use crate::secret::{SecretFinding, find_secrets};
+use crate::secret::{SecretFinding, Severity, find_secrets};
 use crate::selection::{self, NotSent};
 
 /// What a Practice sends: the commit message; for each included file, its
@@ -238,9 +238,17 @@ pub enum Place {
     /// What this connection sends. Its line is the line in the
     /// connection's file.
     Connection(ConnectionId),
+    /// The name of the selected area with this ID.
+    AreaName(AreaId),
+    /// The description of the selected area with this ID.
+    AreaDescription(AreaId),
+    /// The area prompt of the selected area with this ID. Its line is the
+    /// line in the prompt, as it is sent.
+    AreaPrompt(AreaId),
 }
 
-/// Whether a finding still stops **Send**.
+/// Whether the learner has resolved a finding. One that blocks **Send**
+/// stops it until they have; a warning never does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FindingStatus {
     /// Neither left out nor marked as not a secret.
@@ -252,7 +260,8 @@ pub enum FindingStatus {
 /// Why evidence cannot be sent, the first that applies, in this order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Unsendable {
-    /// A possible secret is neither left out nor marked as not a secret.
+    /// A possible secret that blocks **Send** is neither left out nor
+    /// marked as not a secret.
     UnresolvedFindings,
     /// It is larger than [`Evidence::SIZE_LIMIT`].
     TooLarge,
@@ -298,8 +307,10 @@ impl Evidence {
     /// bring back one the second or third leaves out. A renamed file is
     /// matched by its old path as well as its new one.
     ///
-    /// The commit message, every file sent and every connection sent are
-    /// checked for secrets, so one brought back is checked as it returns.
+    /// The commit message, every file sent, every connection sent and each
+    /// selected area's name, description and prompt are checked for
+    /// secrets, so a file or connection brought back is checked as it
+    /// returns.
     /// Connections are listed from the most relevant to the least: related
     /// tests and related configuration first, by path; then connected code,
     /// the high tier before the medium, then the closest to a touched file
@@ -385,6 +396,21 @@ impl Evidence {
                     matched.lines_down(sent.first_line - 1),
                 )
             }));
+        }
+        for area in areas {
+            let id = area.id();
+            let texts = [
+                (Place::AreaName(id.clone()), area.name()),
+                (Place::AreaDescription(id.clone()), area.description()),
+                (Place::AreaPrompt(id.clone()), area.prompt()),
+            ];
+            for (place, text) in texts {
+                found.extend(
+                    find_secrets(text)
+                        .into_iter()
+                        .map(|matched| (place.clone(), matched)),
+                );
+            }
         }
         let findings = found
             .into_iter()
@@ -507,7 +533,8 @@ impl Evidence {
     }
 
     /// The possible secrets in what is sent, the commit message's first,
-    /// then each file's in order, then each connection's in order.
+    /// then each file's in order, then each connection's in order, then each
+    /// area's in order.
     #[must_use]
     pub fn findings(&self) -> &[Finding] {
         &self.findings
@@ -523,14 +550,13 @@ impl Evidence {
     }
 
     /// Why the evidence cannot be sent, if it cannot: unresolved findings
-    /// first, then its size, then having nothing to send.
+    /// that block **Send** first, then its size, then having nothing to
+    /// send. A warning never stops it.
     #[must_use]
     pub fn unsendable(&self) -> Option<Unsendable> {
-        if self
-            .findings
-            .iter()
-            .any(|finding| finding.status == FindingStatus::Unresolved)
-        {
+        if self.findings.iter().any(|finding| {
+            finding.status == FindingStatus::Unresolved && finding.severity() == Severity::Blocking
+        }) {
             Some(Unsendable::UnresolvedFindings)
         } else if self.size > Self::SIZE_LIMIT {
             Some(Unsendable::TooLarge)
@@ -982,10 +1008,17 @@ impl Finding {
         &self.matched
     }
 
-    /// Whether it still stops **Send**.
+    /// Whether the learner has resolved it.
     #[must_use]
     pub fn status(&self) -> FindingStatus {
         self.status
+    }
+
+    /// What it does to **Send** while it is unresolved: its rule's
+    /// severity.
+    #[must_use]
+    pub fn severity(&self) -> Severity {
+        self.matched.rule().severity()
     }
 }
 
@@ -994,7 +1027,11 @@ impl Place {
     #[must_use]
     pub fn file(&self) -> Option<FileIndex> {
         match self {
-            Self::CommitMessage | Self::Connection(_) => None,
+            Self::CommitMessage
+            | Self::Connection(_)
+            | Self::AreaName(_)
+            | Self::AreaDescription(_)
+            | Self::AreaPrompt(_) => None,
             Self::Content(file) | Self::Diff(file) => Some(*file),
         }
     }
@@ -1004,7 +1041,12 @@ impl Place {
     pub fn connection(&self) -> Option<&ConnectionId> {
         match self {
             Self::Connection(connection) => Some(connection),
-            Self::CommitMessage | Self::Content(_) | Self::Diff(_) => None,
+            Self::CommitMessage
+            | Self::Content(_)
+            | Self::Diff(_)
+            | Self::AreaName(_)
+            | Self::AreaDescription(_)
+            | Self::AreaPrompt(_) => None,
         }
     }
 }
@@ -1079,6 +1121,7 @@ mod tests {
     use super::*;
     use crate::change::{CommitId, Comparison};
     use crate::connection::{Connection, ConnectionGroup, Connections, Extent, LineRange, Tier};
+    use crate::secret::Severity;
 
     /// A commit that edits `src/pay.rs` and `src/refund.rs`.
     fn change() -> Change {
@@ -1437,6 +1480,127 @@ mod tests {
 
         assert_eq!(resolved.findings()[0].status(), FindingStatus::NotASecret);
         assert_eq!(resolved.unsendable(), None);
+    }
+
+    /// Connected code: the whole of `src/db.rs`, whose second line holds a
+    /// password in a URL.
+    fn database() -> Connection {
+        caller(
+            "src/db.rs",
+            concat!(
+                "fn connect() {\n    open(\"postgres://app:",
+                "hunter2@db.internal/app\")\n}\n"
+            ),
+        )
+    }
+
+    #[test]
+    fn a_warning_never_makes_the_evidence_unsendable() {
+        let evidence = build(
+            &Connections::Found(vec![database()]),
+            &ReviewChoices::default(),
+        );
+
+        let [finding] = evidence.findings() else {
+            panic!("one finding: {:?}", evidence.findings());
+        };
+        assert_eq!(finding.matched().rule().name(), "Password in a URL");
+        assert_eq!(finding.severity(), Severity::Warning);
+        assert_eq!(finding.matched().line(), 2);
+        assert_eq!(finding.status(), FindingStatus::Unresolved);
+        assert_eq!(evidence.unsendable(), None);
+    }
+
+    #[test]
+    fn a_blocking_finding_still_makes_the_evidence_unsendable_beside_a_warning() {
+        let found = Connections::Found(vec![database(), client("fn start() {}")]);
+        let mut choices = ReviewChoices::default();
+        let evidence = build(&found, &choices);
+        let severities: Vec<Severity> = evidence.findings().iter().map(Finding::severity).collect();
+        assert_eq!(severities, [Severity::Warning, Severity::Blocking]);
+        assert_eq!(evidence.unsendable(), Some(Unsendable::UnresolvedFindings));
+
+        choices.toggle_not_a_secret(&evidence.findings()[1]);
+        let resolved = build(&found, &choices);
+
+        assert_eq!(resolved.findings()[0].status(), FindingStatus::Unresolved);
+        assert_eq!(resolved.unsendable(), None);
+    }
+
+    /// The repository's area `security`, whose file is `text`.
+    fn area(text: &str) -> Area {
+        Area::offered([("security.md", Ok(text.as_bytes()))])
+            .remove(0)
+            .expect("a valid area file")
+    }
+
+    fn build_with_areas(areas: &[Area], choices: &ReviewChoices) -> Evidence {
+        Evidence::build(
+            &change(),
+            &ExcludePatterns::default(),
+            areas,
+            &Connections::Finding,
+            ConnectedCodeLimit::effective(None, None),
+            choices,
+        )
+    }
+
+    #[test]
+    fn an_area_file_holding_a_github_token_blocks_send_until_marked_not_a_secret() {
+        let token = concat!("ghp_", "FAKEfakeFAKEfakeFAKEfakeFAKEfakeFAKE");
+        let security = area(&format!(
+            "+++\nname = \"Security\"\ndescription = \"Who can do what\"\n+++\n\n\
+             Look at who is trusted.\nCall the API with {token}.\n"
+        ));
+        let mut choices = ReviewChoices::default();
+
+        let evidence = build_with_areas(std::slice::from_ref(&security), &choices);
+
+        let [finding] = evidence.findings() else {
+            panic!("one finding: {:?}", evidence.findings());
+        };
+        assert_eq!(finding.place(), &Place::AreaPrompt(security.id().clone()));
+        assert_eq!(finding.place().file(), None);
+        assert_eq!(finding.place().connection(), None);
+        // The line in the prompt, as it is sent.
+        assert_eq!(finding.matched().line(), 2);
+        assert_eq!(finding.matched().rule().name(), "GitHub token");
+        assert_eq!(evidence.unsendable(), Some(Unsendable::UnresolvedFindings));
+
+        choices.toggle_not_a_secret(finding);
+        let resolved = build_with_areas(&[security], &choices);
+
+        assert_eq!(resolved.findings()[0].status(), FindingStatus::NotASecret);
+        assert_eq!(resolved.unsendable(), None);
+    }
+
+    #[test]
+    fn an_areas_name_and_description_are_checked_too() {
+        let jwt = concat!(
+            "eyJhbGciOiJIUzI1NiJ9",
+            ".eyJzdWIiOiJmYWtlIn0",
+            ".FAKEfakeFAKEfakeFAKEfake"
+        );
+        let url = concat!("https://ops:", "hunter2@vault.internal");
+        let security = area(&format!(
+            "+++\nname = \"Security {jwt}\"\ndescription = \"Ask {url}\"\n+++\nLook.\n"
+        ));
+
+        let evidence = build_with_areas(std::slice::from_ref(&security), &ReviewChoices::default());
+
+        let places: Vec<(&Place, &str)> = evidence
+            .findings()
+            .iter()
+            .map(|finding| (finding.place(), finding.matched().rule().name()))
+            .collect();
+        let id = security.id().clone();
+        assert_eq!(
+            places,
+            [
+                (&Place::AreaName(id.clone()), "JSON Web Token"),
+                (&Place::AreaDescription(id), "Password in a URL"),
+            ]
+        );
     }
 
     #[test]

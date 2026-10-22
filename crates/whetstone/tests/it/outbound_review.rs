@@ -494,6 +494,137 @@ fn a_secret_the_change_removes_is_found_in_the_diff_it_sends() {
     );
 }
 
+/// A password in a URL, which the secret check warns about, built from
+/// pieces the same way.
+const DATABASE_URL: &str = concat!("postgres://app:", "hunter2@db.internal/app");
+
+/// What the secret check says once a warning shows.
+const WARNINGS: &str = "Warnings don't block Send: their patterns often match what isn't a secret.";
+
+/// A repository called `payments` whose newest commit adds a password in a
+/// URL to `src/db.py`, and, if `blocking`, an AWS key to `src/settings.py`.
+fn with_a_warning(blocking: bool) -> TestRepo {
+    let repo = TestRepo::new("payments");
+    repo.write("README.md", "# Payments\n");
+    repo.commit("Start the payments service");
+    repo.write("src/db.py", format!("URL = \"{DATABASE_URL}\"\n"));
+    if blocking {
+        repo.write("src/settings.py", format!("KEY = \"{AWS_KEY}\"\n"));
+    }
+    repo.commit("Connect to the database");
+    repo
+}
+
+#[test]
+fn a_warning_shows_with_the_same_actions_and_never_disables_send() {
+    let repo = with_a_warning(false);
+    let mut session = started_with_a_key_in(repo.root(), 120, 60);
+    session.press(REVIEW_NEWEST);
+    session.settle();
+
+    assert_eq!(
+        session.section("Secret check"),
+        [
+            "Warning: possible secret in src/db.py, line 1: Password in a URL, post********",
+            "Leave out the file",
+            "( ) Not a secret",
+            WARNINGS,
+            "Whetstone checks for common secret formats and can't guarantee there are none.",
+        ]
+    );
+    assert_eq!(send(&session), "Send");
+
+    // From the change round to Back, then up to the warning's Not a
+    // secret, then to Leave out the file.
+    session.press("<S-Tab> k k <Space>");
+    assert_eq!(session.section("Secret check")[2], "> (x) Not a secret");
+    session.press("k <Space>");
+
+    assert_eq!(statuses(&session), ["left out by you"]);
+    assert_eq!(
+        session.section("Secret check")[..1],
+        ["No possible secrets found."]
+    );
+}
+
+#[test]
+fn a_blocking_finding_disables_send_beside_a_warning_until_it_is_resolved() {
+    let repo = with_a_warning(true);
+    let mut session = started_with_a_key_in(repo.root(), 120, 60);
+    session.press(REVIEW_NEWEST);
+    session.settle();
+    assert_eq!(
+        session.section("Secret check"),
+        [
+            "Warning: possible secret in src/db.py, line 1: Password in a URL, post********",
+            "Leave out the file",
+            "( ) Not a secret",
+            "Possible secret in src/settings.py, line 1: AWS access key ID, AKIA********",
+            "Leave out the file",
+            "( ) Not a secret",
+            WARNINGS,
+            "Whetstone checks for common secret formats and can't guarantee there are none.",
+        ]
+    );
+    assert_eq!(send(&session), "Send (resolve the possible secrets)");
+
+    // From the change round to Back, then up to the blocking finding's Not
+    // a secret.
+    session.press("<S-Tab> k k <Space>");
+
+    assert_eq!(session.section("Secret check")[5], "> (x) Not a secret");
+    assert_eq!(session.section("Secret check")[2], "( ) Not a secret");
+    assert_eq!(send(&session), "Send");
+}
+
+#[test]
+fn an_area_file_holding_a_github_token_blocks_send() {
+    let repo = with_a_retry();
+    repo.write(
+        ".whetstone/areas/security.md",
+        format!(
+            "+++\nname = \"Security\"\ndescription = \"Who can do what\"\n+++\n\
+             Look at who is trusted.\nCall the API with {GITHUB_TOKEN}.\n"
+        ),
+    );
+    let mut session = started_with_a_key_in(repo.root(), 120, 60);
+    session.press("<Enter> j <Space> k <S-Tab> <Enter>");
+    session.settle();
+
+    assert_eq!(
+        session.section("Secret check"),
+        [
+            "Possible secret in the Security area's prompt, line 2: GitHub token, ghp_********",
+            "( ) Not a secret",
+            "Whetstone checks for common secret formats and can't guarantee there are none.",
+        ]
+    );
+    assert_eq!(send(&session), "Send (resolve the possible secrets)");
+
+    // From the change round to Back, then up to Not a secret.
+    session.press("<S-Tab> k k <Space>");
+    assert_eq!(session.section("Secret check")[1], "> (x) Not a secret");
+    assert_eq!(send(&session), "Send");
+}
+
+#[test]
+fn an_areas_name_and_description_are_checked_for_secrets_too() {
+    let repo = with_a_retry();
+    repo.write(
+        ".whetstone/areas/security.md",
+        format!("+++\nname = \"Security\"\ndescription = \"Ask {DATABASE_URL}\"\n+++\nLook.\n"),
+    );
+    let mut session = started_in(repo.root(), 120, 60);
+
+    session.press("<Enter> j <Space> k <S-Tab> <Enter>");
+
+    assert_eq!(
+        session.section("Secret check")[0],
+        "Warning: possible secret in the Security area's description: Password in a URL, \
+         post********"
+    );
+}
+
 /// `count` presses of `key`, separated by spaces.
 fn times(key: &str, count: usize) -> String {
     vec![key; count].join(" ")
@@ -991,6 +1122,32 @@ fn the_reviews_secret_check_at_80x24() {
     session.press("<S-Tab> k k <Space>");
 
     insta::assert_debug_snapshot!("outbound_review_secret_check_80x24", session.frame());
+}
+
+#[test]
+fn the_reviews_secret_check_with_a_warning_and_a_blocking_finding_at_120x32() {
+    let repo = with_a_warning(true);
+    let mut session = started_in(repo.root(), 120, 32);
+    session.press(REVIEW_NEWEST);
+    session.press("<S-Tab> k k");
+
+    insta::assert_debug_snapshot!(
+        "outbound_review_secret_check_with_a_warning_120x32",
+        session.frame()
+    );
+}
+
+#[test]
+fn the_reviews_secret_check_with_a_warning_and_a_blocking_finding_at_80x24() {
+    let repo = with_a_warning(true);
+    let mut session = started_in(repo.root(), 80, 24);
+    session.press(REVIEW_NEWEST);
+    session.press("<S-Tab> k k");
+
+    insta::assert_debug_snapshot!(
+        "outbound_review_secret_check_with_a_warning_80x24",
+        session.frame()
+    );
 }
 
 #[test]
