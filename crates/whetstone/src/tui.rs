@@ -45,6 +45,11 @@ const STOP_SIGNALS: [c_int; 3] = [SIGHUP, SIGINT, SIGTERM];
 /// The signals that suspend the app, as Ctrl+Z does, and continue it.
 const JOB_CONTROL_SIGNALS: [c_int; 2] = [SIGTSTP, SIGCONT];
 
+/// Every signal the loop acts on.
+fn the_loops_signals() -> impl Iterator<Item = c_int> {
+    STOP_SIGNALS.into_iter().chain(JOB_CONTROL_SIGNALS)
+}
+
 /// Why the UI loop ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Ending {
@@ -126,8 +131,14 @@ async fn run_loop(mut app: App, environment: &Environment) -> Result<Ending, Tui
             Input::Suspend => Flow::Suspend,
             // Continued without suspending first, perhaps after a stop the
             // app could not catch. Taking the terminal back again is
-            // harmless.
+            // harmless, but as after a suspend, a stop signal received while
+            // stopped ends the app without it, and is recorded only once the
+            // signal thread catches up.
             Input::Continue => {
+                signals.thread.catch_up().map_err(TuiError::Signals)?;
+                if let Some(signal) = signals.stop.last() {
+                    break Ending::Stopped { signal };
+                }
                 resume(&mut guard, &mut terminal, &mut app)?;
                 Flow::Continue
             }
@@ -144,7 +155,7 @@ async fn run_loop(mut app: App, environment: &Environment) -> Result<Ending, Tui
                     stop_until_continued().map_err(TuiError::Suspend)?;
                     // Every signal received before the continue is recorded
                     // only once the signal thread catches up.
-                    signals.thread.catch_up().map_err(TuiError::Suspend)?;
+                    signals.thread.catch_up().map_err(TuiError::Signals)?;
                     // The SIGCONT that continued the app is handled here,
                     // but a SIGTSTP after it is not.
                     signals.job_control.forget(SIGCONT);
@@ -405,19 +416,16 @@ impl Signals {
     /// starts any other thread: a thread started before can still take
     /// these signals.
     fn listen() -> io::Result<Self> {
-        let signals = STOP_SIGNALS
-            .into_iter()
-            .chain(JOB_CONTROL_SIGNALS)
-            .map(|signal| NixSignal::try_from(signal).map_err(io::Error::from))
-            .collect::<io::Result<SigSet>>()?;
-        let thread = SignalThread::start(signals)?;
+        let thread = SignalThread::start(
+            the_loops_signals()
+                .map(|signal| NixSignal::try_from(signal).expect("each is a standard signal"))
+                .collect(),
+        )?;
         let stop = LastSignal::listen(&STOP_SIGNALS)?;
         let job_control = LastSignal::listen(&JOB_CONTROL_SIGNALS)?;
         // Registered after the flags, so a signal's flag is set before it
         // wakes the loop.
-        let arrivals = STOP_SIGNALS
-            .into_iter()
-            .chain(JOB_CONTROL_SIGNALS)
+        let arrivals = the_loops_signals()
             .map(|signal| unix_signal::signal(SignalKind::from_raw(signal)))
             .collect::<io::Result<_>>()?;
         Ok(Self {
@@ -465,7 +473,7 @@ impl Signals {
 #[derive(Debug)]
 struct SignalThread {
     /// Asks the thread to reply. Dropping it ends the thread.
-    requests: mpsc::Sender<()>,
+    requests: mpsc::SyncSender<()>,
     replies: mpsc::Receiver<()>,
     /// The mask the starting thread had before, which it gets back once this
     /// is dropped.
@@ -480,15 +488,17 @@ struct SignalThread {
 impl SignalThread {
     /// Starts the thread, then blocks `signals` in the calling thread.
     fn start(signals: SigSet) -> io::Result<Self> {
-        let (requests, received) = mpsc::channel();
-        let (reply, replies) = mpsc::channel();
+        // One request at a time, each with its reply: [`Self::catch_up`]
+        // waits for the reply before it asks again.
+        let (requests, asked) = mpsc::sync_channel(1);
+        let (reply, replies) = mpsc::sync_channel(1);
         let started = thread::Builder::new()
             .name("signals".to_owned())
             .spawn(move || {
-                // In case the app started with them blocked. It fails only
+                // Even if the app started with them blocked. It fails only
                 // for an invalid way to change the mask.
                 let _ = signals.thread_unblock();
-                for () in received {
+                for () in asked {
                     if reply.send(()).is_err() {
                         return;
                     }
@@ -498,10 +508,11 @@ impl SignalThread {
         let pthread = started.as_pthread_t();
         // Detached: it ends once `requests` is dropped.
         drop(started);
+        let mask_before = signals.thread_swap_mask(SigmaskHow::SIG_BLOCK)?;
         Ok(Self {
             requests,
             replies,
-            mask_before: signals.thread_swap_mask(SigmaskHow::SIG_BLOCK)?,
+            mask_before,
             not_send: PhantomData,
             #[cfg(test)]
             pthread,
@@ -510,7 +521,8 @@ impl SignalThread {
 
     /// Returns once the thread has recorded every signal sent to it before:
     /// it runs their handlers before any code of its own, so before it
-    /// replies.
+    /// replies. It blocks the calling thread for that round trip only,
+    /// which lasts no longer than those handlers.
     fn catch_up(&self) -> io::Result<()> {
         self.requests.send(()).map_err(io::Error::other)?;
         self.replies.recv().map_err(io::Error::other)
@@ -739,7 +751,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn every_thread_the_loop_starts_leaves_its_signals_to_the_signal_thread() {
+    async fn the_loops_thread_and_every_thread_it_starts_block_the_loops_signals() {
         let before = blocked_here();
         let signals = Signals::listen().expect("listen for signals");
 
@@ -766,8 +778,10 @@ mod tests {
     async fn once_the_signal_thread_catches_up_it_has_recorded_every_signal_sent_before() {
         let signals = Signals::listen().expect("listen for signals");
 
-        // As when `fg` continues the app after a SIGTERM received while it
-        // was stopped.
+        // Sent to the signal thread, which the kernel picks for one sent to
+        // the process, since every other thread blocks it. That a thread
+        // continued after a stop runs their handlers first is the
+        // pseudo-terminal tests' to show.
         for signal in [NixSignal::SIGTERM, NixSignal::SIGCONT] {
             pthread_kill(signals.thread.pthread, signal).expect("send the signal");
         }
