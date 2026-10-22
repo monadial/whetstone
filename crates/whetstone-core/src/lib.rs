@@ -69,9 +69,7 @@ pub use crate::question_check::{
     Withheld, show_rule,
 };
 pub use crate::repository_config::{RepositoryConfig, RepositoryConfigError};
-pub use crate::secret::{
-    SECRET_RULES, SECRET_RULES_VERSION, SecretFinding, SecretRule, find_secrets,
-};
+pub use crate::secret::{SecretFinding, SecretRule, SecretRules, Severity, find_secrets};
 pub use crate::selection::NotSent;
 pub use crate::showcase::ShowcaseProject;
 pub use crate::shuffle::shuffle_options;
