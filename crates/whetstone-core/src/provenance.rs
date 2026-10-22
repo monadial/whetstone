@@ -645,10 +645,19 @@ mod tests {
         let versions = Versions::new("0.1.0".to_owned(), hash("9f2c"), policy.clone(), Vec::new());
 
         assert_eq!(versions.policy(), &policy);
-        assert_eq!(versions.policy().version().get(), 0);
+        assert_eq!(versions.policy().version().get(), 1);
         assert_eq!(
             versions.policy().cut_offs(Job::QuestionCheck).origin(),
             CutOffsOrigin::Learner
+        );
+        let probe = versions.policy().cut_offs(Job::AnswerProbe);
+        assert_eq!(
+            (probe.cut_offs(), probe.origin()),
+            (
+                CutOffs::new(0.60, 0.20).expect("valid"),
+                CutOffsOrigin::Default
+            ),
+            "the answer probe's cut-offs, policy 1's"
         );
     }
 

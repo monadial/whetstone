@@ -34,7 +34,7 @@ const LABEL: &str = "Jev's probability, not a measure of correctness";
 /// Jev's answers the tests script, each one only it gives, so that a test
 /// can tell where each shows.
 const ANSWERABLE: f64 = 0.9731;
-const NEEDS_CHANGE: f64 = 0.8462;
+const ON_KEY: f64 = 0.1846;
 const CRITERION: f64 = 0.6214;
 const SUPPORTED: f64 = 0.9317;
 const AGREES: f64 = 0.8829;
@@ -45,7 +45,7 @@ fn probability(value: f64) -> Probability {
 
 /// A scripted AI writing four questions about the domain area of the
 /// payment lifecycle change, each passing every check, the first with
-/// [`ANSWERABLE`] and [`NEEDS_CHANGE`] among its answers. Jev finds the
+/// [`ANSWERABLE`] and, on its answer key, [`ON_KEY`] among its answers. Jev finds the
 /// first's reasoning unclear on its one criterion, at [`CRITERION`], and
 /// the generator's explanation of it passes Jev's check, at [`SUPPORTED`]
 /// and [`AGREES`].
@@ -63,7 +63,7 @@ fn writing() -> Arc<ScriptedAi> {
         FIRST,
         [
             answer(CandidateCheck::Answerable, ANSWERABLE),
-            answer(CandidateCheck::NeedsChange, NEEDS_CHANGE),
+            answer(CandidateCheck::AnswerProbe, ON_KEY),
         ],
     );
     for stem in &stems[1..] {
@@ -181,18 +181,20 @@ fn inspect_shows_each_of_jevs_answers_with_its_band_the_policy_version_and_the_m
         session.row_with("Jev's answers about"),
         "Jev's answers about question 1 of 4"
     );
-    let models = "Asked scripted/jev, answered by scripted/jev · assessment policy 0";
+    let models = "Asked scripted/jev, answered by scripted/jev · assessment policy 1";
     assert_eq!(
         session.section("Question check"),
         [
             models,
-            "Cut-offs for the question check · upper 0.8, lower 0.2 · policy 0's",
-            "Cut-offs for the option rating · upper 0.8, lower 0.2 · policy 0's",
-            "Cut-offs for the rationale and hint checks · upper 0.8, lower 0.2 · policy 0's",
+            "Cut-offs for the question check · upper 0.8, lower 0.2 · policy 1's",
+            "Cut-offs for the answer probe · upper 0.6, lower 0.2 · policy 1's",
+            "Cut-offs for the option rating · upper 0.8, lower 0.2 · policy 1's",
+            "Cut-offs for the rationale and hint checks · upper 0.8, lower 0.2 · policy 1's",
             "Answerable from the evidence sent · 0.9731 · clear yes",
             "About its area · 0.9 · clear yes",
-            "Needs this change, not general knowledge · 0.8462 · clear yes",
-            "The stem and options don't give the answer away · 0.9 · clear yes",
+            "Without reading the change, Jev chose option A, the answer key · 0.1846 · clear no",
+            "Without reading the change, Jev chose option B · 0.4077",
+            "Without reading the change, Jev chose option C · 0.4077",
             "Criterion 1 follows from the evidence and the answer key · 0.9 · clear yes",
             "Criterion 1 asks only for what the question needs · 0.9 · clear yes",
             "Option A answers the question correctly · 0.9 · clear yes",
@@ -212,7 +214,7 @@ fn inspect_shows_each_of_jevs_answers_with_its_band_the_policy_version_and_the_m
         session.section("Reasoning"),
         [
             models,
-            "Cut-offs for the reasoning criterion · upper 0.8, lower 0.2 · policy 0's",
+            "Cut-offs for the reasoning criterion · upper 0.8, lower 0.2 · policy 1's",
             "Meets criterion 1: The rubric's criterion, which stays hidden · 0.6214 · unclear",
         ]
     );
@@ -220,7 +222,7 @@ fn inspect_shows_each_of_jevs_answers_with_its_band_the_policy_version_and_the_m
         session.section("Explanation check"),
         [
             models,
-            "Cut-offs for the explanation check · upper 0.8, lower 0.2 · policy 0's",
+            "Cut-offs for the explanation check · upper 0.8, lower 0.2 · policy 1's",
             "Criterion 1's explanation is supported by the evidence · 0.9317 · clear yes",
             "Criterion 1's explanation agrees with its outcome · 0.8829 · clear yes",
         ]
@@ -236,7 +238,7 @@ fn inspect_is_labelled_jevs_probability_not_a_measure_of_correctness() {
         [
             "Each number is Jev's probability that the statement beside it holds, exactly as Jev \
              returned it: it is not a score",
-            "of your answer. Assessment policy 0, unvalidated, bands each one clear yes, unclear or \
+            "of your answer. Assessment policy 1, unvalidated, bands each one clear yes, unclear or \
              clear no, and feedback says",
             "only what the bands lead to.",
         ]
@@ -290,7 +292,7 @@ fn feedback_itself_shows_no_numbers() {
         assert!(!(around(-1) && around(1)), "a number at byte {at}:\n{text}");
     }
     assert!(!text.contains('%'), "{text}");
-    for answer in [ANSWERABLE, NEEDS_CHANGE, CRITERION, SUPPORTED, AGREES] {
+    for answer in [ANSWERABLE, ON_KEY, CRITERION, SUPPORTED, AGREES] {
         let percent = format!("{:.0}", answer * 100.0);
         assert!(
             !text.contains(&percent),
@@ -361,7 +363,7 @@ fn jevs_probabilities_show_on_inspect_and_never_reach_the_log() {
         text = session.text();
     });
 
-    for answer in [ANSWERABLE, NEEDS_CHANGE, CRITERION, SUPPORTED, AGREES] {
+    for answer in [ANSWERABLE, ON_KEY, CRITERION, SUPPORTED, AGREES] {
         let answer = answer.to_string();
         assert!(text.contains(&answer), "{answer} on Inspect:\n{text}");
         assert!(!log.contains(&answer), "{answer} reached the log:\n{log}");

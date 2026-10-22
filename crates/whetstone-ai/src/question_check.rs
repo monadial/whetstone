@@ -1,11 +1,12 @@
-//! The question check: three Jev calls per candidate, sent together, whose
-//! yes/no questions are the candidate's checks. Each call's state holds only
-//! what its questions are about ([`QuestionCheckCall`]), so the option
-//! ratings are decided without the answer key, and the hint is judged
-//! without it too.
+//! The question check: four Jev calls per candidate, sent together, whose
+//! questions are the candidate's checks. Each call's state holds only what
+//! its questions are about ([`QuestionCheckCall`]), so the option ratings
+//! are decided without the answer key, the hint is judged without it too,
+//! and the answer probe answers the candidate from its stem and options
+//! alone.
 //!
 //! [`question_check_request`] builds one call, [`question_check_answers`]
-//! reads Jev's reply to it, and [`CheckCallAnswers::merged`] makes the three
+//! reads Jev's reply to it, and [`CheckCallAnswers::merged`] makes the four
 //! calls' answers whetstone-core's [`QuestionCheckAnswers`] for the show
 //! rule.
 
@@ -14,7 +15,7 @@ use std::convert::Infallible;
 
 use serde_json::{Map, Value, json};
 use whetstone_core::{
-    Candidate, CandidateCheck, Depth, Evidence, ModelId, OptionLetter, Probability,
+    AnswerProbe, Candidate, CandidateCheck, Depth, Evidence, ModelId, OptionLetter, Probability,
     QuestionCheckAnswers,
 };
 
@@ -24,14 +25,14 @@ use crate::failure::AiError;
 use crate::jev::{JevQuestion, JevReply, JevRequest};
 use crate::prompts::QUESTION_CHECK;
 
-/// One of the three Jev calls of a candidate's question check. Each call's
+/// One of the four Jev calls of a candidate's question check. Each call's
 /// state holds only what its questions are about.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum QuestionCheckCall {
-    /// The option ratings, `option_a` to `option_c`, and `no_giveaway`. Its
-    /// state is the evidence as sent, and of the candidate only its stem and
-    /// its options' text: no answer key, rationale, rubric, hint, "why it
-    /// matters" line or citation.
+    /// The option ratings, `option_a` to `option_c`. Its state is the
+    /// evidence as sent, and of the candidate only its stem and its options'
+    /// text: no answer key, rationale, rubric, hint, "why it matters" line
+    /// or citation.
     OptionRatings,
     /// `hint_hides_answer_key`. Its state is the candidate's stem, its
     /// options' text and its hint: no evidence and no answer key.
@@ -39,37 +40,57 @@ pub enum QuestionCheckCall {
     /// Every other check, and the depth score. Its state is the evidence as
     /// sent and the whole candidate.
     Candidate,
+    /// The answer probe, `answer_probe`: a choice among the options. Its
+    /// state is the candidate's stem and its options' text alone: no
+    /// evidence, answer key, rationale, rubric, hint, "why it matters" line
+    /// or citation.
+    AnswerProbe,
 }
 
 /// Jev's answers to one call of a candidate's question check, exactly as
-/// returned: the probability of yes for each check the call asked, and, for
-/// the candidate call, the depth. [`merged`](Self::merged) makes the three
-/// calls' answers one [`QuestionCheckAnswers`].
+/// returned: the probability of yes for each yes/no check the call asked,
+/// for the answer probe call its probe, and for the candidate call the
+/// depth. [`merged`](Self::merged) makes the four calls' answers one
+/// [`QuestionCheckAnswers`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct CheckCallAnswers {
-    /// The call answered, with the depth when it scores one.
+    /// The call answered, with what only it answers: the depth or the
+    /// answer probe.
     answered: Answered,
-    /// Each check the call asked, with Jev's answer, in the order asked.
+    /// Each yes/no check the call asked, with Jev's answer, in the order
+    /// asked.
     checks: Vec<(CandidateCheck, Probability)>,
 }
 
-/// Which call answered, with the depth when it is the candidate call, the
-/// only one that scores it ([`QuestionCheckCall::scores_depth`]).
+/// Which call answered, with what only it answers: the depth, for the
+/// candidate call, the only one that scores it
+/// ([`QuestionCheckCall::scores_depth`]), and the probe, for the answer
+/// probe call.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Answered {
     OptionRatings,
     Hint,
     Candidate(Depth),
+    /// A reply from Jev always holds the probe. A scripted check may leave
+    /// it out, as it may leave out any answer.
+    AnswerProbe(Option<AnswerProbe>),
 }
 
 impl Answered {
-    /// What `call` answered, with the depth `depth` gives when the call
-    /// scores one: `depth` is called only then.
-    fn of<E>(call: QuestionCheckCall, depth: impl FnOnce() -> Result<Depth, E>) -> Result<Self, E> {
+    /// What `call` answered, read from `source`: with the depth `depth`
+    /// reads when the call scores one, and with the probe `probe` reads for
+    /// the answer probe call. Each is called only then.
+    fn of<S, E>(
+        call: QuestionCheckCall,
+        source: S,
+        depth: impl FnOnce(S) -> Result<Depth, E>,
+        probe: impl FnOnce(S) -> Result<Option<AnswerProbe>, E>,
+    ) -> Result<Self, E> {
         Ok(match call {
             QuestionCheckCall::OptionRatings => Self::OptionRatings,
             QuestionCheckCall::Hint => Self::Hint,
-            QuestionCheckCall::Candidate => Self::Candidate(depth()?),
+            QuestionCheckCall::Candidate => Self::Candidate(depth(source)?),
+            QuestionCheckCall::AnswerProbe => Self::AnswerProbe(probe(source)?),
         })
     }
 
@@ -79,6 +100,7 @@ impl Answered {
             Self::OptionRatings => QuestionCheckCall::OptionRatings,
             Self::Hint => QuestionCheckCall::Hint,
             Self::Candidate(_) => QuestionCheckCall::Candidate,
+            Self::AnswerProbe(_) => QuestionCheckCall::AnswerProbe,
         }
     }
 
@@ -86,24 +108,37 @@ impl Answered {
     fn depth(self) -> Option<Depth> {
         match self {
             Self::Candidate(depth) => Some(depth),
-            Self::OptionRatings | Self::Hint => None,
+            Self::OptionRatings | Self::Hint | Self::AnswerProbe(_) => None,
+        }
+    }
+
+    /// The answer probe, when the call asks it and it was answered.
+    fn probe(self) -> Option<AnswerProbe> {
+        match self {
+            Self::AnswerProbe(probe) => probe,
+            Self::OptionRatings | Self::Hint | Self::Candidate(_) => None,
         }
     }
 }
 
 impl QuestionCheckCall {
     /// Every call, in the order Practice sends them.
-    pub const ALL: [Self; 3] = [Self::OptionRatings, Self::Hint, Self::Candidate];
+    pub const ALL: [Self; 4] = [
+        Self::OptionRatings,
+        Self::Hint,
+        Self::Candidate,
+        Self::AnswerProbe,
+    ];
 
     /// The call that asks `check`.
     #[must_use]
     pub fn of(check: CandidateCheck) -> Self {
         match check {
-            CandidateCheck::Option(_) | CandidateCheck::NoGiveaway => Self::OptionRatings,
+            CandidateCheck::Option(_) => Self::OptionRatings,
             CandidateCheck::HintHidesAnswerKey => Self::Hint,
+            CandidateCheck::AnswerProbe => Self::AnswerProbe,
             CandidateCheck::Answerable
             | CandidateCheck::AboutArea
-            | CandidateCheck::NeedsChange
             | CandidateCheck::Criterion(_)
             | CandidateCheck::CriterionMinimum(_)
             | CandidateCheck::Rationale(_)
@@ -118,7 +153,7 @@ impl QuestionCheckCall {
     pub fn scores_depth(self) -> bool {
         match self {
             Self::Candidate => true,
-            Self::OptionRatings | Self::Hint => false,
+            Self::OptionRatings | Self::Hint | Self::AnswerProbe => false,
         }
     }
 
@@ -141,7 +176,8 @@ impl CheckCallAnswers {
         self.answered.call()
     }
 
-    /// Jev's answer to `check`, if the call asked it.
+    /// Jev's answer to the yes/no check `check`, if the call asked it. The
+    /// answer probe isn't one: see [`answer`](Self::answer).
     #[must_use]
     pub fn get(&self, check: CandidateCheck) -> Option<Probability> {
         self.checks
@@ -149,9 +185,30 @@ impl CheckCallAnswers {
             .find_map(|&(asked, answer)| (asked == check).then_some(answer))
     }
 
+    /// Jev's answer to `check` of a candidate whose answer key is
+    /// `answer_key`, if the call asked it: the probability of yes for a
+    /// yes/no check, and for the answer probe its probability on
+    /// `answer_key`.
+    #[must_use]
+    pub fn answer(&self, check: CandidateCheck, answer_key: OptionLetter) -> Option<Probability> {
+        match check {
+            CandidateCheck::AnswerProbe => self
+                .answered
+                .probe()
+                .map(|probe| probe.probability(answer_key)),
+            _ => self.get(check),
+        }
+    }
+
     /// Each yes/no answer, by check, in the order the call asked them.
     pub fn iter(&self) -> impl Iterator<Item = (CandidateCheck, Probability)> + '_ {
         self.checks.iter().copied()
+    }
+
+    /// The answer probe, for the answer probe call; no other call asks it.
+    #[must_use]
+    pub fn probe(&self) -> Option<AnswerProbe> {
+        self.answered.probe()
     }
 
     /// The depth, for the candidate call; no other call scores it.
@@ -161,12 +218,14 @@ impl CheckCallAnswers {
     }
 
     /// The answers to a candidate's question check, from `answers`, its
-    /// calls' answers: every check each call answered, and the candidate
-    /// call's depth. `None` unless `answers` holds each call's answers once.
+    /// calls' answers: every yes/no check each call answered, the answer
+    /// probe call's probe, and the candidate call's depth. `None` unless
+    /// `answers` holds each call's answers once.
     #[must_use]
     pub fn merged(answers: impl IntoIterator<Item = Self>) -> Option<QuestionCheckAnswers> {
         let mut answered = Vec::new();
         let mut checks = Vec::new();
+        let mut probe = None;
         let mut depth = None;
         for answers in answers {
             let call = answers.call();
@@ -175,19 +234,30 @@ impl CheckCallAnswers {
             }
             answered.push(call);
             depth = depth.or(answers.depth());
+            probe = probe.or(answers.probe());
             checks.extend(answers.checks);
         }
         if answered.len() != QuestionCheckCall::ALL.len() {
             return None;
         }
-        Some(QuestionCheckAnswers::new(checks, depth?))
+        let merged = QuestionCheckAnswers::new(checks, depth?);
+        Some(match probe {
+            Some(probe) => merged.with_probe(probe),
+            None => merged,
+        })
     }
 
-    /// The answers of `call` that `answers` holds, its checks' and, for the
-    /// candidate call, the depth, as a scripted reply makes them.
+    /// The answers of `call` that `answers` holds, its yes/no checks', and,
+    /// for the answer probe call, the probe, and for the candidate call, the
+    /// depth, as a scripted reply makes them.
     #[cfg(any(test, feature = "scripted"))]
     pub(crate) fn of_call(call: QuestionCheckCall, answers: &QuestionCheckAnswers) -> Self {
-        let Ok(answered) = Answered::of(call, || Ok::<_, Infallible>(answers.depth()));
+        let Ok(answered) = Answered::of(
+            call,
+            answers,
+            |answers| Ok::<_, Infallible>(answers.depth()),
+            |answers| Ok(answers.probe()),
+        );
         Self {
             answered,
             checks: answers
@@ -199,17 +269,21 @@ impl CheckCallAnswers {
 }
 
 /// The Jev request of the question check's `call` about `candidate`, with
-/// `model`: one yes/no question per check of [`Candidate::checks`] that the
-/// call asks, each named after its check, with its instructions from the
-/// base prompts.
+/// `model`: one question per check of [`Candidate::checks`] that the call
+/// asks, each named after its check, with its instructions from the base
+/// prompts. Each is a yes/no question but the answer probe.
 ///
-/// - The option ratings call asks `option_a` to `option_c` and
-///   `no_giveaway`. Its state is the evidence as sent, as `evidence`, and
-///   the candidate's stem and its options' text, as `candidate`.
+/// - The option ratings call asks `option_a` to `option_c`. Its state is
+///   the evidence as sent, as `evidence`, and the candidate's stem and its
+///   options' text, as `candidate`.
 /// - The hint call asks `hint_hides_answer_key`. Its state is the
 ///   candidate's stem, its options' text and its hint, as `candidate`.
-/// - The candidate call asks every other check: `answerable`, `about_area`
-///   and `needs_change`; `criterion_1` and on, one per criterion;
+/// - The answer probe call asks `answer_probe`, a choice among the options
+///   A, B and C: which correctly answers the stem. Its state is the
+///   candidate's stem and its options' text, as `candidate`, and nothing
+///   else.
+/// - The candidate call asks every other check: `answerable` and
+///   `about_area`; `criterion_1` and on, one per criterion;
 ///   `criterion_1_minimum` and on, one per criterion again, whether it asks
 ///   only for what the question needs; `rationale_a` to `rationale_c` and
 ///   `why_it_matters`; and `hint_points_to_evidence`. It also scores the
@@ -242,6 +316,12 @@ pub fn question_check_request(
                 "hint": candidate.hint().text(),
             },
         }),
+        QuestionCheckCall::AnswerProbe => json!({
+            "candidate": {
+                "stem": candidate.stem(),
+                "options": options_text(candidate),
+            },
+        }),
         QuestionCheckCall::Candidate => json!({
             "evidence": evidence_as_sent(evidence),
             "candidate": candidate_state(evidence, candidate),
@@ -263,26 +343,44 @@ pub fn question_check_request(
 }
 
 /// Jev's answers to the question check's `call` about `candidate`, from
-/// `reply`, exactly as returned: the probability of yes for each check the
-/// call asked and, for the candidate call, the depth's distribution and
-/// expected value. Jev's `confidence` is never read.
+/// `reply`, exactly as returned: the probability of yes for each yes/no
+/// check the call asked, for the answer probe call the probability of each
+/// option, and for the candidate call the depth's distribution and expected
+/// value. Jev's choice and `confidence` are never read.
 ///
 /// Fails with [`AiError::InvalidReply`] when an answer is missing, of
 /// another kind, not a probability, or to a question the call didn't ask,
-/// or when the depth isn't three probabilities with an expected value from
-/// 0 to 2.
+/// when the answer probe's probabilities aren't for exactly the options A,
+/// B and C, or when the depth isn't three probabilities with an expected
+/// value from 0 to 2.
 pub fn question_check_answers(
     candidate: &Candidate,
     call: QuestionCheckCall,
     reply: &JevReply,
 ) -> Result<CheckCallAnswers, AiError> {
     let mut answers = Answers::of(reply);
+    // The answer probe is a choice, which `Answered` reads.
     let checks = call
         .checks(candidate)
         .into_iter()
+        .filter(|&check| check != CandidateCheck::AnswerProbe)
         .map(|check| Ok((check, answers.yes_no(&name(check))?)))
         .collect::<Result<Vec<_>, AiError>>()?;
-    let answered = Answered::of(call, || answers.depth(DEPTH))?;
+    let answered = Answered::of(
+        call,
+        &mut answers,
+        |answers| answers.depth(DEPTH),
+        |answers| {
+            let letters = letters();
+            let probabilities = answers.choice(
+                &name(CandidateCheck::AnswerProbe),
+                letters.iter().map(String::as_str),
+            )?;
+            Ok(Some(AnswerProbe::new(probabilities.try_into().expect(
+                "a choice gives one probability for each option asked",
+            ))))
+        },
+    )?;
     answers.done()?;
     Ok(CheckCallAnswers { answered, checks })
 }
@@ -298,8 +396,7 @@ pub fn name(check: CandidateCheck) -> String {
     match check {
         CandidateCheck::Answerable => "answerable".to_owned(),
         CandidateCheck::AboutArea => "about_area".to_owned(),
-        CandidateCheck::NeedsChange => "needs_change".to_owned(),
-        CandidateCheck::NoGiveaway => "no_giveaway".to_owned(),
+        CandidateCheck::AnswerProbe => "answer_probe".to_owned(),
         CandidateCheck::Criterion(index) => criterion_name(index),
         CandidateCheck::CriterionMinimum(index) => format!("{}_minimum", criterion_name(index)),
         CandidateCheck::Option(letter) => format!("option_{}", lowercase(letter)),
@@ -316,8 +413,12 @@ fn question(check: CandidateCheck) -> JevQuestion {
     match check {
         CandidateCheck::Answerable => prompts.answerable.question(&[]),
         CandidateCheck::AboutArea => prompts.about_area.question(&[]),
-        CandidateCheck::NeedsChange => prompts.needs_change.question(&[]),
-        CandidateCheck::NoGiveaway => prompts.no_giveaway.question(&[]),
+        CandidateCheck::AnswerProbe => {
+            let letters = letters();
+            prompts
+                .answer_probe
+                .question(letters.iter().map(String::as_str))
+        }
         CandidateCheck::Criterion(index) => prompts
             .criterion
             .question(&[("criterion", &criterion_name(index))]),
@@ -334,6 +435,11 @@ fn question(check: CandidateCheck) -> JevQuestion {
         CandidateCheck::HintPointsToEvidence => prompts.hint_points_to_evidence.question(&[]),
         CandidateCheck::HintHidesAnswerKey => prompts.hint_hides_answer_key.question(&[]),
     }
+}
+
+/// The options' letters, as the answer probe labels its choice's options.
+fn letters() -> [String; 3] {
+    OptionLetter::ALL.map(|letter| letter.to_string())
 }
 
 fn lowercase(letter: OptionLetter) -> String {
@@ -468,6 +574,7 @@ mod tests {
             (QuestionCheckCall::OptionRatings, "option_ratings_call"),
             (QuestionCheckCall::Hint, "hint_call"),
             (QuestionCheckCall::Candidate, "candidate_call"),
+            (QuestionCheckCall::AnswerProbe, "answer_probe_call"),
         ] {
             insta::assert_snapshot!(snapshot, pretty(&sent(call).await));
         }
@@ -477,10 +584,7 @@ mod tests {
     async fn the_option_ratings_call_sends_the_evidence_and_only_the_stem_and_the_options_text() {
         let body = sent(QuestionCheckCall::OptionRatings).await;
 
-        assert_eq!(
-            questions(&body),
-            ["no_giveaway", "option_a", "option_b", "option_c"]
-        );
+        assert_eq!(questions(&body), ["option_a", "option_b", "option_c"]);
         assert_eq!(keys(&body["state"]), ["evidence", "candidate"]);
         assert_eq!(
             body["state"]["candidate"],
@@ -540,6 +644,62 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_answer_probe_call_sends_only_the_stem_and_the_options_text() {
+        let body = sent(QuestionCheckCall::AnswerProbe).await;
+
+        assert_eq!(questions(&body), ["answer_probe"]);
+        assert_eq!(
+            body["state"],
+            json!({
+                "candidate": {
+                    "stem": candidate().stem(),
+                    "options": sample_options_text(),
+                },
+            }),
+            "the stem and the options' text, and nothing else"
+        );
+        let text = body.to_string();
+        let candidate = candidate();
+        let evidence = evidence();
+        let mut held = vec![
+            ("an answer key", "answer_key".to_owned()),
+            ("evidence", "evidence".to_owned()),
+            ("evidence", evidence.message().to_owned()),
+            ("a rubric", "rubric".to_owned()),
+            ("a hint", candidate.hint().text().to_owned()),
+            (
+                "a \"why it matters\" line",
+                candidate.why_it_matters().to_owned(),
+            ),
+            ("a citation", "citations".to_owned()),
+            ("a citation", "first_line".to_owned()),
+        ];
+        held.extend(
+            OptionLetter::ALL.map(|letter| ("a rationale", candidate.rationale(letter).to_owned())),
+        );
+        held.extend(candidate.rubric().iter().flat_map(|criterion| {
+            [criterion.statement(), criterion.met(), criterion.not_met()]
+                .map(|text| ("a rubric", text.to_owned()))
+        }));
+        for (what, held) in held {
+            assert!(!text.contains(&held), "the request holds {what}: {held:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn the_answer_probe_is_a_choice_among_the_options_by_letter() {
+        let body = sent(QuestionCheckCall::AnswerProbe).await;
+
+        let probe = &body["questions"]["answer_probe"];
+        assert_eq!(probe["type"], "choice");
+        assert_eq!(
+            keys(&probe["criteria"]),
+            ["A", "B", "C"],
+            "one option per letter"
+        );
+    }
+
+    #[tokio::test]
     async fn the_candidate_call_asks_every_other_check_and_the_depth() {
         let body = sent(QuestionCheckCall::Candidate).await;
 
@@ -554,13 +714,12 @@ mod tests {
                 "criterion_2_minimum",
                 "depth",
                 "hint_points_to_evidence",
-                "needs_change",
                 "rationale_a",
                 "rationale_b",
                 "rationale_c",
                 "why_it_matters",
             ],
-            "never the option ratings, no_giveaway or hint_hides_answer_key"
+            "never the option ratings, hint_hides_answer_key or answer_probe"
         );
         assert_eq!(keys(&body["state"]), ["evidence", "candidate"]);
         assert_eq!(
@@ -649,19 +808,17 @@ mod tests {
             answers.iter().collect::<Vec<_>>(),
             [
                 (CandidateCheck::Answerable, 0.96),
-                (CandidateCheck::AboutArea, 0.78),
-                (CandidateCheck::NeedsChange, 0.56),
-                (CandidateCheck::NoGiveaway, 0.2),
+                (CandidateCheck::AboutArea, 0.75),
                 (CandidateCheck::Criterion(0), 0.81),
                 (CandidateCheck::Criterion(1), 0.93),
-                (CandidateCheck::CriterionMinimum(0), 0.87),
+                (CandidateCheck::CriterionMinimum(0), 0.86),
                 (CandidateCheck::CriterionMinimum(1), 0.92),
                 (CandidateCheck::Option(OptionLetter::A), 0.99),
                 (CandidateCheck::Option(OptionLetter::B), 0.01),
                 (CandidateCheck::Option(OptionLetter::C), 0.02),
                 (CandidateCheck::Rationale(OptionLetter::A), 0.97),
-                (CandidateCheck::Rationale(OptionLetter::B), 0.88),
-                (CandidateCheck::Rationale(OptionLetter::C), 0.9),
+                (CandidateCheck::Rationale(OptionLetter::B), 0.86),
+                (CandidateCheck::Rationale(OptionLetter::C), 0.91),
                 (CandidateCheck::WhyItMatters, 0.83),
                 (CandidateCheck::HintPointsToEvidence, 0.96),
                 (CandidateCheck::HintHidesAnswerKey, 0.27),
@@ -669,10 +826,15 @@ mod tests {
             .map(|(check, answer)| (check, probability(answer)))
         );
         assert_eq!(
+            answers.probe(),
+            Some(AnswerProbe::new([1.0, 0.0, 0.0].map(probability))),
+            "Jev picks the sample's answer key, A, from its stem and options alone"
+        );
+        assert_eq!(
             answers.depth(),
             Depth::new(
-                [probability(0.12), probability(0.3), probability(0.58)],
-                1.46
+                [probability(0.12), probability(0.26), probability(0.62)],
+                1.5
             )
             .expect("the recorded expected depth is from 0 to 2")
         );
@@ -680,14 +842,15 @@ mod tests {
 
     #[tokio::test]
     async fn the_calls_answers_make_one_question_check_only_with_each_call_once() {
-        let [ratings, hint, candidate_call] = [
+        let [ratings, hint, candidate_call, probe] = [
             recorded_answers(QuestionCheckCall::OptionRatings).await,
             recorded_answers(QuestionCheckCall::Hint).await,
             recorded_answers(QuestionCheckCall::Candidate).await,
+            recorded_answers(QuestionCheckCall::AnswerProbe).await,
         ];
 
         assert_eq!(
-            CheckCallAnswers::merged([ratings.clone(), candidate_call.clone()]),
+            CheckCallAnswers::merged([ratings.clone(), candidate_call.clone(), probe.clone()]),
             None,
             "the hint call's are missing"
         );
@@ -696,17 +859,16 @@ mod tests {
                 ratings.clone(),
                 hint.clone(),
                 hint.clone(),
-                candidate_call.clone()
+                candidate_call.clone(),
+                probe.clone()
             ]),
             None,
             "the hint call's twice"
         );
-        assert_eq!(
-            CheckCallAnswers::merged([candidate_call, hint, ratings])
-                .map(|answers| answers.iter().count()),
-            Some(17),
-            "in any order"
-        );
+        let merged = CheckCallAnswers::merged([probe.clone(), candidate_call, hint, ratings])
+            .expect("in any order");
+        assert_eq!(merged.iter().count(), 15, "every yes/no check");
+        assert_eq!(merged.probe(), probe.probe(), "and the answer probe");
     }
 
     #[tokio::test]
@@ -732,7 +894,7 @@ mod tests {
     async fn a_missing_answer_in_any_call_is_an_invalid_reply() {
         for (call, missing) in [
             (QuestionCheckCall::OptionRatings, "option_b"),
-            (QuestionCheckCall::OptionRatings, "no_giveaway"),
+            (QuestionCheckCall::AnswerProbe, "answer_probe"),
             (QuestionCheckCall::Hint, "hint_hides_answer_key"),
             (QuestionCheckCall::Candidate, "rationale_b"),
             (QuestionCheckCall::Candidate, "depth"),
@@ -754,6 +916,7 @@ mod tests {
             (QuestionCheckCall::OptionRatings, "option_b"),
             (QuestionCheckCall::Hint, "hint_hides_answer_key"),
             (QuestionCheckCall::Candidate, "answerable"),
+            (QuestionCheckCall::AnswerProbe, "answer_probe"),
         ] {
             let mut reply = recorded(call).await;
             reply.answers.insert(
@@ -777,9 +940,12 @@ mod tests {
         for (call, extra) in [
             (QuestionCheckCall::OptionRatings, "option_d"),
             (QuestionCheckCall::OptionRatings, "answerable"),
+            (QuestionCheckCall::OptionRatings, "no_giveaway"),
             (QuestionCheckCall::Hint, "option_a"),
             (QuestionCheckCall::Candidate, "option_a"),
             (QuestionCheckCall::Candidate, "hint_hides_answer_key"),
+            (QuestionCheckCall::Candidate, "needs_change"),
+            (QuestionCheckCall::AnswerProbe, "option_a"),
         ] {
             let mut reply = recorded(call).await;
             reply
@@ -790,6 +956,64 @@ mod tests {
                 question_check_answers(&candidate(), call, &reply),
                 Err(AiError::InvalidReply),
                 "{extra} in the {call:?} call"
+            );
+        }
+    }
+
+    /// The recorded reply to the answer probe call, but with `answer` to the
+    /// probe: a probability for each of its options, by label.
+    async fn probed(answer: &[(&str, f64)]) -> JevReply {
+        let mut reply = recorded(QuestionCheckCall::AnswerProbe).await;
+        reply.answers.insert(
+            "answer_probe".to_owned(),
+            JevAnswer::Choice {
+                probabilities: answer
+                    .iter()
+                    .map(|&(label, answer)| (label.to_owned(), answer))
+                    .collect(),
+            },
+        );
+        reply
+    }
+
+    #[tokio::test]
+    async fn the_answer_probe_keeps_jev_s_probability_for_each_option_and_bands_the_answer_key_s() {
+        let reply = probed(&[("A", 0.05), ("B", 0.9), ("C", 0.05)]).await;
+
+        let answers = question_check_answers(&candidate(), QuestionCheckCall::AnswerProbe, &reply)
+            .expect("a probability for each option");
+
+        assert_eq!(
+            answers.probe(),
+            Some(AnswerProbe::new([0.05, 0.9, 0.05].map(probability)))
+        );
+        assert_eq!(answers.iter().count(), 0, "no yes/no check");
+        assert_eq!(
+            answers.answer(CandidateCheck::AnswerProbe, candidate().answer_key()),
+            Some(probability(0.05)),
+            "the sample's answer key is A"
+        );
+        assert_eq!(answers.get(CandidateCheck::AnswerProbe), None);
+    }
+
+    #[tokio::test]
+    async fn an_answer_probe_not_over_exactly_the_options_or_not_of_probabilities_is_an_invalid_reply()
+     {
+        for answer in [
+            &[("A", 0.5), ("B", 0.5)][..],
+            &[("A", 0.4), ("B", 0.3), ("D", 0.3)],
+            &[("A", 0.4), ("B", 0.3), ("C", 0.2), ("D", 0.1)],
+            &[("a", 0.4), ("b", 0.3), ("c", 0.3)],
+            &[("A", 1.2), ("B", -0.1), ("C", -0.1)],
+        ] {
+            assert_eq!(
+                question_check_answers(
+                    &candidate(),
+                    QuestionCheckCall::AnswerProbe,
+                    &probed(answer).await
+                ),
+                Err(AiError::InvalidReply),
+                "{answer:?}"
             );
         }
     }

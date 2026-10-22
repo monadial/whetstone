@@ -75,8 +75,8 @@ pub(crate) struct GatePrompts {
 pub(crate) struct QuestionCheckPrompts {
     pub(crate) answerable: YesNoPrompt,
     pub(crate) about_area: YesNoPrompt,
-    pub(crate) needs_change: YesNoPrompt,
-    pub(crate) no_giveaway: YesNoPrompt,
+    /// The answer probe: a choice among the options, by letter.
+    pub(crate) answer_probe: ChoicePrompt,
     /// One criterion's check; `{criterion}` is the criterion's name.
     pub(crate) criterion: YesNoPrompt,
     /// Whether one criterion asks only for what the question needs;
@@ -186,6 +186,28 @@ pub fn base_prompts_version() -> &'static str {
 pub fn base_prompts_hash() -> ContentHash {
     ContentHash::new(base_prompts_version().to_owned())
         .expect("a SHA-256 digest in lowercase hex is a content hash")
+}
+
+/// A choice question to Jev among a candidate's options, by letter: its
+/// instructions, and what choosing an option means, where `{letter}` is the
+/// option's.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ChoicePrompt {
+    instructions: String,
+    option: String,
+}
+
+impl ChoicePrompt {
+    /// The question, a choice among the options `letters`.
+    pub(crate) fn question<'l>(&self, letters: impl IntoIterator<Item = &'l str>) -> JevQuestion {
+        JevQuestion::choice(
+            &self.instructions,
+            letters
+                .into_iter()
+                .map(|letter| (letter, fill(&self.option, &[("letter", letter)]))),
+        )
+    }
 }
 
 /// A score question to Jev: its instructions, and its three levels, the

@@ -94,8 +94,7 @@ last_line = 57
 [candidate.labels]
 answerable = "yes"
 about_area = "yes"
-needs_change = "yes"
-no_giveaway = "yes"
+answer_probe = { label = "no", by = "agent", on = 2026-10-22 }
 criterion_1 = "yes"
 criterion_2 = "yes"
 criterion_1_minimum = "yes"
@@ -157,8 +156,7 @@ last_line = 37
 [candidate.labels]
 answerable = "yes"
 about_area = "yes"
-needs_change = "yes"
-no_giveaway = "yes"
+answer_probe = { label = "no", by = "agent", on = 2026-10-22 }
 criterion_1 = "yes"
 criterion_1_minimum = "yes"
 option_a = "yes"
@@ -217,8 +215,7 @@ last_line = 37
 [candidate.labels]
 answerable = "yes"
 about_area = "yes"
-needs_change = "no"
-no_giveaway = "no"
+answer_probe = { label = "yes", by = "agent", on = 2026-10-22 }
 criterion_1 = "yes"
 criterion_1_minimum = "yes"
 option_a = "yes"
@@ -323,8 +320,7 @@ last_line = 62
 [candidate.labels]
 answerable = "yes"
 about_area = "yes"
-needs_change = "yes"
-no_giveaway = "yes"
+answer_probe = { label = "no", by = "agent", on = 2026-10-22 }
 criterion_1 = "yes"
 criterion_2 = "yes"
 criterion_1_minimum = "yes"

@@ -16,7 +16,8 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{List, Paragraph, Wrap};
 use whetstone_core::{
-    ConnectedCodeLimitKb, CutOffs, CutOffsOrigin, Job, ModelId, QuestionCount, Validation,
+    AppliedCutOffs, AssessmentPolicy, ConnectedCodeLimitKb, CutOffs, CutOffsOrigin, Job, ModelId,
+    QuestionCount, Validation,
 };
 
 use crate::columns;
@@ -129,17 +130,15 @@ impl Control {
                 };
                 (format!("version {}, {validated}", policy.version()), None)
             }
-            Self::CutOffs => {
-                // Policy 0 gives every job the same cut-offs.
-                let default = CutOffs::POLICY_0;
-                match settings.assessment_policy.learner_jobs().count() {
-                    0 => (format!("{default} for every job"), Some(" (default)")),
-                    learner if learner == Job::ALL.len() => {
-                        ("from your config for every job".to_owned(), None)
-                    }
-                    _ => (format!("{default} for every other job"), Some(" (default)")),
+            Self::CutOffs => match ListedCutOffs::of(&settings.assessment_policy) {
+                ListedCutOffs::Shared(shared) => {
+                    (format!("{shared} for every job"), Some(" (default)"))
                 }
-            }
+                ListedCutOffs::SharedExcept(shared, _) => {
+                    (format!("{shared} for every other job"), Some(" (default)"))
+                }
+                ListedCutOffs::Learner(_) => ("from your config for every job".to_owned(), None),
+            },
             Self::Back => (String::new(), None),
         }
     }
@@ -147,8 +146,9 @@ impl Control {
     /// What Settings adds under the setting's value: the mark against a
     /// model `OpenRouter` refused during this run, in `refused`, the note
     /// when the policy wasn't checked against the Jev model in use, and the
-    /// cut-offs of each job the config sets, with the note that outcomes
-    /// then aren't comparable with the policy's.
+    /// cut-offs of each job the config sets or whose default differs from
+    /// the rest, with the note that outcomes aren't comparable with the
+    /// policy's when the config sets any.
     fn notes(self, settings: &Settings, refused: &RefusedModels) -> Vec<String> {
         let refused_mark = |model: &ModelId| {
             refused
@@ -168,13 +168,15 @@ impl Control {
             }
             Self::CutOffs => {
                 let policy = &settings.assessment_policy;
-                let mut notes: Vec<String> = policy
-                    .learner_jobs()
-                    .map(|job| {
-                        format!(
-                            "{job}: {} (from your config)",
-                            policy.cut_offs(job).cut_offs()
-                        )
+                let mut notes: Vec<String> = ListedCutOffs::of(policy)
+                    .listed()
+                    .iter()
+                    .map(|&(job, applied)| {
+                        let whose = match applied.origin() {
+                            CutOffsOrigin::Default => "default",
+                            CutOffsOrigin::Learner => "from your config",
+                        };
+                        format!("{job}: {} ({whose})", applied.cut_offs())
                     })
                     .collect();
                 if policy.origin() == CutOffsOrigin::Learner {
@@ -247,10 +249,9 @@ impl Control {
             ),
             Self::CutOffs => format!(
                 "For each kind of Jev check, an answer at or above upper is clear yes, at or below \
-                 lower is clear no, and unclear in between. Policy {version}'s are {} for every \
-                 job; with your own, outcomes aren't comparable with policy {version}'s. The jobs \
-                 are {}. A repository's config can't set them.",
-                CutOffs::POLICY_0,
+                 lower is clear no, and unclear in between. Each job's are policy {version}'s \
+                 unless your config sets them; with your own, outcomes aren't comparable with \
+                 policy {version}'s. The jobs are {}. A repository's config can't set them.",
                 Job::ALL.map(cut_offs_key).join(", "),
                 version = settings.assessment_policy.version(),
             ),
@@ -297,6 +298,61 @@ impl Control {
                 ))
             }
             Self::AssessmentPolicy | Self::Back => None,
+        }
+    }
+}
+
+/// How the Cut-offs row lists the cut-offs a policy applies.
+#[derive(Debug)]
+enum ListedCutOffs {
+    /// Every job at the same default.
+    Shared(CutOffs),
+    /// The default the jobs not listed share, then each job whose cut-offs
+    /// the config sets or differ from it, in [`Job::ALL`] order.
+    SharedExcept(CutOffs, Vec<(Job, AppliedCutOffs)>),
+    /// The config sets every job's, each listed in [`Job::ALL`] order.
+    Learner(Vec<(Job, AppliedCutOffs)>),
+}
+
+impl ListedCutOffs {
+    /// How Settings lists `policy`'s cut-offs. The shared default is the
+    /// one most of the jobs the config leaves out have, the first in
+    /// [`Job::ALL`] order on a tie.
+    fn of(policy: &AssessmentPolicy) -> Self {
+        let applied = Job::ALL.map(|job| (job, policy.cut_offs(job)));
+        let defaults: Vec<CutOffs> = applied
+            .iter()
+            .filter(|(_, applied)| applied.origin() == CutOffsOrigin::Default)
+            .map(|(_, applied)| applied.cut_offs())
+            .collect();
+        let mut shared: Option<(CutOffs, usize)> = None;
+        for &cut_offs in &defaults {
+            let jobs = defaults.iter().filter(|&&other| other == cut_offs).count();
+            if shared.is_none_or(|(_, most)| jobs > most) {
+                shared = Some((cut_offs, jobs));
+            }
+        }
+        let Some((shared, _)) = shared else {
+            return Self::Learner(applied.to_vec());
+        };
+        let listed: Vec<_> = applied
+            .into_iter()
+            .filter(|(_, applied)| {
+                applied.origin() == CutOffsOrigin::Learner || applied.cut_offs() != shared
+            })
+            .collect();
+        if listed.is_empty() {
+            Self::Shared(shared)
+        } else {
+            Self::SharedExcept(shared, listed)
+        }
+    }
+
+    /// The jobs listed one by one, under the row's value.
+    fn listed(&self) -> &[(Job, AppliedCutOffs)] {
+        match self {
+            Self::Shared(_) => &[],
+            Self::SharedExcept(_, listed) | Self::Learner(listed) => listed,
         }
     }
 }

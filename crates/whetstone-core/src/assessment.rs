@@ -254,7 +254,7 @@ impl fmt::Debug for WrittenReasoning {
 mod tests {
     use super::*;
     use crate::assessment_policy::{CutOffs, CutOffsOrigin};
-    use crate::question_check::tests::{candidate, depth, passing, probability};
+    use crate::question_check::tests::{candidate, depth, passing, passing_probe, probability};
     use crate::question_check::{QuestionCheckAnswers, show_rule};
 
     /// A question whose answer key is `answer_key`, with options rated
@@ -266,12 +266,9 @@ mod tests {
             let answer = if letter == answer_key { 0.95 } else { 0.03 };
             answers.push((CandidateCheck::Option(letter), probability(answer)));
         }
-        show_rule(
-            candidate,
-            QuestionCheckAnswers::new(answers, depth(1.0)),
-            AssessmentPolicy::current(),
-        )
-        .expect("shown")
+        let answers =
+            QuestionCheckAnswers::new(answers, depth(1.0)).with_probe(passing_probe(&candidate));
+        show_rule(candidate, answers, AssessmentPolicy::current()).expect("shown")
     }
 
     #[test]
@@ -365,7 +362,7 @@ mod tests {
         for applied in [criterion.cut_offs(), rating.cut_offs()] {
             assert_eq!(applied.cut_offs(), cut_offs);
             assert_eq!(applied.origin(), CutOffsOrigin::Learner);
-            assert_eq!(applied.policy().get(), 0);
+            assert_eq!(applied.policy().get(), 1);
         }
         let default = AssessmentPolicy::current().criterion_outcome(probability(0.75));
         assert_eq!(default.outcome(), CriterionOutcome::NeedsReview);
@@ -383,12 +380,9 @@ mod tests {
             Job::OptionRating,
             CutOffs::new(0.85, 0.15).expect("valid"),
         )]);
-        let question = show_rule(
-            candidate,
-            QuestionCheckAnswers::new(answers, depth(1.0)),
-            &policy,
-        )
-        .expect("shown");
+        let answers =
+            QuestionCheckAnswers::new(answers, depth(1.0)).with_probe(passing_probe(&candidate));
+        let question = show_rule(candidate, answers, &policy).expect("shown");
 
         let applied = policy.cut_offs(Job::OptionRating);
         assert_eq!(question.option_rating(OptionLetter::B).cut_offs(), applied);

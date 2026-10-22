@@ -65,8 +65,8 @@ pub use crate::question::{
     QuestionType, WrittenCandidate, WrittenCitation, WrittenCriterion, WrittenOption, plain_checks,
 };
 pub use crate::question_check::{
-    CandidateCheck, Depth, DepthLevel, InvalidDepth, Question, QuestionCheckAnswers, Withheld,
-    show_rule,
+    AnswerProbe, CandidateCheck, Depth, DepthLevel, InvalidDepth, Question, QuestionCheckAnswers,
+    Withheld, show_rule,
 };
 pub use crate::repository_config::{RepositoryConfig, RepositoryConfigError};
 pub use crate::secret::{

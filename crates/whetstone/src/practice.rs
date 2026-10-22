@@ -12,7 +12,7 @@
 //! change is worth asking about: an unclear verdict lets an area through, and only a
 //! clear no drops it. The generator writes candidates, one request per area
 //! that passed, all at once; plain checks drop the malformed ones; Jev
-//! checks each candidate left, in three calls each, all at once, and their
+//! checks each candidate left, in four calls each, all at once, and their
 //! answers make one question check per candidate; the show rule keeps the
 //! clear-cut ones; and picking chooses up to `questions` of them for the
 //! questions screen. The stage row shows where it is. On the questions
@@ -254,7 +254,7 @@ enum Stage {
     /// order: what passed the plain checks.
     Writing(Vec<Request<Vec<Candidate>>>),
     /// Jev checks each candidate that passed the plain checks, in the order
-    /// written, area by area, in its question check's three calls, in
+    /// written, area by area, in its question check's four calls, in
     /// [`QuestionCheckCall::ALL`] order.
     Checking(Vec<(Candidate, CheckCalls)>),
     /// The questions picked.
@@ -281,7 +281,7 @@ impl Stage {
     }
 }
 
-/// The requests of the three calls of one candidate's question check, each
+/// The requests of the four calls of one candidate's question check, each
 /// with its call, in [`QuestionCheckCall::ALL`] order.
 type CheckCalls = [(QuestionCheckCall, Request<CheckCallAnswers>); QuestionCheckCall::ALL.len()];
 

@@ -504,7 +504,7 @@ mod tests {
 
     /// The recorded reply to each call of the sample candidate's check, and
     /// the tokens and cost it reports.
-    fn recorded_checks() -> [(QuestionCheckCall, &'static str, Usage, f64); 3] {
+    fn recorded_checks() -> [(QuestionCheckCall, &'static str, Usage, f64); 4] {
         let usage = |input, output| Usage {
             input_tokens: Some(input),
             output_tokens: Some(output),
@@ -514,8 +514,8 @@ mod tests {
             (
                 QuestionCheckCall::OptionRatings,
                 recorded(QuestionCheckCall::OptionRatings),
-                usage(1563, 74),
-                0.000_065_646,
+                usage(1445, 55),
+                0.000_060_69,
             ),
             (
                 QuestionCheckCall::Hint,
@@ -526,14 +526,20 @@ mod tests {
             (
                 QuestionCheckCall::Candidate,
                 recorded(QuestionCheckCall::Candidate),
-                usage(2952, 250),
-                0.000_123_984,
+                usage(2878, 233),
+                0.000_120_876,
+            ),
+            (
+                QuestionCheckCall::AnswerProbe,
+                recorded(QuestionCheckCall::AnswerProbe),
+                usage(485, 39),
+                0.000_020_37,
             ),
         ]
     }
 
     #[tokio::test]
-    async fn jev_checks_a_candidate_in_three_calls_each_with_the_model_it_was_asked_and_what_it_cost()
+    async fn jev_checks_a_candidate_in_four_calls_each_with_the_model_it_was_asked_and_what_it_cost()
      {
         let candidate = candidate();
         let mut answers = Vec::new();
@@ -545,8 +551,16 @@ mod tests {
                 .await
                 .expect("the recorded reply decodes");
 
-            let answered: Vec<CandidateCheck> =
-                reply.content.iter().map(|(check, _)| check).collect();
+            let answered: Vec<CandidateCheck> = candidate
+                .checks()
+                .into_iter()
+                .filter(|&check| {
+                    reply
+                        .content
+                        .answer(check, candidate.answer_key())
+                        .is_some()
+                })
+                .collect();
             assert_eq!(answered, call.checks(&candidate), "{call:?}");
             assert_eq!(
                 without_exchanges(&reply.provenance),
@@ -563,7 +577,11 @@ mod tests {
         }
 
         let answers = CheckCallAnswers::merged(answers).expect("each call's answers once");
-        let answered: Vec<CandidateCheck> = answers.iter().map(|(check, _)| check).collect();
+        let answered: Vec<CandidateCheck> = candidate
+            .checks()
+            .into_iter()
+            .filter(|&check| answers.answer(check, candidate.answer_key()).is_some())
+            .collect();
         assert_eq!(answered, candidate.checks(), "an answer to every check");
         let rating = |letter| {
             answers
@@ -580,14 +598,15 @@ mod tests {
         );
         assert_eq!(
             answers
-                .get(CandidateCheck::NoGiveaway)
+                .answer(CandidateCheck::AnswerProbe, candidate.answer_key())
                 .map(Probability::get),
-            Some(0.2)
+            Some(1.0),
+            "the answer probe's probability on the answer key"
         );
         let probability = |value| Probability::new(value).expect("from 0 to 1");
         assert_eq!(
             answers.depth(),
-            Depth::new([0.12, 0.3, 0.58].map(probability), 1.46).expect("from 0 to 2"),
+            Depth::new([0.12, 0.26, 0.62].map(probability), 1.5).expect("from 0 to 2"),
             "the depth's distribution and expected value, as returned"
         );
     }
@@ -619,7 +638,6 @@ mod tests {
         for answer in [
             ("option_a", 0.99),
             ("option_b", 0.01),
-            ("no_giveaway", 0.2),
             ("hint_hides_answer_key", 0.27),
             ("criterion_2_minimum", 0.92),
         ] {
@@ -628,7 +646,21 @@ mod tests {
                 "{answer:?}, as returned: {answers:?}"
             );
         }
-        assert_eq!(answers.len(), 17, "every yes/no question: {answers:?}");
+        assert_eq!(answers.len(), 15, "every yes/no question: {answers:?}");
+        let probe = kept.iter().find_map(|exchange| match exchange {
+            JevExchange::Choice { name, answer, .. } if name == "answer_probe" => Some(answer),
+            JevExchange::YesNo { .. } | JevExchange::Score { .. } | JevExchange::Choice { .. } => {
+                None
+            }
+        });
+        assert_eq!(
+            probe.map(|answer| answer
+                .iter()
+                .map(|(label, answer)| (label.as_str(), answer.get()))
+                .collect::<Vec<_>>()),
+            Some(vec![("A", 1.0), ("B", 0.0), ("C", 0.0)]),
+            "the answer probe's probability for each option, as returned"
+        );
         let probability = |value| Probability::new(value).expect("from 0 to 1");
         let depth = kept.iter().find_map(|exchange| match exchange {
             JevExchange::Score { name, answer, .. } if name == "depth" => Some(*answer),
@@ -638,7 +670,7 @@ mod tests {
         });
         assert_eq!(
             depth,
-            Some(Depth::new([0.12, 0.3, 0.58].map(probability), 1.46).expect("from 0 to 2")),
+            Some(Depth::new([0.12, 0.26, 0.62].map(probability), 1.5).expect("from 0 to 2")),
             "the depth's distribution and expected value, as returned"
         );
     }
@@ -1388,7 +1420,7 @@ mod tests {
             log.contains("cost_usd=0.036766"),
             "the generator's cost: {log}"
         );
-        assert!(log.contains("cost_usd=6.5646e-5"), "Jev's cost: {log}");
+        assert!(log.contains("cost_usd=6.069e-5"), "Jev's cost: {log}");
         assert!(log.contains("cost_usd=5.1828e-5"), "the gate's cost: {log}");
         assert!(log.contains("request=1"), "Whetstone's identity: {log}");
         assert!(

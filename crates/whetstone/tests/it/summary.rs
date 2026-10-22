@@ -295,14 +295,14 @@ fn the_cost_adds_up_what_each_reply_reported_for_jev_and_for_the_generator() {
 
     let session = answered_and_finished(&ai, 3);
 
-    // Jev's gate, three checks of three calls each and three evaluations,
+    // Jev's gate, three checks of four calls each and three evaluations,
     // and the generator's one write.
     assert_eq!(
         cost(&session),
         [
-            ["Jev", "$0.000156"],
+            ["Jev", "$0.000192"],
             ["Generator", "$0.0774"],
-            ["Total", "$0.077556"],
+            ["Total", "$0.077592"],
         ]
     );
 }
@@ -332,15 +332,15 @@ fn the_cost_says_how_many_requests_reported_none_a_failed_one_too_and_never_esti
 
     let session = answered_and_finished(&ai, 3);
 
-    // Jev's gate, three checks of three calls each and two evaluations
+    // Jev's gate, three checks of four calls each and two evaluations
     // reported theirs; the generator's write reported none, and the failed
     // evaluation had no reply.
     assert_eq!(
         cost(&session),
         [
-            ["Jev", "$0.000144 · not reported for 1 request"],
+            ["Jev", "$0.00018 · not reported for 1 request"],
             ["Generator", "$0.00 · not reported for 1 request"],
-            ["Total", "$0.000144 · not reported for 2 requests"],
+            ["Total", "$0.00018 · not reported for 2 requests"],
         ]
     );
     assert_eq!(
@@ -363,15 +363,15 @@ fn an_evaluation_the_learner_cancelled_counts_as_a_request_that_reported_no_cost
 
     activate(&mut session, "Finish");
 
-    // The gate, three checks of three calls each and two evaluations, and
+    // The gate, three checks of four calls each and two evaluations, and
     // the write: the cancelled evaluation's cost, if it had one, never
     // came.
     assert_eq!(
         cost(&session),
         [
-            ["Jev", "$3.00 · not reported for 1 request"],
+            ["Jev", "$3.75 · not reported for 1 request"],
             ["Generator", "$1.50"],
-            ["Total", "$4.50 · not reported for 1 request"],
+            ["Total", "$5.25 · not reported for 1 request"],
         ]
     );
 }

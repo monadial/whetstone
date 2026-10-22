@@ -1,10 +1,11 @@
 //! The full question check, against a scripted AI: a candidate is shown
-//! only when Jev answers clear yes to every check apart from its hint's
-//! (answerable from the evidence that was sent, about its area, needs this
-//! change, doesn't give the answer away, each criterion, each rationale and
-//! "why it matters") and its option ratings pick out its answer key alone.
-//! Anything unclear withholds it. A hint that fails its checks never
-//! withholds its question.
+//! only when Jev answers clear yes to every yes/no check apart from its
+//! hint's (answerable from the evidence that was sent, about its area, each
+//! criterion, each rationale and "why it matters"), its option ratings pick
+//! out its answer key alone, and the answer probe isn't clear yes on its
+//! answer key: Jev can't confidently choose the answer without reading the
+//! change. Anything else unclear withholds it. A hint that fails its checks
+//! never withholds its question.
 
 use std::sync::Arc;
 
@@ -99,13 +100,33 @@ fn a_question_not_about_its_area_is_withheld() {
 }
 
 #[test]
-fn a_question_that_general_knowledge_answers_without_this_change_is_withheld() {
-    assert_withheld_unless_clear_yes(&tested(), CandidateCheck::NeedsChange);
+fn a_question_jev_answers_without_reading_the_change_is_withheld() {
+    for on_key in [0.60, 0.75, 1.0] {
+        let mut session = prepared(tested(), [answer(CandidateCheck::AnswerProbe, on_key)]);
+
+        assert_eq!(
+            session.question().rows()[1].trim(),
+            "3 passed checks, 4 asked for · see why in actions",
+            "the answer key at {on_key}"
+        );
+        assert!(!is_shown(&mut session), "the answer key at {on_key}");
+    }
 }
 
 #[test]
-fn a_question_whose_stem_and_options_give_the_answer_away_is_withheld() {
-    assert_withheld_unless_clear_yes(&tested(), CandidateCheck::NoGiveaway);
+fn a_question_jev_cannot_confidently_answer_without_the_change_is_shown() {
+    // Unclear or clear no on the answer key: the other options share the
+    // rest, so at 0.05 Jev picks one of them.
+    for on_key in [0.59, 0.33, 0.20, 0.05] {
+        let mut session = prepared(tested(), [answer(CandidateCheck::AnswerProbe, on_key)]);
+
+        assert!(is_shown(&mut session), "the answer key at {on_key}");
+        assert!(
+            !session.text().contains("asked for"),
+            "no shortfall: {}",
+            session.text()
+        );
+    }
 }
 
 #[test]
@@ -139,8 +160,7 @@ fn a_question_whose_checks_are_all_at_the_cut_offs_is_shown() {
         [
             (Answerable, 0.80),
             (AboutArea, 0.80),
-            (NeedsChange, 0.80),
-            (NoGiveaway, 0.80),
+            (AnswerProbe, 0.59),
             (Criterion(0), 0.80),
             (Option(OptionLetter::A), 0.80),
             (Option(OptionLetter::B), 0.20),

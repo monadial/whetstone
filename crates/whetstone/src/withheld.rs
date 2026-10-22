@@ -7,14 +7,15 @@
 //!
 //! Each check that withholds a candidate is worded here alone, with one
 //! sentence for each way Jev can answer it against the show rule: "Jev
-//! said …" for a clear answer, "Jev couldn't tell whether …" for an
-//! unclear one. The hint's checks never withhold a candidate, so they are
+//! said …" for a clear answer, or for the answer probe "Jev chose the
+//! answer without reading the change", and "Jev couldn't tell whether …"
+//! for an unclear one. The hint's checks never withhold a candidate, so they are
 //! never a reason. A criterion is dropped only when Jev clearly says it asks
 //! for more than the question needs, or doesn't answer, and those checks
 //! withhold the candidate only when every criterion is dropped. So they give
 //! one reason, as unclear as the least clear of them: that Jev said every
 //! criterion asks for more, or, if it left one unanswered, that it didn't
-//! answer. The reasons say whose cut-offs decided, policy 0's or the
+//! answer. The reasons say whose cut-offs decided, the policy's or the
 //! learner's own from config, and never a probability or a cut-off:
 //! Settings and Inspect hold the numbers.
 
@@ -130,8 +131,7 @@ struct Reason {
 enum Asks {
     Answerable,
     AboutArea,
-    NeedsChange,
-    NoGiveaway,
+    AnswerProbe,
     Criterion,
     CriterionMinimum,
     AnswerKey,
@@ -145,7 +145,7 @@ enum Asks {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Answered {
     /// Clearly, against what the show rule needs: no, or, for an option
-    /// besides the answer key, yes.
+    /// besides the answer key and for the answer probe, yes.
     Clearly,
     /// Unclearly: Jev couldn't tell.
     Unclearly,
@@ -156,9 +156,9 @@ enum Answered {
 impl Reason {
     /// The plain sentence that gives it.
     fn sentence(self) -> String {
-        let (whether, said) = self.asks.words();
+        let (whether, clearly) = self.asks.words();
         match self.answered {
-            Answered::Clearly => format!("Jev said {said}"),
+            Answered::Clearly => format!("Jev {clearly}"),
             Answered::Unclearly => format!("Jev couldn't tell whether {whether}"),
             Answered::Not => format!("Jev didn't answer whether {whether}"),
         }
@@ -172,8 +172,7 @@ impl Asks {
         Some(match check {
             CandidateCheck::Answerable => Self::Answerable,
             CandidateCheck::AboutArea => Self::AboutArea,
-            CandidateCheck::NeedsChange => Self::NeedsChange,
-            CandidateCheck::NoGiveaway => Self::NoGiveaway,
+            CandidateCheck::AnswerProbe => Self::AnswerProbe,
             CandidateCheck::Criterion(_) => Self::Criterion,
             CandidateCheck::CriterionMinimum(_) => Self::CriterionMinimum,
             CandidateCheck::Option(letter) if letter == answer_key => Self::AnswerKey,
@@ -186,51 +185,47 @@ impl Asks {
         })
     }
 
-    /// Its words: what it asks, after "whether", and what Jev said, after
-    /// "Jev said", when it answered clearly against the show rule.
+    /// Its words: what it asks, after "whether", and what Jev did, after
+    /// "Jev", when it answered clearly against the show rule.
     fn words(self) -> (&'static str, &'static str) {
         match self {
             Self::Answerable => (
                 "the question can be answered from the evidence",
-                "the question can't be answered from the evidence",
+                "said the question can't be answered from the evidence",
             ),
             Self::AboutArea => (
                 "the question is about its area",
-                "the question isn't about its area",
+                "said the question isn't about its area",
             ),
-            Self::NeedsChange => (
-                "the question needs this change",
-                "the question doesn't need this change",
-            ),
-            Self::NoGiveaway => (
-                "the options give the answer away",
-                "the options give the answer away",
+            Self::AnswerProbe => (
+                "the answer can be chosen without reading the change",
+                "chose the answer without reading the change",
             ),
             Self::Criterion => (
                 "a rubric criterion follows from the evidence and can be judged from written \
                  reasoning",
-                "a rubric criterion doesn't follow from the evidence, or can't be judged from \
-                 written reasoning",
+                "said a rubric criterion doesn't follow from the evidence, or can't be judged \
+                 from written reasoning",
             ),
             Self::CriterionMinimum => (
                 "any rubric criterion asks only for what the question needs",
-                "every rubric criterion asks for more than the question needs",
+                "said every rubric criterion asks for more than the question needs",
             ),
             Self::AnswerKey => (
                 "the answer key answers the question",
-                "the answer key doesn't answer the question",
+                "said the answer key doesn't answer the question",
             ),
             Self::OtherOption => (
                 "an option besides the answer key answers the question",
-                "an option besides the answer key answers the question",
+                "said an option besides the answer key answers the question",
             ),
             Self::Rationale => (
                 "an option's rationale is supported by the evidence",
-                "an option's rationale isn't supported by the evidence",
+                "said an option's rationale isn't supported by the evidence",
             ),
             Self::WhyItMatters => (
                 "\"why it matters\" is supported by the evidence",
-                "\"why it matters\" isn't supported by the evidence",
+                "said \"why it matters\" isn't supported by the evidence",
             ),
         }
     }

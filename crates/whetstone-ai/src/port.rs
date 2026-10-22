@@ -62,12 +62,14 @@ pub trait Ai: fmt::Debug + Send + Sync {
     ) -> Pending<Vec<WrittenCandidate>>;
 
     /// One call of Jev's question check of `candidate` against `evidence`:
-    /// a yes/no answer to each of [`Candidate::checks`] that `call` asks
-    /// and, for the candidate call, the depth, as returned. A question check
-    /// is three calls, sent together, each sent only what its questions are
+    /// an answer to each of [`Candidate::checks`] that `call` asks, a yes/no
+    /// answer or, for the answer probe, a probability for each option, and,
+    /// for the candidate call, the depth, as returned. A question check is
+    /// four calls, sent together, each sent only what its questions are
     /// about ([`QuestionCheckCall`]), so the option ratings never see the
-    /// answer key. [`CheckCallAnswers::merged`] makes the three calls'
-    /// answers one [`QuestionCheckAnswers`].
+    /// answer key, and the answer probe sees only the stem and the options'
+    /// text. [`CheckCallAnswers::merged`] makes the four calls' answers one
+    /// [`QuestionCheckAnswers`].
     ///
     /// [`QuestionCheckAnswers`]: whetstone_core::QuestionCheckAnswers
     fn check_question(

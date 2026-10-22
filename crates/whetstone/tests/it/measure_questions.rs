@@ -320,11 +320,11 @@ fn a_row_reads_what_the_app_logs_about_each_candidate() {
     ai.on_check_passing_except(
         &stems[1],
         [
-            answer(CandidateCheck::NoGiveaway, 0.5),
-            answer(CandidateCheck::NeedsChange, 0.1),
+            answer(CandidateCheck::AnswerProbe, 0.7),
+            answer(CandidateCheck::AboutArea, 0.1),
         ],
     );
-    ai.on_check_passing_except(&stems[2], [answer(CandidateCheck::NoGiveaway, 0.4)]);
+    ai.on_check_passing_except(&stems[2], [answer(CandidateCheck::AnswerProbe, 0.6)]);
 
     let ((), lines) = capture(|| {
         generate(&ai, &[DOMAIN], PAYMENT_LIFECYCLE, 120, 32).settle();
@@ -333,7 +333,7 @@ fn a_row_reads_what_the_app_logs_about_each_candidate() {
     // A scripted AI logs none of its replies: no tokens, Jev calls or cost.
     assert_eq!(
         row("Model the payment lifecycle", "domain", "passed", &lines),
-        "| Model the payment lifecycle | domain | passed | 4 | 1 | 2 | NeedsChange 1 (ClearNo 1); \
-         NoGiveaway 2 (Unclear 2) | 1 | 1 | 0 / 0 | 0 | 0.0000 |"
+        "| Model the payment lifecycle | domain | passed | 4 | 1 | 2 | AboutArea 1 (ClearNo 1); \
+         AnswerProbe 2 (ClearYes 2) | 1 | 1 | 0 / 0 | 0 | 0.0000 |"
     );
 }

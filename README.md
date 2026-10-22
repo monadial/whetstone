@@ -97,21 +97,25 @@ model = "typesafe/jev-1.14"
 [generator]
 model = "anthropic/claude-sonnet-5.5"
 
-# The assessment policy's cut-offs for each kind of Jev check, policy 0's by
-# default: an answer at or above upper is clear yes, at or below lower is clear
+# The assessment policy's cut-offs for each kind of Jev check, the policy's own
+# by default: an answer at or above upper is clear yes, at or below lower is clear
 # no, and unclear in between. Each is a number from 0 to 1, with lower below
-# upper. Your own make outcomes not comparable with policy 0's, and every
+# upper. Your own make outcomes not comparable with the policy's, and every
 # outcome records the cut-offs that banded it. A repository's config can't set them.
+# The answer probe is Jev answering a question from its stem and options alone,
+# without the change; its probability on the answer key at or above upper
+# withholds the question.
 [cut_offs]
 relevance_gate = { upper = 0.80, lower = 0.20 }
 question_check = { upper = 0.80, lower = 0.20 }
+answer_probe = { upper = 0.60, lower = 0.20 }
 option_rating = { upper = 0.80, lower = 0.20 }
 rationale_and_hint_checks = { upper = 0.80, lower = 0.20 }
 reasoning_criterion = { upper = 0.80, lower = 0.20 }
 explanation_check = { upper = 0.80, lower = 0.20 }
 ```
 
-Settings also says how far to trust the outcomes: the assessment policy's version, whether its cut-offs have been validated against labelled examples, each job's cut-offs, marked default or from your config, a note when any of them isn't policy 0's, and a note when `[jev] model` isn't `typesafe/jev-1.14`, the model the policy was checked against. A model OpenRouter refuses for having no zero-retention endpoint is marked there until Whetstone quits.
+Settings also says how far to trust the outcomes: the assessment policy's version, whether its cut-offs have been validated against labelled examples, each job's cut-offs, marked default or from your config, a note when any of them isn't the policy's, and a note when `[jev] model` isn't `typesafe/jev-1.14`, the model the policy was checked against. A model OpenRouter refuses for having no zero-retention endpoint is marked there until Whetstone quits.
 
 The OpenRouter key never goes in the file. Set `OPENROUTER_API_KEY` in your shell; Settings shows only whether it is set. Whetstone writes nothing to disk except its log and your votes on withheld questions (`labels.toml`), both in `$XDG_STATE_HOME/whetstone/` (by default `~/.local/state/whetstone/`), and the area files `whetstone areas init` copies.
 

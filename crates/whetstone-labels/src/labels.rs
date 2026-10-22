@@ -1173,7 +1173,7 @@ labels = { option_a = "yes" }
 
     #[test]
     fn a_learner_vote_reads_its_source_and_the_commit_of_the_learner_s_own_repository() {
-        let showcase = parse(&crate::samples::vote("", "no_giveaway = \"yes\"\n")).unwrap();
+        let showcase = parse(&crate::samples::vote("", "answer_probe = \"yes\"\n")).unwrap();
         let [vote] = showcase.candidates() else {
             panic!("expected one candidate: {showcase:?}");
         };
@@ -1186,7 +1186,7 @@ labels = { option_a = "yes" }
 
         let own = parse(&crate::samples::vote(
             "commit_id = \"0123456789abcdef0123456789abcdef01234567\"\n",
-            "no_giveaway = \"yes\"\n",
+            "answer_probe = \"yes\"\n",
         ))
         .unwrap();
         assert_eq!(
@@ -1195,7 +1195,7 @@ labels = { option_a = "yes" }
         );
         let short = parse(&crate::samples::vote(
             "commit_id = \"0123456\"\n",
-            "no_giveaway = \"yes\"\n",
+            "answer_probe = \"yes\"\n",
         ))
         .unwrap_err();
         assert_eq!(
@@ -1220,7 +1220,7 @@ labels = { option_a = "yes" }
             "seeds.toml, line 2: `commit_id` names a commit of a learner's own repository, which \
              only a learner vote (`source = \"learner vote\"`) is about"
         );
-        let unknown = crate::samples::vote("", "no_giveaway = \"yes\"\n")
+        let unknown = crate::samples::vote("", "answer_probe = \"yes\"\n")
             .replace("source = \"learner vote\"", "source = \"agent\"");
         assert_eq!(
             parse(&unknown).unwrap_err().to_string(),

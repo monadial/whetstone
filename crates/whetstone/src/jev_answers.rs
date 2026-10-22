@@ -2,9 +2,10 @@
 //! answers about the question, from its question check, the evaluation of
 //! the learner's reasoning and the check of its explanation. Each shows as
 //! Jev returned it, a probability or, for depth, a distribution with its
-//! expected level, with its band under the assessment policy, then each
-//! request's models, the policy's version and the cut-offs that banded the
-//! answers, each job's marked as the policy's or from the learner's config.
+//! expected level, and for the answer probe a probability for each option,
+//! with its band under the assessment policy, then each request's models,
+//! the policy's version and the cut-offs that banded the answers, each
+//! job's marked as the policy's or from the learner's config.
 //!
 //! It is labelled "Jev's probability, not a measure of correctness", as
 //! feedback gives only the words the bands lead to and never a number. The
@@ -92,15 +93,42 @@ fn question_check(question: &Question, requests: &[SentRequest]) -> Section {
             policy.version(),
         ),
         cut_offs_line(Job::QuestionCheck, policy.cut_offs(Job::QuestionCheck)),
+        cut_offs_line(Job::AnswerProbe, policy.cut_offs(Job::AnswerProbe)),
         cut_offs_line(Job::OptionRating, policy.cut_offs(Job::OptionRating)),
         cut_offs_line(
             Job::RationaleAndHintChecks,
             policy.cut_offs(Job::RationaleAndHintChecks),
         ),
     ];
-    lines.extend(question.answers().iter().map(|(check, answer)| {
+    let yes_no = |(check, answer): (CandidateCheck, Probability)| {
         answered(&statement(check), answer, policy.band(check.job(), answer))
-    }));
+    };
+    // The answer probe, check 3, is a choice, so each option has Jev's
+    // probability, and only the answer key's is banded.
+    let (before, after): (Vec<_>, Vec<_>) = question
+        .answers()
+        .iter()
+        .partition(|&(check, _)| check < CandidateCheck::AnswerProbe);
+    lines.extend(before.into_iter().map(yes_no));
+    if let Some(probe) = question.answers().probe() {
+        lines.extend(probe.iter().map(|(letter, answer)| {
+            if letter == question.answer_key() {
+                answered(
+                    &format!(
+                        "Without reading the change, Jev chose option {letter}, the answer key"
+                    ),
+                    answer,
+                    policy.band(Job::AnswerProbe, answer),
+                )
+            } else {
+                format!(
+                    "Without reading the change, Jev chose option {letter} · {}",
+                    answer.get()
+                )
+            }
+        }));
+    }
+    lines.extend(after.into_iter().map(yes_no));
     // The answers number the criteria as the generator wrote them, and the
     // reasoning only those the show rule kept. The show rule drops a
     // criterion only on a clear no, or on no answer at all.
@@ -266,8 +294,7 @@ pub(crate) fn statement(check: CandidateCheck) -> String {
     match check {
         CandidateCheck::Answerable => "Answerable from the evidence sent".to_owned(),
         CandidateCheck::AboutArea => "About its area".to_owned(),
-        CandidateCheck::NeedsChange => "Needs this change, not general knowledge".to_owned(),
-        CandidateCheck::NoGiveaway => "The stem and options don't give the answer away".to_owned(),
+        CandidateCheck::AnswerProbe => "Jev chose the answer without reading the change".to_owned(),
         CandidateCheck::Criterion(index) => format!(
             "Criterion {} follows from the evidence and the answer key",
             index + 1

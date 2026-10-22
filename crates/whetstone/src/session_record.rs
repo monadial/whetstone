@@ -564,10 +564,10 @@ impl fmt::Debug for Report {
 #[cfg(test)]
 mod tests {
     use whetstone_core::{
-        AreaId, AssessmentPolicy, CandidateCheck, Change, ConnectedCodeLimit, Connections, Depth,
-        ExcludePatterns, OptionLetter, Probability, QuestionCheckAnswers, QuestionType,
-        ReviewChoices, TouchedFile, WrittenCandidate, WrittenCitation, WrittenCriterion,
-        WrittenOption, plain_checks, show_rule,
+        AnswerProbe, AreaId, AssessmentPolicy, CandidateCheck, Change, ConnectedCodeLimit,
+        Connections, Depth, ExcludePatterns, OptionLetter, Probability, QuestionCheckAnswers,
+        QuestionType, ReviewChoices, TouchedFile, WrittenCandidate, WrittenCitation,
+        WrittenCriterion, WrittenOption, plain_checks, show_rule,
     };
 
     use super::*;
@@ -643,9 +643,11 @@ mod tests {
                     })
                     .collect();
                 let depth = Depth::new([0.2, 0.3, 0.5].map(probability), 1.3).expect("0 to 2");
+                // Jev can't pick the answer key, B, without the evidence.
+                let probe = AnswerProbe::new([0.45, 0.1, 0.45].map(probability));
                 show_rule(
                     candidate,
-                    QuestionCheckAnswers::new(answers, depth),
+                    QuestionCheckAnswers::new(answers, depth).with_probe(probe),
                     AssessmentPolicy::current(),
                 )
                 .expect("every check passes")

@@ -213,7 +213,7 @@ impl ReviewWithheld {
             .map(|&band| jev_answers::band_name(band))
             .collect::<Vec<_>>()
             .join(" or ");
-        let banded = match (withheld.answers().get(check), withheld.band(check)) {
+        let banded = match (withheld.answer(check), withheld.band(check)) {
             (Some(answer), Some(band)) => {
                 format!(
                     "{} · {} · it needed {needed}",

@@ -23,7 +23,7 @@
 //! - [`gate_request`] and [`gate_answers`] ask the relevance gate;
 //! - [`candidates_request`] and [`CandidatesOutput`] write candidates;
 //! - [`question_check_request`] and [`question_check_answers`] check one,
-//!   in three calls ([`QuestionCheckCall`]), whose answers
+//!   in four calls ([`QuestionCheckCall`]), whose answers
 //!   [`CheckCallAnswers::merged`] makes one;
 //! - [`reasoning_request`] and [`reasoning_answers`] assess a response's
 //!   reasoning;
