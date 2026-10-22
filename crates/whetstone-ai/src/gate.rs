@@ -168,7 +168,7 @@ mod tests {
 
         assert_eq!(
             answers,
-            [("domain", 0.89), ("observability", 0.07)].map(|(id, answer)| (
+            [("domain", 0.86), ("observability", 0.07)].map(|(id, answer)| (
                 id.parse().expect("a valid area ID"),
                 Probability::new(answer).expect("a probability")
             ))

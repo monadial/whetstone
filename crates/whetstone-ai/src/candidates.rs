@@ -247,8 +247,10 @@ mod tests {
         let first = &written[0];
         assert_eq!(
             first.stem,
-            "A charge request times out, but the provider had already recorded it before the \
-             response was lost. What does charge_with_retry return after its second request?"
+            "In `charge_with_retry`, the retry after a timeout sends a key to `Client::charge`. \
+             Given how `charge` documents the provider's handling of keys, what does the provider \
+             do with this retry request if the first request had already reached it and been \
+             processed?"
         );
         assert_eq!(
             first
@@ -264,18 +266,18 @@ mod tests {
             first.citations,
             [
                 WrittenCitation {
-                    path: "src/payments/retry.rs".to_owned(),
-                    first_line: 1,
-                    last_line: 9,
-                },
-                WrittenCitation {
                     path: "src/payments/client.rs".to_owned(),
                     first_line: 12,
                     last_line: 16,
                 },
+                WrittenCitation {
+                    path: "src/payments/retry.rs".to_owned(),
+                    first_line: 3,
+                    last_line: 6,
+                },
             ]
         );
-        assert_eq!(written[1].answer_key, "A");
+        assert_eq!(written[1].answer_key, "B");
         let checked = plain_checks(area().id(), written, &evidence());
         assert_eq!(checked.passed().len(), 2);
     }

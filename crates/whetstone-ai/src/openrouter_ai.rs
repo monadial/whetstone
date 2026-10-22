@@ -429,8 +429,10 @@ mod tests {
         assert_eq!(reply.content.len(), 2);
         assert_eq!(
             reply.content[0].stem,
-            "A charge request times out, but the provider had already recorded it before the \
-             response was lost. What does charge_with_retry return after its second request?"
+            "In `charge_with_retry`, the retry after a timeout sends a key to `Client::charge`. \
+             Given how `charge` documents the provider's handling of keys, what does the provider \
+             do with this retry request if the first request had already reached it and been \
+             processed?"
         );
         assert_eq!(
             *reply.provenance,
@@ -441,14 +443,14 @@ mod tests {
                 versions()
             )
             .with_generation(GenerationId::new(
-                "gen-1792574742-6mTYp6eLYi65k1QVjIP4".to_owned()
+                "gen-1792670964-HzLHGAAFUQDeQCiQbrYA".to_owned()
             ))
             .with_reported_model(ModelId::new("anthropic/claude-sonnet-5.5".to_owned()))
             .with_usage(Usage {
-                input_tokens: Some(4818),
-                output_tokens: Some(2713),
+                input_tokens: Some(5406),
+                output_tokens: Some(1357),
             })
-            .with_cost(Cost::new(0.036_766).expect("0.036766 is a cost"))
+            .with_cost(Cost::new(0.024_382).expect("0.024382 is a cost"))
         );
         let (_, body) = received(&server).await;
         assert_eq!(body["model"], generator_model().as_str());
@@ -469,8 +471,8 @@ mod tests {
             .await
             .expect("the recorded reply decodes");
 
-        // The recorded reply's second candidate has its correct option at A;
-        // the shuffle moves it to C, and the option written at C to A.
+        // The recorded reply's second candidate has its correct option at B;
+        // the shuffle moves it to C, and the option written at C to B.
         let second = &reply.content[1];
         assert_eq!(second.answer_key, "C");
         let options: Vec<(&str, &str, &str)> = second
@@ -487,17 +489,9 @@ mod tests {
         assert_eq!(
             options,
             [
-                (
-                    "A",
-                    "It confirms that the retry returns first receipt",
-                    "Wrong"
-                ),
-                ("B", "It confirms that both requests carry one key", "Wrong"),
-                (
-                    "C",
-                    "It confirms that two charge requests are made",
-                    "Correct"
-                ),
+                ("A", "A new key generated for the retry attempt", "Wrong"),
+                ("B", "A key derived from the charge amount", "Wrong"),
+                ("C", "The same key the first attempt carried", "Correct"),
             ]
         );
     }
@@ -692,7 +686,7 @@ mod tests {
             .collect();
         assert_eq!(
             answers,
-            [("domain", 0.89), ("observability", 0.07)],
+            [("domain", 0.86), ("observability", 0.07)],
             "an answer per area, in the areas' order, as returned"
         );
         assert_eq!(
@@ -700,16 +694,16 @@ mod tests {
             Provenance::new(stamp().request, Role::Jev, jev_model(), versions())
                 .with_reported_model(ModelId::new("typesafe/jev-1.14-20261014".to_owned()))
                 .with_usage(Usage {
-                    input_tokens: Some(1234),
+                    input_tokens: Some(1318),
                     output_tokens: Some(39),
                 })
-                .with_cost(Cost::new(0.000_051_828).expect("0.000051828 is a cost"))
+                .with_cost(Cost::new(0.000_055_356).expect("0.000055356 is a cost"))
         );
         let (_, body) = received(&server).await;
         assert_kept_as_sent(reply.provenance.exchanges(), &body);
         assert_eq!(
             yes_no_answers(reply.provenance.exchanges()),
-            [("domain", 0.89), ("observability", 0.07)],
+            [("domain", 0.86), ("observability", 0.07)],
             "each answer as returned"
         );
         assert_eq!(body["model"], jev_model().as_str());
@@ -1421,14 +1415,14 @@ mod tests {
         let log = log.text();
         assert!(log.contains("OpenRouter replied"), "{log}");
         assert!(
-            log.contains("cost_usd=0.036766"),
+            log.contains("cost_usd=0.024382"),
             "the generator's cost: {log}"
         );
         assert!(log.contains("cost_usd=6.069e-5"), "Jev's cost: {log}");
-        assert!(log.contains("cost_usd=5.1828e-5"), "the gate's cost: {log}");
+        assert!(log.contains("cost_usd=5.5356e-5"), "the gate's cost: {log}");
         assert!(log.contains("request=1"), "Whetstone's identity: {log}");
         assert!(
-            log.contains("gen-1792574742-6mTYp6eLYi65k1QVjIP4"),
+            log.contains("gen-1792670964-HzLHGAAFUQDeQCiQbrYA"),
             "OpenRouter's generation ID: {log}"
         );
         for never in [
@@ -1436,7 +1430,7 @@ mod tests {
             // about an area, and an explanation check's.
             "0.99",
             "1.47",
-            "0.89",
+            "0.86",
             "0.71",
             // The key.
             crate::replay::TEST_KEY,
@@ -1450,8 +1444,8 @@ mod tests {
             "let key = original.key.clone();",
             // A candidate sent to Jev, and one the generator wrote.
             "Why does the retry in `charge_with_retry`",
-            "A charge request times out, but the provider had already recorded it",
-            "It confirms that two charge requests are made",
+            "the retry after a timeout sends a key to `Client::charge`",
+            "The same key the first attempt carried",
             // The learner's reasoning, and the explanation of it.
             REASONING,
             &explained[0].text,
