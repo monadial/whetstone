@@ -5,9 +5,9 @@
 # on Linux x86_64. Clippy, nextest (including the pseudo-terminal smoke test)
 # and doc tests run on Linux and macOS, each on x86_64 and arm64.
 #
-# The repository is private, so macOS minutes cost more: macOS runs only the
-# platform matrix, reuses a dependency cache, and is cancelled when a newer
-# commit is pushed to the same pull request.
+# macOS runners are the slowest to start and to build on, so macOS runs only
+# the platform matrix, reuses a dependency cache, and is cancelled when a
+# newer commit is pushed to the same pull request.
 name: CI
 
 on:
@@ -92,7 +92,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
-      # One failing platform cancels the rest, to save macOS minutes.
+      # One failing platform cancels the rest, to free the macOS runners.
       fail-fast: true
       matrix:
         include:
