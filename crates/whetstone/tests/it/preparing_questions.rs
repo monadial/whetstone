@@ -731,48 +731,56 @@ fn retry_after_a_failed_write_asks_again_only_for_the_area_that_failed() {
 
 #[test]
 fn retry_after_a_failed_check_asks_again_only_for_the_call_that_failed() {
-    let ai = Arc::new(ScriptedAi::new());
-    let stems = stems("Domain", 6);
-    ai.on_write(
-        &area_id(DOMAIN),
-        Ok(stems
-            .iter()
-            .map(|stem| candidate(stem, "A", PAYMENT_LIFECYCLE))
-            .collect()),
-    );
-    for (index, stem) in stems.iter().enumerate() {
-        if index == 2 {
-            ai.on_check_call_failing(stem, QuestionCheckCall::Hint, RequestFailure::TimedOut);
+    // The answer probe, the fourth call, fails and is retried on its own
+    // as the other three do.
+    for call in QuestionCheckCall::ALL {
+        let ai = Arc::new(ScriptedAi::new());
+        let stems = stems("Domain", 6);
+        ai.on_write(
+            &area_id(DOMAIN),
+            Ok(stems
+                .iter()
+                .map(|stem| candidate(stem, "A", PAYMENT_LIFECYCLE))
+                .collect()),
+        );
+        for (index, stem) in stems.iter().enumerate() {
+            if index == 2 {
+                ai.on_check_call_failing(stem, call, RequestFailure::TimedOut);
+            }
+            ai.on_check_passing(stem);
         }
-        ai.on_check_passing(stem);
+        let mut session = generate(&ai, &[DOMAIN], PAYMENT_LIFECYCLE, 80, 24);
+        session.settle();
+        let rows = rows(&session);
+        assert!(
+            rows.contains(&"Checking questions failed: timed out.".to_owned()),
+            "{call:?}: {rows:#?}"
+        );
+        assert!(
+            rows.iter()
+                .any(|row| row.contains("✓ Writing questions · generator")),
+            "{call:?}: {rows:#?}"
+        );
+        assert!(
+            rows.iter()
+                .any(|row| row.contains("✗ Checking questions · Jev")),
+            "{call:?}: {rows:#?}"
+        );
+        let asked = ai.asked().len();
+
+        session.press("<Enter>");
+        session.settle();
+
+        assert_eq!(
+            asked_for(&ai)[asked..],
+            [format!("check Domain question 3? ({call:?})")]
+        );
+        assert_eq!(
+            session.question().row_with("Question 1"),
+            "Question 1 of 4 · Domain",
+            "{call:?}"
+        );
     }
-    let mut session = generate(&ai, &[DOMAIN], PAYMENT_LIFECYCLE, 80, 24);
-    session.settle();
-    let rows = rows(&session);
-    assert!(
-        rows.contains(&"Checking questions failed: timed out.".to_owned()),
-        "{rows:#?}"
-    );
-    assert!(
-        rows.iter()
-            .any(|row| row.contains("✓ Writing questions · generator")),
-        "{rows:#?}"
-    );
-    assert!(
-        rows.iter()
-            .any(|row| row.contains("✗ Checking questions · Jev")),
-        "{rows:#?}"
-    );
-    let asked = ai.asked().len();
-
-    session.press("<Enter>");
-    session.settle();
-
-    assert_eq!(asked_for(&ai)[asked..], ["check Domain question 3? (Hint)"]);
-    assert_eq!(
-        session.question().row_with("Question 1"),
-        "Question 1 of 4 · Domain"
-    );
 }
 
 #[test]
