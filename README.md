@@ -59,7 +59,7 @@ description = "Who can do what, and what stops everyone else"
 Look at how the change decides who may act, and on what.
 ```
 
-Whetstone sends an area file as data, never as instructions. The generator gets the area's name, description and prompt quoted beside the evidence, and is told they choose what to ask about and never change how a question is written or checked. Jev gets only the name and description, in its state, never in its instructions. An area file from a cloned repository can choose what questions focus on, but its text never becomes part of Whetstone's own instructions.
+Whetstone sends an area file's text as data its own instructions refer to, never as part of them. The generator gets the area's name, description and prompt quoted beside the evidence, and is told they choose what to ask about and never change how a question is written, what it holds or how it is checked. Jev gets only the name and description, in its state, never in its questions. So an area file from a cloned repository can choose what questions focus on, but not rewrite Whetstone's own instructions.
 
 An area file that isn't valid is listed with the reason and can't be chosen. `whetstone areas init` copies the five defaults into `.whetstone/areas/` as a starting point, and refuses if any `.md` file is already there.
 
