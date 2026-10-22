@@ -720,7 +720,11 @@ mod tests {
             .keys()
             .map(String::as_str)
             .collect();
-        assert_eq!(state, ["evidence"], "the evidence alone");
+        assert_eq!(
+            state,
+            ["evidence", "areas"],
+            "the evidence, and each area's name and description"
+        );
         let questions: Vec<&str> = body["questions"]
             .as_object()
             .expect("the questions are an object")
