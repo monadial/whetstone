@@ -802,24 +802,50 @@ fn a_deleted_file_sends_its_content_before_the_change_and_a_left_out_file_sends_
 }
 
 #[test]
-fn enter_on_an_area_reads_its_prompt_and_where_it_comes_from() {
+fn enter_on_an_area_reads_its_description_and_numbered_prompt_and_where_they_come_from() {
     let repo = with_a_retry();
     let mut session = started_in(repo.root(), 120, 40);
     session.press(REVIEW_NEWEST);
 
     session.press("j j <Enter>");
 
-    assert_eq!(session.rows()[1].trim(), "Area prompt: Domain");
+    assert_eq!(session.rows()[1].trim(), "What is sent for the Domain area");
     assert_eq!(
-        reader(&session)[..5],
+        reader(&session)[..8],
         [
             "Prompt source",
             "Whetstone default",
             "",
+            "Description, as it is sent",
+            "The rules, concepts and language the work is about",
+            "",
             "Area prompt, as it is sent",
-            "Focus on the subject the change is about: the concepts it names, the rules",
+            "1 Focus on the subject the change is about: the concepts it names, the rules",
         ]
     );
+}
+
+/// From home: open the repository's picker, choose the newest commit, open
+/// its outbound review with the five default areas selected, and read the
+/// first area.
+const READ_AN_AREA: &str = "<Enter> j j j j j <Space> k k k k k <S-Tab> <Enter> j j <Enter>";
+
+#[test]
+fn reading_what_an_area_sends_at_120x32() {
+    let repo = with_a_retry();
+    let mut session = started_in(repo.root(), 120, 32);
+    session.press(READ_AN_AREA);
+
+    insta::assert_debug_snapshot!("outbound_review_reading_an_area_120x32", session.frame());
+}
+
+#[test]
+fn reading_what_an_area_sends_at_80x24() {
+    let repo = with_a_retry();
+    let mut session = started_in(repo.root(), 80, 24);
+    session.press(READ_AN_AREA);
+
+    insta::assert_debug_snapshot!("outbound_review_reading_an_area_80x24", session.frame());
 }
 
 #[test]
@@ -863,15 +889,21 @@ fn areas_from_the_repository_say_their_prompt_comes_from_this_repository() {
 
     session.press("j j <Enter>");
 
-    assert_eq!(session.rows()[1].trim(), "Area prompt: Security");
     assert_eq!(
-        reader(&session)[..5],
+        session.rows()[1].trim(),
+        "What is sent for the Security area"
+    );
+    assert_eq!(
+        reader(&session)[..8],
         [
             "Prompt source",
             "this repository",
             "",
+            "Description, as it is sent",
+            "Who can do what",
+            "",
             "Area prompt, as it is sent",
-            "Look at who is trusted.",
+            "1 Look at who is trusted.",
         ]
     );
 }

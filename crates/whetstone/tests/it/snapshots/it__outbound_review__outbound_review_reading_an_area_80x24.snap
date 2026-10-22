@@ -1,0 +1,38 @@
+---
+source: crates/whetstone/tests/it/outbound_review.rs
+expression: session.frame()
+---
+Buffer {
+    area: Rect { x: 0, y: 0, width: 80, height: 24 },
+    content: [
+        "                                                                                ",
+        "  What is sent for the Domain area                                              ",
+        "                                                                                ",
+        "  Prompt source                                                                 ",
+        "  Whetstone default                                                             ",
+        "                                                                                ",
+        "  Description, as it is sent                                                    ",
+        "  The rules, concepts and language the work is about                            ",
+        "                                                                                ",
+        "  Area prompt, as it is sent                                                    ",
+        "   1 Focus on the subject the change is about: the concepts it names, the       ",
+        "  rules                                                                         ",
+        "   2 it encodes and the language it uses for them.                              ",
+        "   3                                                                            ",
+        "   4 Look for:                                                                  ",
+        "   5                                                                            ",
+        "   6 - The concepts the change introduces, renames or redefines, and how they   ",
+        "   7   relate to the ones already there.                                        ",
+        "   8 - The rules and invariants it adds or changes: what must always hold,      ",
+        "  what                                                                          ",
+        "   9   is forbidden, and which states or cases are possible.                    ",
+        "  10 - Edge cases in the subject itself: unusual but legitimate situations the  ",
+        "  ? keys  : actions  q back                                                     ",
+        "                                                                                ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 34, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+    ]
+}

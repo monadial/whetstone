@@ -1142,12 +1142,14 @@ impl OutboundReview {
             }
             Reading::Area(index) => {
                 let area = self.evidence.areas().get(index)?;
+                // Numbered, as the secret check cites a line in the prompt.
                 Reader::new(
                     route,
-                    format!("Area prompt: {}", area.name()),
+                    format!("What is sent for the {} area", area.name()),
                     vec![
                         Section::plain("Prompt source", &area.source().to_string()),
-                        Section::plain("Area prompt, as it is sent", area.prompt()),
+                        Section::plain("Description, as it is sent", area.description()),
+                        Section::numbered("Area prompt, as it is sent", area.prompt()),
                     ],
                 )
             }
