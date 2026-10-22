@@ -1022,7 +1022,7 @@ mod tests {
 
         let ratings = ask(QuestionCheckCall::OptionRatings).expect("scripted to answer");
         let hint = ask(QuestionCheckCall::Hint).expect("scripted to answer");
-        let rest = ask(QuestionCheckCall::Candidate).expect("scripted to answer");
+        let candidate_call = ask(QuestionCheckCall::Candidate).expect("scripted to answer");
         let failed = QuestionCheckCall::ALL.map(|call| ask(call).err());
 
         assert_eq!(
@@ -1033,11 +1033,11 @@ mod tests {
         assert_eq!(ratings.content.depth(), None);
         assert_eq!(hint.content.iter().count(), 0, "none scripted");
         assert_eq!(
-            rest.content.depth(),
+            candidate_call.content.depth(),
             Some(depth(0.2, 0.3, 0.5, 1.3)),
             "the depth goes with the candidate call"
         );
-        assert_eq!(rest.provenance.role(), Role::Jev);
+        assert_eq!(candidate_call.provenance.role(), Role::Jev);
         assert_eq!(failed, [Some(RequestFailure::RateLimited); 3]);
     }
 

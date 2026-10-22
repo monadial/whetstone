@@ -9,6 +9,9 @@
 //! calls' answers whetstone-core's [`QuestionCheckAnswers`] for the show
 //! rule.
 
+#[cfg(any(test, feature = "scripted"))]
+use std::convert::Infallible;
+
 use serde_json::{Map, Value, json};
 use whetstone_core::{
     Candidate, CandidateCheck, Depth, Evidence, ModelId, OptionLetter, Probability,
@@ -44,12 +47,48 @@ pub enum QuestionCheckCall {
 /// calls' answers one [`QuestionCheckAnswers`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct CheckCallAnswers {
-    /// The call answered.
-    call: QuestionCheckCall,
+    /// The call answered, with the depth when it scores one.
+    answered: Answered,
     /// Each check the call asked, with Jev's answer, in the order asked.
     checks: Vec<(CandidateCheck, Probability)>,
-    /// The depth, for the call that scores it ([`QuestionCheckCall::scores_depth`]).
-    depth: Option<Depth>,
+}
+
+/// Which call answered, with the depth when it is the candidate call, the
+/// only one that scores it ([`QuestionCheckCall::scores_depth`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Answered {
+    OptionRatings,
+    Hint,
+    Candidate(Depth),
+}
+
+impl Answered {
+    /// What `call` answered, with the depth `depth` gives when the call
+    /// scores one: `depth` is called only then.
+    fn of<E>(call: QuestionCheckCall, depth: impl FnOnce() -> Result<Depth, E>) -> Result<Self, E> {
+        Ok(match call {
+            QuestionCheckCall::OptionRatings => Self::OptionRatings,
+            QuestionCheckCall::Hint => Self::Hint,
+            QuestionCheckCall::Candidate => Self::Candidate(depth()?),
+        })
+    }
+
+    /// The call that answered.
+    fn call(self) -> QuestionCheckCall {
+        match self {
+            Self::OptionRatings => QuestionCheckCall::OptionRatings,
+            Self::Hint => QuestionCheckCall::Hint,
+            Self::Candidate(_) => QuestionCheckCall::Candidate,
+        }
+    }
+
+    /// The depth, when the call scores one.
+    fn depth(self) -> Option<Depth> {
+        match self {
+            Self::Candidate(depth) => Some(depth),
+            Self::OptionRatings | Self::Hint => None,
+        }
+    }
 }
 
 impl QuestionCheckCall {
@@ -99,7 +138,7 @@ impl CheckCallAnswers {
     /// The call answered.
     #[must_use]
     pub fn call(&self) -> QuestionCheckCall {
-        self.call
+        self.answered.call()
     }
 
     /// Jev's answer to `check`, if the call asked it.
@@ -118,7 +157,7 @@ impl CheckCallAnswers {
     /// The depth, for the candidate call; no other call scores it.
     #[must_use]
     pub fn depth(&self) -> Option<Depth> {
-        self.depth
+        self.answered.depth()
     }
 
     /// The answers to a candidate's question check, from `answers`, its
@@ -130,12 +169,13 @@ impl CheckCallAnswers {
         let mut checks = Vec::new();
         let mut depth = None;
         for answers in answers {
-            if answered.contains(&answers.call) {
+            let call = answers.call();
+            if answered.contains(&call) {
                 return None;
             }
-            answered.push(answers.call);
+            answered.push(call);
+            depth = depth.or(answers.depth());
             checks.extend(answers.checks);
-            depth = depth.or(answers.depth);
         }
         if answered.len() != QuestionCheckCall::ALL.len() {
             return None;
@@ -147,13 +187,13 @@ impl CheckCallAnswers {
     /// candidate call, the depth, as a scripted reply makes them.
     #[cfg(any(test, feature = "scripted"))]
     pub(crate) fn of_call(call: QuestionCheckCall, answers: &QuestionCheckAnswers) -> Self {
+        let Ok(answered) = Answered::of(call, || Ok::<_, Infallible>(answers.depth()));
         Self {
-            call,
+            answered,
             checks: answers
                 .iter()
                 .filter(|&(check, _)| QuestionCheckCall::of(check) == call)
                 .collect(),
-            depth: call.scores_depth().then(|| answers.depth()),
         }
     }
 }
@@ -242,17 +282,9 @@ pub fn question_check_answers(
         .into_iter()
         .map(|check| Ok((check, answers.yes_no(&name(check))?)))
         .collect::<Result<Vec<_>, AiError>>()?;
-    let depth = if call.scores_depth() {
-        Some(answers.depth(DEPTH)?)
-    } else {
-        None
-    };
+    let answered = Answered::of(call, || answers.depth(DEPTH))?;
     answers.done()?;
-    Ok(CheckCallAnswers {
-        call,
-        checks,
-        depth,
-    })
+    Ok(CheckCallAnswers { answered, checks })
 }
 
 /// The name the depth score goes under.
@@ -648,24 +680,30 @@ mod tests {
 
     #[tokio::test]
     async fn the_calls_answers_make_one_question_check_only_with_each_call_once() {
-        let [ratings, hint, rest] = [
+        let [ratings, hint, candidate_call] = [
             recorded_answers(QuestionCheckCall::OptionRatings).await,
             recorded_answers(QuestionCheckCall::Hint).await,
             recorded_answers(QuestionCheckCall::Candidate).await,
         ];
 
         assert_eq!(
-            CheckCallAnswers::merged([ratings.clone(), rest.clone()]),
+            CheckCallAnswers::merged([ratings.clone(), candidate_call.clone()]),
             None,
             "the hint call's are missing"
         );
         assert_eq!(
-            CheckCallAnswers::merged([ratings.clone(), hint.clone(), hint.clone(), rest.clone()]),
+            CheckCallAnswers::merged([
+                ratings.clone(),
+                hint.clone(),
+                hint.clone(),
+                candidate_call.clone()
+            ]),
             None,
             "the hint call's twice"
         );
         assert_eq!(
-            CheckCallAnswers::merged([rest, hint, ratings]).map(|answers| answers.iter().count()),
+            CheckCallAnswers::merged([candidate_call, hint, ratings])
+                .map(|answers| answers.iter().count()),
             Some(17),
             "in any order"
         );
