@@ -8,12 +8,17 @@
 use std::ffi::c_int;
 use std::future::{self, Future};
 use std::io;
-use std::sync::Arc;
+use std::marker::PhantomData;
+#[cfg(test)]
+use std::os::unix::thread::{JoinHandleExt as _, RawPthread};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, mpsc};
 use std::task::Poll;
+use std::thread;
 use std::time::Duration;
 
 use futures_util::StreamExt as _;
+use nix::sys::signal::{SigSet, SigmaskHow, Signal as NixSignal};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm::event::{Event, EventStream};
@@ -137,6 +142,9 @@ async fn run_loop(mut app: App, environment: &Environment) -> Result<Ending, Tui
                 // ends the app without taking the terminal back.
                 if signals.stop.last().is_none() {
                     stop_until_continued().map_err(TuiError::Suspend)?;
+                    // Every signal received before the continue is recorded
+                    // only once the signal thread catches up.
+                    signals.thread.catch_up().map_err(TuiError::Suspend)?;
                     // The SIGCONT that continued the app is handled here,
                     // but a SIGTSTP after it is not.
                     signals.job_control.forget(SIGCONT);
@@ -388,11 +396,21 @@ struct Signals {
     /// is read from `stop` and `job_control`, which keep what matters about
     /// their order.
     arrivals: Vec<unix_signal::Signal>,
+    /// The one thread whose handlers record those signals.
+    thread: SignalThread,
 }
 
 impl Signals {
-    /// Must be called on the loop's runtime.
+    /// Must be called on the loop's runtime, on the loop's thread, before it
+    /// starts any other thread: a thread started before can still take
+    /// these signals.
     fn listen() -> io::Result<Self> {
+        let signals = STOP_SIGNALS
+            .into_iter()
+            .chain(JOB_CONTROL_SIGNALS)
+            .map(|signal| NixSignal::try_from(signal).map_err(io::Error::from))
+            .collect::<io::Result<SigSet>>()?;
+        let thread = SignalThread::start(signals)?;
         let stop = LastSignal::listen(&STOP_SIGNALS)?;
         let job_control = LastSignal::listen(&JOB_CONTROL_SIGNALS)?;
         // Registered after the flags, so a signal's flag is set before it
@@ -406,6 +424,7 @@ impl Signals {
             stop,
             job_control,
             arrivals,
+            thread,
         })
     }
 
@@ -423,6 +442,86 @@ impl Signals {
             }
         })
         .await;
+    }
+}
+
+/// The one thread that takes some signals. The thread that starts it blocks
+/// them, and so does every thread that one starts afterwards, since a thread
+/// starts with the signal mask of the thread that starts it.
+///
+/// The kernel gives a signal sent to the process to one thread that does
+/// not block it, and a thread continued after a stop runs the handler of
+/// every signal pending for it before any code of its own. So this thread's
+/// handlers record each of these signals, and once the app is continued,
+/// this thread replies to [`SignalThread::catch_up`] only after recording
+/// every one received before the continue. When any thread could take them,
+/// a SIGTERM received while suspended could still be on its way to its
+/// flag, on another thread, when the loop's thread looked (#152).
+///
+/// A child process starts with the signal mask of the thread that starts
+/// it, so one started from any other thread would start with these signals
+/// blocked. Whetstone starts none: gix opens repositories isolated and cgg
+/// analyses without Git, so neither runs `git`.
+#[derive(Debug)]
+struct SignalThread {
+    /// Asks the thread to reply. Dropping it ends the thread.
+    requests: mpsc::Sender<()>,
+    replies: mpsc::Receiver<()>,
+    /// The mask the starting thread had before, which it gets back once this
+    /// is dropped.
+    mask_before: SigSet,
+    /// The mask is the starting thread's, so this is dropped there.
+    not_send: PhantomData<*const ()>,
+    /// The thread, so a test can send it a signal.
+    #[cfg(test)]
+    pthread: RawPthread,
+}
+
+impl SignalThread {
+    /// Starts the thread, then blocks `signals` in the calling thread.
+    fn start(signals: SigSet) -> io::Result<Self> {
+        let (requests, received) = mpsc::channel();
+        let (reply, replies) = mpsc::channel();
+        let started = thread::Builder::new()
+            .name("signals".to_owned())
+            .spawn(move || {
+                // In case the app started with them blocked. It fails only
+                // for an invalid way to change the mask.
+                let _ = signals.thread_unblock();
+                for () in received {
+                    if reply.send(()).is_err() {
+                        return;
+                    }
+                }
+            })?;
+        #[cfg(test)]
+        let pthread = started.as_pthread_t();
+        // Detached: it ends once `requests` is dropped.
+        drop(started);
+        Ok(Self {
+            requests,
+            replies,
+            mask_before: signals.thread_swap_mask(SigmaskHow::SIG_BLOCK)?,
+            not_send: PhantomData,
+            #[cfg(test)]
+            pthread,
+        })
+    }
+
+    /// Returns once the thread has recorded every signal sent to it before:
+    /// it runs their handlers before any code of its own, so before it
+    /// replies.
+    fn catch_up(&self) -> io::Result<()> {
+        self.requests.send(()).map_err(io::Error::other)?;
+        self.replies.recv().map_err(io::Error::other)
+    }
+}
+
+impl Drop for SignalThread {
+    fn drop(&mut self) {
+        // It fails only for an invalid way to change the mask, and setting
+        // it is a valid one.
+        let _ = self.mask_before.thread_set_mask();
     }
 }
 
@@ -539,6 +638,8 @@ fn crash() -> ! {
 
 #[cfg(test)]
 mod tests {
+    use nix::sys::pthread::pthread_kill;
+
     use super::*;
     use crate::job::Jobs;
 
@@ -616,5 +717,63 @@ mod tests {
 
         assert_eq!(time_limits.run_out().await, job);
         assert_eq!(started.elapsed(), Duration::from_secs(50));
+    }
+
+    /// The signals the loop acts on: SIGHUP, SIGINT and SIGTERM stop it,
+    /// SIGTSTP suspends it and SIGCONT continues it.
+    const THE_LOOPS_SIGNALS: [NixSignal; 5] = [
+        NixSignal::SIGHUP,
+        NixSignal::SIGINT,
+        NixSignal::SIGTERM,
+        NixSignal::SIGTSTP,
+        NixSignal::SIGCONT,
+    ];
+
+    /// The loop's signals that the calling thread blocks.
+    fn blocked_here() -> Vec<NixSignal> {
+        let mask = SigSet::thread_get_mask().expect("read this thread's signal mask");
+        THE_LOOPS_SIGNALS
+            .into_iter()
+            .filter(|&signal| mask.contains(signal))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn every_thread_the_loop_starts_leaves_its_signals_to_the_signal_thread() {
+        let before = blocked_here();
+        let signals = Signals::listen().expect("listen for signals");
+
+        assert_eq!(blocked_here(), THE_LOOPS_SIGNALS, "the loop's own thread");
+        let started = thread::spawn(blocked_here).join().expect("join the thread");
+        assert_eq!(started, THE_LOOPS_SIGNALS, "a thread the loop starts");
+        let blocking = tokio::task::spawn_blocking(blocked_here)
+            .await
+            .expect("join the blocking thread");
+        assert_eq!(
+            blocking, THE_LOOPS_SIGNALS,
+            "a blocking thread, where jobs run"
+        );
+
+        drop(signals);
+        assert_eq!(
+            blocked_here(),
+            before,
+            "the loop's thread takes them again once it stops listening"
+        );
+    }
+
+    #[tokio::test]
+    async fn once_the_signal_thread_catches_up_it_has_recorded_every_signal_sent_before() {
+        let signals = Signals::listen().expect("listen for signals");
+
+        // As when `fg` continues the app after a SIGTERM received while it
+        // was stopped.
+        for signal in [NixSignal::SIGTERM, NixSignal::SIGCONT] {
+            pthread_kill(signals.thread.pthread, signal).expect("send the signal");
+        }
+        signals.thread.catch_up().expect("catch up");
+
+        assert_eq!(signals.stop.last(), Some(SIGTERM));
+        assert_eq!(signals.job_control.last(), Some(SIGCONT));
     }
 }
