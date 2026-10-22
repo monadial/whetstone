@@ -31,16 +31,36 @@ _Avoid_: category, topic, tag.
 An area's instructions for what to look for in a change; it adds focus to Whetstone's own question instructions and never replaces them.
 _Avoid_: master prompt.
 
-**Session record**:
-The local record of one Practice: its questions, the evidence that was sent, the learner's responses and every outcome, with the models, versions and assessment policy that produced them.
-
-**Session export**:
-A session record written out as one file the learner can keep or share.
-_Avoid_: report, which a learner's **Report** already uses; evidence report.
-
 **Outbound review**:
 The learner's check of exactly what a Practice on their own repository will send and where, before anything leaves the machine; approving it covers that evidence, those destinations and the learner's later responses in the session.
 _Avoid_: consent screen; review alone, which **Needs review** uses.
+
+## Sessions
+
+**Session record**:
+The local record of one Practice, kept as it happens: the evidence that was sent and every request that sent it, its questions, the learner's drafts and responses, and every outcome, with the models, versions and assessment policy that produced them. Nothing is sent before the record of it is saved.
+
+**Saved**:
+Written to the session record on disk, so it survives quitting, a crash or a power cut.
+
+**Not saved**:
+A write to the session record that failed. What it was for is not sent, and the learner can retry.
+_Avoid_: unsaved, which doesn't say whether anything was sent.
+
+**Waiting**:
+A request that has been sent and whose result hasn't arrived. Closing its session doesn't cancel it; quitting Whetstone makes it an **Interrupted request**.
+_Avoid_: pending.
+
+**Resume**:
+Continuing an unfinished Practice from its session record, reusing every result it already received instead of paying for it again.
+_Avoid_: restart, reload.
+
+**Interrupted request**:
+A request that was sent but whose result never arrived because the session closed. It may already have been billed, so it is sent again only when the learner chooses Retry.
+
+**Session export**:
+A session record written out for the learner to keep or share, as two files: a complete one Whetstone can read back, and a readable Markdown one the learner sees before it is written.
+_Avoid_: report, which a learner's **Report** already uses; evidence report.
 
 ## Responding
 
@@ -48,14 +68,17 @@ _Avoid_: consent screen; review alone, which **Needs review** uses.
 The learner's selected choice for a question and, optionally, their written reasoning. Reasoning that is blank or only whitespace is not written, and only written reasoning is assessed.
 _Avoid_: treating a response with no reasoning as a failed one.
 
+**Draft**:
+A response the learner hasn't submitted yet. It is saved as it is written and never sent.
+
 **Attempt**:
-A learner's work on a particular question.
+A learner's work on a particular question. Answering a question again is a new attempt; earlier attempts stay as they were.
 
 **Hint**:
 Help that points to relevant evidence without revealing the answer; the attempt still counts as the learner's own.
 
 **Assisted attempt**:
-An attempt made after the learner revealed the answer or rubric, so its assessment is not independent.
+An attempt made after the learner revealed the answer or rubric, or saw them in an earlier attempt's feedback, so its assessment is not independent.
 
 **Skip**:
 A learner's choice to leave a question unattempted for now.
@@ -77,6 +100,10 @@ _Avoid_: mastery score, competence certificate.
 **Needs review**:
 An outcome whose support or reliability has not been established well enough to call it supported or not.
 _Avoid_: treating it as incorrect.
+
+**Re-evaluation**:
+A later assessment of an already assessed response, saved beside the original and never replacing it. It is offered only when the assessment policy, the model or Whetstone's prompts have changed, or the earlier request failed.
+_Avoid_: regrade, re-run.
 
 **Assessment policy**:
 The versioned cut-off values that turn Jev's probabilities into clear yes, unclear or clear no for each kind of check. The learner's own config can override any check's cut-offs, which makes outcomes not comparable with the policy's; every outcome records the cut-offs that produced it.
