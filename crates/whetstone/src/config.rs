@@ -156,7 +156,7 @@ struct File {
     connected_code_limit_kb: Option<ConnectedCodeLimitKb>,
     #[serde(default, deserialize_with = "questions")]
     questions: Option<QuestionCount>,
-    jev: Option<Role>,
+    jev: Option<Role<JevModel>>,
     generator: Option<Role>,
     cut_offs: Option<CutOffsTable>,
 }
@@ -170,11 +170,42 @@ struct CutOffsTable(Vec<(Job, CutOffs)>);
 #[derive(Debug, Clone, Copy)]
 struct CutOffsKey(Job);
 
-/// The settings of one AI role.
+/// The settings of one AI role, whose model is read as a `Model`.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Role {
-    model: Option<String>,
+struct Role<Model = String> {
+    model: Option<Model>,
+}
+
+/// `[jev] model`: one of `TypeSafe`'s models, whose IDs start with
+/// `typesafe/`. Jev requests can't carry `OpenRouter`'s zero-retention flags
+/// until Rig can send them (#69), so they keep no prompts only because
+/// `TypeSafe`'s endpoints keep none (ADR 0001).
+#[derive(Debug, Deserialize)]
+#[serde(try_from = "String")]
+struct JevModel(String);
+
+/// What every `TypeSafe` model's ID starts with.
+const TYPESAFE_MODELS: &str = "typesafe/";
+
+/// A `[jev] model` that isn't one of `TypeSafe`'s.
+#[derive(Debug, thiserror::Error)]
+#[error(
+    "`jev.model` must be a TypeSafe model, such as `{DEFAULT_JEV_MODEL}`: Jev requests can't ask \
+     OpenRouter for zero-retention routing yet"
+)]
+struct NotATypeSafeModel;
+
+impl TryFrom<String> for JevModel {
+    type Error = NotATypeSafeModel;
+
+    fn try_from(model: String) -> Result<Self, NotATypeSafeModel> {
+        if model.starts_with(TYPESAFE_MODELS) {
+            Ok(Self(model))
+        } else {
+            Err(NotATypeSafeModel)
+        }
+    }
 }
 
 impl Settings {
@@ -200,13 +231,21 @@ impl Settings {
             }
             Err(source) => return Err(ConfigError::Read { path, source }),
         };
-        let model = |role: Option<Role>, default: &str| {
-            Setting::or_default(role.and_then(|role| role.model), default.to_owned())
-        };
+        let model =
+            |model: Option<String>, default: &str| Setting::or_default(model, default.to_owned());
         Ok(Self {
             provider: Setting::or_default(contents.provider, Provider::OpenRouter),
-            jev_model: model(contents.jev, DEFAULT_JEV_MODEL),
-            generator_model: model(contents.generator, DEFAULT_GENERATOR_MODEL),
+            jev_model: model(
+                contents
+                    .jev
+                    .and_then(|role| role.model)
+                    .map(|JevModel(model)| model),
+                DEFAULT_JEV_MODEL,
+            ),
+            generator_model: model(
+                contents.generator.and_then(|role| role.model),
+                DEFAULT_GENERATOR_MODEL,
+            ),
             colours: Setting::or_default(contents.colours, Colours::Auto),
             detected_color_support: ColorSupport::detect(environment),
             no_color: NoColorStatus::read(environment),
