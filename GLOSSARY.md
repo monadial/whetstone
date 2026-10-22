@@ -108,7 +108,7 @@ A candidate question the question check didn't pass. It is never shown in Practi
 _Avoid_: rejected question, failed question.
 
 **Option rating**:
-Supported, Not supported or Needs review for one option of a question, decided in its question check before the learner sees it.
+Supported, Not supported or Needs review for one option of a question, decided in its question check before the learner sees it. Jev rates the options without seeing the answer key.
 
 ## AI roles
 

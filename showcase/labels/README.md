@@ -14,11 +14,12 @@ OPENROUTER_API_KEY=… cargo run -p whetstone-labels -- measure > report.md
 
 - **`check`** reads every example and checks it against the showcase
   project. It is offline and free, so run it while you label.
-- **`measure`** sends each example's Jev call three times, and prints the
+- **`measure`** sends each example's Jev calls three times, and prints the
   report as Markdown, ready to paste into #99.
-  - A run makes three calls per example, and `check` prints how many
-    calls that is. In the first run, over the seeds, a call cost about
-    0.0003 USD.
+  - An example is one call, but a candidate example is up to three, as
+    Practice checks a question in three calls. A run sends each call three
+    times, and `check` prints how many calls that is. In the first run,
+    over the seeds, a call cost about 0.0003 USD.
   - `--model` measures a Jev model other than `typesafe/jev-1.14`.
 - **Both** take `--labels DIR` to read another folder, or `--labels FILE`
   to read one file, such as a learner's votes (see
@@ -66,8 +67,8 @@ option_b = { label = "yes", by = "Tomas", on = 2026-10-23 }
   agent-made, dated 2026-10-21, and are there to be reviewed. Where you
   agree with a label, set `by` and `on` to yourself. Where you don't, fix
   the label. The report counts the agent labels that are still left.
-- **Every label is required.** An example must label everything its call
-  asks, and nothing else. `check` names any label that is missing or extra.
+- **Every label is required.** An example must label everything its calls
+  ask, and nothing else. `check` names any label that is missing or extra.
 
 ## Gate examples
 
@@ -119,6 +120,15 @@ Jev sees it. `check` names what fails. The keys that need labels are these:
 
 Depth isn't labelled. It only orders questions, and has no cut-offs.
 
+The tool asks the question check in three calls, as Practice does, and
+each call is sent only what its questions are about:
+
+- the option ratings and `no_giveaway`: the evidence, and the stem and the
+  options' text, never the answer key;
+- `hint_hides_answer_key`: the stem, the options' text and the hint, with
+  no evidence;
+- every other check: the evidence and the whole candidate.
+
 A criterion labelled `criterion_N_minimum = "no"` asks for more than the
 question needs, so the question its labels show leaves it out, as Practice
 drops a criterion when Jev's answer is clear no (one Jev is unclear about
@@ -148,8 +158,9 @@ it, and "Should have passed" the answer the show rule needed. A vote has
 two keys of its own:
 
 - `source = "learner vote"`: it labels only the check voted on, not
-  everything its call asks. Jev is still asked the whole question check, as
-  in Practice, and only that label is measured.
+  everything its calls ask. Jev is asked the one call of the question check
+  that holds that check, whole, as Practice asks it, and only that label is
+  measured.
 - `commit_id`: the full ID of a commit of the learner's own repository,
   when the vote is about one rather than about the showcase project.
 
