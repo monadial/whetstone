@@ -336,43 +336,64 @@ mod tests {
 
     #[tokio::test]
     async fn a_failed_call_of_a_candidate_s_question_check_is_named_by_its_call() {
-        let server = MockServer::start().await;
-        // Only the hint call asks whether the hint hides the answer key.
-        Mock::given(method("POST"))
-            .and(path("/api/v1/systemone"))
-            .and(|request: &Request| {
-                String::from_utf8_lossy(&request.body).contains(r#""hint_hides_answer_key":{"#)
-            })
-            .respond_with(ResponseTemplate::new(429).set_body_json(
-                json!({ "error": { "code": 429, "message": "Rate limit exceeded" } }),
-            ))
-            .mount(&server)
-            .await;
-        Mock::given(method("POST"))
-            .and(path("/api/v1/systemone"))
-            .respond_with(Jev {
-                answers: |_| Some(0.9),
-            })
-            .mount(&server)
-            .await;
-        let prepared = prepared(&format!("{GATE}{CANDIDATE}")).unwrap();
+        // Only the hint call asks whether the hint hides the answer key, and
+        // only the answer probe call asks the answer probe.
+        for (question, call, named) in [
+            (
+                "hint_hides_answer_key",
+                QuestionCheckCall::Hint,
+                "hint call",
+            ),
+            (
+                "answer_probe",
+                QuestionCheckCall::AnswerProbe,
+                "answer probe call",
+            ),
+        ] {
+            let server = MockServer::start().await;
+            let asks = format!(r#""{question}":{{"#);
+            Mock::given(method("POST"))
+                .and(path("/api/v1/systemone"))
+                .and(move |request: &Request| {
+                    String::from_utf8_lossy(&request.body).contains(&asks)
+                })
+                .respond_with(ResponseTemplate::new(429).set_body_json(
+                    json!({ "error": { "code": 429, "message": "Rate limit exceeded" } }),
+                ))
+                .mount(&server)
+                .await;
+            Mock::given(method("POST"))
+                .and(path("/api/v1/systemone"))
+                .respond_with(Jev {
+                    answers: |_| Some(0.9),
+                })
+                .mount(&server)
+                .await;
+            let prepared = prepared(&format!("{GATE}{CANDIDATE}")).unwrap();
 
-        let measurements = measure(&connection(&server), &prepared, three()).await;
+            let measurements = measure(&connection(&server), &prepared, three()).await;
 
-        let failed: Vec<(&str, Option<QuestionCheckCall>, usize)> = measurements
-            .failures
-            .iter()
-            .map(|failure| (failure.example.as_str(), failure.call, failure.run))
-            .collect();
-        assert_eq!(
-            failed,
-            [1, 2, 3].map(|run| ("retry-key", Some(QuestionCheckCall::Hint), run))
-        );
-        assert_eq!(
-            answers(&measurements, "retry-key/hint_hides_answer_key"),
-            [0.0; 0]
-        );
-        assert_eq!(answers(&measurements, "retry-key/option_a"), [0.9; 3]);
+            let failed: Vec<(&str, Option<QuestionCheckCall>, usize)> = measurements
+                .failures
+                .iter()
+                .map(|failure| (failure.example.as_str(), failure.call, failure.run))
+                .collect();
+            assert_eq!(
+                failed,
+                [1, 2, 3].map(|run| ("retry-key", Some(call), run)),
+                "{call:?}"
+            );
+            assert_eq!(
+                answers(&measurements, &format!("retry-key/{question}")),
+                [0.0; 0]
+            );
+            assert_eq!(answers(&measurements, "retry-key/option_a"), [0.9; 3]);
+            let report = crate::Report::new(measurements).to_string();
+            assert!(
+                report.contains(&format!("- `retry-key` ({named}), run 1: ")),
+                "{report}"
+            );
+        }
     }
 
     #[tokio::test]
