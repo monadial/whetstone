@@ -1319,6 +1319,9 @@ mod tests {
                 } => (name.as_str(), instructions.as_str(), Some(answer.get())),
                 JevExchange::Score {
                     name, instructions, ..
+                }
+                | JevExchange::Choice {
+                    name, instructions, ..
                 } => (name.as_str(), instructions.as_str(), None),
             })
             .collect()
@@ -1331,7 +1334,10 @@ mod tests {
             .iter()
             .map(|(name, question)| match question {
                 JevQuestion::YesNo { instructions, .. }
-                | JevQuestion::Score { instructions, .. } => (name.as_str(), instructions.as_str()),
+                | JevQuestion::Score { instructions, .. }
+                | JevQuestion::Choice { instructions, .. } => {
+                    (name.as_str(), instructions.as_str())
+                }
             })
             .collect()
     }
@@ -1420,7 +1426,7 @@ mod tests {
                 .iter()
                 .find_map(|exchange| match exchange {
                     JevExchange::Score { answer, .. } => Some(*answer),
-                    JevExchange::YesNo { .. } => None,
+                    JevExchange::YesNo { .. } | JevExchange::Choice { .. } => None,
                 }),
             Some(depth(0.1, 0.2, 0.7, 1.6))
         );

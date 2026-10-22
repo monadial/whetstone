@@ -1,9 +1,12 @@
 //! Jev evaluations: one call to `OpenRouter`'s `/systemone`, through
 //! `rig-typesafeai`, with a JSON state and named questions.
 //!
-//! A question is a yes/no question or a score with ordered levels. Practice
-//! never asks Jev's choice questions: their answers sum to one and always
-//! pick an option, so each option gets a yes/no question of its own.
+//! A question is a yes/no question, a score with ordered levels, or a choice
+//! among labelled options. A choice's answers sum to one and always pick an
+//! option, so where each option is judged on its own, as in the option
+//! ratings, each gets a yes/no question instead. Practice asks a choice only
+//! where it wants just that: which option Jev would pick, in the answer
+//! probe.
 //!
 //! Jev requests carry no `provider` object. Rig 0.45 can't send one, so this
 //! is ADR 0001's temporary exception until #69: `TypeSafe` is Jev's only
@@ -52,6 +55,15 @@ pub enum JevQuestion {
         /// The levels, lowest first: two to ten of them.
         levels: Vec<String>,
     },
+    /// A choice among options. Jev answers with a probability for each
+    /// option.
+    Choice {
+        /// What to choose.
+        instructions: String,
+        /// The options, by label, each with what choosing it means: two to
+        /// 255 of them, none with an empty label.
+        options: BTreeMap<String, String>,
+    },
 }
 
 /// What yes and no mean for a yes/no question.
@@ -99,6 +111,21 @@ impl JevQuestion {
         }
     }
 
+    /// A choice question about `instructions` among `options`, each a label
+    /// with what choosing it means.
+    pub fn choice(
+        instructions: impl Into<String>,
+        options: impl IntoIterator<Item = (impl Into<String>, impl Into<String>)>,
+    ) -> Self {
+        Self::Choice {
+            instructions: instructions.into(),
+            options: options
+                .into_iter()
+                .map(|(label, meaning)| (label.into(), meaning.into()))
+                .collect(),
+        }
+    }
+
     /// The question as `rig-typesafeai` sends it.
     fn definition(&self) -> Question {
         match self {
@@ -122,6 +149,16 @@ impl JevQuestion {
                 criteria: levels
                     .iter()
                     .map(|level| Value::from(level.as_str()))
+                    .collect(),
+            },
+            Self::Choice {
+                instructions,
+                options,
+            } => Question::Choice {
+                instructions: Value::from(instructions.as_str()),
+                criteria: options
+                    .iter()
+                    .map(|(label, meaning)| (label.clone(), Some(Value::from(meaning.as_str()))))
                     .collect(),
             },
         }
@@ -159,6 +196,13 @@ pub enum JevAnswer {
         /// positions.
         expected: f64,
     },
+    /// A choice question's answer. Jev's choice, its most probable option,
+    /// is never read.
+    Choice {
+        /// The probability of each option, by label: exactly the options
+        /// asked, as Rig has checked, summing to one.
+        probabilities: BTreeMap<String, f64>,
+    },
 }
 
 impl JevAnswer {
@@ -180,7 +224,7 @@ impl JevAnswer {
                     expected: score,
                 })
             }
-            Answer::Choice { .. } => Err(AiError::InvalidReply),
+            Answer::Choice { probabilities, .. } => Ok(Self::Choice { probabilities }),
         }
     }
 }
@@ -191,10 +235,12 @@ impl OpenRouter {
     /// `cancel` is cancelled.
     ///
     /// The whole reply is rejected, as [`AiError::InvalidReply`], when an
-    /// answer is missing, unexpected, of another kind or out of range. A
-    /// request Rig can't build (no questions, an empty name, a score without
-    /// two to ten levels, a null state) is [`AiError::InvalidRequest`], and
-    /// nothing is sent.
+    /// answer is missing, unexpected, of another kind or out of range, or
+    /// when a choice's probabilities aren't for exactly the options asked or
+    /// don't sum to one. A request Rig can't build (no questions, an empty
+    /// name, a score without two to ten levels, a choice without two to 255
+    /// options, a null state) is [`AiError::InvalidRequest`], and nothing is
+    /// sent.
     #[tracing::instrument(name = "jev", skip_all, fields(model = %request.model))]
     pub async fn evaluate(
         &self,
@@ -345,7 +391,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_reply_whose_answer_is_of_another_kind_is_invalid() {
-        // The spike's recorded reply rates `options` as a choice question,
+        // The spike's recorded reply answers `options` as a choice question,
         // where this request asks a yes/no question.
         let request = JevRequest {
             model: JEV_MODEL.to_owned(),
@@ -363,6 +409,112 @@ mod tests {
         .await;
 
         assert_eq!(reply, Err(AiError::InvalidReply));
+    }
+
+    /// A request whose `options` question is a choice over `labels`, beside
+    /// the spike's two yes/no questions, as its recorded reply answers.
+    fn choice_request(labels: &[&str]) -> JevRequest {
+        JevRequest {
+            model: JEV_MODEL.to_owned(),
+            state: sample_state(),
+            questions: BTreeMap::from([
+                ("gate".to_owned(), JevQuestion::yes_no("A statement.")),
+                (
+                    "options".to_owned(),
+                    JevQuestion::choice(
+                        "Which option keeps the retry to one charge?",
+                        labels
+                            .iter()
+                            .map(|&label| (label, format!("Option {label} does."))),
+                    ),
+                ),
+                ("criterion".to_owned(), JevQuestion::yes_no("A statement.")),
+            ]),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_choice_question_carries_each_option_by_its_label() {
+        let (_, body) = evaluate(
+            &choice_request(&["A", "B", "C"]),
+            include_str!("../fixtures/jev-answers-with-choice.json"),
+        )
+        .await;
+
+        assert_eq!(
+            body["questions"]["options"],
+            json!({
+                "type": "choice",
+                "instructions": "Which option keeps the retry to one charge?",
+                "criteria": {
+                    "A": "Option A does.",
+                    "B": "Option B does.",
+                    "C": "Option C does.",
+                },
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn a_choice_answer_decodes_as_returned_with_a_probability_per_option() {
+        let (reply, _) = evaluate(
+            &choice_request(&["A", "B", "C"]),
+            include_str!("../fixtures/jev-answers-with-choice.json"),
+        )
+        .await;
+
+        let reply = reply.expect("the spike's recorded reply decodes");
+        assert_eq!(
+            reply.answers["options"],
+            JevAnswer::Choice {
+                probabilities: BTreeMap::from([
+                    ("A".to_owned(), 1.0),
+                    ("B".to_owned(), 0.0),
+                    ("C".to_owned(), 0.0),
+                ]),
+            }
+        );
+        assert_eq!(reply.answers["gate"], JevAnswer::YesNo { yes: 0.88 });
+    }
+
+    #[tokio::test]
+    async fn a_choice_answer_whose_options_are_not_those_asked_is_invalid() {
+        for labels in [&["A", "B"][..], &["A", "B", "D"], &["A", "B", "C", "D"]] {
+            let (reply, _) = evaluate(
+                &choice_request(labels),
+                include_str!("../fixtures/jev-answers-with-choice.json"),
+            )
+            .await;
+
+            assert_eq!(reply, Err(AiError::InvalidReply), "{labels:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_choice_answer_whose_probabilities_are_not_probabilities_is_invalid() {
+        for probabilities in [
+            json!({ "A": 1.2, "B": -0.2, "C": 0.0 }),
+            json!({ "A": 0.5, "B": 0.2, "C": 0.1 }),
+            json!({ "A": "most", "B": 0.0, "C": 0.0 }),
+        ] {
+            let reply = json!({
+                "model": "typesafe/jev-1.14-20261014",
+                "answers": {
+                    "gate": { "type": "noul", "noul": 0.88 },
+                    "options": {
+                        "type": "choice",
+                        "choice": "A",
+                        "probabilities": probabilities,
+                        "confidence": 1,
+                    },
+                    "criterion": { "type": "noul", "noul": 0.91 },
+                },
+            });
+
+            let (reply, _) = evaluate(&choice_request(&["A", "B", "C"]), &reply.to_string()).await;
+
+            assert_eq!(reply, Err(AiError::InvalidReply), "{probabilities}");
+        }
     }
 
     #[tokio::test]
