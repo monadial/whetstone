@@ -269,8 +269,8 @@ fn plain_checks_drop_malformed_candidates_before_jev_sees_them() {
         })
         .collect();
     assert_eq!(
-        checked, ["Well formed?"; 3],
-        "the one well-formed candidate's check, in three calls"
+        checked, ["Well formed?"; 4],
+        "the one well-formed candidate's check, in four calls"
     );
     assert_eq!(
         session.question().rows()[1].trim(),
@@ -340,8 +340,8 @@ fn retry_when_none_pass_writes_and_checks_new_candidates() {
     );
     assert_eq!(
         again.len(),
-        7,
-        "one write, then a check of three calls for each of two"
+        9,
+        "one write, then a check of four calls for each of two"
     );
     assert_eq!(
         session.question().row_with("Question 1"),

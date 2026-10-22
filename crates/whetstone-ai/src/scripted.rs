@@ -9,8 +9,8 @@
 //! any checks a test answers otherwise, or at a depth a test chooses. Each
 //! reply scripted for one of them answers one request, in the order
 //! scripted, so a test scripts a Retry's reply as a second one. A question
-//! check's reply answers its three calls: each call takes the answers to
-//! the checks it asks, and a failure fails all three. A test can also script
+//! check's reply answers its four calls: each call takes the answers to
+//! the checks it asks, and a failure fails all four. A test can also script
 //! one call of a check to fail on its own. A reply reports no cost unless a
 //! test scripts one for its role.
 //!
@@ -24,9 +24,9 @@ use std::future;
 use std::sync::{Mutex, MutexGuard};
 
 use whetstone_core::{
-    Area, AreaId, Candidate, CandidateCheck, Cost, Criterion, CriterionOutcome, Depth, DepthLevel,
-    Evidence, GenerationId, JevExchange, ModelId, Probability, Provenance, Question,
-    QuestionCheckAnswers, Role, WrittenCandidate,
+    AnswerProbe, Area, AreaId, Candidate, CandidateCheck, Cost, Criterion, CriterionOutcome, Depth,
+    DepthLevel, Evidence, GenerationId, JevExchange, ModelId, OptionLetter, Probability,
+    Provenance, Question, QuestionCheckAnswers, Role, WrittenCandidate,
 };
 
 use crate::exchanges::jev_exchanges;
@@ -58,7 +58,7 @@ struct Script {
     /// The generator's next replies for each area.
     writes: HashMap<AreaId, VecDeque<Result<Vec<WrittenCandidate>, RequestFailure>>>,
     /// Jev's next replies for each candidate, by its stem, each of which
-    /// answers the three calls of a check.
+    /// answers the four calls of a check.
     checks: HashMap<String, VecDeque<CheckReply>>,
     /// Jev's next replies to each call of the check of each candidate, by
     /// its stem: a call's share of a check's reply, or a failure scripted
@@ -211,7 +211,7 @@ impl ScriptedAi {
 
     /// Scripts Jev's reply to the next check of the candidate whose stem is
     /// `stem`: exactly these answers, each call taking the answers to the
-    /// checks it asks, or a failure of all three calls.
+    /// checks it asks, or a failure of all four calls.
     pub fn on_check(&self, stem: &str, reply: Result<QuestionCheckAnswers, RequestFailure>) {
         self.script_check(stem, CheckReply::Exactly(reply));
     }
@@ -234,15 +234,19 @@ impl ScriptedAi {
 
     /// Scripts Jev's reply to the next request to check the candidate whose
     /// stem is `stem` as answers the show rule passes, made for the
-    /// candidate asked: every one of its checks clear yes, at 0.9, but the
-    /// options that aren't its answer key clear no, at 0.1. Its depth is
-    /// needs reading the change, at 0.8, so its expected value is 1.
+    /// candidate asked: every one of its yes/no checks clear yes, at 0.9,
+    /// but the options that aren't its answer key clear no, at 0.1. Its
+    /// answer probe is clear no on the answer key, at 0.1, with 0.45 on each
+    /// other option. Its depth is needs reading the change, at 0.8, so its
+    /// expected value is 1.
     pub fn on_check_passing(&self, stem: &str) {
         self.on_check_passing_except(stem, []);
     }
 
     /// The same as [`on_check_passing`](Self::on_check_passing), but Jev
-    /// gives `answers` to their checks instead.
+    /// gives `answers` to their checks instead. An answer to
+    /// [`CandidateCheck::AnswerProbe`] is the probe's probability on the
+    /// answer key, and the other two options share the rest equally.
     pub fn on_check_passing_except(
         &self,
         stem: &str,
@@ -420,7 +424,7 @@ impl Ai for ScriptedAi {
         });
         let key = (candidate.stem().to_owned(), call);
         if script.calls.get(&key).is_none_or(VecDeque::is_empty) {
-            // A check's reply answers its three calls: each takes its share.
+            // A check's reply answers its four calls: each takes its share.
             let reply = script
                 .checks
                 .get_mut(candidate.stem())
@@ -457,11 +461,23 @@ impl Ai for ScriptedAi {
                     },
                 )
             });
+            let probe = answers.probe().map(|probe| {
+                (
+                    question_check::name(CandidateCheck::AnswerProbe),
+                    JevAnswer::Choice {
+                        probabilities: probe
+                            .iter()
+                            .map(|(letter, answer)| (letter.to_string(), answer.get()))
+                            .collect(),
+                    },
+                )
+            });
             kept(
                 &sent,
                 answers
                     .iter()
                     .map(|(check, answer)| (question_check::name(check), yes_no(answer)))
+                    .chain(probe)
                     .chain(depth),
             )
         })
@@ -581,9 +597,11 @@ impl CheckReply {
         match self {
             Self::Exactly(reply) => reply,
             Self::Passing { except, depth } => {
+                let answer_key = candidate.answer_key();
                 let passing = candidate.checks().into_iter().map(|check| {
                     let answer = match check {
-                        CandidateCheck::Option(letter) if letter != candidate.answer_key() => 0.1,
+                        CandidateCheck::Option(letter) if letter != answer_key => 0.1,
+                        CandidateCheck::AnswerProbe => 0.1,
                         _ => 0.9,
                     };
                     (
@@ -592,10 +610,32 @@ impl CheckReply {
                     )
                 });
                 // A check answered twice keeps its last answer.
-                Ok(QuestionCheckAnswers::new(passing.chain(except), depth))
+                let answers: Vec<_> = passing.chain(except).collect();
+                let on_key = answers
+                    .iter()
+                    .rev()
+                    .find_map(|&(check, answer)| {
+                        (check == CandidateCheck::AnswerProbe).then_some(answer)
+                    })
+                    .expect("the answer probe is one of the candidate's checks");
+                Ok(QuestionCheckAnswers::new(answers, depth)
+                    .with_probe(probe_on_key(answer_key, on_key)))
             }
         }
     }
+}
+
+/// An answer probe at `on_key` on the option `answer_key`, the other two
+/// options sharing the rest equally.
+fn probe_on_key(answer_key: OptionLetter, on_key: Probability) -> AnswerProbe {
+    AnswerProbe::new(OptionLetter::ALL.map(|letter| {
+        if letter == answer_key {
+            on_key
+        } else {
+            Probability::new((1.0 - on_key.get()) / 2.0)
+                .expect("half of what a probability leaves is a probability")
+        }
+    }))
 }
 
 /// The gate's answer for an area a test scripted none for: 0.9, clear yes.
@@ -814,6 +854,7 @@ mod tests {
                 .map(|(letter, value)| (CandidateCheck::Option(letter), probability(value))),
             depth(0.2, 0.3, 0.5, 1.3),
         )
+        .with_probe(AnswerProbe::new([0.6, 0.3, 0.1].map(probability)))
     }
 
     /// [`candidate`] asking `stem`, once its question check passes.
@@ -839,7 +880,7 @@ mod tests {
         CandidateCount::per_area(QuestionCount::DEFAULT, 2)
     }
 
-    /// `ai`'s check of `candidate`: its three calls, in order, and their
+    /// `ai`'s check of `candidate`: its four calls, in order, and their
     /// answers made one, or the first call's failure.
     fn check(
         ai: &ScriptedAi,
@@ -1023,6 +1064,7 @@ mod tests {
         let ratings = ask(QuestionCheckCall::OptionRatings).expect("scripted to answer");
         let hint = ask(QuestionCheckCall::Hint).expect("scripted to answer");
         let candidate_call = ask(QuestionCheckCall::Candidate).expect("scripted to answer");
+        let probe = ask(QuestionCheckCall::AnswerProbe).expect("scripted to answer");
         let failed = QuestionCheckCall::ALL.map(|call| ask(call).err());
 
         assert_eq!(
@@ -1038,7 +1080,16 @@ mod tests {
             "the depth goes with the candidate call"
         );
         assert_eq!(candidate_call.provenance.role(), Role::Jev);
-        assert_eq!(failed, [Some(RequestFailure::RateLimited); 3]);
+        assert_eq!(
+            probe.content.probe(),
+            answers(0.9, 0.1, 0.05).probe(),
+            "the answer probe goes with its own call"
+        );
+        assert_eq!(probe.content.iter().count(), 0, "no yes/no check");
+        for other in [&ratings, &hint, &candidate_call] {
+            assert_eq!(other.content.probe(), None);
+        }
+        assert_eq!(failed, [Some(RequestFailure::RateLimited); 4]);
     }
 
     #[test]
@@ -1056,7 +1107,7 @@ mod tests {
         let first = QuestionCheckCall::ALL.map(|call| ask(call).err());
         let retried = ask(QuestionCheckCall::Hint).expect("the check's own reply");
 
-        assert_eq!(first, [None, Some(RequestFailure::TimedOut), None]);
+        assert_eq!(first, [None, Some(RequestFailure::TimedOut), None, None]);
         assert_eq!(
             retried.content.iter().collect::<Vec<_>>(),
             [(CandidateCheck::HintHidesAnswerKey, probability(0.9))]
@@ -1071,67 +1122,74 @@ mod tests {
         ai.on_check_passing("Why retry?");
         ai.on_check_passing_except(
             "Why retry?",
-            [(NeedsChange, unclear), (Option(OptionLetter::C), unclear)],
+            [
+                (AboutArea, unclear),
+                (Option(OptionLetter::C), unclear),
+                (AnswerProbe, unclear),
+            ],
         );
         let candidate = candidate_with("Why retry?", "B", 2);
 
         let passing = check(&ai, &candidate);
         let except = check(&ai, &candidate);
 
-        let answers = |answers: &[(CandidateCheck, f64)]| {
+        let answers = |answers: &[(CandidateCheck, f64)], probe: [f64; 3]| {
             QuestionCheckAnswers::new(
                 answers
                     .iter()
                     .map(|&(check, value)| (check, probability(value))),
                 depth(0.1, 0.8, 0.1, 1.0),
             )
+            .with_probe(whetstone_core::AnswerProbe::new(probe.map(probability)))
         };
         assert_eq!(
             passing,
-            Ok(answers(&[
-                (Answerable, 0.9),
-                (AboutArea, 0.9),
-                (NeedsChange, 0.9),
-                (NoGiveaway, 0.9),
-                (Criterion(0), 0.9),
-                (Criterion(1), 0.9),
-                (CriterionMinimum(0), 0.9),
-                (CriterionMinimum(1), 0.9),
-                (Option(OptionLetter::A), 0.1),
-                (Option(OptionLetter::B), 0.9),
-                (Option(OptionLetter::C), 0.1),
-                (Rationale(OptionLetter::A), 0.9),
-                (Rationale(OptionLetter::B), 0.9),
-                (Rationale(OptionLetter::C), 0.9),
-                (WhyItMatters, 0.9),
-                (HintPointsToEvidence, 0.9),
-                (HintHidesAnswerKey, 0.9),
-            ])),
+            Ok(answers(
+                &[
+                    (Answerable, 0.9),
+                    (AboutArea, 0.9),
+                    (Criterion(0), 0.9),
+                    (Criterion(1), 0.9),
+                    (CriterionMinimum(0), 0.9),
+                    (CriterionMinimum(1), 0.9),
+                    (Option(OptionLetter::A), 0.1),
+                    (Option(OptionLetter::B), 0.9),
+                    (Option(OptionLetter::C), 0.1),
+                    (Rationale(OptionLetter::A), 0.9),
+                    (Rationale(OptionLetter::B), 0.9),
+                    (Rationale(OptionLetter::C), 0.9),
+                    (WhyItMatters, 0.9),
+                    (HintPointsToEvidence, 0.9),
+                    (HintHidesAnswerKey, 0.9),
+                ],
+                [0.45, 0.1, 0.45]
+            )),
             "every check clear yes, but the options that aren't the answer key clear no, \
-             and needs reading the change"
+             the answer probe clear no on the answer key, and needs reading the change"
         );
         assert_eq!(
             except,
-            Ok(answers(&[
-                (Answerable, 0.9),
-                (AboutArea, 0.9),
-                (NeedsChange, 0.5),
-                (NoGiveaway, 0.9),
-                (Criterion(0), 0.9),
-                (Criterion(1), 0.9),
-                (CriterionMinimum(0), 0.9),
-                (CriterionMinimum(1), 0.9),
-                (Option(OptionLetter::A), 0.1),
-                (Option(OptionLetter::B), 0.9),
-                (Option(OptionLetter::C), 0.5),
-                (Rationale(OptionLetter::A), 0.9),
-                (Rationale(OptionLetter::B), 0.9),
-                (Rationale(OptionLetter::C), 0.9),
-                (WhyItMatters, 0.9),
-                (HintPointsToEvidence, 0.9),
-                (HintHidesAnswerKey, 0.9),
-            ])),
-            "the same, but the answers given"
+            Ok(answers(
+                &[
+                    (Answerable, 0.9),
+                    (AboutArea, 0.5),
+                    (Criterion(0), 0.9),
+                    (Criterion(1), 0.9),
+                    (CriterionMinimum(0), 0.9),
+                    (CriterionMinimum(1), 0.9),
+                    (Option(OptionLetter::A), 0.1),
+                    (Option(OptionLetter::B), 0.9),
+                    (Option(OptionLetter::C), 0.5),
+                    (Rationale(OptionLetter::A), 0.9),
+                    (Rationale(OptionLetter::B), 0.9),
+                    (Rationale(OptionLetter::C), 0.9),
+                    (WhyItMatters, 0.9),
+                    (HintPointsToEvidence, 0.9),
+                    (HintHidesAnswerKey, 0.9),
+                ],
+                [0.25, 0.5, 0.25]
+            )),
+            "the same, but the answers given, the answer probe's on the answer key"
         );
     }
 

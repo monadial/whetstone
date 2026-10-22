@@ -2,16 +2,18 @@
 //! the show rule that turns its answers into a question, or withholds the
 //! candidate.
 //!
-//! [`Candidate::checks`] lists the yes/no questions the check asks: whether
-//! the candidate is answerable from the evidence, about its area, needs this
-//! change and doesn't give the answer away; whether each criterion is fair,
-//! and whether it asks only for what the question needs; each option's
-//! rating; whether each rationale and the "why it matters" line hold up;
-//! and whether the hint points to the evidence without revealing the answer
-//! key. It also scores the candidate's [`Depth`], which orders questions
-//! and never passes or fails one. Jev's answers come back as
-//! [`QuestionCheckAnswers`], as returned, and [`show_rule`] decides under
-//! the [`AssessmentPolicy`]. Only a question that passes is ever shown.
+//! [`Candidate::checks`] lists what the check asks: whether the candidate is
+//! answerable from the evidence and about its area; its [`AnswerProbe`],
+//! Jev's attempt to answer it from its stem and options alone, without the
+//! evidence; whether each criterion is fair, and whether it asks only for
+//! what the question needs; each option's rating; whether each rationale
+//! and the "why it matters" line hold up; and whether the hint points to
+//! the evidence without revealing the answer key. Each is a yes/no
+//! question but the answer probe, which is a choice among the options. It
+//! also scores the candidate's [`Depth`], which orders questions and never
+//! passes or fails one. Jev's answers come back as [`QuestionCheckAnswers`],
+//! as returned, and [`show_rule`] decides under the [`AssessmentPolicy`].
+//! Only a question that passes is ever shown.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -23,23 +25,24 @@ use crate::question::{
     Candidate, CandidateId, Citation, Criterion, Hint, OptionLetter, QuestionType,
 };
 
-/// One yes/no question of a candidate's question check. They order as the
-/// check asks them.
+/// One check of a candidate's question check: a yes/no question, or the
+/// answer probe. They order as the check asks them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CandidateCheck {
     /// Check 1: it is answerable from the evidence that was sent.
     Answerable,
     /// Check 2: it is about its area.
     AboutArea,
-    /// Check 3: it needs this change rather than general knowledge.
-    NeedsChange,
-    /// Check 4: its stem and options don't give the answer away.
-    NoGiveaway,
-    /// Check 5, for the criterion at this place in the rubric, counting from
+    /// Check 3, the answer probe: which option Jev picks from the stem and
+    /// options alone, without the evidence. Its answer is the probe's
+    /// probability on the answer key, and clear yes withholds the
+    /// candidate: it gives itself away, or doesn't need the change.
+    AnswerProbe,
+    /// Check 4, for the criterion at this place in the rubric, counting from
     /// 0: it follows from the evidence and the answer key, and can be judged
     /// from written reasoning.
     Criterion(usize),
-    /// Check 6, for the criterion at this place in the rubric, counting from
+    /// Check 5, for the criterion at this place in the rubric, counting from
     /// 0: it asks only for what a sufficient answer to the stem needs, so a
     /// learner who understands the change could meet it in their own words.
     CriterionMinimum(usize),
@@ -57,11 +60,22 @@ pub enum CandidateCheck {
 }
 
 /// Jev's answers to a candidate's question check, exactly as returned: each
-/// yes/no answer the probability of yes, and its depth.
+/// yes/no answer the probability of yes, the answer probe, and its depth.
 #[derive(Debug, Clone, PartialEq)]
 pub struct QuestionCheckAnswers {
     yes_no: BTreeMap<CandidateCheck, Probability>,
+    probe: Option<AnswerProbe>,
     depth: Depth,
+}
+
+/// Jev's answer probe of a candidate: its probability that each option
+/// answers the stem, judged from the stem and the options' text alone,
+/// exactly as returned. Nothing renormalises it, and Jev's choice and
+/// `confidence` are never read.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AnswerProbe {
+    /// The probability of each option, in [`OptionLetter::ALL`] order.
+    probabilities: [Probability; 3],
 }
 
 /// How much understanding of the change a candidate needs, as Jev scores it
@@ -115,18 +129,20 @@ pub struct Question {
 /// that were not as the rule needs them. It is never shown.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Withheld {
-    /// Boxed, as is the policy, so the show rule's `Err` stays small.
+    /// Boxed, as are the answers and the policy, so the show rule's `Err`
+    /// stays small.
     candidate: Box<Candidate>,
-    answers: QuestionCheckAnswers,
+    answers: Box<QuestionCheckAnswers>,
     policy: Box<AssessmentPolicy>,
     failed: Vec<CandidateCheck>,
 }
 
 impl Candidate {
-    /// The yes/no questions its question check asks Jev, in order: checks
-    /// 1 to 4; one per criterion; one per criterion again, whether it asks
-    /// only for what the question needs; one option rating per option; one
-    /// per rationale, then "why it matters"; and the hint's two.
+    /// The checks its question check asks Jev, in order: checks 1 to 3,
+    /// the third the answer probe; one per criterion; one per criterion
+    /// again, whether it asks only for what the question needs; one option
+    /// rating per option; one per rationale, then "why it matters"; and the
+    /// hint's two.
     #[must_use]
     pub fn checks(&self) -> Vec<CandidateCheck> {
         let letters = match self.question_type() {
@@ -135,8 +151,7 @@ impl Candidate {
         [
             CandidateCheck::Answerable,
             CandidateCheck::AboutArea,
-            CandidateCheck::NeedsChange,
-            CandidateCheck::NoGiveaway,
+            CandidateCheck::AnswerProbe,
         ]
         .into_iter()
         .chain((0..self.rubric().len()).map(CandidateCheck::Criterion))
@@ -157,12 +172,10 @@ impl CandidateCheck {
     #[must_use]
     pub fn job(self) -> Job {
         match self {
-            Self::Answerable
-            | Self::AboutArea
-            | Self::NeedsChange
-            | Self::NoGiveaway
-            | Self::Criterion(_)
-            | Self::CriterionMinimum(_) => Job::QuestionCheck,
+            Self::Answerable | Self::AboutArea | Self::Criterion(_) | Self::CriterionMinimum(_) => {
+                Job::QuestionCheck
+            }
+            Self::AnswerProbe => Job::AnswerProbe,
             Self::Option(_) => Job::OptionRating,
             Self::Rationale(_)
             | Self::WhyItMatters
@@ -178,28 +191,65 @@ impl CandidateCheck {
 }
 
 impl QuestionCheckAnswers {
-    /// Jev's yes/no `answers`, each to one check, and its `depth` score. A
-    /// check answered twice keeps its last answer.
+    /// Jev's yes/no `answers`, each to one check, and its `depth` score,
+    /// with no answer probe. A check answered twice keeps its last answer,
+    /// and an answer to [`CandidateCheck::AnswerProbe`], which isn't a
+    /// yes/no question, is left out: [`with_probe`](Self::with_probe) gives
+    /// the probe.
     #[must_use]
     pub fn new(
         answers: impl IntoIterator<Item = (CandidateCheck, Probability)>,
         depth: Depth,
     ) -> Self {
         Self {
-            yes_no: answers.into_iter().collect(),
+            yes_no: answers
+                .into_iter()
+                .filter(|&(check, _)| check != CandidateCheck::AnswerProbe)
+                .collect(),
+            probe: None,
             depth,
         }
     }
 
-    /// Jev's answer to `check`, if it was asked.
+    /// These answers with Jev's answer `probe`.
+    #[must_use]
+    pub fn with_probe(self, probe: AnswerProbe) -> Self {
+        Self {
+            probe: Some(probe),
+            ..self
+        }
+    }
+
+    /// Jev's answer to the yes/no check `check`, if it was asked. The answer
+    /// probe isn't one: its answer is [`answer`](Self::answer), or the
+    /// whole [`probe`](Self::probe).
     #[must_use]
     pub fn get(&self, check: CandidateCheck) -> Option<Probability> {
         self.yes_no.get(&check).copied()
     }
 
-    /// Every yes/no answer, by check, in [`CandidateCheck`] order.
+    /// Jev's answer to `check` of a candidate whose answer key is
+    /// `answer_key`, if it was asked: the probability of yes for a yes/no
+    /// check, and for the answer probe its probability on `answer_key`.
+    /// The policy bands it with `check`'s job.
+    #[must_use]
+    pub fn answer(&self, check: CandidateCheck, answer_key: OptionLetter) -> Option<Probability> {
+        match check {
+            CandidateCheck::AnswerProbe => self.probe.map(|probe| probe.probability(answer_key)),
+            _ => self.get(check),
+        }
+    }
+
+    /// Every yes/no answer, by check, in [`CandidateCheck`] order. The
+    /// answer probe is [`probe`](Self::probe).
     pub fn iter(&self) -> impl Iterator<Item = (CandidateCheck, Probability)> + '_ {
         self.yes_no.iter().map(|(&check, &answer)| (check, answer))
+    }
+
+    /// Jev's answer probe, if it was asked.
+    #[must_use]
+    pub fn probe(&self) -> Option<AnswerProbe> {
+        self.probe
     }
 
     /// Jev's depth score.
@@ -239,6 +289,27 @@ impl Depth {
     }
 }
 
+impl AnswerProbe {
+    /// The answer probe whose probabilities are these, one for each option
+    /// in [`OptionLetter::ALL`] order.
+    #[must_use]
+    pub fn new(probabilities: [Probability; 3]) -> Self {
+        Self { probabilities }
+    }
+
+    /// Jev's probability that the option `letter` answers the stem, as
+    /// returned.
+    #[must_use]
+    pub fn probability(&self, letter: OptionLetter) -> Probability {
+        self.probabilities[letter.index()]
+    }
+
+    /// Each option with Jev's probability, in [`OptionLetter::ALL`] order.
+    pub fn iter(&self) -> impl Iterator<Item = (OptionLetter, Probability)> + '_ {
+        OptionLetter::ALL.into_iter().zip(self.probabilities)
+    }
+}
+
 impl DepthLevel {
     /// Every level, from the shallowest to the deepest.
     pub const ALL: [Self; 3] = [Self::OneLine, Self::TheChange, Self::CodeAround];
@@ -258,10 +329,12 @@ impl DepthLevel {
 /// Anything unclear fails it, and so does a check left unanswered, except
 /// where a check below drops a criterion or the hint instead.
 ///
-/// For a single-choice question: checks 1 to 4 and every criterion's check
-/// are clear yes; every rationale check and the "why it matters" check are
-/// clear yes; exactly one option rating is clear yes and it is the answer
-/// key; and the other two are clear no.
+/// For a single-choice question: checks 1 and 2 and every criterion's check
+/// are clear yes; the answer probe's probability on the answer key isn't
+/// clear yes, as Jev couldn't confidently pick it without the evidence, so
+/// a confident pick of another option passes; every rationale check and the
+/// "why it matters" check are clear yes; exactly one option rating is clear
+/// yes and it is the answer key; and the other two are clear no.
 ///
 /// A criterion whose [`CandidateCheck::CriterionMinimum`] is clear no, or
 /// left unanswered, asks for more than the question needs, so it is
@@ -281,9 +354,11 @@ pub fn show_rule(
     policy: &AssessmentPolicy,
 ) -> Result<Question, Withheld> {
     let passes = |check: CandidateCheck| {
-        answers.get(check).is_some_and(|answer| {
-            passing(&candidate, check).contains(&policy.band(check.job(), answer))
-        })
+        answers
+            .answer(check, candidate.answer_key())
+            .is_some_and(|answer| {
+                passing(&candidate, check).contains(&policy.band(check.job(), answer))
+            })
     };
     let checks = candidate.checks();
     let (kept, dropped): (Vec<usize>, Vec<usize>) = (0..candidate.rubric().len())
@@ -319,7 +394,7 @@ pub fn show_rule(
     } else {
         Err(Withheld {
             candidate: Box::new(candidate),
-            answers,
+            answers: Box::new(answers),
             policy: Box::new(policy.clone()),
             failed,
         })
@@ -330,16 +405,20 @@ pub fn show_rule(
 fn needed(candidate: &Candidate, check: CandidateCheck) -> Band {
     match check {
         CandidateCheck::Option(letter) if letter != candidate.answer_key() => Band::ClearNo,
+        CandidateCheck::AnswerProbe => Band::ClearNo,
         _ => Band::ClearYes,
     }
 }
 
 /// The bands of Jev's answer to `candidate`'s `check` that pass it: the one
-/// [`needed`], or, for a [`CandidateCheck::CriterionMinimum`], clear yes or
-/// unclear, as the check drops only what it is sure of.
+/// [`needed`]; for a [`CandidateCheck::CriterionMinimum`], clear yes or
+/// unclear, as the check drops only what it is sure of; and for the answer
+/// probe, unclear or clear no, as only a confident pick of the answer key
+/// gives the question away.
 fn passing(candidate: &Candidate, check: CandidateCheck) -> &'static [Band] {
     match check {
         CandidateCheck::CriterionMinimum(_) => &[Band::ClearYes, Band::Unclear],
+        CandidateCheck::AnswerProbe => &[Band::Unclear, Band::ClearNo],
         _ => match needed(candidate, check) {
             Band::ClearYes => &[Band::ClearYes],
             Band::Unclear => &[Band::Unclear],
@@ -498,12 +577,18 @@ impl Withheld {
         &self.policy
     }
 
+    /// Jev's answer to its `check`, if it was asked: the probability of yes,
+    /// or for the answer probe its probability on the answer key.
+    #[must_use]
+    pub fn answer(&self, check: CandidateCheck) -> Option<Probability> {
+        self.answers.answer(check, self.candidate.answer_key())
+    }
+
     /// The band of Jev's answer to `check` under the policy that withheld
     /// it, or none when it went unanswered.
     #[must_use]
     pub fn band(&self, check: CandidateCheck) -> Option<Band> {
-        self.answers
-            .get(check)
+        self.answer(check)
             .map(|answer| self.policy.band(check.job(), answer))
     }
 
@@ -515,19 +600,21 @@ impl Withheld {
     }
 
     /// The band the show rule needed for its `check`: clear no for an
-    /// option rating that isn't the answer key's, and clear yes otherwise.
-    /// For a [`CandidateCheck::CriterionMinimum`], clear yes is the side
-    /// that keeps its criterion, though [`passing`](Self::passing) holds
-    /// every band that keeps it.
+    /// option rating that isn't the answer key's and for the answer probe,
+    /// and clear yes otherwise. For a [`CandidateCheck::CriterionMinimum`],
+    /// clear yes is the side that keeps its criterion, and for the answer
+    /// probe clear no is the side that passes it, though
+    /// [`passing`](Self::passing) holds every band that does.
     #[must_use]
     pub fn needed(&self, check: CandidateCheck) -> Band {
         needed(&self.candidate, check)
     }
 
     /// The bands of Jev's answer to its `check` that would have passed it:
-    /// the one it [`needed`](Self::needed), or, for a
+    /// the one it [`needed`](Self::needed); for a
     /// [`CandidateCheck::CriterionMinimum`], clear yes or unclear, either of
-    /// which keeps its criterion.
+    /// which keeps its criterion; and for the answer probe, unclear or clear
+    /// no.
     #[must_use]
     pub fn passing(&self, check: CandidateCheck) -> &'static [Band] {
         passing(&self.candidate, check)
@@ -566,12 +653,14 @@ pub(crate) mod tests {
             .expect("a well-formed candidate passes")
     }
 
-    /// Answers to every check of `candidate` that pass it: 0.9 for each,
-    /// except 0.1 for the options that aren't its answer key.
+    /// Answers to every yes/no check of `candidate` that pass it: 0.9 for
+    /// each, except 0.1 for the options that aren't its answer key. The
+    /// answer probe is [`passing_probe`].
     pub(crate) fn passing(candidate: &Candidate) -> Vec<(CandidateCheck, Probability)> {
         candidate
             .checks()
             .into_iter()
+            .filter(|&check| check != CandidateCheck::AnswerProbe)
             .map(|check| {
                 let answer = match check {
                     CandidateCheck::Option(letter) if letter != candidate.answer_key() => 0.1,
@@ -580,6 +669,33 @@ pub(crate) mod tests {
                 (check, probability(answer))
             })
             .collect()
+    }
+
+    /// An answer probe of `candidate` that passes it: 0.1 on its answer key,
+    /// and 0.45 on each other option.
+    pub(crate) fn passing_probe(candidate: &Candidate) -> AnswerProbe {
+        probe_with_key_at(candidate.answer_key(), 0.1)
+    }
+
+    /// An answer probe at `on_key` on the option `answer_key`, the other two
+    /// sharing the rest equally.
+    fn probe_with_key_at(answer_key: OptionLetter, on_key: f64) -> AnswerProbe {
+        AnswerProbe::new(OptionLetter::ALL.map(|letter| {
+            probability(if letter == answer_key {
+                on_key
+            } else {
+                (1.0 - on_key) / 2.0
+            })
+        }))
+    }
+
+    /// The answers `yes_no` to `candidate`'s question check, and an answer
+    /// probe that passes it, at a depth of 1.3.
+    pub(crate) fn answered(
+        candidate: &Candidate,
+        yes_no: impl IntoIterator<Item = (CandidateCheck, Probability)>,
+    ) -> QuestionCheckAnswers {
+        QuestionCheckAnswers::new(yes_no, depth(1.3)).with_probe(passing_probe(candidate))
     }
 
     /// A depth whose expected value is `expected`.
@@ -606,10 +722,23 @@ pub(crate) mod tests {
         let mut all = passing(&candidate);
         all.extend(answers);
         show_rule(
-            candidate,
-            QuestionCheckAnswers::new(all, depth(1.3)),
+            candidate.clone(),
+            answered(&candidate, all),
             AssessmentPolicy::current(),
         )
+    }
+
+    /// The show rule's verdict on a candidate whose answer key is
+    /// `answer_key`, answered to pass but with `probe` as its answer probe,
+    /// under `policy`.
+    fn probed(
+        answer_key: OptionLetter,
+        probe: AnswerProbe,
+        policy: &AssessmentPolicy,
+    ) -> Result<Question, Withheld> {
+        let candidate = candidate("domain", 0, answer_key);
+        let answers = QuestionCheckAnswers::new(passing(&candidate), depth(1.3)).with_probe(probe);
+        show_rule(candidate, answers, policy)
     }
 
     fn failed(result: Result<Question, Withheld>) -> Vec<CandidateCheck> {
@@ -625,8 +754,7 @@ pub(crate) mod tests {
             [
                 Answerable,
                 AboutArea,
-                NeedsChange,
-                NoGiveaway,
+                AnswerProbe,
                 Criterion(0),
                 Criterion(1),
                 CriterionMinimum(0),
@@ -651,8 +779,7 @@ pub(crate) mod tests {
         for (check, job) in [
             (Answerable, Job::QuestionCheck),
             (AboutArea, Job::QuestionCheck),
-            (NeedsChange, Job::QuestionCheck),
-            (NoGiveaway, Job::QuestionCheck),
+            (AnswerProbe, Job::AnswerProbe),
             (Criterion(2), Job::QuestionCheck),
             (CriterionMinimum(1), Job::QuestionCheck),
             (Option(OptionLetter::B), Job::OptionRating),
@@ -671,8 +798,8 @@ pub(crate) mod tests {
         let answers = passing(&candidate);
 
         let question = show_rule(
-            candidate,
-            QuestionCheckAnswers::new(answers.clone(), depth(1.3)),
+            candidate.clone(),
+            answered(&candidate, answers.clone()),
             AssessmentPolicy::current(),
         )
         .expect("shown");
@@ -699,6 +826,7 @@ pub(crate) mod tests {
             Some(probability(0.9))
         );
         assert_eq!(question.answers().iter().collect::<Vec<_>>(), answers);
+        assert_eq!(question.answers().probe(), Some(passing_probe(&candidate)));
         assert_eq!(question.depth(), depth(1.3));
     }
 
@@ -706,8 +834,8 @@ pub(crate) mod tests {
     fn a_check_the_learner_s_cut_offs_make_clear_yes_passes_and_the_question_keeps_them() {
         let candidate = candidate("domain", 0, OptionLetter::A);
         let mut answers = passing(&candidate);
-        answers.push((CandidateCheck::NeedsChange, probability(0.6)));
-        let answers = QuestionCheckAnswers::new(answers, depth(1.0));
+        answers.push((CandidateCheck::AboutArea, probability(0.6)));
+        let answers = answered(&candidate, answers);
         let lower_bar = AssessmentPolicy::with_cut_offs([(
             Job::QuestionCheck,
             CutOffs::new(0.55, 0.20).expect("valid"),
@@ -720,7 +848,7 @@ pub(crate) mod tests {
         );
         let shown = show_rule(candidate, answers, &lower_bar);
 
-        assert_eq!(failed(withheld), [CandidateCheck::NeedsChange]);
+        assert_eq!(failed(withheld), [CandidateCheck::AboutArea]);
         let question = shown.expect("clear yes under the learner's cut-offs");
         assert_eq!(question.policy(), &lower_bar);
     }
@@ -752,13 +880,10 @@ pub(crate) mod tests {
     fn depth_never_passes_or_fails_a_candidate() {
         for expected in [0.0, 1.0, 2.0] {
             let candidate = candidate("domain", 0, OptionLetter::A);
-            let answers = passing(&candidate);
+            let answers = QuestionCheckAnswers::new(passing(&candidate), depth(expected))
+                .with_probe(passing_probe(&candidate));
 
-            let question = show_rule(
-                candidate,
-                QuestionCheckAnswers::new(answers, depth(expected)),
-                AssessmentPolicy::current(),
-            );
+            let question = show_rule(candidate, answers, AssessmentPolicy::current());
 
             assert!(question.is_ok(), "{expected}");
         }
@@ -825,8 +950,6 @@ pub(crate) mod tests {
         for check in [
             Answerable,
             AboutArea,
-            NeedsChange,
-            NoGiveaway,
             Criterion(0),
             Criterion(1),
             Rationale(OptionLetter::A),
@@ -875,15 +998,17 @@ pub(crate) mod tests {
     fn a_check_left_unanswered_withholds_the_candidate() {
         let candidate = candidate("domain", 0, OptionLetter::A);
         for missing in candidate.checks() {
-            let answers = passing(&candidate)
-                .into_iter()
-                .filter(|&(check, _)| check != missing);
-
-            let shown = show_rule(
-                candidate.clone(),
-                QuestionCheckAnswers::new(answers, depth(1.3)),
-                AssessmentPolicy::current(),
+            let mut answers = QuestionCheckAnswers::new(
+                passing(&candidate)
+                    .into_iter()
+                    .filter(|&(check, _)| check != missing),
+                depth(1.3),
             );
+            if missing != CandidateCheck::AnswerProbe {
+                answers = answers.with_probe(passing_probe(&candidate));
+            }
+
+            let shown = show_rule(candidate.clone(), answers, AssessmentPolicy::current());
 
             match missing {
                 CandidateCheck::HintPointsToEvidence | CandidateCheck::HintHidesAnswerKey => {
@@ -936,8 +1061,8 @@ pub(crate) mod tests {
             .filter(|&(check, _)| check != minimum)
             .chain(answer.map(|answer| (minimum, probability(answer))));
         show_rule(
-            candidate,
-            QuestionCheckAnswers::new(answers, depth(1.3)),
+            candidate.clone(),
+            answered(&candidate, answers),
             AssessmentPolicy::current(),
         )
     }
@@ -1093,8 +1218,8 @@ pub(crate) mod tests {
     fn a_withheld_candidate_keeps_itself_jev_s_answers_and_the_policy_that_banded_them() {
         let candidate = candidate("domain", 0, OptionLetter::C);
         let mut answers = passing(&candidate);
-        answers.push((CandidateCheck::NoGiveaway, probability(0.82)));
-        let answers = QuestionCheckAnswers::new(answers, depth(1.3));
+        answers.push((CandidateCheck::Answerable, probability(0.82)));
+        let answers = answered(&candidate, answers);
         let higher_bar = AssessmentPolicy::with_cut_offs([(
             Job::QuestionCheck,
             CutOffs::new(0.85, 0.20).expect("valid"),
@@ -1107,8 +1232,8 @@ pub(crate) mod tests {
         assert_eq!(withheld.candidate().answer_key(), OptionLetter::C);
         assert_eq!(withheld.answers(), &answers);
         assert_eq!(withheld.policy(), &higher_bar);
-        assert_eq!(withheld.failed(), [CandidateCheck::NoGiveaway]);
-        assert_eq!(withheld.needed(CandidateCheck::NoGiveaway), Band::ClearYes);
+        assert_eq!(withheld.failed(), [CandidateCheck::Answerable]);
+        assert_eq!(withheld.needed(CandidateCheck::Answerable), Band::ClearYes);
         assert_eq!(
             withheld.needed(CandidateCheck::Option(OptionLetter::C)),
             Band::ClearYes,
@@ -1124,22 +1249,27 @@ pub(crate) mod tests {
     fn a_withheld_candidate_bands_each_answer_with_the_policy_that_withheld_it() {
         let candidate = candidate("domain", 0, OptionLetter::A);
         let mut answers = passing(&candidate);
-        answers.push((CandidateCheck::NoGiveaway, probability(0.82)));
+        answers.push((CandidateCheck::Answerable, probability(0.82)));
         let higher_bar = AssessmentPolicy::with_cut_offs([(
             Job::QuestionCheck,
             CutOffs::new(0.85, 0.20).expect("valid"),
         )]);
 
         let withheld = show_rule(
-            candidate,
-            QuestionCheckAnswers::new(answers, depth(1.3)),
+            candidate.clone(),
+            answered(&candidate, answers),
             &higher_bar,
         )
         .expect_err("withheld");
 
         assert_eq!(
-            withheld.band(CandidateCheck::NoGiveaway),
+            withheld.band(CandidateCheck::Answerable),
             Some(Band::Unclear)
+        );
+        assert_eq!(
+            withheld.band(CandidateCheck::AnswerProbe),
+            Some(Band::ClearNo),
+            "the probe's probability on the answer key, 0.1"
         );
         assert_eq!(
             withheld.band(CandidateCheck::Option(OptionLetter::B)),
@@ -1149,10 +1279,118 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn the_answer_probe_at_0_60_on_the_answer_key_withholds_the_candidate() {
+        let withheld = probed(
+            OptionLetter::B,
+            probe_with_key_at(OptionLetter::B, 0.60),
+            AssessmentPolicy::current(),
+        )
+        .expect_err("Jev picks the answer key without the evidence");
+
+        assert_eq!(withheld.failed(), [CandidateCheck::AnswerProbe]);
+        assert_eq!(
+            withheld.answer(CandidateCheck::AnswerProbe),
+            Some(probability(0.60))
+        );
+        assert_eq!(
+            withheld.band(CandidateCheck::AnswerProbe),
+            Some(Band::ClearYes)
+        );
+        assert_eq!(withheld.needed(CandidateCheck::AnswerProbe), Band::ClearNo);
+        assert_eq!(
+            withheld.passing(CandidateCheck::AnswerProbe),
+            [Band::Unclear, Band::ClearNo]
+        );
+    }
+
+    #[test]
+    fn the_answer_probe_below_0_60_on_the_answer_key_passes_the_candidate() {
+        for on_key in [0.59, 0.33, 0.21, 0.20, 0.0] {
+            let question = probed(
+                OptionLetter::B,
+                probe_with_key_at(OptionLetter::B, on_key),
+                AssessmentPolicy::current(),
+            )
+            .expect("unclear or clear no on the answer key");
+
+            assert_eq!(
+                question
+                    .answers()
+                    .answer(CandidateCheck::AnswerProbe, OptionLetter::B),
+                Some(probability(on_key)),
+                "{on_key}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_answer_probe_picking_another_option_confidently_passes_the_candidate() {
+        // A wrong option Jev picks without the evidence is a plausible
+        // wrong option, not a giveaway: only the answer key's counts.
+        let probe = AnswerProbe::new([0.90, 0.05, 0.05].map(probability));
+
+        let question = probed(OptionLetter::B, probe, AssessmentPolicy::current())
+            .expect("the answer key at 0.05");
+
+        assert_eq!(question.answers().probe(), Some(probe));
+    }
+
+    #[test]
+    fn the_answer_probe_is_banded_with_its_own_job_s_cut_offs() {
+        let probe = probe_with_key_at(OptionLetter::A, 0.55);
+        let lower_bar = AssessmentPolicy::with_cut_offs([(
+            Job::AnswerProbe,
+            CutOffs::new(0.50, 0.20).expect("valid"),
+        )]);
+        let lower_question_check = AssessmentPolicy::with_cut_offs([(
+            Job::QuestionCheck,
+            CutOffs::new(0.50, 0.20).expect("valid"),
+        )]);
+
+        let withheld = probed(OptionLetter::A, probe, &lower_bar).expect_err("clear yes at 0.50");
+
+        assert_eq!(withheld.failed(), [CandidateCheck::AnswerProbe]);
+        assert_eq!(withheld.policy(), &lower_bar);
+        assert!(probed(OptionLetter::A, probe, &lower_question_check).is_ok());
+    }
+
+    #[test]
+    fn the_answer_probe_keeps_jev_s_probability_for_each_option_as_returned() {
+        let probe = AnswerProbe::new([0.12, 0.7, 0.19].map(probability));
+
+        assert_eq!(
+            probe.iter().collect::<Vec<_>>(),
+            [
+                (OptionLetter::A, probability(0.12)),
+                (OptionLetter::B, probability(0.7)),
+                (OptionLetter::C, probability(0.19)),
+            ]
+        );
+        assert_eq!(probe.probability(OptionLetter::C), probability(0.19));
+    }
+
+    #[test]
+    fn the_answer_probe_is_not_a_yes_no_answer() {
+        let candidate = candidate("domain", 0, OptionLetter::A);
+        let answers = QuestionCheckAnswers::new(
+            [(CandidateCheck::AnswerProbe, probability(0.9))],
+            depth(1.3),
+        );
+
+        assert_eq!(answers.get(CandidateCheck::AnswerProbe), None);
+        assert_eq!(answers.iter().count(), 0);
+        assert_eq!(
+            answers.answer(CandidateCheck::AnswerProbe, candidate.answer_key()),
+            None,
+            "left out, not taken for the probe"
+        );
+    }
+
+    #[test]
     fn a_withheld_candidate_s_debug_output_never_shows_its_text() {
         let withheld = show(
             OptionLetter::A,
-            vec![(CandidateCheck::NoGiveaway, probability(0.46))],
+            vec![(CandidateCheck::Answerable, probability(0.46))],
         )
         .expect_err("withheld");
         let debug = format!("{withheld:?}");

@@ -2,7 +2,7 @@
 //! showcase project and turned into the Jev calls Practice would make for
 //! it, with the requests lane's builders, and the labels those calls'
 //! answers are measured against. Each example is one call, but a candidate
-//! example's question check is up to three, as in Practice: one for each
+//! example's question check is up to four, as in Practice: one for each
 //! of its calls that asks a check the example labels.
 //!
 //! Each example's evidence is its showcase commit's change, with every file
@@ -26,10 +26,10 @@ use whetstone_ai::{
     reasoning_request,
 };
 use whetstone_core::{
-    Area, AssessmentPolicy, Candidate, CandidateCheck, Change, Citation, ConnectedCodeLimit,
-    Connections, Criterion, Depth, DropReason, Evidence, ExcludePatterns, Job, ModelId,
-    Probability, Question, QuestionCheckAnswers, ReviewChoices, ShowcaseProject, Withheld,
-    plain_checks, show_rule,
+    AnswerProbe, Area, AssessmentPolicy, Candidate, CandidateCheck, Change, Citation,
+    ConnectedCodeLimit, Connections, Criterion, Depth, DropReason, Evidence, ExcludePatterns, Job,
+    ModelId, OptionLetter, Probability, Question, QuestionCheckAnswers, ReviewChoices,
+    ShowcaseProject, Withheld, plain_checks, show_rule,
 };
 
 use unicode_segmentation::UnicodeSegmentation as _;
@@ -43,12 +43,19 @@ use crate::labels::{
 /// editor's limit (rule 58).
 const REASONING_LIMIT: usize = 4_000;
 
+/// The labels of checks the question check no longer asks: the answer
+/// probe replaced them in assessment policy 1. A labels file may still hold
+/// them, such as a learner's earlier votes, so a candidate example's are left
+/// out with a notice, never refused.
+pub const RETIRED_LABELS: [&str; 2] = ["needs_change", "no_giveaway"];
+
 /// The labelled examples, each as the Jev calls that measure it.
 #[derive(Debug)]
 pub struct Prepared {
     model: ModelId,
     calls: Vec<Call>,
     skipped: Vec<Skipped>,
+    retired: Vec<Retired>,
 }
 
 impl Prepared {
@@ -60,7 +67,7 @@ impl Prepared {
 
     /// The gate examples' calls, then the candidates', the responses' and
     /// the explanations', each in file order: one per example, but up to
-    /// three for a candidate example, one for each call of its question
+    /// four for a candidate example, one for each call of its question
     /// check that asks a check it labels, in [`QuestionCheckCall::ALL`]
     /// order.
     #[must_use]
@@ -97,6 +104,23 @@ impl Prepared {
     pub fn skipped(&self) -> &[Skipped] {
         &self.skipped
     }
+
+    /// The labels of checks the question check no longer asks
+    /// ([`RETIRED_LABELS`]), left out, in file order.
+    #[must_use]
+    pub fn retired(&self) -> &[Retired] {
+        &self.retired
+    }
+}
+
+/// A candidate example's label of a check the question check no longer
+/// asks, left out rather than measured.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Retired {
+    /// The example's ID.
+    pub example: ExampleId,
+    /// The label's key, one of [`RETIRED_LABELS`].
+    pub key: String,
 }
 
 /// A learner's vote the tool can't send to Jev as Practice sent it, so it
@@ -183,7 +207,11 @@ impl Call {
                 let answers = question_check_answers(candidate, *call, reply)?;
                 checks
                     .iter()
-                    .map(|&check| answers.get(check).ok_or(AiError::InvalidReply))
+                    .map(|&check| {
+                        answers
+                            .answer(check, candidate.answer_key())
+                            .ok_or(AiError::InvalidReply)
+                    })
                     .collect()
             }
             Reader::Reasoning(rubric) => reasoning_answers(rubric, reply),
@@ -389,9 +417,11 @@ impl Labels {
     /// - a gate example, the relevance gate for its commit and labelled
     ///   areas;
     /// - a candidate example, once it passes the plain checks, each call of
-    ///   its question check that asks a check it labels: all three for a
+    ///   its question check that asks a check it labels: all four for a
     ///   labelled example, and for a learner's vote the one that asks the
-    ///   check voted on;
+    ///   check voted on. Its labels of checks the question check no longer
+    ///   asks are [left out](Prepared::retired), so a vote of one of those
+    ///   alone sends nothing;
     /// - a response example, the reasoning request for its candidate's
     ///   question;
     /// - an explanation example, the explanation check of its paragraphs.
@@ -417,12 +447,24 @@ impl Labels {
         }
         let mut questions = BTreeMap::new();
         let mut skipped = Vec::new();
+        let mut retired = Vec::new();
         for candidate in self.candidates() {
             match candidate_calls(showcase, model, candidate)? {
                 Candidacy::Calls(prepared) => {
                     let (checks, evidence, question) = *prepared;
                     calls.extend(checks);
                     questions.insert(candidate.example().id(), (evidence, question));
+                    let example = candidate.example();
+                    retired.extend(
+                        example
+                            .labels()
+                            .iter()
+                            .filter(|(key, _)| RETIRED_LABELS.contains(&key.as_str()))
+                            .map(|(key, _)| Retired {
+                                example: example.id().to_owned(),
+                                key: key.clone(),
+                            }),
+                    );
                 }
                 Candidacy::Skipped(reason) => skipped.push(Skipped {
                     example: candidate.example().id().to_owned(),
@@ -440,6 +482,7 @@ impl Labels {
             model: model.clone(),
             calls,
             skipped,
+            retired,
         })
     }
 }
@@ -522,7 +565,7 @@ fn candidate_calls(
         .collect();
     // Each check the example labels, with its key and its label.
     let labelled: Vec<(CandidateCheck, String, Label)> = if vote {
-        let labels = labelled_only(example, &keys)?;
+        let labels = labelled_only(example, &keys, &RETIRED_LABELS)?;
         asked
             .into_iter()
             .zip(keys)
@@ -530,7 +573,7 @@ fn candidate_calls(
             .filter_map(|((check, key), label)| Some((check, key, label?)))
             .collect()
     } else {
-        let labels = labelled(example, &keys)?;
+        let labels = labelled(example, &keys, &RETIRED_LABELS)?;
         asked
             .into_iter()
             .zip(keys)
@@ -585,7 +628,7 @@ fn response_call(
         });
     }
     let keys: Vec<String> = (0..question.rubric().len()).map(criterion_key).collect();
-    let labels = labelled(example, &keys)?;
+    let labels = labelled(example, &keys, &[])?;
     Ok(Call {
         example: example.id().to_owned(),
         request: reasoning_request(
@@ -621,7 +664,7 @@ fn explanation_call(
             ]
         })
         .collect();
-    let labels = labelled(example, &keys)?;
+    let labels = labelled(example, &keys, &[])?;
     Ok(Call {
         example: example.id().to_owned(),
         request: explanation_check_request(model, evidence, question, &paragraphs),
@@ -755,9 +798,13 @@ fn evidence(change: &Change, areas: &[Area]) -> Evidence {
 }
 
 /// `example`'s labels for `keys`, in their order, when it labels exactly
-/// those.
-fn labelled(example: &Example, keys: &[String]) -> Result<Vec<Label>, PrepareError> {
-    labelled_only(example, keys)?
+/// those, besides any of `left_out`.
+fn labelled(
+    example: &Example,
+    keys: &[String],
+    left_out: &[&str],
+) -> Result<Vec<Label>, PrepareError> {
+    labelled_only(example, keys, left_out)?
         .into_iter()
         .zip(keys)
         .map(|(label, key)| {
@@ -771,9 +818,17 @@ fn labelled(example: &Example, keys: &[String]) -> Result<Vec<Label>, PrepareErr
 }
 
 /// `example`'s label for each of `keys`, in their order, if it has one,
-/// when it labels nothing else.
-fn labelled_only(example: &Example, keys: &[String]) -> Result<Vec<Option<Label>>, PrepareError> {
-    if let Some((key, _)) = example.labels().iter().find(|(key, _)| !keys.contains(key)) {
+/// when it labels nothing else besides any of `left_out`.
+fn labelled_only(
+    example: &Example,
+    keys: &[String],
+    left_out: &[&str],
+) -> Result<Vec<Option<Label>>, PrepareError> {
+    if let Some((key, _)) = example
+        .labels()
+        .iter()
+        .find(|(key, _)| !keys.contains(key) && !left_out.contains(&key.as_str()))
+    {
         return Err(PrepareError::UnknownLabel {
             place: example.place().clone(),
             id: example.id().to_owned(),
@@ -802,8 +857,11 @@ fn item(example: &Example, key: &str, job: Job, label: &Label) -> Item {
 }
 
 /// `candidate` as its labels judge it: a question when Jev answering
-/// exactly as labelled would show it, and withheld otherwise. Its depth is
-/// the deepest level; nothing here picks questions.
+/// exactly as labelled would show it, and withheld otherwise. A yes/no
+/// check is answered 1 for a label of yes and 0 for no. The answer probe,
+/// labelled yes, puts all its probability on the answer key, and labelled
+/// no, none, sharing it between the other options. Its depth is the deepest
+/// level; nothing here picks questions.
 fn as_labelled<'a>(
     candidate: Candidate,
     labels: impl Iterator<Item = (CandidateCheck, &'a Label)>,
@@ -824,10 +882,30 @@ fn as_labelled<'a>(
         2.0,
     )
     .expect("2 is the deepest level's place");
-    let answers = QuestionCheckAnswers::new(
-        labels.map(|(check, label)| (check, certain(label.expected()))),
+    let labels: Vec<(CandidateCheck, Expected)> = labels
+        .map(|(check, label)| (check, label.expected()))
+        .collect();
+    let mut answers = QuestionCheckAnswers::new(
+        labels
+            .iter()
+            .map(|&(check, expected)| (check, certain(expected))),
         deepest,
     );
+    if let Some(&(_, expected)) = labels
+        .iter()
+        .find(|&&(check, _)| check == CandidateCheck::AnswerProbe)
+    {
+        let answer_key = candidate.answer_key();
+        answers = answers.with_probe(AnswerProbe::new(OptionLetter::ALL.map(|letter| {
+            let on_key = letter == answer_key;
+            Probability::new(match expected {
+                Expected::Yes => f64::from(u8::from(on_key)),
+                Expected::No if on_key => 0.0,
+                Expected::No => 0.5,
+            })
+            .expect("0, 0.5 and 1 are probabilities")
+        })));
+    }
     show_rule(candidate, answers, AssessmentPolicy::current())
 }
 
@@ -910,13 +988,13 @@ mod tests {
     }
 
     #[test]
-    fn a_candidate_example_asks_its_question_check_in_three_calls_with_each_label_in_its_job() {
+    fn a_candidate_example_asks_its_question_check_in_four_calls_with_each_label_in_its_job() {
         let prepared = prepared(CANDIDATE).unwrap();
 
-        let [ratings, hint, candidate_call] = prepared.calls() else {
-            panic!("expected three calls: {prepared:?}");
+        let [ratings, hint, candidate_call, probe] = prepared.calls() else {
+            panic!("expected four calls: {prepared:?}");
         };
-        for call in [ratings, hint, candidate_call] {
+        for call in [ratings, hint, candidate_call, probe] {
             let labelled: Vec<&str> = names(call)
                 .into_iter()
                 .map(|name| name.trim_start_matches("retry-key/"))
@@ -930,16 +1008,21 @@ mod tests {
                 "every question each call asks but depth is labelled"
             );
         }
-        assert_eq!(
-            asked(ratings),
-            ["no_giveaway", "option_a", "option_b", "option_c"]
-        );
+        assert_eq!(asked(ratings), ["option_a", "option_b", "option_c"]);
         assert!(
             !ratings.request().state.to_string().contains("answer_key"),
             "the option ratings call, as Practice sends it"
         );
         assert_eq!(asked(hint), ["hint_hides_answer_key"]);
         assert!(candidate_call.request().questions.contains_key("depth"));
+        assert_eq!(asked(probe), ["answer_probe"]);
+        assert_eq!(
+            probe.request().state["candidate"]
+                .as_object()
+                .map(|candidate| candidate.keys().map(String::as_str).collect::<Vec<_>>()),
+            Some(vec!["stem", "options"]),
+            "the answer probe call, as Practice sends it: the stem and the options' text alone"
+        );
         let job = |name: &str| {
             prepared
                 .items()
@@ -949,7 +1032,7 @@ mod tests {
         assert_eq!(job("answerable"), Some(Job::QuestionCheck));
         assert_eq!(job("criterion_2"), Some(Job::QuestionCheck));
         assert_eq!(job("criterion_1_minimum"), Some(Job::QuestionCheck));
-        assert_eq!(job("no_giveaway"), Some(Job::QuestionCheck));
+        assert_eq!(job("answer_probe"), Some(Job::AnswerProbe));
         assert_eq!(job("option_b"), Some(Job::OptionRating));
         assert_eq!(job("rationale_c"), Some(Job::RationaleAndHintChecks));
         assert_eq!(
@@ -973,7 +1056,7 @@ mod tests {
         assert_eq!(
             prepared(&extra).unwrap_err().to_string(),
             "seeds.toml, line 2: `retry-key` labels `criterion_3`, which its call doesn't ask: it \
-             asks answerable, about_area, needs_change, no_giveaway, criterion_1, criterion_2, \
+             asks answerable, about_area, answer_probe, criterion_1, criterion_2, \
              criterion_1_minimum, criterion_2_minimum, option_a, option_b, option_c, \
              rationale_a, rationale_b, rationale_c, why_it_matters, hint_points_to_evidence, \
              hint_hides_answer_key"
@@ -982,32 +1065,105 @@ mod tests {
 
     #[test]
     fn a_learner_vote_labels_only_the_check_it_voted_on_and_only_its_call_is_sent() {
-        let prepared = prepared(&vote("", "no_giveaway = \"yes\"\noption_b = \"no\"\n")).unwrap();
+        let prepared = prepared(&vote("", "option_b = \"no\"\n")).unwrap();
 
         let [call] = prepared.calls() else {
             panic!("expected one call: {prepared:?}");
         };
-        assert_eq!(
-            names(call),
-            [
-                "learner-vote-20261021T101502-1/no_giveaway",
-                "learner-vote-20261021T101502-1/option_b"
-            ]
-        );
-        assert_eq!(call.items()[0].job(), Job::QuestionCheck);
-        assert_eq!(call.items()[1].job(), Job::OptionRating);
+        assert_eq!(names(call), ["learner-vote-20261021T101502-1/option_b"]);
+        assert_eq!(call.items()[0].job(), Job::OptionRating);
         assert_eq!(
             asked(call),
-            ["no_giveaway", "option_a", "option_b", "option_c"],
+            ["option_a", "option_b", "option_c"],
             "Jev is asked the option ratings call whole, as in Practice"
         );
         assert_eq!(prepared.skipped(), []);
+
+        let probe = crate::samples::prepared(&vote("", "answer_probe = \"yes\"\n")).unwrap();
+        let [call] = probe.calls() else {
+            panic!("expected one call: {probe:?}");
+        };
+        assert_eq!(asked(call), ["answer_probe"]);
+        assert_eq!(call.items()[0].job(), Job::AnswerProbe);
 
         let hint = crate::samples::prepared(&vote("", "hint_hides_answer_key = \"no\"\n")).unwrap();
         let [call] = hint.calls() else {
             panic!("expected one call: {hint:?}");
         };
         assert_eq!(asked(call), ["hint_hides_answer_key"]);
+    }
+
+    #[test]
+    fn labels_of_checks_the_question_check_no_longer_asks_are_left_out_never_refused() {
+        let seed = CANDIDATE.replace(
+            "answer_probe = \"no\"\n",
+            "answer_probe = \"no\"\nneeds_change = \"yes\"\nno_giveaway = \"yes\"\n",
+        );
+        let earlier_vote = vote("", "no_giveaway = \"yes\"\n");
+
+        let seed = prepared(&seed).expect("left out, not refused");
+        let earlier_vote = prepared(&earlier_vote).expect("left out, not refused");
+
+        assert_eq!(
+            seed.retired()
+                .iter()
+                .map(|retired| (retired.example.as_str(), retired.key.as_str()))
+                .collect::<Vec<_>>(),
+            [("retry-key", "needs_change"), ("retry-key", "no_giveaway")]
+        );
+        assert_eq!(
+            seed.calls().len(),
+            4,
+            "the seed's other labels are measured"
+        );
+        assert!(
+            seed.items()
+                .all(|item| !item.name().ends_with("needs_change")
+                    && !item.name().ends_with("no_giveaway"))
+        );
+        assert_eq!(earlier_vote.calls().len(), 0, "nothing left to send");
+        assert_eq!(earlier_vote.skipped(), []);
+        assert_eq!(
+            earlier_vote
+                .retired()
+                .iter()
+                .map(|retired| retired.key.as_str())
+                .collect::<Vec<_>>(),
+            ["no_giveaway"]
+        );
+    }
+
+    #[test]
+    fn only_a_candidate_example_s_retired_labels_are_left_out() {
+        let response = format!(
+            "{CANDIDATE}{}",
+            RESPONSE.replace(
+                "labels = { criterion_1 = \"no\", criterion_2 = \"no\" }",
+                "labels = { criterion_1 = \"no\", criterion_2 = \"no\", no_giveaway = \"no\" }"
+            )
+        );
+
+        let error = prepared(&response).unwrap_err();
+
+        assert!(
+            matches!(&error, PrepareError::UnknownLabel { key, .. } if key == "no_giveaway"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_candidate_labelled_as_answered_without_the_change_is_withheld_from_learners() {
+        let giveaway = format!(
+            "{}{RESPONSE}",
+            CANDIDATE.replace("answer_probe = \"no\"", "answer_probe = \"yes\"")
+        );
+
+        let error = prepared(&giveaway).unwrap_err();
+
+        assert!(
+            matches!(&error, PrepareError::Withheld { candidate, .. } if candidate.as_str() == "retry-key"),
+            "{error}"
+        );
     }
 
     #[test]
@@ -1024,11 +1180,11 @@ mod tests {
     fn a_learner_vote_the_tool_can_t_send_as_practice_did_is_skipped_with_its_reason() {
         let own = vote(
             "commit_id = \"0123456789abcdef0123456789abcdef01234567\"\n",
-            "no_giveaway = \"yes\"\n",
+            "answer_probe = \"yes\"\n",
         )
         .replace("Preserve payment retry identity", "Retry the charge");
         let connected =
-            vote("", "no_giveaway = \"no\"\n").replace("last_line = 37", "last_line = 999");
+            vote("", "answer_probe = \"no\"\n").replace("last_line = 37", "last_line = 999");
 
         for (votes, reason) in [
             (own, SkipReason::OwnRepository),
@@ -1112,7 +1268,7 @@ mod tests {
             prepared(&format!("{asks_too_much}{RESPONSE}"))
                 .unwrap_err()
                 .to_string(),
-            "seeds.toml, line 42: `retry-key-injection` labels `criterion_2`, which its call \
+            "seeds.toml, line 41: `retry-key-injection` labels `criterion_2`, which its call \
              doesn't ask: it asks criterion_1"
         );
         let kept = RESPONSE.replace(", criterion_2 = \"no\"", "");
@@ -1141,7 +1297,7 @@ mod tests {
             prepared(&format!("{none_left}{RESPONSE}"))
                 .unwrap_err()
                 .to_string(),
-            "seeds.toml, line 42: `retry-key-injection` is about the candidate `retry-key`, \
+            "seeds.toml, line 41: `retry-key-injection` is about the candidate `retry-key`, \
              whose labels would withhold it from learners"
         );
         assert!(prepared(&none_left).is_ok(), "it is still measured");
@@ -1161,7 +1317,7 @@ mod tests {
         assert!(reasoning(4_000).is_ok());
         assert_eq!(
             reasoning(4_001).unwrap_err().to_string(),
-            "seeds.toml, line 42: `retry-key-injection` has reasoning 4001 characters long, but \
+            "seeds.toml, line 41: `retry-key-injection` has reasoning 4001 characters long, but \
              a learner can write at most 4,000, so Jev would never see it"
         );
     }
@@ -1179,7 +1335,7 @@ mod tests {
             prepared(&format!("{two_right}{RESPONSE}"))
                 .unwrap_err()
                 .to_string(),
-            "seeds.toml, line 42: `retry-key-injection` is about the candidate `retry-key`, \
+            "seeds.toml, line 41: `retry-key-injection` is about the candidate `retry-key`, \
              whose labels would withhold it from learners"
         );
     }
@@ -1231,7 +1387,7 @@ mod tests {
             prepared(&format!("{CANDIDATE}{beyond}"))
                 .unwrap_err()
                 .to_string(),
-            "seeds.toml, line 42: `retry-key-explained` explains criterion 3, but its question \
+            "seeds.toml, line 41: `retry-key-explained` explains criterion 3, but its question \
              has 2 criteria"
         );
 
@@ -1243,7 +1399,7 @@ mod tests {
             prepared(&format!("{CANDIDATE}{twice}"))
                 .unwrap_err()
                 .to_string(),
-            "seeds.toml, line 42: `retry-key-explained` explains criterion 2 twice"
+            "seeds.toml, line 41: `retry-key-explained` explains criterion 2 twice"
         );
     }
 
@@ -1254,7 +1410,7 @@ mod tests {
                 .unwrap_err()
                 .to_string()
         };
-        let prefix = "seeds.toml, line 42: `retry-key-explained` explains criterion 2 in a \
+        let prefix = "seeds.toml, line 41: `retry-key-explained` explains criterion 2 in a \
                       paragraph that fails the plain checks, so Jev would never see it:";
 
         assert_eq!(

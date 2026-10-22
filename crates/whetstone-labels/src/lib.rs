@@ -28,7 +28,9 @@ pub use crate::labels::{
     GateExample, Label, LabelDate, LabelError, Labeller, Labels, Place, ResponseExample, Source,
 };
 pub use crate::measure::measure;
-pub use crate::prepare::{Call, Item, ParagraphDrop, PrepareError, Prepared, SkipReason, Skipped};
+pub use crate::prepare::{
+    Call, Item, ParagraphDrop, PrepareError, Prepared, RETIRED_LABELS, Retired, SkipReason, Skipped,
+};
 pub use crate::report::{
     CutOffs, Failure, JobReport, Measured, Measurements, Report, Row, SWEEP, Spread,
 };
@@ -280,6 +282,9 @@ fn summary(prepared: &Prepared) -> String {
     if let Some(not_measured) = report::not_measured(prepared.skipped()) {
         writeln!(summary, "Not measured: {not_measured}").expect("writing to a String never fails");
     }
+    if let Some(left_out) = report::left_out(prepared.retired()) {
+        writeln!(summary, "Left out: {left_out}").expect("writing to a String never fails");
+    }
     for job in Job::ALL {
         let labels = items.iter().filter(|item| item.job() == job).count();
         let yes = items
@@ -308,7 +313,8 @@ fn summary(prepared: &Prepared) -> String {
 pub(crate) fn job_name(job: Job) -> &'static str {
     match job {
         Job::RelevanceGate => "Relevance gate",
-        Job::QuestionCheck => "Question check (checks 1 to 6)",
+        Job::QuestionCheck => "Question check (checks 1, 2, 4 and 5)",
+        Job::AnswerProbe => "Answer probe (check 3)",
         Job::OptionRating => "Option rating",
         Job::RationaleAndHintChecks => "Rationale and hint checks",
         Job::ReasoningCriterion => "Reasoning criterion",
@@ -389,12 +395,12 @@ mod tests {
         let summary = summary(&prepared);
 
         assert!(
-            summary.starts_with("2 examples, 19 labels"),
+            summary.starts_with("2 examples, 18 labels"),
             "the gate and the candidate: {summary}"
         );
         assert!(
-            summary.ends_with("Measuring them makes 12 calls to Jev: 3 runs of 4.\n"),
-            "the gate's call and the candidate's three: {summary}"
+            summary.ends_with("Measuring them makes 15 calls to Jev: 3 runs of 5.\n"),
+            "the gate's call and the candidate's four: {summary}"
         );
     }
 
@@ -402,7 +408,7 @@ mod tests {
     fn check_counts_the_learner_votes_it_cannot_measure() {
         let votes = samples::vote(
             "commit_id = \"0123456789abcdef0123456789abcdef01234567\"\n",
-            "no_giveaway = \"yes\"\n",
+            "answer_probe = \"yes\"\n",
         );
         let prepared = samples::prepared(&format!("{}{votes}", samples::CANDIDATE)).unwrap();
 
@@ -412,6 +418,20 @@ mod tests {
                 "Not measured: 1 learner vote, which the tool can't send to Jev as Practice sent \
                  them: 1 about a commit of the learner's own repository, whose code would go out \
                  again without a new outbound review."
+            )
+        );
+    }
+
+    #[test]
+    fn check_says_which_labels_of_checks_no_longer_asked_it_left_out() {
+        let votes = samples::vote("", "no_giveaway = \"yes\"\n");
+        let prepared = samples::prepared(&format!("{}{votes}", samples::CANDIDATE)).unwrap();
+
+        assert_eq!(
+            summary(&prepared).lines().nth(1),
+            Some(
+                "Left out: 1 label of `no_giveaway`, which the question check no longer asks: \
+                 the answer probe replaced them in assessment policy 1."
             )
         );
     }
@@ -439,7 +459,7 @@ mod tests {
             .unwrap();
 
         let names: Vec<&str> = prepared.items().map(Item::name).collect();
-        assert_eq!(names, ["learner-vote-20261021T101502-1/no_giveaway"]);
+        assert_eq!(names, ["learner-vote-20261021T101502-1/answer_probe"]);
         assert_eq!(prepared.skipped(), []);
         assert_eq!(
             prepared

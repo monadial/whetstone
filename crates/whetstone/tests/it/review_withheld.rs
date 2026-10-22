@@ -31,9 +31,9 @@ const SECOND: &str = "Domain question 2?";
 const NOTE: &str = "The options read alike, so nothing gives it away.";
 
 /// A scripted AI that writes two candidates about the domain area, both
-/// withheld: Jev can't tell whether the first's options give the answer
-/// away, or whether its option B, which isn't its answer key, is right; and
-/// it says the second doesn't need this change. On a Retry it writes two
+/// withheld: Jev chose the first's answer without reading the change, and
+/// can't tell whether its option B, which isn't its answer key, is right;
+/// and it says the second isn't about its area. On a Retry it writes two
 /// more, which pass.
 fn withholding_two() -> Arc<ScriptedAi> {
     let ai = Arc::new(ScriptedAi::new());
@@ -46,11 +46,11 @@ fn withholding_two() -> Arc<ScriptedAi> {
     ai.on_check_passing_except(
         FIRST,
         [
-            answer(CandidateCheck::NoGiveaway, 0.46),
+            answer(CandidateCheck::AnswerProbe, 0.7),
             answer(CandidateCheck::Option(OptionLetter::B), 0.5),
         ],
     );
-    ai.on_check_passing_except(SECOND, [answer(CandidateCheck::NeedsChange, 0.1)]);
+    ai.on_check_passing_except(SECOND, [answer(CandidateCheck::AboutArea, 0.1)]);
     let retried = stems("Retried", 2);
     ai.on_write(
         &area_id(DOMAIN),
@@ -201,8 +201,8 @@ fn it_shows_one_withheld_candidate_at_a_time_with_every_part_and_each_check_with
         checks(&session),
         [
             "Jev's probability, not a measure of correctness",
-            "1. The stem and options don't give the answer away",
-            "Jev: 0.46 · unclear · it needed clear yes",
+            "1. Jev chose the answer without reading the change",
+            "Jev: 0.7 · clear yes · it needed unclear or clear no",
             "Your vote: Not voted yet",
             "2. Option B answers the question correctly",
             "Jev: 0.5 · unclear · it needed clear no",
@@ -220,7 +220,7 @@ fn it_shows_one_withheld_candidate_at_a_time_with_every_part_and_each_check_with
         checks(&session),
         [
             "Jev's probability, not a measure of correctness",
-            "1. Needs this change, not general knowledge",
+            "1. About its area",
             "Jev: 0.1 · clear no · it needed clear yes",
             "Your vote: Not voted yet",
         ]
@@ -307,7 +307,7 @@ fn a_vote_a_skip_and_a_note_are_written_to_the_labels_file_created_owner_only() 
     assert_eq!(example["note"].as_str(), Some(NOTE));
     assert_eq!(
         example["labels"].as_table().map(ToString::to_string),
-        Some("no_giveaway = \"yes\"\n".to_owned()),
+        Some("answer_probe = \"no\"\n".to_owned()),
         "Should have passed is the answer the show rule needed, and the skip has no label"
     );
     insta::assert_snapshot!(
@@ -333,7 +333,7 @@ fn a_vote_on_the_learner_s_repository_names_its_commit_by_its_full_id() {
             ..candidate(FIRST, "A", PAYMENT_LIFECYCLE)
         }]),
     );
-    ai.on_check_passing_except(FIRST, [answer(CandidateCheck::NoGiveaway, 0.46)]);
+    ai.on_check_passing_except(FIRST, [answer(CandidateCheck::AnswerProbe, 0.7)]);
     let mut session = Session::start(
         Setup {
             variables: NO_COLOR,
@@ -355,7 +355,7 @@ fn a_vote_on_the_learner_s_repository_names_its_commit_by_its_full_id() {
     let [example] = examples(&session).try_into().expect("one vote");
     assert_eq!(example["commit"].as_str(), Some("Double the charge"));
     assert_eq!(example["commit_id"].as_str(), Some(commit.as_str()));
-    assert_eq!(example["labels"].to_string(), "{ no_giveaway = \"no\" }");
+    assert_eq!(example["labels"].to_string(), "{ answer_probe = \"yes\" }");
 }
 
 #[test]
@@ -416,7 +416,7 @@ fn rightly_withheld_labels_the_answer_that_withheld_the_candidate_and_votes_add_
             ),
             (
                 "learner-vote-20261021T101502-2".to_owned(),
-                "{ needs_change = \"no\" }".to_owned()
+                "{ about_area = \"no\" }".to_owned()
             ),
         ],
         "option B, which isn't the answer key, needed clear no"
@@ -544,7 +544,7 @@ fn a_vote_never_goes_to_the_log() {
     });
 
     assert!(log.contains("saved a vote to the labels file"), "{log}");
-    for text in [NOTE, FIRST, "Should have passed", "no_giveaway"] {
+    for text in [NOTE, FIRST, "Should have passed", "answer_probe"] {
         assert!(!log.contains(text), "{text:?} was logged:\n{log}");
     }
     assert_eq!(examples(&session).len(), 1);
@@ -599,7 +599,7 @@ fn review_withheld_questions_is_offered_in_the_palette_where_the_shortfall_shows
     );
     ai.on_check_passing(&stems[0]);
     ai.on_check_passing(&stems[1]);
-    ai.on_check_passing_except(&stems[2], [answer(CandidateCheck::NoGiveaway, 0.46)]);
+    ai.on_check_passing_except(&stems[2], [answer(CandidateCheck::AnswerProbe, 0.7)]);
     let mut session = generate(&ai, &[DOMAIN], PAYMENT_LIFECYCLE, 80, 24);
     session.settle();
 

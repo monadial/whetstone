@@ -18,6 +18,7 @@
 //! [cut_offs]
 //! relevance_gate = { upper = 0.80, lower = 0.20 }
 //! question_check = { upper = 0.80, lower = 0.20 }
+//! answer_probe = { upper = 0.60, lower = 0.20 }
 //! option_rating = { upper = 0.80, lower = 0.20 }
 //! rationale_and_hint_checks = { upper = 0.80, lower = 0.20 }
 //! reasoning_criterion = { upper = 0.80, lower = 0.20 }
@@ -26,7 +27,7 @@
 //!
 //! The values above are the defaults, used for anything the file leaves out
 //! and for everything when there is no file. The cut-offs are the
-//! assessment policy's, policy 0's by default: a job's own makes its
+//! assessment policy's, the current policy's by default: a job's own makes its
 //! outcomes not comparable with the policy's, and every outcome records the
 //! cut-offs that banded it. Only this config sets them, never a
 //! repository's. The API key never lives in the
@@ -70,8 +71,8 @@ pub struct Settings {
     pub(crate) connected_code_limit: Setting<ConnectedCodeLimitKb>,
     /// How many questions a Practice asks for.
     pub(crate) questions: Setting<QuestionCount>,
-    /// The assessment policy Practice applies: policy 0, with the cut-offs
-    /// `[cut_offs]` sets for any job.
+    /// The assessment policy Practice applies: the current policy, with the
+    /// cut-offs `[cut_offs]` sets for any job.
     pub(crate) assessment_policy: AssessmentPolicy,
     pub(crate) file: ConfigFile,
     pub(crate) openrouter_key: KeyStatus,
@@ -340,6 +341,7 @@ pub(crate) fn cut_offs_key(job: Job) -> &'static str {
     match job {
         Job::RelevanceGate => "relevance_gate",
         Job::QuestionCheck => "question_check",
+        Job::AnswerProbe => "answer_probe",
         Job::OptionRating => "option_rating",
         Job::RationaleAndHintChecks => "rationale_and_hint_checks",
         Job::ReasoningCriterion => "reasoning_criterion",

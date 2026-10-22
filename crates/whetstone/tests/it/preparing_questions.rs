@@ -201,7 +201,7 @@ fn generate_questions_writes_checks_and_shows_the_first_of_the_questions_that_pa
     };
     assert_eq!(area.id(), &area_id(DOMAIN));
     assert_eq!(count.get(), 6, "4 questions and 2 more, for one area");
-    assert_eq!(checks.len(), 18, "a check of three calls per candidate");
+    assert_eq!(checks.len(), 24, "a check of four calls per candidate");
     let text = session.text();
     assert!(text.contains("Question 1 of 4"), "{text}");
     assert!(text.contains("Domain"), "{text}");
@@ -278,7 +278,7 @@ fn one_generator_call_per_chosen_area_goes_out_at_once_then_one_check_per_candid
         [domain.clone(), infrastructure.clone()]
             .concat()
             .into_iter()
-            .flat_map(|stem| [stem.clone(), stem.clone(), stem])
+            .flat_map(|stem| [stem.clone(), stem.clone(), stem.clone(), stem])
             .collect::<Vec<_>>(),
         "each call of every candidate's check sent before any replies, in the order written"
     );
@@ -461,8 +461,8 @@ fn the_showcase_changes_connected_code_reaches_the_evidence_the_generator_and_je
         .collect();
     assert_eq!(
         checked_against.len(),
-        3,
-        "one check's three calls: {asked:#?}"
+        4,
+        "one check's four calls: {asked:#?}"
     );
     assert_eq!(written_from.connections_state(), ConnectionsState::Found);
     assert_ne!(
@@ -482,7 +482,7 @@ fn the_showcase_changes_connected_code_reaches_the_evidence_the_generator_and_je
         "the change's own message"
     );
     assert_eq!(
-        checked_against, [written_from; 3],
+        checked_against, [written_from; 4],
         "Jev checks against the same evidence"
     );
     assert!(session.text().contains("Served?"));
@@ -535,7 +535,7 @@ fn when_finding_connected_code_takes_too_long_questions_are_written_without_it()
         "the analysis's late result changes nothing:\n{}",
         session.text()
     );
-    assert_eq!(ai.asked().len(), 5, "nothing is asked again");
+    assert_eq!(ai.asked().len(), 6, "nothing is asked again");
 }
 
 #[test]
@@ -718,7 +718,7 @@ fn retry_after_a_failed_write_asks_again_only_for_the_area_that_failed() {
     );
     assert_eq!(
         asked.len(),
-        22,
+        28,
         "then every call of every candidate's check is sent once"
     );
     submit(&mut session, "a", "Because.");

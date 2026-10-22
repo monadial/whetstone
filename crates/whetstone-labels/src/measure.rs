@@ -81,6 +81,7 @@ pub async fn measure(
         labels: Vec::new(),
         by_agent: prepared.by_agent(),
         skipped: prepared.skipped().to_vec(),
+        retired: prepared.retired().to_vec(),
     };
     for (run, index, reply) in replies {
         let call = &prepared.calls()[index];
@@ -133,8 +134,10 @@ mod tests {
 
     /// A stand-in for Jev on `OpenRouter`'s `/systemone`, which answers every
     /// question a request asks, in the shape Jev replies in: a yes/no
-    /// question with the probability `answers` gives its name, or 0.9, and a
-    /// score with a fixed distribution. Each reply costs 0.0001 USD.
+    /// question with the probability `answers` gives its name; a choice
+    /// with that probability on its first option, the others sharing the
+    /// rest; and a score with a fixed distribution. Each reply costs 0.0001
+    /// USD.
     struct Jev {
         answers: fn(&str) -> Option<f64>,
     }
@@ -157,6 +160,28 @@ mod tests {
                         "legend": legend,
                         "probabilities": { "0": 0.1, "1": 0.5, "2": 0.4 },
                         "confidence": 0.3,
+                    })
+                } else if question["type"] == "choice" {
+                    let Some(first) = (self.answers)(name) else {
+                        continue;
+                    };
+                    let labels: Vec<&String> =
+                        question["criteria"].as_object().unwrap().keys().collect();
+                    let others = f64::from(u32::try_from(labels.len() - 1).expect("a few options"));
+                    let rest = (1.0 - first) / others;
+                    let probabilities: Map<String, Value> = labels
+                        .iter()
+                        .enumerate()
+                        .map(|(at, &label)| {
+                            (label.clone(), json!(if at == 0 { first } else { rest }))
+                        })
+                        .collect();
+                    let choice = if first >= rest { labels[0] } else { labels[1] };
+                    json!({
+                        "type": "choice",
+                        "choice": choice,
+                        "probabilities": probabilities,
+                        "confidence": 0.5,
                     })
                 } else {
                     match (self.answers)(name) {
@@ -218,6 +243,7 @@ mod tests {
                 "observability" => Some(0.1),
                 "option_b" => Some(0.15),
                 "criterion_2_minimum" => Some(0.3),
+                "answer_probe" => Some(0.2),
                 _ => Some(0.9),
             },
         })
@@ -226,9 +252,9 @@ mod tests {
 
         let measurements = measure(&connection(&server), &prepared, three()).await;
 
-        // The gate's call and the candidate's three, three times each.
-        assert_eq!(server.received_requests().await.unwrap().len(), 12);
-        assert_eq!((measurements.runs, measurements.calls), (3, 12));
+        // The gate's call and the candidate's four, three times each.
+        assert_eq!(server.received_requests().await.unwrap().len(), 15);
+        assert_eq!((measurements.runs, measurements.calls), (3, 15));
         assert_eq!(measurements.failures, []);
         assert_eq!(answers(&measurements, "gate-retry/observability"), [0.1; 3]);
         assert_eq!(answers(&measurements, "gate-retry/domain"), [0.9; 3]);
@@ -241,9 +267,14 @@ mod tests {
             answers(&measurements, "retry-key/hint_hides_answer_key"),
             [0.9; 3]
         );
-        assert_eq!(measurements.labels.len(), 2 + 17);
-        assert_eq!(measurements.by_agent, 2 + 17);
-        assert!((measurements.cost - 0.0012).abs() < 1e-12);
+        assert_eq!(
+            answers(&measurements, "retry-key/answer_probe"),
+            [0.2; 3],
+            "the answer probe's probability on the answer key, A"
+        );
+        assert_eq!(measurements.labels.len(), 2 + 16);
+        assert_eq!(measurements.by_agent, 2 + 16);
+        assert!((measurements.cost - 0.0015).abs() < 1e-12);
         assert_eq!(measurements.cost_not_reported, 0);
         assert_eq!(
             measurements.reported_models,
@@ -299,7 +330,7 @@ mod tests {
         );
         assert_eq!(answers(&measurements, "gate-retry/domain"), [0.0; 0]);
         assert_eq!(answers(&measurements, "retry-key/option_a"), [0.9; 3]);
-        assert!((measurements.cost - 0.0009).abs() < 1e-12);
+        assert!((measurements.cost - 0.0012).abs() < 1e-12);
         assert_eq!(measurements.cost_not_reported, 3);
     }
 

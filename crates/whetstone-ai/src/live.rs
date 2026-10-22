@@ -144,7 +144,14 @@ async fn live_check_question() {
     let candidate = candidate();
     let ai = live_ai();
 
-    // Each of the check's three calls, as Practice sends them.
+    let answered = |answers: &CheckCallAnswers| -> Vec<CandidateCheck> {
+        candidate
+            .checks()
+            .into_iter()
+            .filter(|&check| answers.answer(check, candidate.answer_key()).is_some())
+            .collect()
+    };
+    // Each of the check's four calls, as Practice sends them.
     let mut answers = Vec::new();
     for call in QuestionCheckCall::ALL {
         let reply = ai
@@ -152,8 +159,16 @@ async fn live_check_question() {
             .await
             .unwrap_or_else(|failure| panic!("Jev answers the {call:?} call: {failure}"));
 
-        let answered: Vec<CandidateCheck> = reply.content.iter().map(|(check, _)| check).collect();
-        assert_eq!(answered, call.checks(&candidate), "{call:?}");
+        assert_eq!(
+            answered(&reply.content),
+            call.checks(&candidate),
+            "{call:?}"
+        );
+        assert_eq!(
+            reply.content.probe().is_some(),
+            call == QuestionCheckCall::AnswerProbe,
+            "only the answer probe call asks the probe"
+        );
         assert_eq!(
             reply.content.depth().is_some(),
             call.scores_depth(),
@@ -165,7 +180,10 @@ async fn live_check_question() {
 
     let answers = CheckCallAnswers::merged(answers).expect("each call's answers once");
     for check in candidate.checks() {
-        assert!(answers.get(check).is_some(), "Jev didn't answer {check:?}");
+        assert!(
+            answers.answer(check, candidate.answer_key()).is_some(),
+            "Jev didn't answer {check:?}"
+        );
     }
     // Depth is kept as returned, so its expected value must be what Depth
     // takes it for: the levels' places, counting from 0, weighted by their

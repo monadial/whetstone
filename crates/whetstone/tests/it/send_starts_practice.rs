@@ -414,6 +414,12 @@ fn as_shown(evidence: &Evidence) -> Shown {
     }
 }
 
+/// Whether a request of `kind`, as [`requests_sent`] names it, sends
+/// evidence: every one but the hint's check and the answer probe.
+fn sends_evidence(kind: &str) -> bool {
+    !matches!(kind, "check: hint" | "check: answer probe")
+}
+
 /// The evidence each request `ai` was asked carried, in order.
 fn evidence_asked(ai: &ScriptedAi) -> Vec<Evidence> {
     ai.asked()
@@ -431,8 +437,8 @@ fn evidence_asked(ai: &ScriptedAi) -> Vec<Evidence> {
 
 /// What each request `ai` was asked sends, in order: the request the real
 /// AI builds from what the scripted one was given, as its kind, the
-/// evidence as sent, which the hint's check sends none of, and the whole
-/// request as text.
+/// evidence as sent, which the hint's check and the answer probe send none
+/// of, and the whole request as text.
 fn requests_sent(ai: &ScriptedAi) -> Vec<(&'static str, Value, String)> {
     let model = ModelId::new("scripted".to_owned());
     ai.asked()
@@ -466,6 +472,7 @@ fn requests_sent(ai: &ScriptedAi) -> Vec<(&'static str, Value, String)> {
                         QuestionCheckCall::OptionRatings => "check: option ratings",
                         QuestionCheckCall::Hint => "check: hint",
                         QuestionCheckCall::Candidate => "check: candidate",
+                        QuestionCheckCall::AnswerProbe => "check: answer probe",
                     },
                     sent.state["evidence"].clone(),
                     format!("{} {:?}", sent.state, sent.questions),
@@ -597,8 +604,8 @@ fn every_request_carries_exactly_the_evidence_the_outbound_review_showed() {
     let asked = evidence_asked(&ai);
     assert_eq!(
         asked.len(),
-        8,
-        "the gate, one write, one check's three calls, the reasoning evaluation, the \
+        9,
+        "the gate, one write, one check's four calls, the reasoning evaluation, the \
          explanation and its check"
     );
     for evidence in &asked {
@@ -628,7 +635,8 @@ fn a_file_the_learner_left_out_is_absent_from_every_request() {
             "write",
             "check: option ratings",
             "check: hint",
-            "check: candidate"
+            "check: candidate",
+            "check: answer probe"
         ]
     );
     for (kind, evidence, text) in &sent {
@@ -637,8 +645,8 @@ fn a_file_the_learner_left_out_is_absent_from_every_request() {
             "{kind} names the file left out:\n{text}"
         );
         assert!(!text.contains(PLAN_TEXT), "{kind} sends the file left out");
-        if *kind == "check: hint" {
-            assert_eq!(evidence, &Value::Null, "the hint's check sends no evidence");
+        if !sends_evidence(kind) {
+            assert_eq!(evidence, &Value::Null, "{kind} sends no evidence");
             continue;
         }
         assert!(
@@ -665,10 +673,10 @@ fn what_jev_and_the_generator_receive_names_the_files_without_connected_code() {
     let sent = requests_sent(&ai);
     assert_eq!(
         sent.len(),
-        5,
-        "the gate, one write and one check's three calls"
+        6,
+        "the gate, one write and one check's four calls"
     );
-    for (kind, evidence, _) in sent.iter().filter(|(kind, ..)| *kind != "check: hint") {
+    for (kind, evidence, _) in sent.iter().filter(|(kind, ..)| sends_evidence(kind)) {
         assert_eq!(
             evidence["files_without_connected_code"],
             json!(["notes.txt"]),
@@ -691,8 +699,8 @@ fn retry_after_the_gate_fails_sends_the_same_evidence_with_no_new_outbound_revie
     let asked = evidence_asked(&ai);
     assert_eq!(
         asked.len(),
-        6,
-        "the gate twice, one write and one check's three calls"
+        7,
+        "the gate twice, one write and one check's four calls"
     );
     assert!(leaves_out_the_plan(&asked[0]), "{:#?}", asked[0]);
     assert!(asked.iter().all(|evidence| *evidence == asked[0]));
@@ -728,8 +736,8 @@ fn ask_anyway_sends_the_same_evidence_with_no_new_outbound_review() {
     let asked = evidence_asked(&ai);
     assert_eq!(
         asked.len(),
-        5,
-        "the gate, then one write and one check's three calls"
+        6,
+        "the gate, then one write and one check's four calls"
     );
     assert!(leaves_out_the_plan(&asked[0]), "{:#?}", asked[0]);
     assert!(asked.iter().all(|evidence| *evidence == asked[0]));
@@ -837,10 +845,10 @@ fn send_waits_for_connected_code_and_once_its_time_limit_runs_out_sends_without_
     let sent = requests_sent(&ai);
     assert_eq!(
         sent.len(),
-        5,
-        "the gate, one write and one check's three calls"
+        6,
+        "the gate, one write and one check's four calls"
     );
-    for (kind, evidence, _) in sent.iter().filter(|(kind, ..)| *kind != "check: hint") {
+    for (kind, evidence, _) in sent.iter().filter(|(kind, ..)| sends_evidence(kind)) {
         assert_eq!(evidence["connected_code"], json!([]), "{kind}");
         assert_eq!(
             evidence["files_without_connected_code"],

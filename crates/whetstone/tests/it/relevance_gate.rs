@@ -337,8 +337,8 @@ fn ask_anyway_writes_about_every_chosen_area_without_the_gate_and_still_checks_e
             .iter()
             .filter(|asked| asked.starts_with("check "))
             .count(),
-        18,
-        "every candidate is checked, in three calls: {asked:#?}"
+        24,
+        "every candidate is checked, in four calls: {asked:#?}"
     );
     let text = session.text();
     assert!(text.contains("Question 1 of 4 · Domain"), "{text}");
@@ -361,7 +361,7 @@ fn writing_none_passing(ai: &ScriptedAi, place: usize, name: &str, count: usize)
             .collect()),
     );
     for stem in &stems {
-        ai.on_check_passing_except(stem, [answer(CandidateCheck::NeedsChange, 0.5)]);
+        ai.on_check_passing_except(stem, [answer(CandidateCheck::AboutArea, 0.5)]);
     }
 }
 

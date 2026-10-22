@@ -59,13 +59,21 @@ fn probability(value: f64) -> Probability {
 
 /// Answers that pass a candidate with `criteria` criteria whose answer key
 /// is A, but with `except`'s answer to each of its checks instead, or none.
+/// The answer probe's answer is its probability on A, and the other options
+/// share the rest.
 fn passing_except(
     criteria: usize,
     except: &[(CandidateCheck, Option<f64>)],
 ) -> QuestionCheckAnswers {
     use CandidateCheck::*;
 
-    let checks = [Answerable, AboutArea, NeedsChange, NoGiveaway]
+    let excepted = |check: CandidateCheck, passing: f64| {
+        except
+            .iter()
+            .find_map(|&(excepted, value)| (excepted == check).then_some(value))
+            .unwrap_or(Some(passing))
+    };
+    let checks = [Answerable, AboutArea]
         .into_iter()
         .chain((0..criteria).map(Criterion))
         .chain((0..criteria).map(CriterionMinimum))
@@ -77,14 +85,16 @@ fn passing_except(
             Option(OptionLetter::B | OptionLetter::C) => 0.1,
             _ => 0.9,
         };
-        let value = except
-            .iter()
-            .find_map(|&(excepted, value)| (excepted == check).then_some(value))
-            .unwrap_or(Some(passing))?;
-        Some(answer(check, value))
+        Some(answer(check, excepted(check, passing)?))
     });
     let depth = Depth::new([0.2, 0.3, 0.5].map(probability), 1.3).expect("from 0 to 2");
-    QuestionCheckAnswers::new(answers, depth)
+    let answers = QuestionCheckAnswers::new(answers, depth);
+    match excepted(AnswerProbe, 0.1) {
+        Some(on_a) => answers.with_probe(whetstone_core::AnswerProbe::new(
+            [on_a, (1.0 - on_a) / 2.0, (1.0 - on_a) / 2.0].map(probability),
+        )),
+        None => answers,
+    }
 }
 
 /// The rows between the subject and Retry writes and checks new ones,
@@ -112,18 +122,18 @@ fn the_reasons_tell_jev_saying_no_from_jev_not_being_able_to_tell_across_checks(
         (
             "First?",
             vec![
-                answer(CandidateCheck::NoGiveaway, 0.5),
-                answer(CandidateCheck::NeedsChange, 0.6),
+                answer(CandidateCheck::Answerable, 0.5),
+                answer(CandidateCheck::AboutArea, 0.6),
             ],
         ),
         (
             "Second?",
             vec![
-                answer(CandidateCheck::NoGiveaway, 0.45),
-                answer(CandidateCheck::NeedsChange, 0.1),
+                answer(CandidateCheck::Answerable, 0.45),
+                answer(CandidateCheck::AboutArea, 0.1),
             ],
         ),
-        ("Third?", vec![answer(CandidateCheck::NoGiveaway, 0.15)]),
+        ("Third?", vec![answer(CandidateCheck::Answerable, 0.15)]),
     ]);
 
     let session = prepared(&ai, 120, 32);
@@ -131,11 +141,11 @@ fn the_reasons_tell_jev_saying_no_from_jev_not_being_able_to_tell_across_checks(
     assert_eq!(
         reasons(&session),
         [
-            "3 written · 3 withheld, using policy 0's cut-offs",
-            "2: Jev couldn't tell whether the options give the answer away",
-            "1: Jev said the question doesn't need this change",
-            "1: Jev couldn't tell whether the question needs this change",
-            "1: Jev said the options give the answer away",
+            "3 written · 3 withheld, using policy 1's cut-offs",
+            "2: Jev couldn't tell whether the question can be answered from the evidence",
+            "1: Jev said the question can't be answered from the evidence",
+            "1: Jev said the question isn't about its area",
+            "1: Jev couldn't tell whether the question is about its area",
         ],
         "{}",
         session.text()
@@ -152,10 +162,10 @@ fn each_check_that_withholds_a_candidate_has_one_sentence_for_jev_saying_no_and_
         (Answerable, 0.5),
         (AboutArea, 0.1),
         (AboutArea, 0.5),
-        (NeedsChange, 0.1),
-        (NeedsChange, 0.5),
-        (NoGiveaway, 0.1),
-        (NoGiveaway, 0.5),
+        // Jev picks the answer key without reading the change. Unclear, or
+        // a confident pick of another option, would pass, so only a clear
+        // yes withholds.
+        (AnswerProbe, 0.6),
         (Criterion(0), 0.1),
         (Criterion(0), 0.5),
         // Jev clearly says the only criterion asks for more than the
@@ -182,24 +192,21 @@ fn each_check_that_withholds_a_candidate_has_one_sentence_for_jev_saying_no_and_
     for (stem, (check, value)) in stems.iter().zip(failing) {
         ai.on_check_passing_except(stem, [answer(check, value)]);
     }
-    // Jev leaves the giveaway check unanswered.
-    ai.on_check("Unanswered?", Ok(passing_except(1, &[(NoGiveaway, None)])));
+    // Jev leaves the answer probe unanswered.
+    ai.on_check("Unanswered?", Ok(passing_except(1, &[(AnswerProbe, None)])));
 
     let session = prepared(&ai, 120, 60);
 
     assert_eq!(
         reasons(&session),
         [
-            "20 written · 20 withheld, using policy 0's cut-offs",
+            "17 written · 17 withheld, using policy 1's cut-offs",
             "1: Jev said the question can't be answered from the evidence",
             "1: Jev couldn't tell whether the question can be answered from the evidence",
             "1: Jev said the question isn't about its area",
             "1: Jev couldn't tell whether the question is about its area",
-            "1: Jev said the question doesn't need this change",
-            "1: Jev couldn't tell whether the question needs this change",
-            "1: Jev said the options give the answer away",
-            "1: Jev couldn't tell whether the options give the answer away",
-            "1: Jev didn't answer whether the options give the answer away",
+            "1: Jev chose the answer without reading the change",
+            "1: Jev didn't answer whether the answer can be chosen without reading the change",
             "1: Jev said a rubric criterion doesn't follow from the evidence, or can't be judged \
              from written reasoning",
             "1: Jev couldn't tell whether a rubric criterion follows from the evidence and can be \
@@ -260,7 +267,7 @@ fn a_candidate_with_no_criterion_left_gives_one_reason_as_unclear_as_its_least_c
     assert_eq!(
         reasons(&session),
         [
-            "2 written · 2 withheld, using policy 0's cut-offs",
+            "2 written · 2 withheld, using policy 1's cut-offs",
             "1: Jev said every rubric criterion asks for more than the question needs",
             "1: Jev didn't answer whether any rubric criterion asks only for what the question \
              needs",
@@ -302,7 +309,7 @@ fn the_plain_checks_drops_are_counted_apart_from_the_candidates_withheld() {
         ]),
     );
     for stem in ["Withheld first?", "Withheld second?"] {
-        ai.on_check_passing_except(stem, [answer(CandidateCheck::NoGiveaway, 0.5)]);
+        ai.on_check_passing_except(stem, [answer(CandidateCheck::AnswerProbe, 0.7)]);
     }
 
     let session = prepared(&ai, 120, 32);
@@ -310,8 +317,8 @@ fn the_plain_checks_drops_are_counted_apart_from_the_candidates_withheld() {
     assert_eq!(
         reasons(&session),
         [
-            "6 written · 2 withheld, using policy 0's cut-offs",
-            "all 2: Jev couldn't tell whether the options give the answer away",
+            "6 written · 2 withheld, using policy 1's cut-offs",
+            "all 2: Jev chose the answer without reading the change",
             "2 dropped: each had options other than exactly A, B and C",
             "1 dropped: it cited lines that aren't in the evidence",
             "1 dropped: it was missing its hint",
@@ -353,7 +360,7 @@ fn a_hint_that_failed_its_checks_is_never_a_reason() {
     let ai = checking(&[(
         "Withheld?",
         vec![
-            answer(CandidateCheck::NeedsChange, 0.5),
+            answer(CandidateCheck::AboutArea, 0.5),
             answer(CandidateCheck::HintPointsToEvidence, 0.1),
             answer(CandidateCheck::HintHidesAnswerKey, 0.5),
         ],
@@ -364,8 +371,8 @@ fn a_hint_that_failed_its_checks_is_never_a_reason() {
     assert_eq!(
         reasons(&session),
         [
-            "1 written · 1 withheld, using policy 0's cut-offs",
-            "1: Jev couldn't tell whether the question needs this change",
+            "1 written · 1 withheld, using policy 1's cut-offs",
+            "1: Jev couldn't tell whether the question is about its area",
         ],
         "{}",
         session.text()
@@ -394,10 +401,10 @@ fn reasons_under(config: &str, ai: &Arc<ScriptedAi>) -> Vec<String> {
 
 #[test]
 fn the_reasons_say_when_the_learner_s_cut_offs_from_config_decided() {
-    let ai = checking(&[("Withheld?", vec![answer(CandidateCheck::NoGiveaway, 0.82)])]);
+    let ai = checking(&[("Withheld?", vec![answer(CandidateCheck::AnswerProbe, 0.55)])]);
 
     let reasons = reasons_under(
-        "[cut_offs]\nquestion_check = { upper = 0.85, lower = 0.20 }\n",
+        "[cut_offs]\nanswer_probe = { upper = 0.50, lower = 0.20 }\n",
         &ai,
     );
 
@@ -405,14 +412,14 @@ fn the_reasons_say_when_the_learner_s_cut_offs_from_config_decided() {
         reasons,
         [
             "1 written · 1 withheld, using your cut-offs from config",
-            "1: Jev couldn't tell whether the options give the answer away",
+            "1: Jev chose the answer without reading the change",
         ]
     );
 }
 
 #[test]
-fn the_reasons_say_policy_0_s_cut_offs_decided_when_config_changes_only_other_jobs() {
-    let ai = checking(&[("Withheld?", vec![answer(CandidateCheck::NoGiveaway, 0.5)])]);
+fn the_reasons_say_policy_1_s_cut_offs_decided_when_config_changes_only_other_jobs() {
+    let ai = checking(&[("Withheld?", vec![answer(CandidateCheck::AnswerProbe, 0.7)])]);
 
     let reasons = reasons_under(
         "[cut_offs]\noption_rating = { upper = 0.70, lower = 0.30 }\n",
@@ -421,14 +428,14 @@ fn the_reasons_say_policy_0_s_cut_offs_decided_when_config_changes_only_other_jo
 
     assert_eq!(
         reasons[0],
-        "1 written · 1 withheld, using policy 0's cut-offs"
+        "1 written · 1 withheld, using policy 1's cut-offs"
     );
 }
 
 #[test]
-fn the_reasons_say_when_the_learner_s_cut_offs_and_policy_0_s_both_decided() {
+fn the_reasons_say_when_the_learner_s_cut_offs_and_policy_1_s_both_decided() {
     let ai = checking(&[
-        ("Giveaway?", vec![answer(CandidateCheck::NoGiveaway, 0.82)]),
+        ("Off area?", vec![answer(CandidateCheck::AboutArea, 0.82)]),
         (
             "Option B?",
             vec![answer(CandidateCheck::Option(OptionLetter::B), 0.5)],
@@ -442,14 +449,14 @@ fn the_reasons_say_when_the_learner_s_cut_offs_and_policy_0_s_both_decided() {
 
     assert_eq!(
         reasons[0],
-        "2 written · 2 withheld, using your cut-offs from config and policy 0's"
+        "2 written · 2 withheld, using your cut-offs from config and policy 1's"
     );
 }
 
-/// A scripted AI as the showcase goes live today: the generator writes six
-/// candidates, one citing lines the evidence doesn't send, and Jev can't
-/// tell whether the options of the other five give the answer away, nor,
-/// for three of them, whether they need this change.
+/// A scripted AI as the showcase went live before the answer probe: the
+/// generator writes six candidates, one citing lines the evidence doesn't
+/// send, and Jev can't tell whether the other five are about their area,
+/// and chooses the answer of three of them without reading the change.
 fn as_live() -> Arc<ScriptedAi> {
     let stems = stems("Domain", 5);
     let mut written: Vec<WrittenCandidate> = stems
@@ -469,9 +476,9 @@ fn as_live() -> Arc<ScriptedAi> {
     let ai = Arc::new(ScriptedAi::new());
     ai.on_write(&area_id(DOMAIN), Ok(written));
     for (place, stem) in stems.iter().enumerate() {
-        let mut answers = vec![answer(CandidateCheck::NoGiveaway, 0.4)];
+        let mut answers = vec![answer(CandidateCheck::AboutArea, 0.4)];
         if place < 3 {
-            answers.push(answer(CandidateCheck::NeedsChange, 0.7));
+            answers.push(answer(CandidateCheck::AnswerProbe, 0.7));
         }
         ai.on_check_passing_except(stem, answers);
     }
@@ -485,16 +492,16 @@ fn no_questions_passed_checks_gives_its_reasons_in_words() {
     assert_eq!(
         reasons(&session),
         [
-            "6 written · 5 withheld, using policy 0's cut-offs",
-            "all 5: Jev couldn't tell whether the options give the answer away",
-            "3: Jev couldn't tell whether the question needs this change",
+            "6 written · 5 withheld, using policy 1's cut-offs",
+            "all 5: Jev couldn't tell whether the question is about its area",
+            "3: Jev chose the answer without reading the change",
             "1 dropped: it cited lines that aren't in the evidence",
         ],
         "{}",
         session.text()
     );
     let text = session.text();
-    for number in ["0.4", "0.7", "0.8", "0.2"] {
+    for number in ["0.4", "0.7", "0.8", "0.6", "0.2"] {
         assert!(!text.contains(number), "no probability or cut-off: {text}");
     }
 }
@@ -547,7 +554,7 @@ fn after_retry_the_reasons_are_the_new_candidates_alone() {
     assert_eq!(
         reasons(&session),
         [
-            "3 written · 3 withheld, using policy 0's cut-offs",
+            "3 written · 3 withheld, using policy 1's cut-offs",
             "all 3: Jev couldn't tell whether the question is about its area",
         ],
         "{}",
@@ -556,9 +563,9 @@ fn after_retry_the_reasons_are_the_new_candidates_alone() {
 }
 
 /// A session where 3 of the 4 questions asked for passed: the generator
-/// wrote six, one of which the plain checks dropped, and Jev couldn't tell
-/// whether the options of two others give the answer away. Reasoning
-/// submitted to those shown meets its criterion.
+/// wrote six, one of which the plain checks dropped, and Jev chose the
+/// answer of two others without reading the change. Reasoning submitted to
+/// those shown meets its criterion.
 fn a_shortfall(width: u16, height: u16) -> Session {
     let passing = stems("Passing", 3);
     let ai = Arc::new(ScriptedAi::new());
@@ -574,7 +581,7 @@ fn a_shortfall(width: u16, height: u16) -> Session {
         reasoning_met(&ai, stem);
     }
     for stem in ["Withheld first?", "Withheld second?"] {
-        ai.on_check_passing_except(stem, [answer(CandidateCheck::NoGiveaway, 0.5)]);
+        ai.on_check_passing_except(stem, [answer(CandidateCheck::AnswerProbe, 0.7)]);
     }
     prepared(&ai, width, height)
 }
@@ -598,8 +605,8 @@ fn see_why_fewer_passed_gives_the_same_reasons_and_back_returns_to_the_question(
     let text = session.text();
     assert!(text.contains("Why fewer passed checks"), "{text}");
     for reason in [
-        "6 written · 3 passed · 2 withheld, using policy 0's cut-offs",
-        "all 2: Jev couldn't tell whether the options give the answer away",
+        "6 written · 3 passed · 2 withheld, using policy 1's cut-offs",
+        "all 2: Jev chose the answer without reading the change",
         "1 dropped: it was missing its hint",
     ] {
         assert!(text.contains(reason), "{reason}: {text}");

@@ -219,7 +219,7 @@ async fn record_candidates() {
     assert!(reply.is_ok());
 }
 
-/// Records the reply to each of the question check's three calls, as its
+/// Records the reply to each of the question check's four calls, as its
 /// own fixture.
 #[tokio::test]
 #[ignore = "calls OpenRouter with the maintainer's key"]

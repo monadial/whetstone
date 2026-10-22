@@ -52,14 +52,6 @@ expression: pretty(&sent(call).await)
     }
   },
   "questions": {
-    "no_giveaway": {
-      "type": "noul",
-      "instructions": "The candidate's stem and options don't give the answer away: no option stands out as correct or wrong from its wording, length, detail or how it echoes the stem. The state holds the evidence, and of the candidate only its stem and its options' text, as the learner sees them before answering.",
-      "criteria": {
-        "false": "The wording of the stem or options points to the correct option, or rules options out.",
-        "true": "Nothing in the wording of the stem or options points to the correct option."
-      }
-    },
     "option_a": {
       "type": "noul",
       "instructions": "Given the evidence, option A correctly answers the candidate's stem. The state holds the evidence, and of the candidate only its stem and its options' text.",

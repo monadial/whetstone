@@ -47,4 +47,4 @@ first_line = 1
 last_line = 1
 
 [candidate.labels]
-no_giveaway = "yes"
+answer_probe = "no"

@@ -104,7 +104,7 @@ fn the_session_record_starts_once_questions_pass_with_the_questions_and_the_evid
         .collect();
     assert_eq!(
         roles,
-        [[Role::Jev, Role::Generator].as_slice(), &[Role::Jev; 18]].concat(),
+        [[Role::Jev, Role::Generator].as_slice(), &[Role::Jev; 24]].concat(),
         "the provenance of the relevance gate, the write and each call of each check"
     );
 }

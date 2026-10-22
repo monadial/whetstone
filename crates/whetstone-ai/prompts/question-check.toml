@@ -1,15 +1,19 @@
 # The question check: Jev's questions about one candidate question, asked in
-# three calls. Each call's state holds only what its questions are about:
+# four calls. Each call's state holds only what its questions are about:
 #
-# - the option ratings (`option`) and `no_giveaway`: the `evidence`, and the
-#   candidate's stem and options' text as `candidate`;
+# - the option ratings (`option`): the `evidence`, and the candidate's stem
+#   and options' text as `candidate`;
 # - `hint_hides_answer_key`: the candidate's stem, options' text and hint as
 #   `candidate`, and no evidence;
+# - the answer probe (`answer_probe`): the candidate's stem and options' text
+#   as `candidate`, and nothing else;
 # - every other question, and the depth score: the `evidence`, and the whole
 #   candidate as `candidate`.
 #
 # Each yes/no question has its instructions and what yes and no mean; the
-# depth score has its instructions and its levels, the shallowest first.
+# depth score has its instructions and its levels, the shallowest first; and
+# the answer probe, a choice among the options by letter, has its
+# instructions and what choosing an option means.
 #
 # Placeholders: `{letter}` is an option's letter, and `{criterion}` is a
 # criterion's name in the candidate's rubric, such as `criterion_1`.
@@ -24,15 +28,11 @@ instructions = "The candidate is about its area, as the area's name and descript
 yes = "The question asks about what the area's name and description cover."
 no = "The question asks about something outside the area, or touches it only in passing."
 
-[needs_change]
-instructions = "Answering the candidate needs this change: someone with general programming knowledge, but without the evidence, couldn't choose the correct option with confidence."
-yes = "Choosing the correct option needs understanding what the change does."
-no = "General knowledge alone is enough to choose the correct option."
-
-[no_giveaway]
-instructions = "The candidate's stem and options don't give the answer away: no option stands out as correct or wrong from its wording, length, detail or how it echoes the stem. The state holds the evidence, and of the candidate only its stem and its options' text, as the learner sees them before answering."
-yes = "Nothing in the wording of the stem or options points to the correct option."
-no = "The wording of the stem or options points to the correct option, or rules options out."
+# Jev answers the candidate without the change: a question it can answer
+# confidently this way gives itself away, or doesn't need the change.
+[answer_probe]
+instructions = "Which option correctly answers the candidate's stem? The state holds only the stem and the options' text."
+option = "Option {letter} correctly answers the stem."
 
 [criterion]
 instructions = "Rubric criterion {criterion} of the candidate follows from the evidence and the answer key, and whether a learner's written reasoning meets it can be judged from the reasoning alone."

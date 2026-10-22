@@ -40,8 +40,7 @@ citations = [{ path = "src/provider.rs", first_line = 26, last_line = 37 }]
 [candidate.labels]
 answerable = "yes"
 about_area = "yes"
-needs_change = "yes"
-no_giveaway = "yes"
+answer_probe = "no"
 criterion_1 = "yes"
 criterion_2 = "yes"
 criterion_1_minimum = "yes"

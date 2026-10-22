@@ -10,12 +10,12 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 use whetstone_core::{
-    Area, AreaFileVersion, AreaSource, AssessmentPolicy, Candidate, CandidateCheck, Change,
-    ConnectedCodeLimit, Connection, ConnectionGroup, Connections, ContentHash, CriterionOutcome,
-    Depth, Evidence, ExcludePatterns, Extent, LineRange, ModelId, OptionLetter, Probability,
-    Question, QuestionCheckAnswers, QuestionType, Relation, RequestId, ReviewChoices, Tier,
-    TouchedFile, Versions, WrittenCandidate, WrittenCitation, WrittenCriterion, WrittenOption,
-    plain_checks, show_rule,
+    AnswerProbe, Area, AreaFileVersion, AreaSource, AssessmentPolicy, Candidate, CandidateCheck,
+    Change, ConnectedCodeLimit, Connection, ConnectionGroup, Connections, ContentHash,
+    CriterionOutcome, Depth, Evidence, ExcludePatterns, Extent, LineRange, ModelId, OptionLetter,
+    Probability, Question, QuestionCheckAnswers, QuestionType, Relation, RequestId, ReviewChoices,
+    Tier, TouchedFile, Versions, WrittenCandidate, WrittenCitation, WrittenCriterion,
+    WrittenOption, plain_checks, show_rule,
 };
 
 use crate::replay::{GENERATOR_MODEL, JEV_MODEL, connection, received, server};
@@ -312,8 +312,9 @@ pub(crate) fn candidate() -> Candidate {
     passed.remove(0)
 }
 
-/// [`candidate`] after a question check it passes: every check clear yes,
-/// but options B and C clear no.
+/// [`candidate`] after a question check it passes: every yes/no check clear
+/// yes, but options B and C clear no, and the answer probe clear no on the
+/// answer key, A.
 pub(crate) fn question() -> Question {
     let candidate = candidate();
     let answer = |value| Probability::new(value).expect("the value is a probability");
@@ -329,7 +330,8 @@ pub(crate) fn question() -> Question {
             )
         }),
         Depth::new([answer(0.1), answer(0.3), answer(0.6)], 1.5).expect("the depth is one"),
-    );
+    )
+    .with_probe(AnswerProbe::new([answer(0.1), answer(0.5), answer(0.4)]));
     show_rule(candidate, answers, AssessmentPolicy::current()).expect("the sample passes")
 }
 
@@ -348,6 +350,10 @@ pub(crate) fn recorded_check(call: QuestionCheckCall) -> (&'static str, &'static
         QuestionCheckCall::Candidate => (
             "question-check-candidate",
             include_str!("../fixtures/question-check-candidate.json"),
+        ),
+        QuestionCheckCall::AnswerProbe => (
+            "question-check-answer-probe",
+            include_str!("../fixtures/question-check-answer-probe.json"),
         ),
     }
 }

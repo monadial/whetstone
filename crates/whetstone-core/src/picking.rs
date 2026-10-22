@@ -166,7 +166,7 @@ mod tests {
     use crate::assessment_policy::AssessmentPolicy;
     use crate::question::OptionLetter;
     use crate::question::tests::area;
-    use crate::question_check::tests::{candidate, depth, passing};
+    use crate::question_check::tests::{candidate, depth, passing, passing_probe};
     use crate::question_check::{QuestionCheckAnswers, show_rule};
 
     fn count(count: i64) -> QuestionCount {
@@ -177,7 +177,8 @@ mod tests {
     /// depth's expected value is `deep`.
     fn question(area_id: &str, written_at: usize, deep: f64) -> Question {
         let candidate = candidate(area_id, written_at, OptionLetter::A);
-        let answers = QuestionCheckAnswers::new(passing(&candidate), depth(deep));
+        let answers = QuestionCheckAnswers::new(passing(&candidate), depth(deep))
+            .with_probe(passing_probe(&candidate));
         show_rule(candidate, answers, AssessmentPolicy::current()).expect("shown")
     }
 

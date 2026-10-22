@@ -14,7 +14,7 @@ use whetstone_ai::{AiError, QuestionCheckCall};
 use whetstone_core::{AssessmentPolicy, Band, Job, ModelId, Probability};
 
 use crate::labels::{ExampleId, Expected};
-use crate::prepare::{SkipReason, Skipped};
+use crate::prepare::{RETIRED_LABELS, Retired, SkipReason, Skipped};
 
 /// One label, and Jev's answer to it in each run that answered.
 #[derive(Debug, Clone, PartialEq)]
@@ -66,6 +66,8 @@ pub struct Measurements {
     pub by_agent: usize,
     /// The learner votes not measured, each with why.
     pub skipped: Vec<Skipped>,
+    /// The labels of checks the question check no longer asks, left out.
+    pub retired: Vec<Retired>,
 }
 
 /// A pair of cut-offs a report row bands the answers with.
@@ -103,7 +105,7 @@ impl CutOffs {
 }
 
 /// The candidate cut-offs every job is measured at, from the loosest to the
-/// strictest, around policy 0's 0.80 and 0.20. The clear-yes counts depend
+/// strictest, around Jev's example 0.80 and 0.20. The clear-yes counts depend
 /// only on the upper cut-off and the clear-no counts only on the lower, so
 /// any pair of them can be read off these rows.
 pub const SWEEP: [CutOffs; 5] = [
@@ -411,6 +413,9 @@ impl fmt::Display for Report {
         if let Some(not_measured) = not_measured(&run.skipped) {
             writeln!(f, "- **Not measured:** {not_measured}")?;
         }
+        if let Some(left_out) = left_out(&run.retired) {
+            writeln!(f, "- **Left out:** {left_out}")?;
+        }
         writeln!(
             f,
             "- **Assessment policy:** version {}, {}. This tool never changes it: setting its \
@@ -455,6 +460,7 @@ fn call_name(call: QuestionCheckCall) -> &'static str {
         QuestionCheckCall::OptionRatings => "option ratings",
         QuestionCheckCall::Hint => "hint",
         QuestionCheckCall::Candidate => "candidate",
+        QuestionCheckCall::AnswerProbe => "answer probe",
     }
 }
 
@@ -559,6 +565,25 @@ pub(crate) fn not_measured(skipped: &[Skipped]) -> Option<String> {
     ))
 }
 
+/// What the tool says about the `retired` labels it left out, if any: how
+/// many, and of which checks.
+pub(crate) fn left_out(retired: &[Retired]) -> Option<String> {
+    if retired.is_empty() {
+        return None;
+    }
+    let keys: Vec<String> = RETIRED_LABELS
+        .into_iter()
+        .filter(|&key| retired.iter().any(|label| label.key == key))
+        .map(|key| format!("`{key}`"))
+        .collect();
+    Some(format!(
+        "{} of {}, which the question check no longer asks: the answer probe replaced them in \
+         assessment policy 1.",
+        counted(retired.len(), "label", "labels"),
+        keys.join(" and ")
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -611,7 +636,7 @@ mod tests {
                 [2, 1, 6, 2, 7], // 0.80 / 0.20
                 [1, 0, 6, 2, 8], // 0.85 / 0.15
                 [1, 0, 5, 1, 9], // 0.90 / 0.10
-                [2, 1, 6, 2, 7], // policy 0, which is 0.80 / 0.20
+                [2, 1, 6, 2, 7], // policy 1, 0.80 / 0.20 for option ratings
             ]
         );
         let disagreement = |row: usize| report.rows()[row].disagreement().unwrap();
@@ -692,6 +717,34 @@ mod tests {
     }
 
     #[test]
+    fn answer_probe_labels_are_their_own_job_and_policy_1_bands_them_from_0_60() {
+        let labels = vec![
+            Measured {
+                job: Job::AnswerProbe,
+                ..measured("a/answer_probe", Expected::Yes, &[0.65, 0.62, 0.7])
+            },
+            Measured {
+                job: Job::QuestionCheck,
+                ..measured("a/answerable", Expected::Yes, &[0.65, 0.62, 0.7])
+            },
+        ];
+
+        let probe = JobReport::new(Job::AnswerProbe, &labels);
+        let question_check = JobReport::new(Job::QuestionCheck, &labels);
+
+        assert_eq!((probe.yes(), probe.answers()), (1, 3));
+        let policy = |report: &JobReport| counts(&report.rows()[5]);
+        assert_eq!(counts(&probe.rows()[2]), [0, 0, 0, 0, 3], "0.80 / 0.20");
+        assert_eq!(policy(&probe), [3, 0, 0, 0, 0], "policy 1: 0.60 / 0.20");
+        assert_eq!(
+            policy(&question_check),
+            [0, 0, 0, 0, 3],
+            "policy 1: 0.80 / 0.20"
+        );
+        assert_eq!(probe.flagged(), []);
+    }
+
+    #[test]
     fn the_report_reads_as_markdown_with_every_job() {
         let measurements = Measurements {
             model: ModelId::new("typesafe/jev-1.14".to_owned()),
@@ -717,6 +770,7 @@ mod tests {
             labels: option_ratings(),
             by_agent: 5,
             skipped: Vec::new(),
+            retired: Vec::new(),
         };
 
         insta::assert_snapshot!(Report::new(measurements).to_string());
@@ -743,6 +797,7 @@ mod tests {
                 skipped("vote-2", SkipReason::OwnRepository),
                 skipped("vote-3", SkipReason::NotInEvidence),
             ],
+            retired: Vec::new(),
         };
 
         let report = Report::new(measurements).to_string();
@@ -753,6 +808,43 @@ mod tests {
                  Practice sent them: 2 about a commit of the learner's own repository, whose \
                  code would go out again without a new outbound review, and 1 citing lines \
                  the tool's evidence doesn't send, such as connected code.\n"
+            ),
+            "{report}"
+        );
+        assert!(!report.contains("Left out"), "{report}");
+    }
+
+    #[test]
+    fn the_report_says_which_retired_labels_it_left_out() {
+        let retired = |id: &str, key: &str| Retired {
+            example: ExampleId::new(id),
+            key: key.to_owned(),
+        };
+        let measurements = Measurements {
+            model: ModelId::new("typesafe/jev-1.14".to_owned()),
+            reported_models: BTreeSet::new(),
+            runs: 3,
+            calls: 0,
+            failures: Vec::new(),
+            cost: 0.0,
+            cost_not_reported: 0,
+            labels: Vec::new(),
+            by_agent: 0,
+            skipped: Vec::new(),
+            retired: vec![
+                retired("vote-1", "no_giveaway"),
+                retired("seed", "needs_change"),
+                retired("seed", "no_giveaway"),
+            ],
+        };
+
+        let report = Report::new(measurements).to_string();
+
+        assert!(
+            report.contains(
+                "- **Left out:** 3 labels of `needs_change` and `no_giveaway`, which the \
+                 question check no longer asks: the answer probe replaced them in assessment \
+                 policy 1.\n"
             ),
             "{report}"
         );

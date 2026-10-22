@@ -158,14 +158,6 @@ expression: pretty(&sent(call).await)
         "true": "The hint points to specific parts of the evidence that bear on the answer."
       }
     },
-    "needs_change": {
-      "type": "noul",
-      "instructions": "Answering the candidate needs this change: someone with general programming knowledge, but without the evidence, couldn't choose the correct option with confidence.",
-      "criteria": {
-        "false": "General knowledge alone is enough to choose the correct option.",
-        "true": "Choosing the correct option needs understanding what the change does."
-      }
-    },
     "rationale_a": {
       "type": "noul",
       "instructions": "The candidate's rationale for option A, which explains why that option is correct or wrong, is supported by the evidence. Judge the rationale, not the option: a rationale that rightly explains why a wrong option is wrong is supported.",

@@ -1,0 +1,28 @@
+---
+source: crates/whetstone-ai/src/question_check.rs
+expression: pretty(&sent(call).await)
+---
+{
+  "model": "typesafe/jev-1.14",
+  "state": {
+    "candidate": {
+      "stem": "Why does the retry in `charge_with_retry` now reuse `original.key` instead of making a new `OperationKey`?",
+      "options": {
+        "A": "So that the provider treats the retry as the same charge, and a charge that went through before the timeout isn't made twice.",
+        "B": "So that the retry skips the provider's checks on the card and completes faster than the first attempt.",
+        "C": "So that the provider rejects the retry if the first attempt failed, and the caller sees the original timeout."
+      }
+    }
+  },
+  "questions": {
+    "answer_probe": {
+      "type": "choice",
+      "instructions": "Which option correctly answers the candidate's stem? The state holds only the stem and the options' text.",
+      "criteria": {
+        "A": "Option A correctly answers the stem.",
+        "B": "Option B correctly answers the stem.",
+        "C": "Option C correctly answers the stem."
+      }
+    }
+  }
+}
