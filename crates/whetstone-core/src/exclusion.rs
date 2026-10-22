@@ -3,8 +3,10 @@
 use std::fmt;
 use std::iter::Peekable;
 use std::str::Chars;
+use std::sync::LazyLock;
 
 use regex::Regex;
+use serde::Deserialize;
 
 /// One gitignore-style `exclude` pattern from a repository's config, matched
 /// against repository-relative paths.
@@ -102,8 +104,9 @@ impl ExcludePatterns {
 }
 
 /// A file left out by default, until the learner brings it back: a
-/// lockfile or a common secret path. Each matches by file name, at any depth
-/// and ignoring ASCII case.
+/// lockfile or a common secret path, as the embedded
+/// `default_exclusions.toml` lists them. Each matches by file name, at any
+/// depth and ignoring ASCII case.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DefaultExclusion {
     kind: DefaultExclusionKind,
@@ -119,50 +122,62 @@ pub enum DefaultExclusionKind {
     SecretPath,
 }
 
-/// Lockfiles, by file name.
-const LOCKFILES: [&str; 20] = [
-    "Cargo.lock",
-    "package-lock.json",
-    "yarn.lock",
-    "pnpm-lock.yaml",
-    "Gemfile.lock",
-    "poetry.lock",
-    "composer.lock",
-    "go.sum",
-    "Pipfile.lock",
-    "bun.lockb",
-    "bun.lock",
-    "uv.lock",
-    "flake.lock",
-    "mix.lock",
-    "pubspec.lock",
-    "Podfile.lock",
-    "packages.lock.json",
-    "npm-shrinkwrap.json",
-    "deno.lock",
-    "Package.resolved",
-];
+/// The embedded default exclusions file.
+const DEFAULTS_FILE: &str = include_str!("default_exclusions.toml");
 
-/// Common secret paths, by file name. A `*` stands for any run of
-/// characters, and only ever leads or trails.
-const SECRET_PATHS: [&str; 16] = [
-    ".env",
-    ".env.*",
-    "*.pem",
-    "*.key",
-    "id_rsa*",
-    "id_ed25519*",
-    "*.p12",
-    "*.pfx",
-    "*.keystore",
-    "*.jks",
-    "credentials*",
-    "secrets.*",
-    ".npmrc",
-    ".pypirc",
-    ".netrc",
-    "*.kdbx",
-];
+/// The embedded default exclusions, read the first time a path is checked.
+static DEFAULTS: LazyLock<DefaultExclusions> = LazyLock::new(|| {
+    DefaultExclusions::parse(DEFAULTS_FILE)
+        .expect("the embedded default exclusions file is valid, which a unit test checks")
+});
+
+/// The file names left out by default, as `default_exclusions.toml` lists
+/// them. Reading them validates them, so [`DefaultExclusion::of`] can match
+/// them without checking them again.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DefaultExclusions {
+    lockfiles: Vec<String>,
+    secret_paths: Vec<String>,
+}
+
+/// Why a default exclusions file cannot be used.
+#[derive(Debug, thiserror::Error)]
+enum DefaultExclusionsError {
+    /// It is not TOML, or not in the file's shape: an unknown or missing
+    /// list.
+    #[error("the default exclusions file is not valid")]
+    Toml(#[source] toml::de::Error),
+    /// A name is empty, has a `/`, or has a `*` anywhere but at one end.
+    #[error("`{0}` is not a file name with at most one leading or trailing `*`")]
+    BadName(String),
+}
+
+impl DefaultExclusions {
+    /// The default exclusions in `text`, a default exclusions file.
+    fn parse(text: &str) -> Result<Self, DefaultExclusionsError> {
+        let defaults: Self = toml::from_str(text).map_err(DefaultExclusionsError::Toml)?;
+        if let Some(bad) = defaults
+            .lockfiles
+            .iter()
+            .chain(&defaults.secret_paths)
+            .find(|name_pattern| !is_name_pattern(name_pattern))
+        {
+            return Err(DefaultExclusionsError::BadName(bad.clone()));
+        }
+        Ok(defaults)
+    }
+}
+
+/// Whether `name_pattern` is a file name with at most one `*`, which leads
+/// or trails it, and something besides it.
+fn is_name_pattern(name_pattern: &str) -> bool {
+    let name = name_pattern
+        .strip_prefix('*')
+        .or_else(|| name_pattern.strip_suffix('*'))
+        .unwrap_or(name_pattern);
+    !name.is_empty() && !name.contains(['*', '/'])
+}
 
 impl DefaultExclusion {
     /// The default exclusion that leaves out the file at `path`, relative to
@@ -170,15 +185,19 @@ impl DefaultExclusion {
     #[must_use]
     pub fn of(path: &str) -> Option<Self> {
         let name = path.rsplit('/').next().unwrap_or(path);
+        let defaults: &'static DefaultExclusions = &DEFAULTS;
         let lists = [
-            (DefaultExclusionKind::Lockfile, LOCKFILES.as_slice()),
-            (DefaultExclusionKind::SecretPath, SECRET_PATHS.as_slice()),
+            (DefaultExclusionKind::Lockfile, &defaults.lockfiles),
+            (DefaultExclusionKind::SecretPath, &defaults.secret_paths),
         ];
         lists.into_iter().find_map(|(kind, name_patterns)| {
             name_patterns
                 .iter()
                 .find(|name_pattern| name_matches(name_pattern, name))
-                .map(|&name_pattern| Self { kind, name_pattern })
+                .map(|name_pattern| Self {
+                    kind,
+                    name_pattern: name_pattern.as_str(),
+                })
         })
     }
 
@@ -437,6 +456,32 @@ impl fmt::Display for ExcludePatternProblem {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_embedded_default_exclusions_file_is_valid() {
+        let defaults = DefaultExclusions::parse(DEFAULTS_FILE);
+
+        assert!(defaults.is_ok(), "{defaults:?}");
+    }
+
+    #[test]
+    fn a_default_exclusion_is_a_file_name_with_at_most_one_star_at_one_end() {
+        for bad in ["", "*", "*.env*", "config/*.env", "se*crets"] {
+            let text = format!("lockfiles = []\nsecret_paths = [{bad:?}]\n");
+
+            assert!(
+                matches!(
+                    DefaultExclusions::parse(&text),
+                    Err(DefaultExclusionsError::BadName(name)) if name == bad
+                ),
+                "{bad:?}"
+            );
+        }
+        assert!(matches!(
+            DefaultExclusions::parse("lockfiles = []\n"),
+            Err(DefaultExclusionsError::Toml(_))
+        ));
+    }
 
     fn pattern(text: &str) -> ExcludePattern {
         ExcludePattern::parse(text).expect("the pattern is valid")
@@ -702,6 +747,9 @@ mod tests {
             (".pypirc", ".pypirc"),
             (".netrc", ".netrc"),
             ("vault.kdbx", "*.kdbx"),
+            ("deploy/prod.env", "*.env"),
+            ("infra/main.tfvars", "*.tfvars"),
+            ("infra/terraform.tfstate", "*.tfstate"),
         ];
 
         for (path, name_pattern) in secret_paths {

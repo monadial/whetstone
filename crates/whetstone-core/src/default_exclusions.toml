@@ -1,0 +1,64 @@
+# The files a Practice on the learner's repository leaves out by default,
+# until the learner brings them back in the outbound review. Whetstone embeds
+# this file and reads it once, the first time a path is checked; a test
+# checks it is valid, so a mistake here fails CI rather than a learner's
+# review.
+#
+# To leave out another kind of file by default, add its name to a list
+# below. No code changes.
+#
+# Each list holds file names, matched against the last segment of a path,
+# at any depth, ignoring ASCII case. A name has no `/`. A `*` stands for any
+# run of characters, and only leads or trails, never both: `*.pem` or
+# `id_rsa*`. Lockfiles are checked first, then secret paths, each list in
+# its order, and the first name that matches is the reason the outbound
+# review shows.
+
+# Package managers' lockfiles: bulky, and of little use to a question.
+lockfiles = [
+    "Cargo.lock",
+    "package-lock.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "Gemfile.lock",
+    "poetry.lock",
+    "composer.lock",
+    "go.sum",
+    "Pipfile.lock",
+    "bun.lockb",
+    "bun.lock",
+    "uv.lock",
+    "flake.lock",
+    "mix.lock",
+    "pubspec.lock",
+    "Podfile.lock",
+    "packages.lock.json",
+    "npm-shrinkwrap.json",
+    "deno.lock",
+    "Package.resolved",
+]
+
+# Paths where secrets commonly live: environment files, keys and
+# certificates, credential stores, package registries' login files, and
+# Terraform's variables and state, which hold provider credentials.
+secret_paths = [
+    ".env",
+    ".env.*",
+    "*.env",
+    "*.tfvars",
+    "*.tfstate",
+    "*.pem",
+    "*.key",
+    "id_rsa*",
+    "id_ed25519*",
+    "*.p12",
+    "*.pfx",
+    "*.keystore",
+    "*.jks",
+    "credentials*",
+    "secrets.*",
+    ".npmrc",
+    ".pypirc",
+    ".netrc",
+    "*.kdbx",
+]
