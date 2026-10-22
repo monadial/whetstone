@@ -19,7 +19,8 @@ OPENROUTER_API_KEY=… cargo run -p whetstone-labels -- measure > report.md
   - An example is one call, but a candidate example is up to three, as
     Practice checks a question in three calls. A run sends each call three
     times, and `check` prints how many calls that is. In the first run,
-    over the seeds, a call cost about 0.0003 USD.
+    over the seeds, a call cost about 0.0003 USD, when the question check
+    was still one larger call.
   - `--model` measures a Jev model other than `typesafe/jev-1.14`.
 - **Both** take `--labels DIR` to read another folder, or `--labels FILE`
   to read one file, such as a learner's votes (see
