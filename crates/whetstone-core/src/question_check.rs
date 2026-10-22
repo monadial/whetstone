@@ -341,9 +341,9 @@ impl DepthLevel {
 /// where a check below passes it or drops a criterion or the hint instead.
 ///
 /// For a single-choice question: check 1 and every criterion's check are
-/// clear yes; check 2 isn't clear no, as whether a question fits its area
-/// is a matter of focus, so it withholds only a candidate Jev clearly says
-/// is off its area; the answer probe's probability on the answer key isn't
+/// clear yes; check 2 is clear yes or unclear, as whether a question fits
+/// its area is a matter of focus, so it withholds only a candidate Jev
+/// clearly says is off its area; the answer probe's probability on the answer key isn't
 /// clear yes, as Jev couldn't confidently pick it without the evidence, so
 /// a confident pick of another option passes; every rationale check and the
 /// "why it matters" check are clear yes; exactly one option rating is clear
@@ -629,9 +629,9 @@ impl Withheld {
 
     /// The bands of Jev's answer to its `check` that would have passed it:
     /// the one it [`needed`](Self::needed); for
-    /// [`CandidateCheck::AboutArea`], clear yes or unclear; for a
+    /// [`CandidateCheck::AboutArea`] and a
     /// [`CandidateCheck::CriterionMinimum`], clear yes or unclear, either of
-    /// which keeps its criterion; and for the answer probe, unclear or clear
+    /// which keeps a criterion; and for the answer probe, unclear or clear
     /// no.
     #[must_use]
     pub fn passing(&self, check: CandidateCheck) -> &'static [Band] {
@@ -973,7 +973,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_candidate_jev_is_clear_or_unclear_is_about_its_area_is_shown() {
+    fn a_candidate_whose_about_area_check_is_clear_yes_or_unclear_is_shown() {
         // Clear yes from 0.80, and unclear from 0.79 down to 0.21.
         for answer in [0.80, 1.0, 0.79, 0.5, 0.21] {
             let question = show(

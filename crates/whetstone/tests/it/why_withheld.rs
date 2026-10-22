@@ -461,7 +461,7 @@ fn the_reasons_say_when_the_learner_s_cut_offs_and_policy_1_s_both_decided() {
 /// candidates, one citing lines the evidence doesn't send, and Jev says
 /// the other five are off their area, and chooses the answer of three of
 /// them without reading the change.
-fn as_live() -> Arc<ScriptedAi> {
+fn none_passing() -> Arc<ScriptedAi> {
     let stems = stems("Domain", 5);
     let mut written: Vec<WrittenCandidate> = stems
         .iter()
@@ -491,7 +491,7 @@ fn as_live() -> Arc<ScriptedAi> {
 
 #[test]
 fn no_questions_passed_checks_gives_its_reasons_in_words() {
-    let session = prepared(&as_live(), 120, 32);
+    let session = prepared(&none_passing(), 120, 32);
 
     assert_eq!(
         reasons(&session),
@@ -512,7 +512,7 @@ fn no_questions_passed_checks_gives_its_reasons_in_words() {
 
 #[test]
 fn no_questions_passed_checks_with_its_reasons_at_120x32() {
-    let session = prepared(&as_live(), 120, 32);
+    let session = prepared(&none_passing(), 120, 32);
 
     insta::assert_debug_snapshot!(
         "no_questions_passed_checks_with_reasons_120x32",
@@ -522,7 +522,7 @@ fn no_questions_passed_checks_with_its_reasons_at_120x32() {
 
 #[test]
 fn no_questions_passed_checks_with_its_reasons_at_80x24() {
-    let session = prepared(&as_live(), 80, 24);
+    let session = prepared(&none_passing(), 80, 24);
 
     insta::assert_debug_snapshot!(
         "no_questions_passed_checks_with_reasons_80x24",

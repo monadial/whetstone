@@ -85,6 +85,21 @@ fn assert_withheld_at(tested: &WrittenCandidate, check: CandidateCheck, values: 
     }
 }
 
+/// Asserts that `tested` is shown, with no shortfall, when Jev's answer to
+/// `check` is each of `values`, and every other check passes.
+fn assert_shown_at(tested: &WrittenCandidate, check: CandidateCheck, values: &[f64]) {
+    for &value in values {
+        let mut session = prepared(tested.clone(), [answer(check, value)]);
+
+        assert!(is_shown(&mut session), "{check:?} at {value}");
+        assert!(
+            !session.text().contains("asked for"),
+            "no shortfall at {value}: {}",
+            session.text()
+        );
+    }
+}
+
 #[test]
 fn a_question_that_passes_every_check_is_shown() {
     let mut session = prepared(tested(), []);
@@ -112,46 +127,24 @@ fn a_question_jev_clearly_says_is_off_its_area_is_withheld() {
 fn a_question_whose_only_unclear_check_is_about_its_area_is_shown() {
     // Unclear from 0.79 down to 0.21: whether a question fits its area is a
     // matter of focus, so only a clear no withholds it.
-    for value in [0.79, 0.5, 0.21] {
-        let mut session = prepared(tested(), [answer(CandidateCheck::AboutArea, value)]);
-
-        assert!(is_shown(&mut session), "about its area at {value}");
-        assert!(
-            !session.text().contains("asked for"),
-            "no shortfall: {}",
-            session.text()
-        );
-    }
+    assert_shown_at(&tested(), CandidateCheck::AboutArea, &[0.79, 0.5, 0.21]);
 }
 
 #[test]
 fn a_question_jev_answers_without_reading_the_change_is_withheld() {
-    for on_key in [0.60, 0.75, 1.0] {
-        let mut session = prepared(tested(), [answer(CandidateCheck::AnswerProbe, on_key)]);
-
-        assert_eq!(
-            session.question().rows()[1].trim(),
-            "3 passed checks, 4 asked for · see why in actions",
-            "the answer key at {on_key}"
-        );
-        assert!(!is_shown(&mut session), "the answer key at {on_key}");
-    }
+    // Clear yes on the answer key, from 0.60.
+    assert_withheld_at(&tested(), CandidateCheck::AnswerProbe, &[0.60, 0.75, 1.0]);
 }
 
 #[test]
 fn a_question_jev_cannot_confidently_answer_without_the_change_is_shown() {
     // Unclear or clear no on the answer key: the other options share the
     // rest, so at 0.05 Jev picks one of them.
-    for on_key in [0.59, 0.33, 0.20, 0.05] {
-        let mut session = prepared(tested(), [answer(CandidateCheck::AnswerProbe, on_key)]);
-
-        assert!(is_shown(&mut session), "the answer key at {on_key}");
-        assert!(
-            !session.text().contains("asked for"),
-            "no shortfall: {}",
-            session.text()
-        );
-    }
+    assert_shown_at(
+        &tested(),
+        CandidateCheck::AnswerProbe,
+        &[0.59, 0.33, 0.20, 0.05],
+    );
 }
 
 #[test]
