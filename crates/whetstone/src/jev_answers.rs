@@ -104,25 +104,25 @@ fn question_check(question: &Question, requests: &[SentRequest]) -> Section {
         answered(&statement(check), answer, policy.band(check.job(), answer))
     };
     // The answer probe, check 3, is a choice, so each option has Jev's
-    // probability, and only the answer key's is banded.
+    // probability that it answers the question, judged without the change,
+    // and only the answer key's is banded.
     let (before, after): (Vec<_>, Vec<_>) = question
         .answers()
         .iter()
         .partition(|&(check, _)| check < CandidateCheck::AnswerProbe);
     lines.extend(before.into_iter().map(yes_no));
     if let Some(probe) = question.answers().probe() {
+        let check = CandidateCheck::AnswerProbe;
         lines.extend(probe.iter().map(|(letter, answer)| {
             if letter == question.answer_key() {
                 answered(
-                    &format!(
-                        "Without reading the change, Jev chose option {letter}, the answer key"
-                    ),
+                    &format!("Without the change, option {letter}, the answer key, answers it"),
                     answer,
-                    policy.band(Job::AnswerProbe, answer),
+                    policy.band(check.job(), answer),
                 )
             } else {
                 format!(
-                    "Without reading the change, Jev chose option {letter} · {}",
+                    "Without the change, option {letter} answers it · {}",
                     answer.get()
                 )
             }

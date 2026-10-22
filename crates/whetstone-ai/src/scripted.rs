@@ -25,8 +25,8 @@ use std::sync::{Mutex, MutexGuard};
 
 use whetstone_core::{
     AnswerProbe, Area, AreaId, Candidate, CandidateCheck, Cost, Criterion, CriterionOutcome, Depth,
-    DepthLevel, Evidence, GenerationId, JevExchange, ModelId, OptionLetter, Probability,
-    Provenance, Question, QuestionCheckAnswers, Role, WrittenCandidate,
+    DepthLevel, Evidence, GenerationId, JevExchange, ModelId, Probability, Provenance, Question,
+    QuestionCheckAnswers, Role, WrittenCandidate,
 };
 
 use crate::exchanges::jev_exchanges;
@@ -619,23 +619,10 @@ impl CheckReply {
                     })
                     .expect("the answer probe is one of the candidate's checks");
                 Ok(QuestionCheckAnswers::new(answers, depth)
-                    .with_probe(probe_on_key(answer_key, on_key)))
+                    .with_probe(AnswerProbe::on_key(answer_key, on_key)))
             }
         }
     }
-}
-
-/// An answer probe at `on_key` on the option `answer_key`, the other two
-/// options sharing the rest equally.
-fn probe_on_key(answer_key: OptionLetter, on_key: Probability) -> AnswerProbe {
-    AnswerProbe::new(OptionLetter::ALL.map(|letter| {
-        if letter == answer_key {
-            on_key
-        } else {
-            Probability::new((1.0 - on_key.get()) / 2.0)
-                .expect("half of what a probability leaves is a probability")
-        }
-    }))
 }
 
 /// The gate's answer for an area a test scripted none for: 0.9, clear yes.

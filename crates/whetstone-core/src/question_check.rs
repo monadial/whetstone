@@ -297,6 +297,15 @@ impl AnswerProbe {
         Self { probabilities }
     }
 
+    /// The answer probe a label or a scripted reply stands for: `on_key` on
+    /// the option `answer_key`, the other two sharing the rest equally.
+    #[must_use]
+    pub fn on_key(answer_key: OptionLetter, on_key: Probability) -> Self {
+        let rest = Probability::new((1.0 - on_key.get()) / 2.0)
+            .expect("half of what a probability leaves is a probability");
+        Self::new(OptionLetter::ALL.map(|letter| if letter == answer_key { on_key } else { rest }))
+    }
+
     /// Jev's probability that the option `letter` answers the stem, as
     /// returned.
     #[must_use]
@@ -674,19 +683,7 @@ pub(crate) mod tests {
     /// An answer probe of `candidate` that passes it: 0.1 on its answer key,
     /// and 0.45 on each other option.
     pub(crate) fn passing_probe(candidate: &Candidate) -> AnswerProbe {
-        probe_with_key_at(candidate.answer_key(), 0.1)
-    }
-
-    /// An answer probe at `on_key` on the option `answer_key`, the other two
-    /// sharing the rest equally.
-    fn probe_with_key_at(answer_key: OptionLetter, on_key: f64) -> AnswerProbe {
-        AnswerProbe::new(OptionLetter::ALL.map(|letter| {
-            probability(if letter == answer_key {
-                on_key
-            } else {
-                (1.0 - on_key) / 2.0
-            })
-        }))
+        AnswerProbe::on_key(candidate.answer_key(), probability(0.1))
     }
 
     /// The answers `yes_no` to `candidate`'s question check, and an answer
@@ -1282,7 +1279,7 @@ pub(crate) mod tests {
     fn the_answer_probe_at_0_60_on_the_answer_key_withholds_the_candidate() {
         let withheld = probed(
             OptionLetter::B,
-            probe_with_key_at(OptionLetter::B, 0.60),
+            AnswerProbe::on_key(OptionLetter::B, probability(0.60)),
             AssessmentPolicy::current(),
         )
         .expect_err("Jev picks the answer key without the evidence");
@@ -1308,7 +1305,7 @@ pub(crate) mod tests {
         for on_key in [0.59, 0.33, 0.21, 0.20, 0.0] {
             let question = probed(
                 OptionLetter::B,
-                probe_with_key_at(OptionLetter::B, on_key),
+                AnswerProbe::on_key(OptionLetter::B, probability(on_key)),
                 AssessmentPolicy::current(),
             )
             .expect("unclear or clear no on the answer key");
@@ -1337,7 +1334,7 @@ pub(crate) mod tests {
 
     #[test]
     fn the_answer_probe_is_banded_with_its_own_job_s_cut_offs() {
-        let probe = probe_with_key_at(OptionLetter::A, 0.55);
+        let probe = AnswerProbe::on_key(OptionLetter::A, probability(0.55));
         let lower_bar = AssessmentPolicy::with_cut_offs([(
             Job::AnswerProbe,
             CutOffs::new(0.50, 0.20).expect("valid"),
@@ -1367,6 +1364,25 @@ pub(crate) mod tests {
             ]
         );
         assert_eq!(probe.probability(OptionLetter::C), probability(0.19));
+    }
+
+    #[test]
+    fn a_probe_on_the_answer_key_shares_the_rest_between_the_other_options() {
+        let probe = AnswerProbe::on_key(OptionLetter::C, probability(0.5));
+
+        assert_eq!(
+            probe.iter().collect::<Vec<_>>(),
+            [
+                (OptionLetter::A, probability(0.25)),
+                (OptionLetter::B, probability(0.25)),
+                (OptionLetter::C, probability(0.5)),
+            ]
+        );
+        for (on_key, rest) in [(1.0, 0.0), (0.0, 0.5)] {
+            let probe = AnswerProbe::on_key(OptionLetter::A, probability(on_key));
+            assert_eq!(probe.probability(OptionLetter::A), probability(on_key));
+            assert_eq!(probe.probability(OptionLetter::B), probability(rest));
+        }
     }
 
     #[test]

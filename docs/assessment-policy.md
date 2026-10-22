@@ -11,7 +11,7 @@ Every released version stays built in (`AssessmentPolicy::released()`), so an ou
 
   | Job | Policy 1 | Policy 0 |
   | --- | --- | --- |
-  | Answer probe (`answer_probe`) | 0.60 / 0.20 | none: policy 0 had no answer probe |
+  | Answer probe (`answer_probe`) | 0.60 / 0.20 | none: policy 0 had no answer probe. Its built-in record lists 0.80 / 0.20 for the job, which banded no outcome |
   | Every other job | 0.80 / 0.20 | 0.80 / 0.20 |
 
 - **Decision ([#159](https://github.com/monadial/whetstone/issues/159)):** the question check's `no_giveaway` and `needs_change` are replaced by one test, the answer probe. Jev answers the candidate from its stem and its options' text alone, as a choice among A, B and C, and the show rule withholds the candidate when the probe's probability on the answer key is clear yes. A confident pick of a wrong option is a plausible wrong option, not a giveaway, so only the answer key's probability counts. A guess among three options is 0.33, so a key Jev picks at 0.60 or more without reading the change is too easy.

@@ -90,8 +90,9 @@ fn passing_except(
     let depth = Depth::new([0.2, 0.3, 0.5].map(probability), 1.3).expect("from 0 to 2");
     let answers = QuestionCheckAnswers::new(answers, depth);
     match excepted(AnswerProbe, 0.1) {
-        Some(on_a) => answers.with_probe(whetstone_core::AnswerProbe::new(
-            [on_a, (1.0 - on_a) / 2.0, (1.0 - on_a) / 2.0].map(probability),
+        Some(on_a) => answers.with_probe(whetstone_core::AnswerProbe::on_key(
+            OptionLetter::A,
+            probability(on_a),
         )),
         None => answers,
     }
