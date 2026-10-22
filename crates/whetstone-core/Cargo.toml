@@ -17,6 +17,9 @@ workspace = true
 # be any UTF-8), so the tables are left out to keep the binary small; `perf`
 # keeps scanning a 400 KB change fast.
 regex = { version = "1.13", default-features = false, features = ["std", "perf"] }
+# The default exclusions and the secret rules are data, read from embedded
+# TOML files into their types. Already in the tree through the other crates.
+serde = { version = "1", features = ["derive"] }
 # Each module that can fail has its own error type (CODING_STANDARDS.md rule 13).
 thiserror = "2"
 # Area files carry TOML front matter, as the config files do; the binary

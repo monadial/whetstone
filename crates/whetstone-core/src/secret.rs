@@ -1,265 +1,268 @@
-//! The secret check: known secret formats in the text a Practice would send.
+//! The secret check: known secret formats, and generic patterns that are
+//! often secrets, in the text a Practice would send.
 //!
-//! The rules are data: [`SECRET_RULES`], versioned by
-//! [`SECRET_RULES_VERSION`]. Each names its provider's documented format and
-//! carries one example it should match and one it shouldn't. A finding keeps
-//! only a masked excerpt, never the matched value, so logging one can't spread
-//! a secret.
+//! The rules are data, in the embedded `secret_rules.toml`, which documents
+//! them: [`SecretRules::embedded`], with its version. Each names its source,
+//! the provider's or the standard's documented format, and carries one
+//! example it should match and one it shouldn't. A known format's match
+//! blocks **Send** until the learner resolves it; a generic pattern's is only
+//! a warning, since its false matches would block **Send** too often (see
+//! [`Severity`]). Reading the file validates it, so [`find_secrets`] applies
+//! the rules without checking them again. A finding keeps only a masked
+//! excerpt, never the matched value, so logging one can't spread a secret.
 //!
-//! The examples are fake but match their format, so the source must not hold
+//! The examples are fake but match their format, so the file must not hold
 //! them whole: GitHub push protection and other secret scanners would flag
-//! them. Each is built with `concat!` from pieces that are harmless on their
-//! own, such as `concat!("AKIA", "FAKEFAKEFAKEFAKE")`, and only exists whole
-//! in the compiled binary.
-//!
-//! Patterns use `(?-u:\b)`, an ASCII word boundary: every format is ASCII, and
-//! the crate leaves out `regex`'s Unicode tables.
+//! them. Each is written as pieces that are harmless on their own, such as
+//! `["AKIA", "FAKEFAKEFAKEFAKE"]`, and only exists whole in memory.
 
 use std::cell::LazyCell;
+use std::collections::HashSet;
 use std::fmt;
+use std::ops::Range;
 use std::sync::LazyLock;
 
 use regex::Regex;
+use serde::Deserialize;
 
-/// The version of [`SECRET_RULES`]. It changes whenever a rule is added,
-/// removed or changed.
-pub const SECRET_RULES_VERSION: u32 = 1;
+/// The embedded secret rules file.
+const RULES_FILE: &str = include_str!("secret_rules.toml");
 
-/// One known secret format: a name, a regex, and an example it should match
-/// and one it shouldn't.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct SecretRule {
-    name: &'static str,
-    pattern: &'static str,
-    example: &'static str,
-    counterexample: &'static str,
+/// The embedded secret rules, read the first time text is checked.
+static RULES: LazyLock<SecretRules> = LazyLock::new(|| {
+    SecretRules::parse(RULES_FILE)
+        .expect("the embedded secret rules file is valid, which a unit test checks")
+});
+
+/// The rules the secret check applies, in order, with the version of the
+/// set, the regex each compiles to and what stands in for a secret.
+#[derive(Debug)]
+pub struct SecretRules {
+    version: u32,
+    rules: Vec<SecretRule>,
+    /// Each rule's regex, in the rules' order.
+    regexes: Vec<Regex>,
+    /// What a rule's `value` group must not be all of.
+    placeholders: Regex,
 }
 
-/// The rules the secret check applies, version [`SECRET_RULES_VERSION`].
+/// One secret format: a name, what its match does to **Send**, where the
+/// format comes from, a regex, and an example it should match and one it
+/// shouldn't.
 ///
-/// Generic patterns such as `password =` and JWTs are left out: their false
-/// matches would block **Send** too often.
-pub const SECRET_RULES: &[SecretRule] = &[
-    PEM_PRIVATE_KEY,
-    AWS_ACCESS_KEY_ID,
-    GITHUB_TOKEN,
-    GITLAB_PERSONAL_ACCESS_TOKEN,
-    SLACK_TOKEN,
-    STRIPE_LIVE_KEY,
-    GOOGLE_API_KEY,
-    OPENROUTER_API_KEY,
-    ANTHROPIC_API_KEY,
-    OPENAI_API_KEY,
-];
+/// A rule whose regex has a capture group named `value` matches only where
+/// that group isn't a placeholder, such as `${DB_PASSWORD}`, `<password>`
+/// or `changeme`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SecretRule {
+    name: String,
+    severity: Severity,
+    source: String,
+    pattern: String,
+    example: String,
+    counterexample: String,
+}
 
-/// A PEM private key block, from its `BEGIN` line to its `END` line.
-///
-/// Source: RFC 7468 section 2 (<https://www.rfc-editor.org/rfc/rfc7468>),
-/// whose encapsulation boundaries are `-----BEGIN label-----` and
-/// `-----END label-----`, with the labels `PRIVATE KEY` and `ENCRYPTED
-/// PRIVATE KEY`. It also covers OpenSSL's older labels (`RSA PRIVATE KEY`,
-/// `EC PRIVATE KEY`), OpenSSH's `OPENSSH PRIVATE KEY` (`sshkey.c`) and
-/// OpenPGP's `PGP PRIVATE KEY BLOCK` armor (RFC 9580 section 6.2.1,
-/// <https://www.rfc-editor.org/rfc/rfc9580>), which has the same shape.
-///
-/// Between the boundaries, the block holds no quote and no run of dashes:
-/// that finds a key in a diff, in YAML or in JSON with escaped newlines, but
-/// not code that only names the boundaries, and never runs from an
-/// unfinished block into the next one. The `END` label isn't checked against
-/// the `BEGIN` label, because `regex` has no backreferences.
-#[expect(
-    clippy::doc_markdown,
-    reason = "OpenSSH and OpenPGP are names, not code"
-)]
-const PEM_PRIVATE_KEY: SecretRule = SecretRule {
-    name: "PEM private key",
-    // A removed line in a diff puts one more dash before `-----END`.
-    pattern: "-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----\
-              (?:[^-\"'`]|-[^-\"'`])*?\
-              -?-----END (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----",
-    example: concat!(
-        "-----BEGIN ",
-        "PRIVATE KEY-----\nFAKE\n-----END ",
-        "PRIVATE KEY-----"
-    ),
-    counterexample: concat!(
-        "-----BEGIN ",
-        "PUBLIC KEY-----\nFAKE\n-----END ",
-        "PUBLIC KEY-----"
-    ),
-};
+/// What a rule's match does to **Send**.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Severity {
+    /// It blocks **Send** until the learner resolves it: a provider's own
+    /// key format, which is rarely anything but a key.
+    Blocking,
+    /// It never blocks **Send**: a generic pattern, which often matches what
+    /// isn't a secret.
+    Warning,
+}
 
-/// An AWS access key ID: `AKIA` (long-term) or `ASIA` (temporary, from STS)
-/// and 16 more uppercase letters and digits.
-///
-/// Source: AWS IAM User Guide, "IAM identifiers"
-/// (<https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_identifiers.html>),
-/// whose table of unique ID prefixes lists `AKIA` for access keys and `ASIA`
-/// for temporary ones. The IAM API reference allows any 16 to 128 word
-/// characters (<https://docs.aws.amazon.com/IAM/latest/APIReference/API_AccessKey.html>);
-/// the 20 characters here fit AWS's example key ID and gitleaks' rule.
-const AWS_ACCESS_KEY_ID: SecretRule = SecretRule {
-    name: "AWS access key ID",
-    pattern: r"(?-u:\b)(?:AKIA|ASIA)[A-Z0-9]{16}(?-u:\b)",
-    example: concat!("AKIA", "FAKEFAKEFAKEFAKE"),
-    counterexample: concat!("AKIA", "FAKEFAKE"),
-};
+/// The secret rules file as written.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct File {
+    version: u32,
+    #[serde(rename = "rule")]
+    rules: Vec<RuleEntry>,
+    placeholders: Vec<String>,
+}
 
-/// A GitHub token: `ghp_` (personal access token), `gho_` (OAuth), `ghu_`
-/// (user-to-server), `ghs_` (server-to-server), `ghr_` (refresh) or
-/// `github_pat_` (fine-grained personal access token).
-///
-/// Source: GitHub Docs, "About authentication to GitHub"
-/// (<https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/about-authentication-to-github>),
-/// section "GitHub's token formats", which lists the prefixes, and the GitHub
-/// blog post "Behind GitHub's new authentication token formats" (2021): 30
-/// random Base62 characters and a 6-character checksum after the prefix.
-/// Tokens may grow to 255 characters, and since April 2026 installation
-/// tokens (`ghs_`) can be about 520 characters with `.` and `-` (GitHub
-/// changelog, 24 April 2026), so no upper bound is set. The 82-character
-/// body of `github_pat_` follows gitleaks, because GitHub doesn't document
-/// it.
-const GITHUB_TOKEN: SecretRule = SecretRule {
-    name: "GitHub token",
-    pattern: r"(?-u:\b)(?:gh[pour]_[A-Za-z0-9_]{36,}|ghs_[A-Za-z0-9_.-]{36,}|github_pat_[A-Za-z0-9_]{82,})",
-    example: concat!("ghp_", "FAKEfakeFAKEfakeFAKEfakeFAKEfakeFAKE"),
-    counterexample: concat!("ghp_", "FAKEfakeFAKE"),
-};
+/// One rule as written: its regex, example and counterexample as pieces,
+/// joined in order.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RuleEntry {
+    name: String,
+    severity: Severity,
+    source: String,
+    pattern: Vec<String>,
+    example: Vec<String>,
+    counterexample: Vec<String>,
+}
 
-/// A GitLab personal access token: `glpat-` and at least 20 characters.
-///
-/// Source: GitLab Docs, "Token prefixes" in
-/// <https://docs.gitlab.com/security/tokens/> (`glpat-` for personal,
-/// project, group and impersonation tokens), and
-/// <https://docs.gitlab.com/user/profile/personal_access_tokens/>, which says
-/// the token is 20 characters long. The newer routable tokens (GitLab
-/// handbook, "Routable tokens") carry a longer Base64 payload after the same
-/// prefix, which this also matches.
-const GITLAB_PERSONAL_ACCESS_TOKEN: SecretRule = SecretRule {
-    name: "GitLab personal access token",
-    pattern: r"(?-u:\b)glpat-[0-9A-Za-z_-]{20,}",
-    example: concat!("glpat-", "FAKEfakeFAKEfakeFAKE"),
-    counterexample: concat!("glpat-", "FAKEfake"),
-};
+/// Why a secret rules file cannot be used.
+#[derive(Debug, thiserror::Error)]
+enum SecretRulesError {
+    /// It is not TOML, or not in the file's shape: an unknown or missing
+    /// field, or a severity that is neither `blocking` nor `warning`.
+    #[error("the secret rules file is not valid")]
+    Toml(#[source] toml::de::Error),
+    /// A rule has an empty name, source, pattern, example or counterexample.
+    #[error("the rule {rule:?} has no {field}")]
+    Empty {
+        /// The rule's name, which may be the empty field.
+        rule: String,
+        /// The field that is empty.
+        field: &'static str,
+    },
+    /// Two rules have the same name, so their findings would read the same.
+    #[error("two rules are called {0:?}")]
+    DuplicateName(String),
+    /// A rule's pattern is not a regex the `regex` crate compiles.
+    #[error("the rule {rule:?} has a pattern that does not compile")]
+    Pattern {
+        /// The rule's name.
+        rule: String,
+        /// Why it does not compile.
+        #[source]
+        source: regex::Error,
+    },
+    /// The placeholders do not compile.
+    #[error("the placeholders do not compile")]
+    Placeholders(#[source] regex::Error),
+}
 
-/// A Slack token: `xoxb-` (bot), `xoxp-` (user), `xapp-` (app-level),
-/// `xwfp-` (workflow) or another `xox?-` type, optionally with the `xoxe.`
-/// prefix of a rotating token.
-///
-/// Source: Slack API docs, <https://docs.slack.dev/authentication/tokens>
-/// and <https://docs.slack.dev/authentication/using-token-rotation>, which
-/// list the prefixes and ask integrators to expect up to 255 characters and
-/// not to rely on any other structure. The older `xoxa-`, `xoxo-`, `xoxr-`
-/// and `xoxs-` types follow gitleaks.
-const SLACK_TOKEN: SecretRule = SecretRule {
-    name: "Slack token",
-    pattern: r"(?-u:\b)(?:xoxe\.)?(?:xox[abeoprs]|xapp|xwfp)-[0-9A-Za-z-]{10,}",
-    example: concat!("xoxb-", "FAKEFAKEFA"),
-    counterexample: concat!("xoxb-", "FAKE"),
-};
+impl SecretRules {
+    /// The rules Whetstone embeds.
+    #[must_use]
+    pub fn embedded() -> &'static Self {
+        &RULES
+    }
 
-/// A Stripe live secret key (`sk_live_`) or restricted key (`rk_live_`).
-/// Test-mode keys (`_test_`) are left out: they can't move money.
-///
-/// Source: Stripe Docs, "API keys" (<https://docs.stripe.com/keys>), which
-/// gives the prefixes. Stripe documents no length; the 10-character minimum
-/// follows gitleaks.
-const STRIPE_LIVE_KEY: SecretRule = SecretRule {
-    name: "Stripe live key",
-    pattern: r"(?-u:\b)[rs]k_live_[0-9A-Za-z]{10,}",
-    example: concat!("sk_live_", "FAKEFAKEFA"),
-    counterexample: concat!("sk_test_", "FAKEFAKEFA"),
-};
+    /// The rules in `text`, a secret rules file. It fails if `text` is not
+    /// one, or if a rule can't be applied: see [`SecretRulesError`].
+    fn parse(text: &str) -> Result<Self, SecretRulesError> {
+        let File {
+            version,
+            rules: entries,
+            placeholders,
+        } = toml::from_str(text).map_err(SecretRulesError::Toml)?;
+        let mut names = HashSet::new();
+        let mut rules = Vec::with_capacity(entries.len());
+        let mut regexes = Vec::with_capacity(entries.len());
+        for entry in entries {
+            let rule = SecretRule {
+                name: entry.name,
+                severity: entry.severity,
+                source: entry.source,
+                pattern: entry.pattern.concat(),
+                example: entry.example.concat(),
+                counterexample: entry.counterexample.concat(),
+            };
+            if let Some(field) = rule.empty_field() {
+                return Err(SecretRulesError::Empty {
+                    rule: rule.name,
+                    field,
+                });
+            }
+            if !names.insert(rule.name.clone()) {
+                return Err(SecretRulesError::DuplicateName(rule.name));
+            }
+            let regex = Regex::new(&rule.pattern).map_err(|source| SecretRulesError::Pattern {
+                rule: rule.name.clone(),
+                source,
+            })?;
+            rules.push(rule);
+            regexes.push(regex);
+        }
+        let alternatives: Vec<String> = placeholders
+            .iter()
+            .map(|placeholder| format!("(?:{placeholder})"))
+            .collect();
+        let placeholders = Regex::new(&format!("^(?:{})$", alternatives.join("|")))
+            .map_err(SecretRulesError::Placeholders)?;
+        Ok(Self {
+            version,
+            rules,
+            regexes,
+            placeholders,
+        })
+    }
 
-/// A Google API key: `AIza` and 35 letters, digits, `-` or `_`.
-///
-/// Source: Google Cloud docs
-/// (<https://cloud.google.com/docs/authentication/api-keys>), whose example
-/// key starts with `AIza`. Google publishes no length; the 39-character
-/// format follows Microsoft Purview's "Google API key" sensitive information
-/// type.
-const GOOGLE_API_KEY: SecretRule = SecretRule {
-    name: "Google API key",
-    pattern: r"(?-u:\b)AIza[0-9A-Za-z_-]{35}",
-    example: concat!("AIza", "FAKEfakeFAKEfakeFAKEfakeFAKEfakeFAK"),
-    counterexample: concat!("AIza", "FAKEfake"),
-};
+    /// The version of the rules. It changes whenever a rule is added,
+    /// removed or changed.
+    #[must_use]
+    pub fn version(&self) -> u32 {
+        self.version
+    }
 
-/// An OpenRouter API key: `sk-or-v1-` and 64 lowercase hexadecimal digits.
-///
-/// Source: OpenRouter docs
-/// (<https://openrouter.ai/docs/guides/features/guardrails/secret-formats>),
-/// which gives this format.
-#[expect(clippy::doc_markdown, reason = "OpenRouter is a name, not code")]
-const OPENROUTER_API_KEY: SecretRule = SecretRule {
-    name: "OpenRouter API key",
-    pattern: r"(?-u:\b)sk-or-v1-[0-9a-f]{64}",
-    example: concat!(
-        "sk-or-v1-",
-        "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
-    ),
-    counterexample: concat!("sk-or-v1-", "deadbeef"),
-};
+    /// The rules, in the order they apply: the known formats, which block
+    /// **Send**, then the generic patterns, which only warn.
+    #[must_use]
+    pub fn rules(&self) -> &[SecretRule] {
+        &self.rules
+    }
 
-/// An Anthropic API key (`sk-ant-api03-`), Admin API key (`sk-ant-admin01-`)
-/// or other `sk-ant-` key with a type and version.
-///
-/// Source: Claude Docs, <https://platform.claude.com/docs/en/get-api-key> and
-/// <https://platform.claude.com/docs/en/manage-claude/admin-api-keys>, which
-/// give the prefixes. Anthropic documents no length: keys seen so far have 95
-/// characters after the prefix, so a minimum of 32 keeps a shorter future
-/// format from slipping through.
-const ANTHROPIC_API_KEY: SecretRule = SecretRule {
-    name: "Anthropic API key",
-    pattern: r"(?-u:\b)sk-ant-[a-z]{3,5}[0-9]{2}-[A-Za-z0-9_-]{32,}",
-    example: concat!("sk-ant-", "api03-", "FAKEfakeFAKEfakeFAKEfakeFAKEfake"),
-    counterexample: concat!("sk-ant-", "api03-", "FAKEfake"),
-};
-
-/// An OpenAI API key: `sk-`, `sk-proj-`, `sk-svcacct-` or `sk-admin-`, with
-/// the marker `T3BlbkFJ` (Base64 for "OpenAI") in the middle.
-///
-/// Source: OpenAI publishes no key format. The prefixes are those its
-/// dashboard issues, and the marker follows gitleaks' `openai-api-key` rule
-/// (<https://github.com/gitleaks/gitleaks/blob/master/config/gitleaks.toml>).
-/// A key without the marker is missed.
-#[expect(clippy::doc_markdown, reason = "OpenAI is a name, not code")]
-const OPENAI_API_KEY: SecretRule = SecretRule {
-    name: "OpenAI API key",
-    pattern: r"(?-u:\b)sk-(?:(?:proj|svcacct|admin)-)?[A-Za-z0-9_-]{20,}T3BlbkFJ[A-Za-z0-9_-]{20,}",
-    example: concat!(
-        "sk-",
-        "FAKEfakeFAKEfakeFAKE",
-        "T3Blbk",
-        "FJ",
-        "FAKEfakeFAKEfakeFAKE"
-    ),
-    counterexample: concat!("sk-", "FAKEfakeFAKEfakeFAKEfakeFAKEfakeFAKEfake"),
-};
+    /// Whether a rule's `value` stands in for a secret: one of the
+    /// placeholders matches it whole, or it is one character repeated, such
+    /// as `********`.
+    fn is_placeholder(&self, value: &str) -> bool {
+        let mut chars = value.chars();
+        let repeated = chars
+            .next()
+            .is_some_and(|first| chars.all(|other| other == first));
+        repeated || self.placeholders.is_match(value)
+    }
+}
 
 impl SecretRule {
     /// The rule's name, which its findings show.
     #[must_use]
-    pub fn name(&self) -> &'static str {
-        self.name
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// What the rule's match does to **Send**.
+    #[must_use]
+    pub fn severity(&self) -> Severity {
+        self.severity
+    }
+
+    /// Where the format comes from: the provider's or the standard's
+    /// documentation.
+    #[must_use]
+    pub fn source(&self) -> &str {
+        &self.source
     }
 
     /// The regex the rule matches, in `regex` crate syntax.
     #[must_use]
-    pub fn pattern(&self) -> &'static str {
-        self.pattern
+    pub fn pattern(&self) -> &str {
+        &self.pattern
     }
 
     /// A fake secret the rule should find.
     #[must_use]
-    pub fn example(&self) -> &'static str {
-        self.example
+    pub fn example(&self) -> &str {
+        &self.example
     }
 
     /// A text the rule should find no secret in.
     #[must_use]
-    pub fn counterexample(&self) -> &'static str {
-        self.counterexample
+    pub fn counterexample(&self) -> &str {
+        &self.counterexample
+    }
+
+    /// The first of its fields that is empty, if one is.
+    fn empty_field(&self) -> Option<&'static str> {
+        [
+            ("name", &self.name),
+            ("source", &self.source),
+            ("pattern", &self.pattern),
+            ("example", &self.example),
+            ("counterexample", &self.counterexample),
+        ]
+        .into_iter()
+        .find(|(_, text)| text.is_empty())
+        .map(|(field, _)| field)
     }
 }
 
@@ -318,26 +321,39 @@ impl fmt::Debug for SecretFinding {
     }
 }
 
-/// [`SECRET_RULES`], compiled.
-static COMPILED_RULES: LazyLock<Vec<(&SecretRule, Regex)>> = LazyLock::new(|| {
-    SECRET_RULES
-        .iter()
-        .map(|rule| {
-            let regex = Regex::new(rule.pattern).expect("every secret rule is a valid regex");
-            (rule, regex)
-        })
-        .collect()
-});
-
-/// The possible secrets in `text`, in reading order. Matches that start at
-/// the same place keep the order of [`SECRET_RULES`].
+/// The possible secrets in `text`, by the embedded rules, in reading order.
+/// Matches that start at the same place keep the rules' order. A warning
+/// that overlaps a blocking match is left out, since that match already
+/// stops **Send** for the same text.
 #[must_use]
 pub fn find_secrets(text: &str) -> Vec<SecretFinding> {
-    let mut matches: Vec<_> = COMPILED_RULES
+    let rules = SecretRules::embedded();
+    let mut matches: Vec<_> = rules
+        .rules
         .iter()
-        .flat_map(|(rule, regex)| regex.find_iter(text).map(move |found| (rule, found)))
+        .zip(&rules.regexes)
+        .flat_map(|(rule, regex)| {
+            regex.captures_iter(text).filter_map(move |captures| {
+                let value = captures.name("value");
+                if value.is_some_and(|value| rules.is_placeholder(value.as_str())) {
+                    return None;
+                }
+                Some((rule, captures.get(0).expect("group 0 is the whole match")))
+            })
+        })
         .collect();
     matches.sort_by_key(|(_, found)| found.start());
+    let blocking: Vec<Range<usize>> = matches
+        .iter()
+        .filter(|(rule, _)| rule.severity == Severity::Blocking)
+        .map(|(_, found)| found.range())
+        .collect();
+    matches.retain(|(rule, found)| {
+        rule.severity == Severity::Blocking
+            || !blocking
+                .iter()
+                .any(|range| range.start < found.end() && found.start() < range.end)
+    });
     // The byte offset where each line starts, found only if a rule matches.
     let line_starts = LazyCell::new(|| {
         std::iter::once(0)
@@ -367,8 +383,59 @@ pub fn find_secrets(text: &str) -> Vec<SecretFinding> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn the_embedded_secret_rules_file_is_valid_and_every_rule_names_its_source() {
+        let rules = SecretRules::parse(RULES_FILE);
+
+        assert!(rules.is_ok(), "{rules:?}");
+        for rule in SecretRules::embedded().rules() {
+            assert!(rule.source().contains("https://"), "{}", rule.name());
+        }
+    }
+
+    /// A secret rules file with one rule, `rule`, a TOML table's body.
+    fn with_rule(rule: &str) -> String {
+        format!("version = 1\nplaceholders = []\n[[rule]]\n{rule}\n")
+    }
+
+    #[test]
+    fn a_rule_that_cannot_be_applied_is_refused() {
+        let fields = |name: &str, severity: &str, pattern: &str, example: &str| {
+            format!(
+                "name = {name:?}\nseverity = {severity:?}\nsource = \"RFC\"\n\
+                 pattern = [{pattern:?}]\nexample = [{example:?}]\ncounterexample = [\"b\"]"
+            )
+        };
+
+        assert!(matches!(
+            SecretRules::parse(&with_rule(&fields("A", "blocking", "(a", "a"))),
+            Err(SecretRulesError::Pattern { rule, .. }) if rule == "A"
+        ));
+        assert!(matches!(
+            SecretRules::parse(&with_rule(&fields("A", "blocking", "a", ""))),
+            Err(SecretRulesError::Empty {
+                field: "example",
+                ..
+            })
+        ));
+        assert!(matches!(
+            SecretRules::parse(&with_rule(&fields("A", "fatal", "a", "a"))),
+            Err(SecretRulesError::Toml(_))
+        ));
+        let twice = format!(
+            "{}\n[[rule]]\n{}",
+            with_rule(&fields("A", "blocking", "a", "a")),
+            fields("A", "warning", "b", "b")
+        );
+        assert!(matches!(
+            SecretRules::parse(&twice),
+            Err(SecretRulesError::DuplicateName(name)) if name == "A"
+        ));
+    }
+
     fn rule(name: &str) -> &'static SecretRule {
-        SECRET_RULES
+        SecretRules::embedded()
+            .rules()
             .iter()
             .find(|rule| rule.name() == name)
             .expect("the rule exists")
@@ -421,30 +488,164 @@ mod tests {
     }
 
     #[test]
-    fn the_first_rule_set_covers_the_known_secret_formats() {
-        let names: Vec<_> = SECRET_RULES.iter().map(SecretRule::name).collect();
+    fn the_known_secret_formats_block_send_and_the_generic_patterns_warn() {
+        let rules: Vec<_> = SecretRules::embedded()
+            .rules()
+            .iter()
+            .map(|rule| (rule.name(), rule.severity()))
+            .collect();
 
-        assert_eq!(SECRET_RULES_VERSION, 1);
+        assert_eq!(SecretRules::embedded().version(), 2);
         assert_eq!(
-            names,
+            rules,
             [
-                "PEM private key",
-                "AWS access key ID",
-                "GitHub token",
-                "GitLab personal access token",
-                "Slack token",
-                "Stripe live key",
-                "Google API key",
-                "OpenRouter API key",
-                "Anthropic API key",
-                "OpenAI API key",
+                ("PEM private key", Severity::Blocking),
+                ("AWS access key ID", Severity::Blocking),
+                ("GitHub token", Severity::Blocking),
+                ("GitLab personal access token", Severity::Blocking),
+                ("Slack token", Severity::Blocking),
+                ("Stripe live key", Severity::Blocking),
+                ("Google API key", Severity::Blocking),
+                ("OpenRouter API key", Severity::Blocking),
+                ("Anthropic API key", Severity::Blocking),
+                ("OpenAI API key", Severity::Blocking),
+                ("Password in a URL", Severity::Warning),
+                ("JSON Web Token", Severity::Warning),
+                ("Literal assigned to a secret name", Severity::Warning),
+                ("Start of a PEM private key", Severity::Warning),
             ]
         );
     }
 
     #[test]
+    fn placeholders_are_never_a_warning() {
+        for placeholder in [
+            "${DB_PASSWORD}",
+            "$DB_PASSWORD",
+            "<password>",
+            "{{ db_password }}",
+            "%(password)s",
+            "changeme",
+            "CHANGE_ME",
+            "your-api-key",
+            "********",
+            "xxxxxxxx",
+        ] {
+            let url = format!("postgres://app:{placeholder}@db.internal/app");
+            let assigned = format!("db_password = \"{placeholder}\"");
+
+            assert_eq!(rule_names(&url), [] as [&str; 0], "{url}");
+            assert_eq!(rule_names(&assigned), [] as [&str; 0], "{assigned}");
+        }
+    }
+
+    #[test]
+    fn a_warning_inside_a_blocking_match_is_left_out() {
+        let github = rule("GitHub token").example();
+        let pem = rule("PEM private key")
+            .example()
+            .replace("FAKE", &"FAKE".repeat(8));
+        let escaped = format!(r#"{{"private_key": "{}"}}"#, pem.replace('\n', r"\n"));
+
+        assert_eq!(
+            rule_names(&format!("GITHUB_TOKEN = \"{github}\"")),
+            ["GitHub token"]
+        );
+        assert_eq!(rule_names(&escaped), ["PEM private key"]);
+    }
+
+    #[test]
+    fn a_password_in_a_url_is_found_with_or_without_a_user_name() {
+        let found = [
+            concat!("redis://:", "hunter22@cache:6379"),
+            concat!("DATABASE_URL=mysql://root:", "s3cr3t@localhost/app"),
+            concat!("jdbc:postgresql://app:", "hunter2@db/app?ssl=true"),
+        ];
+        let kept = [
+            "https://example.com:8443/path",
+            "ssh://git@github.com/monadial/whetstone.git",
+            "postgres://app:@db.internal/app",
+            "see http://localhost:8080/a@b",
+        ];
+
+        for text in found {
+            assert_eq!(rule_names(text), ["Password in a URL"], "{text}");
+        }
+        for text in kept {
+            assert_eq!(rule_names(text), [] as [&str; 0], "{text}");
+        }
+    }
+
+    #[test]
+    fn a_literal_assigned_to_a_secret_name_is_found_however_it_is_assigned() {
+        let found = [
+            concat!("password: \"", "hunter2\""),
+            concat!("\"api_key\": \"", "FAKEfake1234\""),
+            concat!("const API_KEY: &str = \"", "FAKEfake1234\";"),
+            concat!("token := \"", "FAKEfake1234\""),
+            concat!("'client_secret' => '", "FAKEfake1234',"),
+            concat!("export GITHUB_TOKEN=\"", "FAKEfake1234\""),
+            concat!("AWS_SECRET_ACCESS_KEY = '", "FAKEfake1234'"),
+            concat!("client(apiKey=\"", "FAKEfake1234\")"),
+        ];
+        let kept = [
+            "password = get_password()",
+            "DB_PASSWORD=hunter2",
+            "tokenizer = \"bert-base-uncased\"",
+            "password_policy = \"strict-mode\"",
+            "token_type: \"bearer-token\"",
+            "secret = \"short\"",
+            "label = \"Enter your password\"",
+            "print(\"password: \" + password + \"!\")",
+            "if password == \"hunter2\":",
+        ];
+
+        for text in found {
+            assert_eq!(
+                rule_names(text),
+                ["Literal assigned to a secret name"],
+                "{text}"
+            );
+        }
+        for text in kept {
+            assert_eq!(rule_names(text), [] as [&str; 0], "{text}");
+        }
+    }
+
+    #[test]
+    fn a_literal_assigned_to_a_secret_name_shows_only_the_names_start() {
+        let findings = find_secrets(concat!("db_password = \"", "hunter2\""));
+
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].excerpt(), "db_p********");
+    }
+
+    #[test]
+    fn the_start_of_a_pem_private_key_is_found_when_strings_split_it() {
+        let body = "FAKEfakeFAKEfakeFAKEfakeFAKEfake";
+        let python = format!(
+            "KEY = (\"{}\\n\"\n       \"{body}\\n\")\n",
+            concat!("-----BEGIN ", "RSA PRIVATE KEY-----")
+        );
+        let javascript = format!(
+            "const key = '{}\\n' +\n  '{body}';\n",
+            concat!("-----BEGIN ", "PRIVATE KEY-----")
+        );
+        let cut_off = format!("+{}\n+{body}\n", concat!("-----BEGIN ", "PRIVATE KEY-----"));
+
+        for text in [python, javascript, cut_off] {
+            let found: Vec<_> = find_secrets(&text)
+                .iter()
+                .map(|finding| (finding.line(), finding.rule().name()))
+                .collect();
+
+            assert_eq!(found, [(1, "Start of a PEM private key")], "{text}");
+        }
+    }
+
+    #[test]
     fn every_rule_finds_its_example_and_not_its_counterexample() {
-        for rule in SECRET_RULES {
+        for rule in SecretRules::embedded().rules() {
             let found = |text| {
                 find_secrets(text)
                     .iter()
