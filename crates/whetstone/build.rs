@@ -16,23 +16,31 @@
 //! area's ID, or anything else the replay does not understand fails the
 //! build. `build/areas.rs` holds the checks on areas, which the integration
 //! tests share.
+//!
+//! It also sets `WHETSTONE_LONG_VERSION`, the version `whetstone --version`
+//! prints: the package version, then the commit git says this crate is built
+//! from and that commit's date (`build/version.rs`). Without git, or outside
+//! a repository, it is the package version alone, and the build carries on.
 
 use std::collections::BTreeMap;
 use std::error::Error as _;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
-use std::process::ExitCode;
+use std::process::{Command, ExitCode};
 use std::{env, fs, io};
 
 use whetstone_core::{Area, AreaId};
 
 #[path = "build/areas.rs"]
 mod areas;
+#[path = "build/version.rs"]
+mod version;
 
 /// The showcase project's patch series, relative to this crate.
 const HISTORY: &str = "../../showcase/payments-history";
 
 fn main() -> ExitCode {
+    set_long_version();
     match embed() {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
@@ -110,6 +118,62 @@ fn embed() -> Result<(), EmbedError> {
     }
     let out = out.join("showcase.rs");
     fs::write(&out, rust_source(&replay)).map_err(|source| EmbedError::Write { path: out, source })
+}
+
+/// Sets `WHETSTONE_LONG_VERSION` for the crate, and asks Cargo to run this
+/// script again when HEAD moves to another commit.
+fn set_long_version() {
+    let git_log = git(&["log", "-1", "--format=%H %cs"]);
+    let long_version = version::long_version(env!("CARGO_PKG_VERSION"), git_log.as_deref());
+    println!("cargo::rustc-env=WHETSTONE_LONG_VERSION={long_version}");
+    for path in head_files() {
+        println!("cargo::rerun-if-changed={}", path.display());
+    }
+}
+
+/// What `git` prints with `args` in this crate's directory, or `None` when
+/// git isn't installed, the crate isn't in a repository, or git fails.
+fn git(args: &[&str]) -> Option<String> {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .ok()?;
+    if output.status.success() {
+        String::from_utf8(output.stdout).ok()
+    } else {
+        None
+    }
+}
+
+/// The files git changes when HEAD moves to another commit: HEAD and its
+/// log, the branch HEAD is on, and the packed refs. A linked worktree has a
+/// HEAD of its own but shares branches with the main repository. Only files
+/// that exist are named, because Cargo reruns a script on every build while
+/// a file it watches is missing.
+fn head_files() -> Vec<PathBuf> {
+    let Some(dirs) = git(&[
+        "rev-parse",
+        "--path-format=absolute",
+        "--git-dir",
+        "--git-common-dir",
+    ]) else {
+        return Vec::new();
+    };
+    let mut dirs = dirs.lines().map(Path::new);
+    let (Some(own), Some(common)) = (dirs.next(), dirs.next()) else {
+        return Vec::new();
+    };
+    let mut files = vec![
+        own.join("HEAD"),
+        own.join("logs/HEAD"),
+        common.join("packed-refs"),
+    ];
+    if let Some(branch) = git(&["symbolic-ref", "--quiet", "HEAD"]) {
+        files.push(common.join(branch.trim_end()));
+    }
+    files.retain(|file| file.is_file());
+    files
 }
 
 /// Asks Cargo to run this script again when any of `paths` changes. A

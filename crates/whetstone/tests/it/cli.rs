@@ -6,6 +6,8 @@ use std::process::Output;
 use assert_cmd::cargo::cargo_bin_cmd;
 use tempfile::TempDir;
 
+use crate::version::built_version;
+
 /// Runs `whetstone` with `args` in a clean environment whose home is a fresh
 /// temporary directory, with stdin and stdout piped rather than a terminal.
 fn whetstone(args: &[&str]) -> (Output, TempDir) {
@@ -28,8 +30,17 @@ fn stderr(output: &Output) -> String {
 }
 
 #[test]
-fn version_prints_to_stdout_and_exits_successfully() {
+fn version_names_the_commit_it_was_built_from_on_stdout_and_exits_successfully() {
     let (output, _home) = whetstone(&["--version"]);
+
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(stdout(&output), format!("whetstone {}\n", built_version()));
+    assert_eq!(stderr(&output), "");
+}
+
+#[test]
+fn short_version_prints_the_version_alone() {
+    let (output, _home) = whetstone(&["-V"]);
 
     assert_eq!(output.status.code(), Some(0));
     assert_eq!(

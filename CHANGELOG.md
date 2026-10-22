@@ -16,3 +16,4 @@ The first release.
 - Areas of your own in `.whetstone/areas/`, and `whetstone areas init` to start from the five defaults.
 - Settings read from `config.toml`: provider, colours, connected code limit, number of questions, models and cut-offs.
 - Support for Linux and macOS, on x86_64 and arm64, in the terminals the README lists.
+- `whetstone --version` names the commit the binary was built from and its date. `-V` prints the version alone.
