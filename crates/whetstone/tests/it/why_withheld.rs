@@ -124,7 +124,7 @@ fn the_reasons_tell_jev_saying_no_from_jev_not_being_able_to_tell_across_checks(
             "First?",
             vec![
                 answer(CandidateCheck::Answerable, 0.5),
-                answer(CandidateCheck::AboutArea, 0.6),
+                answer(CandidateCheck::WhyItMatters, 0.6),
             ],
         ),
         (
@@ -146,7 +146,7 @@ fn the_reasons_tell_jev_saying_no_from_jev_not_being_able_to_tell_across_checks(
             "2: Jev couldn't tell whether the question can be answered from the evidence",
             "1: Jev said the question can't be answered from the evidence",
             "1: Jev said the question isn't about its area",
-            "1: Jev couldn't tell whether the question is about its area",
+            "1: Jev couldn't tell whether \"why it matters\" is supported by the evidence",
         ],
         "{}",
         session.text()
@@ -161,8 +161,9 @@ fn each_check_that_withholds_a_candidate_has_one_sentence_for_jev_saying_no_and_
     let failing = [
         (Answerable, 0.1),
         (Answerable, 0.5),
+        // Jev clearly says the question is off its area. Unclear, it would
+        // pass, so only a clear no withholds.
         (AboutArea, 0.1),
-        (AboutArea, 0.5),
         // Jev picks the answer key without reading the change. Unclear, or
         // a confident pick of another option, would pass, so only a clear
         // yes withholds.
@@ -201,11 +202,10 @@ fn each_check_that_withholds_a_candidate_has_one_sentence_for_jev_saying_no_and_
     assert_eq!(
         reasons(&session),
         [
-            "17 written · 17 withheld, using policy 1's cut-offs",
+            "16 written · 16 withheld, using policy 1's cut-offs",
             "1: Jev said the question can't be answered from the evidence",
             "1: Jev couldn't tell whether the question can be answered from the evidence",
             "1: Jev said the question isn't about its area",
-            "1: Jev couldn't tell whether the question is about its area",
             "1: Jev chose the answer without reading the change",
             "1: Jev didn't answer whether the answer can be chosen without reading the change",
             "1: Jev said a rubric criterion doesn't follow from the evidence, or can't be judged \
@@ -361,7 +361,7 @@ fn a_hint_that_failed_its_checks_is_never_a_reason() {
     let ai = checking(&[(
         "Withheld?",
         vec![
-            answer(CandidateCheck::AboutArea, 0.5),
+            answer(CandidateCheck::Answerable, 0.5),
             answer(CandidateCheck::HintPointsToEvidence, 0.1),
             answer(CandidateCheck::HintHidesAnswerKey, 0.5),
         ],
@@ -373,7 +373,7 @@ fn a_hint_that_failed_its_checks_is_never_a_reason() {
         reasons(&session),
         [
             "1 written · 1 withheld, using policy 1's cut-offs",
-            "1: Jev couldn't tell whether the question is about its area",
+            "1: Jev couldn't tell whether the question can be answered from the evidence",
         ],
         "{}",
         session.text()
@@ -436,7 +436,10 @@ fn the_reasons_say_policy_1_s_cut_offs_decided_when_config_changes_only_other_jo
 #[test]
 fn the_reasons_say_when_the_learner_s_cut_offs_and_policy_1_s_both_decided() {
     let ai = checking(&[
-        ("Off area?", vec![answer(CandidateCheck::AboutArea, 0.82)]),
+        (
+            "Answerable?",
+            vec![answer(CandidateCheck::Answerable, 0.82)],
+        ),
         (
             "Option B?",
             vec![answer(CandidateCheck::Option(OptionLetter::B), 0.5)],
@@ -454,10 +457,10 @@ fn the_reasons_say_when_the_learner_s_cut_offs_and_policy_1_s_both_decided() {
     );
 }
 
-/// A scripted AI as the showcase went live before the answer probe: the
-/// generator writes six candidates, one citing lines the evidence doesn't
-/// send, and Jev can't tell whether the other five are about their area,
-/// and chooses the answer of three of them without reading the change.
+/// A scripted AI under which no question passes: the generator writes six
+/// candidates, one citing lines the evidence doesn't send, and Jev says
+/// the other five are off their area, and chooses the answer of three of
+/// them without reading the change.
 fn as_live() -> Arc<ScriptedAi> {
     let stems = stems("Domain", 5);
     let mut written: Vec<WrittenCandidate> = stems
@@ -477,7 +480,7 @@ fn as_live() -> Arc<ScriptedAi> {
     let ai = Arc::new(ScriptedAi::new());
     ai.on_write(&area_id(DOMAIN), Ok(written));
     for (place, stem) in stems.iter().enumerate() {
-        let mut answers = vec![answer(CandidateCheck::AboutArea, 0.4)];
+        let mut answers = vec![answer(CandidateCheck::AboutArea, 0.1)];
         if place < 3 {
             answers.push(answer(CandidateCheck::AnswerProbe, 0.7));
         }
@@ -494,7 +497,7 @@ fn no_questions_passed_checks_gives_its_reasons_in_words() {
         reasons(&session),
         [
             "6 written · 5 withheld, using policy 1's cut-offs",
-            "all 5: Jev couldn't tell whether the question is about its area",
+            "all 5: Jev said the question isn't about its area",
             "3: Jev chose the answer without reading the change",
             "1 dropped: it cited lines that aren't in the evidence",
         ],
@@ -502,7 +505,7 @@ fn no_questions_passed_checks_gives_its_reasons_in_words() {
         session.text()
     );
     let text = session.text();
-    for number in ["0.4", "0.7", "0.8", "0.6", "0.2"] {
+    for number in ["0.1", "0.7", "0.8", "0.6", "0.2"] {
         assert!(!text.contains(number), "no probability or cut-off: {text}");
     }
 }
@@ -545,7 +548,7 @@ fn after_retry_the_reasons_are_the_new_candidates_alone() {
         ai.on_check_passing_except(stem, [answer(CandidateCheck::Answerable, 0.1)]);
     }
     for stem in &second {
-        ai.on_check_passing_except(stem, [answer(CandidateCheck::AboutArea, 0.5)]);
+        ai.on_check_passing_except(stem, [answer(CandidateCheck::WhyItMatters, 0.5)]);
     }
     let mut session = prepared(&ai, 120, 32);
 
@@ -556,7 +559,7 @@ fn after_retry_the_reasons_are_the_new_candidates_alone() {
         reasons(&session),
         [
             "3 written · 3 withheld, using policy 1's cut-offs",
-            "all 3: Jev couldn't tell whether the question is about its area",
+            "all 3: Jev couldn't tell whether \"why it matters\" is supported by the evidence",
         ],
         "{}",
         session.text()

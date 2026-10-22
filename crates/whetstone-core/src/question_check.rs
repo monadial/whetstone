@@ -31,7 +31,9 @@ use crate::question::{
 pub enum CandidateCheck {
     /// Check 1: it is answerable from the evidence that was sent.
     Answerable,
-    /// Check 2: it is about its area.
+    /// Check 2: it is about its area. Only clear no withholds the
+    /// candidate: whether a question fits its area is a matter of focus, so
+    /// one Jev is unclear about passes.
     AboutArea,
     /// Check 3, the answer probe: which option Jev picks from the stem and
     /// options alone, without the evidence. Its answer is the probe's
@@ -336,10 +338,12 @@ impl DepthLevel {
 /// The show rule: `candidate` becomes a question only when Jev's `answers`
 /// to its question check are what its question type needs, under `policy`.
 /// Anything unclear fails it, and so does a check left unanswered, except
-/// where a check below drops a criterion or the hint instead.
+/// where a check below passes it or drops a criterion or the hint instead.
 ///
-/// For a single-choice question: checks 1 and 2 and every criterion's check
-/// are clear yes; the answer probe's probability on the answer key isn't
+/// For a single-choice question: check 1 and every criterion's check are
+/// clear yes; check 2 isn't clear no, as whether a question fits its area
+/// is a matter of focus, so it withholds only a candidate Jev clearly says
+/// is off its area; the answer probe's probability on the answer key isn't
 /// clear yes, as Jev couldn't confidently pick it without the evidence, so
 /// a confident pick of another option passes; every rationale check and the
 /// "why it matters" check are clear yes; exactly one option rating is clear
@@ -420,13 +424,16 @@ fn needed(candidate: &Candidate, check: CandidateCheck) -> Band {
 }
 
 /// The bands of Jev's answer to `candidate`'s `check` that pass it: the one
-/// [`needed`]; for a [`CandidateCheck::CriterionMinimum`], clear yes or
-/// unclear, as the check drops only what it is sure of; and for the answer
-/// probe, unclear or clear no, as only a confident pick of the answer key
-/// gives the question away.
+/// [`needed`]; for [`CandidateCheck::AboutArea`] and a
+/// [`CandidateCheck::CriterionMinimum`], clear yes or unclear, as each
+/// withholds or drops only what it is sure of; and for the answer probe,
+/// unclear or clear no, as only a confident pick of the answer key gives
+/// the question away.
 fn passing(candidate: &Candidate, check: CandidateCheck) -> &'static [Band] {
     match check {
-        CandidateCheck::CriterionMinimum(_) => &[Band::ClearYes, Band::Unclear],
+        CandidateCheck::AboutArea | CandidateCheck::CriterionMinimum(_) => {
+            &[Band::ClearYes, Band::Unclear]
+        }
         CandidateCheck::AnswerProbe => &[Band::Unclear, Band::ClearNo],
         _ => match needed(candidate, check) {
             Band::ClearYes => &[Band::ClearYes],
@@ -610,17 +617,19 @@ impl Withheld {
 
     /// The band the show rule needed for its `check`: clear no for an
     /// option rating that isn't the answer key's and for the answer probe,
-    /// and clear yes otherwise. For a [`CandidateCheck::CriterionMinimum`],
-    /// clear yes is the side that keeps its criterion, and for the answer
-    /// probe clear no is the side that passes it, though
-    /// [`passing`](Self::passing) holds every band that does.
+    /// and clear yes otherwise. For [`CandidateCheck::AboutArea`] clear yes
+    /// is the side that passes it, for a [`CandidateCheck::CriterionMinimum`]
+    /// the side that keeps its criterion, and for the answer probe clear no
+    /// is the side that passes it, though [`passing`](Self::passing) holds
+    /// every band that does.
     #[must_use]
     pub fn needed(&self, check: CandidateCheck) -> Band {
         needed(&self.candidate, check)
     }
 
     /// The bands of Jev's answer to its `check` that would have passed it:
-    /// the one it [`needed`](Self::needed); for a
+    /// the one it [`needed`](Self::needed); for
+    /// [`CandidateCheck::AboutArea`], clear yes or unclear; for a
     /// [`CandidateCheck::CriterionMinimum`], clear yes or unclear, either of
     /// which keeps its criterion; and for the answer probe, unclear or clear
     /// no.
@@ -831,7 +840,7 @@ pub(crate) mod tests {
     fn a_check_the_learner_s_cut_offs_make_clear_yes_passes_and_the_question_keeps_them() {
         let candidate = candidate("domain", 0, OptionLetter::A);
         let mut answers = passing(&candidate);
-        answers.push((CandidateCheck::AboutArea, probability(0.6)));
+        answers.push((CandidateCheck::Answerable, probability(0.6)));
         let answers = answered(&candidate, answers);
         let lower_bar = AssessmentPolicy::with_cut_offs([(
             Job::QuestionCheck,
@@ -845,7 +854,7 @@ pub(crate) mod tests {
         );
         let shown = show_rule(candidate, answers, &lower_bar);
 
-        assert_eq!(failed(withheld), [CandidateCheck::AboutArea]);
+        assert_eq!(failed(withheld), [CandidateCheck::Answerable]);
         let question = shown.expect("clear yes under the learner's cut-offs");
         assert_eq!(question.policy(), &lower_bar);
     }
@@ -946,7 +955,6 @@ pub(crate) mod tests {
 
         for check in [
             Answerable,
-            AboutArea,
             Criterion(0),
             Criterion(1),
             Rationale(OptionLetter::A),
@@ -961,6 +969,47 @@ pub(crate) mod tests {
                     "{check:?} at {answer}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn a_candidate_jev_is_clear_or_unclear_is_about_its_area_is_shown() {
+        // Clear yes from 0.80, and unclear from 0.79 down to 0.21.
+        for answer in [0.80, 1.0, 0.79, 0.5, 0.21] {
+            let question = show(
+                OptionLetter::A,
+                vec![(CandidateCheck::AboutArea, probability(answer))],
+            )
+            .expect("shown");
+
+            assert_eq!(
+                question.answers().get(CandidateCheck::AboutArea),
+                Some(probability(answer)),
+                "{answer}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_candidate_jev_clearly_says_is_off_its_area_is_withheld_naming_the_check() {
+        // Clear no from 0.20 down.
+        for answer in [0.20, 0.19, 0.0] {
+            let withheld = show(
+                OptionLetter::A,
+                vec![(CandidateCheck::AboutArea, probability(answer))],
+            )
+            .expect_err("withheld");
+
+            assert_eq!(withheld.failed(), [CandidateCheck::AboutArea], "{answer}");
+            assert_eq!(
+                withheld.band(CandidateCheck::AboutArea),
+                Some(Band::ClearNo),
+                "{answer}"
+            );
+            assert_eq!(
+                withheld.passing(CandidateCheck::AboutArea),
+                [Band::ClearYes, Band::Unclear]
+            );
         }
     }
 

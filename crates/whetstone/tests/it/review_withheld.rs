@@ -221,7 +221,7 @@ fn it_shows_one_withheld_candidate_at_a_time_with_every_part_and_each_check_with
         [
             "Jev's probability, not a measure of correctness",
             "1. About its area",
-            "Jev: 0.1 · clear no · it needed clear yes",
+            "Jev: 0.1 · clear no · it needed clear yes or unclear",
             "Your vote: Not voted yet",
         ]
     );

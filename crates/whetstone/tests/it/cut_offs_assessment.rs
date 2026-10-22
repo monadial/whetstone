@@ -109,12 +109,12 @@ fn assessments(log: &[StoreEntry]) -> Vec<Assessment> {
 }
 
 #[test]
-fn a_question_about_its_area_at_0_6_is_withheld_under_policy_1_and_shown_under_the_learner_s_question_check()
+fn a_question_answerable_at_0_6_is_withheld_under_policy_1_and_shown_under_the_learner_s_question_check()
  {
-    let about_area = [answer(CandidateCheck::AboutArea, 0.6)];
+    let answerable = [answer(CandidateCheck::Answerable, 0.6)];
 
-    let mut defaults = prepared(None, about_area);
-    let mut lowered = prepared(Some(LOWER_QUESTION_CHECK), about_area);
+    let mut defaults = prepared(None, answerable);
+    let mut lowered = prepared(Some(LOWER_QUESTION_CHECK), answerable);
 
     assert_eq!(
         lowered.question().row_with("Question 1"),
