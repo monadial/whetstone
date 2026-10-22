@@ -517,6 +517,10 @@ mod tests {
                 ("Password in a URL", Severity::Warning),
                 ("JSON Web Token", Severity::Warning),
                 ("Literal assigned to a secret name", Severity::Warning),
+                (
+                    "Unquoted value assigned to a secret name",
+                    Severity::Warning
+                ),
                 ("Start of a PEM private key", Severity::Warning),
             ]
         );
@@ -535,6 +539,11 @@ mod tests {
             "your-api-key",
             "********",
             "xxxxxxxx",
+            "{password}",
+            "[REDACTED]",
+            "REPLACE_ME",
+            "sk-...",
+            "settings.DB_PASSWORD",
         ] {
             let url = format!("postgres://app:{placeholder}@db.internal/app");
             let assigned = format!("db_password = \"{placeholder}\"");
@@ -595,7 +604,6 @@ mod tests {
         ];
         let kept = [
             "password = get_password()",
-            "DB_PASSWORD=hunter2",
             "tokenizer = \"bert-base-uncased\"",
             "password_policy = \"strict-mode\"",
             "token_type: \"bearer-token\"",
@@ -613,6 +621,51 @@ mod tests {
             );
         }
         for text in kept {
+            assert_eq!(rule_names(text), [] as [&str; 0], "{text}");
+        }
+    }
+
+    #[test]
+    fn an_unquoted_value_is_found_where_configuration_sets_one() {
+        let found = [
+            concat!("    POSTGRES_PASSWORD: ", "hunter2"),
+            concat!("ENV DB_PASSWORD=", "hunter2"),
+            concat!("DB_PASSWORD=", "hunter2"),
+            concat!("export API_TOKEN=", "FAKEfake1234"),
+            concat!("  password: ", "hunter2  # local only"),
+            concat!("spring.datasource.password: ", "hunter2\r"),
+        ];
+        let kept = [
+            "password = new_password",
+            "TOKEN = os.environ.get(\"TOKEN\")",
+            "SECRET_KEY = get_random_secret_key()",
+            "DB_PASSWORD=${DB_PASSWORD}",
+            "token: ${{ secrets.GITHUB_TOKEN }}",
+            "password: !vault |",
+            "secretName: db-credentials",
+            "password: String,",
+            "password: Optional[str]",
+            "TOKEN = None",
+        ];
+
+        for text in found {
+            assert_eq!(
+                rule_names(text),
+                ["Unquoted value assigned to a secret name"],
+                "{text}"
+            );
+        }
+        for text in kept {
+            assert_eq!(rule_names(text), [] as [&str; 0], "{text}");
+        }
+    }
+
+    #[test]
+    fn a_format_string_that_builds_a_url_from_names_is_no_warning() {
+        for text in [
+            r#"f"postgresql://{user}:{password}@{host}/app""#,
+            r#"format!("postgres://{user}:{password}@{host}/app")"#,
+        ] {
             assert_eq!(rule_names(text), [] as [&str; 0], "{text}");
         }
     }

@@ -602,6 +602,44 @@ fn cancel_and_back_on_preparing_questions_return_to_the_area_and_change_screen()
     }
 }
 
+/// Whether `ai` was asked to assess or explain reasoning that holds `text`.
+fn reasoning_sent(ai: &ScriptedAi, text: &str) -> bool {
+    ai.asked().iter().any(|asked| match asked {
+        Asked::AssessReasoning { reasoning, .. } | Asked::Explain { reasoning, .. } => {
+            reasoning.contains(text)
+        }
+        _ => false,
+    })
+}
+
+#[test]
+fn on_a_repository_too_reasoning_with_a_possible_secret_is_sent_only_on_a_second_submit() {
+    let token = concat!("ghp_", "FAKEfakeFAKEfakeFAKEfakeFAKEfakeFAKE");
+    let repo = doubling_the_charge();
+    let ai = writing_one_about_the_domain();
+    let mut session = reviewing(&repo, &ai, REVIEW_ABOUT_THE_DOMAIN, 120, 40);
+    press_send(&mut session);
+    session.settle();
+
+    submit(&mut session, "a", &format!("It sends {token} again."));
+    session.settle();
+
+    assert!(
+        session
+            .question()
+            .words()
+            .contains("Possible secret in your reasoning: GitHub token, ghp_********"),
+        "{}",
+        session.text()
+    );
+    assert!(!reasoning_sent(&ai, token));
+
+    session.press("<Enter>");
+    session.settle();
+
+    assert!(reasoning_sent(&ai, token));
+}
+
 #[test]
 fn every_request_carries_exactly_the_evidence_the_outbound_review_showed() {
     let repo = doubling_the_charge();
