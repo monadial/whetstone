@@ -1,11 +1,11 @@
 //! The evidence as sent: the one JSON value that is Jev's state, or part of
-//! it, and the generator's input.
+//! it, and the generator's input, or part of it.
 //!
 //! It holds only what the learner approved in the outbound review: what
 //! [`Evidence`]'s public interface says is sent. A left-out file or
 //! connection sends nothing, not even its path. Area prompts are never part
-//! of it: the generator gets its area's prompt in its preamble, and Jev
-//! never gets one.
+//! of it: the generator gets its area's prompt beside it in its input, and
+//! Jev never gets one.
 
 use std::collections::BTreeSet;
 
@@ -129,7 +129,9 @@ mod tests {
     }
 
     fn sent(evidence: &Evidence) -> Value {
-        serde_json::from_str(&request(evidence).input).expect("the input is JSON")
+        serde_json::from_str::<Value>(&request(evidence).input).expect("the input is JSON")
+            ["evidence"]
+            .take()
     }
 
     /// Evidence for `files`, whose diffs are `diff`, with `connections`.
@@ -153,12 +155,33 @@ mod tests {
     }
 
     #[test]
-    fn the_area_prompt_goes_in_the_preamble_and_never_in_the_evidence() {
+    fn the_area_goes_in_the_input_beside_the_evidence_and_never_in_the_preamble() {
         let request = request(&evidence());
-        let prompt = "Focus on the rules the change encodes";
+        let input: Value = serde_json::from_str(&request.input).expect("the input is JSON");
 
-        assert!(request.preamble.contains(prompt));
-        assert!(!request.input.contains(prompt));
+        assert_eq!(
+            input["area"],
+            json!({
+                "name": "Domain",
+                "description": "The rules, concepts and language the work is about",
+                "prompt": "Focus on the rules the change encodes: what must always hold, and what\n\
+                           would go wrong if it didn't.",
+            })
+        );
+        for text in [
+            "Domain",
+            "The rules, concepts and language the work is about",
+            "Focus on the rules the change encodes",
+        ] {
+            assert!(
+                !request.preamble.contains(text),
+                "{text:?} is in the preamble"
+            );
+            assert!(
+                !input["evidence"].to_string().contains(text),
+                "{text:?} is in the evidence"
+            );
+        }
     }
 
     #[test]
@@ -240,7 +263,7 @@ mod tests {
         let input = request(&evidence).input;
 
         assert_eq!(
-            serde_json::from_str::<Value>(&input).expect("the input is JSON")["connected_code"],
+            sent(&evidence)["connected_code"],
             json!([{
                 "path": "src/read.rs",
                 "relations": ["called by `load`, changed in src/config.rs"],
