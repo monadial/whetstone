@@ -20,7 +20,11 @@ Every released version stays built in (`AssessmentPolicy::released()`), so an ou
   - **[#154](https://github.com/monadial/whetstone/issues/154), PR [#158](https://github.com/monadial/whetstone/pull/158), under policy 0:** six showcase pairs (change and area), 30 candidates, and no question shown. `no_giveaway` withheld all 30. With the answer key in its state it was unclear on all 30; without it, unclear on 28 and clear no on 2, never clear yes. `needs_change` withheld 10 candidates before that change and 13 after.
   - **[#119](https://github.com/monadial/whetstone/issues/119), PR [#121](https://github.com/monadial/whetstone/pull/121):** even hand-made options with no cue at all scored around 0.6 on `no_giveaway` at most, while sound candidates scored 0.8 or more on the other checks.
   - **[#124](https://github.com/monadial/whetstone/issues/124), PR [#146](https://github.com/monadial/whetstone/pull/146):** lowering `no_giveaway`'s upper cut-off to 0.50 showed 2 of 30 candidates; 24 were still unclear.
-- **Measured under policy 1:** see [#159](https://github.com/monadial/whetstone/issues/159)'s pull request.
+- **Measured under policy 1 ([#159](https://github.com/monadial/whetstone/issues/159), 22 October 2026):**
+  - **The same six pairs:** 5 questions shown, on 2 pairs, where policy 0 showed none. Of 30 candidates, the answer probe withheld 10, each clear yes. Its probability on the answer key was clear yes for 10, unclear for 11 and clear no for 9.
+  - **The check that now withholds most** is `about_area`: 17 of 30, each unclear.
+  - **Three hand-made candidates, three runs each:** one whose wording gives the answer away scored 0.96 to 0.97 on its key; one answerable from general knowledge scored 1.0; one that needs the change scored 0.22 to 0.25.
+- **Still open:** #99's labels should check the 0.60 upper cut-off: eight of the ten candidates the probe withheld scored from 0.61 to 0.78 on their key, close to it.
 
 ## Policy 0 (20 October 2026)
 
