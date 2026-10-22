@@ -9,8 +9,12 @@
 //! probe.
 //!
 //! Jev requests carry no `provider` object. Rig 0.45 can't send one, so this
-//! is ADR 0001's temporary exception until #69: `TypeSafe` is Jev's only
-//! provider on `OpenRouter`, and keeps no prompts.
+//! is ADR 0001's temporary exception until #69. It rests on two things: the
+//! app's config refuses at launch any Jev model whose ID doesn't start with
+//! `typesafe/` (`JevModel` in the `whetstone` crate), and `TypeSafe`, Jev's
+//! only provider on `OpenRouter`, keeps no prompts. Without the check, a
+//! learner could name another model, and its requests would go out with no
+//! zero-retention routing.
 
 use std::collections::BTreeMap;
 
