@@ -90,10 +90,13 @@ connected_code_limit_kb = 100
 questions = 4
 
 # Jev, the evaluator: it returns decisions and probabilities, never prose.
+# Only TypeSafe's models (typesafe/…) are accepted. Jev requests can't yet ask
+# OpenRouter for endpoints that keep no prompts, and TypeSafe's endpoints keep none.
 [jev]
 model = "typesafe/jev-1.14"
 
-# The generator writes questions, explanations and hints.
+# The generator writes questions, explanations and hints. Any model is accepted:
+# its requests ask OpenRouter only for endpoints that keep no prompts.
 [generator]
 model = "anthropic/claude-sonnet-5.5"
 
