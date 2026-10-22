@@ -151,6 +151,52 @@ fn a_connected_code_limit_that_is_not_a_whole_number_from_0_to_400_is_an_error_n
 }
 
 #[test]
+fn jev_accepts_only_typesafe_models() {
+    for model in ["typesafe/jev-1.14", "typesafe/jev-1.13-20260917"] {
+        let dir = TempDir::new().expect("create a temporary config directory");
+
+        let loaded = load(dir.path(), &format!("[jev]\nmodel = \"{model}\"\n"));
+
+        assert!(loaded.is_ok(), "{model}: {loaded:?}");
+    }
+    for model in ["openai/gpt-5", "jev-1.14", ""] {
+        let dir = TempDir::new().expect("create a temporary config directory");
+        let config = format!("colours = \"auto\"\n\n[jev]\nmodel = \"{model}\"\n");
+
+        let error = load(dir.path(), &config).expect_err("not a TypeSafe model");
+
+        let path = dir.path().join("config.toml");
+        assert!(
+            error.starts_with(&format!(
+                "the config file {} is not valid: ",
+                path.display()
+            )),
+            "{model:?}: {error}"
+        );
+        assert!(
+            error.contains("line 4"),
+            "says where, for {model:?}: {error}"
+        );
+        assert!(
+            error.contains(
+                "`jev.model` must be a TypeSafe model, such as `typesafe/jev-1.14`: Jev requests \
+                 can't ask OpenRouter for zero-retention routing yet"
+            ),
+            "names the key, an example and why, for {model:?}: {error}"
+        );
+    }
+}
+
+#[test]
+fn the_generator_accepts_any_model() {
+    let dir = TempDir::new().expect("create a temporary config directory");
+
+    let loaded = load(dir.path(), "[generator]\nmodel = \"openai/gpt-5\"\n");
+
+    assert!(loaded.is_ok(), "{loaded:?}");
+}
+
+#[test]
 fn the_connected_code_limit_that_applies_is_the_learners_unless_the_repository_sets_less() {
     for (learner, repository, kb, source) in [
         (None, "", 100, ConnectedCodeLimitSource::Default),
