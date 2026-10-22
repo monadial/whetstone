@@ -256,7 +256,7 @@ enum Stage {
     /// Jev checks each candidate that passed the plain checks, in the order
     /// written, area by area, in its question check's three calls, in
     /// [`QuestionCheckCall::ALL`] order.
-    Checking(Vec<(Candidate, [Request<CheckCallAnswers>; 3])>),
+    Checking(Vec<(Candidate, CheckCalls)>),
     /// The questions picked.
     Shown(Box<Questions>),
     /// No question passed its checks.
@@ -280,6 +280,10 @@ impl Stage {
         }
     }
 }
+
+/// The requests of the three calls of one candidate's question check, each
+/// with its call, in [`QuestionCheckCall::ALL`] order.
+type CheckCalls = [(QuestionCheckCall, Request<CheckCallAnswers>); QuestionCheckCall::ALL.len()];
 
 /// One request to Jev or the generator, from sending it to its reply.
 #[derive(Debug)]
@@ -695,7 +699,12 @@ impl Practice {
             self.stage = Stage::Checking(
                 candidates
                     .into_iter()
-                    .map(|candidate| (candidate, QuestionCheckCall::ALL.map(|_| Request::Unsent)))
+                    .map(|candidate| {
+                        (
+                            candidate,
+                            QuestionCheckCall::ALL.map(|call| (call, Request::Unsent)),
+                        )
+                    })
                     .collect(),
             );
             self.pick_if_checked();
@@ -718,10 +727,9 @@ impl Practice {
             .iter_mut()
             .find(|(checked, _)| checked.id() == candidate)
             .and_then(|(_, calls)| {
-                QuestionCheckCall::ALL
-                    .into_iter()
-                    .zip(calls)
-                    .find_map(|(each, check)| (each == call).then_some(check))
+                calls
+                    .iter_mut()
+                    .find_map(|(each, check)| (*each == call).then_some(check))
             })
         else {
             return;
@@ -752,7 +760,7 @@ impl Practice {
         if !checks
             .iter()
             .flat_map(|(_, calls)| calls)
-            .all(|check| matches!(check, Request::Replied(_)))
+            .all(|(_, check)| matches!(check, Request::Replied(_)))
         {
             return;
         }
@@ -763,11 +771,10 @@ impl Practice {
         let checked = checks.len();
         let mut passed = Vec::new();
         for (candidate, calls) in checks {
-            let Some(answers) =
-                CheckCallAnswers::merged(calls.into_iter().filter_map(Request::replied))
-            else {
-                continue;
-            };
+            let answers = CheckCallAnswers::merged(
+                calls.into_iter().filter_map(|(_, check)| check.replied()),
+            )
+            .expect("each call of the check replied, with its own call's answers");
             match show_rule(candidate, answers, policy) {
                 Ok(question) => passed.push(question),
                 Err(withheld) => {
@@ -849,7 +856,7 @@ impl Practice {
             Stage::Checking(checks) => checks
                 .iter()
                 .flat_map(|(_, calls)| calls)
-                .find_map(Request::failure),
+                .find_map(|(_, check)| check.failure()),
             Stage::FindingConnectedCode(_)
             | Stage::NothingToPractice
             | Stage::Shown(_)
@@ -872,7 +879,7 @@ impl Practice {
             Stage::Checking(checks) => checks
                 .iter_mut()
                 .flat_map(|(_, calls)| calls)
-                .for_each(Request::retry),
+                .for_each(|(_, check)| check.retry()),
             Stage::NonePassed => self.write(),
             Stage::FindingConnectedCode(_)
             | Stage::NothingToPractice
@@ -1282,7 +1289,8 @@ impl View for Practice {
             }
             Stage::Checking(checks) => {
                 for (candidate, calls) in checks {
-                    for (call, check) in QuestionCheckCall::ALL.into_iter().zip(calls) {
+                    for (call, check) in calls {
+                        let call = *call;
                         if let Request::Unsent = check {
                             let id = candidate.id().clone();
                             send(

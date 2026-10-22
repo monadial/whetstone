@@ -20,8 +20,8 @@ use whetstone_core::{
 
 use crate::replay::{GENERATOR_MODEL, JEV_MODEL, connection, received, server};
 use crate::{
-    AiError, GeneratorReply, GeneratorRequest, JevReply, JevRequest, Saved, Stamp, Timeouts,
-    WrittenParagraph, base_prompts_hash, explanation_paragraphs,
+    AiError, GeneratorReply, GeneratorRequest, JevReply, JevRequest, QuestionCheckCall, Saved,
+    Stamp, Timeouts, WrittenParagraph, base_prompts_hash, explanation_paragraphs,
 };
 
 pub(crate) fn jev_model() -> ModelId {
@@ -331,6 +331,25 @@ pub(crate) fn question() -> Question {
         Depth::new([answer(0.1), answer(0.3), answer(0.6)], 1.5).expect("the depth is one"),
     );
     show_rule(candidate, answers, AssessmentPolicy::current()).expect("the sample passes")
+}
+
+/// The fixture the reply to `call` of [`candidate`]'s question check is
+/// recorded as: its name, and the recorded body.
+pub(crate) fn recorded_check(call: QuestionCheckCall) -> (&'static str, &'static str) {
+    match call {
+        QuestionCheckCall::OptionRatings => (
+            "question-check-option-ratings",
+            include_str!("../fixtures/question-check-option-ratings.json"),
+        ),
+        QuestionCheckCall::Hint => (
+            "question-check-hint",
+            include_str!("../fixtures/question-check-hint.json"),
+        ),
+        QuestionCheckCall::Candidate => (
+            "question-check-candidate",
+            include_str!("../fixtures/question-check-candidate.json"),
+        ),
+    }
 }
 
 /// A learner's reasoning for [`question`]: it connects the reused key to the
