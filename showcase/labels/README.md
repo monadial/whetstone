@@ -16,8 +16,8 @@ OPENROUTER_API_KEY=… cargo run -p whetstone-labels -- measure > report.md
   project. It is offline and free, so run it while you label.
 - **`measure`** sends each example's Jev calls three times, and prints the
   report as Markdown, ready to paste into #99.
-  - An example is one call, but a candidate example is up to three, as
-    Practice checks a question in three calls. A run sends each call three
+  - An example is one call, but a candidate example is up to four, as
+    Practice checks a question in four calls. A run sends each call three
     times, and `check` prints how many calls that is. In the first run,
     over the seeds, a call cost about 0.0003 USD, when the question check
     was still one larger call.
@@ -38,7 +38,7 @@ number of examples of any kind. The seeds are split by kind:
 | File | Kind of example | Jobs it measures |
 | --- | --- | --- |
 | `gate.toml` | `[[gate]]` | Relevance gate |
-| `candidates.toml` | `[[candidate]]` | Question check, option rating, rationale and hint checks |
+| `candidates.toml` | `[[candidate]]` | Question check, answer probe, option rating, rationale and hint checks |
 | `responses.toml` | `[[response]]` | Reasoning criterion |
 | `explanations.toml` | `[[explanation]]` | Explanation check |
 
@@ -109,8 +109,7 @@ Jev sees it. `check` names what fails. The keys that need labels are these:
 | --- | --- | --- |
 | `answerable` | Question check | The evidence holds everything needed to answer |
 | `about_area` | Question check | It asks about its area |
-| `needs_change` | Question check | General knowledge alone can't pick the right option |
-| `no_giveaway` | Question check | Nothing in the stem or options' wording points to the answer |
+| `answer_probe` | Answer probe | From the stem and options alone, without the change, Jev picks the answer key: the question gives itself away or doesn't need the change. A label of "yes" withholds the question |
 | `criterion_1` and on | Question check | The criterion follows from the evidence and the answer key, and reasoning can show it |
 | `criterion_1_minimum` and on | Question check | The criterion asks only for what a sufficient answer to the stem needs: an idea a learner could give in their own words, without the code's identifiers, quoted conditions or exact values |
 | `option_a`, `option_b`, `option_c` | Option rating | The evidence shows this option answers the stem |
@@ -121,14 +120,21 @@ Jev sees it. `check` names what fails. The keys that need labels are these:
 
 Depth isn't labelled. It only orders questions, and has no cut-offs.
 
-The tool asks the question check in three calls, as Practice does, and
+The tool asks the question check in four calls, as Practice does, and
 each call is sent only what its questions are about:
 
-- the option ratings and `no_giveaway`: the evidence, and the stem and the
-  options' text, never the answer key;
+- the option ratings: the evidence, and the stem and the options' text,
+  never the answer key;
 - `hint_hides_answer_key`: the stem, the options' text and the hint, with
   no evidence;
+- `answer_probe`: the stem and the options' text alone, as a choice among
+  A, B and C; its answer is Jev's probability on the answer key;
 - every other check: the evidence and the whole candidate.
+
+**Retired labels.** Assessment policy 1 replaced `needs_change` and
+`no_giveaway` with the answer probe. A file that still labels them, such as
+a learner's earlier votes, isn't refused: `check` and `measure` leave those
+labels out and say how many. A vote of one of them alone sends nothing.
 
 A criterion labelled `criterion_N_minimum = "no"` asks for more than the
 question needs, so the question its labels show leaves it out, as Practice
@@ -171,13 +177,13 @@ id = "learner-vote-20261021T101502-1"
 source = "learner vote"
 by = "learner"
 on = 2026-10-21
-note = "The options don't point to the answer."   # the learner's own note, if any
+note = "Nothing but the change says which option is right."   # the learner's own note, if any
 commit = "Preserve payment retry identity"
 area = "domain"
 # … the candidate as the generator wrote it
 
 [candidate.labels]
-no_giveaway = "yes"
+answer_probe = "no"
 ```
 
 `check` and `measure` read the file with `--labels`, and skip two kinds of
