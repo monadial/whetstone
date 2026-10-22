@@ -5,7 +5,7 @@ expression: "Report::new(measurements).to_string()"
 # Jev against the labelled examples
 
 - **Model:** `typesafe/jev-1.14`, reported as `typesafe/jev-1.14-20261014`.
-- **Runs:** each example 3 times: 6 calls, 1 failed.
+- **Runs:** each example 3 times: 6 calls, 2 failed.
 - **Cost:** 0.000412 USD, as reported; not reported for 1 call.
 - **Labels:** 5, of which 5 by an agent, as seeds still to review.
 - **Assessment policy:** version 0, unvalidated. This tool never changes it: setting its values is a recorded decision that bumps its version (rule 38).
@@ -14,6 +14,7 @@ Counts are of answers, one per label per run. A clear answer disagrees when it i
 
 ## Failed calls
 
+- `a` (option ratings call), run 1: no reply in time
 - `b`, run 2: rate limited by OpenRouter
 
 ## Relevance gate

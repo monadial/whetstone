@@ -108,6 +108,7 @@ pub async fn measure(
             }
             Err(error) => measurements.failures.push(Failure {
                 example: call.example().to_owned(),
+                call: call.question_check_call(),
                 run,
                 error,
             }),
@@ -122,7 +123,7 @@ mod tests {
     use super::*;
 
     use serde_json::{Map, Value, json};
-    use whetstone_ai::{AiError, SecretString, Timeouts};
+    use whetstone_ai::{AiError, QuestionCheckCall, SecretString, Timeouts};
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
@@ -275,23 +276,72 @@ mod tests {
 
         let measurements = measure(&connection(&server), &prepared, three()).await;
 
-        let failed: Vec<(&str, usize, &AiError)> = measurements
+        let failed: Vec<(&str, Option<QuestionCheckCall>, usize, &AiError)> = measurements
             .failures
             .iter()
-            .map(|failure| (failure.example.as_str(), failure.run, &failure.error))
+            .map(|failure| {
+                (
+                    failure.example.as_str(),
+                    failure.call,
+                    failure.run,
+                    &failure.error,
+                )
+            })
             .collect();
         assert_eq!(
             failed,
             [
-                ("gate-retry", 1, &AiError::RateLimited),
-                ("gate-retry", 2, &AiError::RateLimited),
-                ("gate-retry", 3, &AiError::RateLimited),
-            ]
+                ("gate-retry", None, 1, &AiError::RateLimited),
+                ("gate-retry", None, 2, &AiError::RateLimited),
+                ("gate-retry", None, 3, &AiError::RateLimited),
+            ],
+            "the gate is one call"
         );
         assert_eq!(answers(&measurements, "gate-retry/domain"), [0.0; 0]);
         assert_eq!(answers(&measurements, "retry-key/option_a"), [0.9; 3]);
         assert!((measurements.cost - 0.0009).abs() < 1e-12);
         assert_eq!(measurements.cost_not_reported, 3);
+    }
+
+    #[tokio::test]
+    async fn a_failed_call_of_a_candidate_s_question_check_is_named_by_its_call() {
+        let server = MockServer::start().await;
+        // Only the hint call asks whether the hint hides the answer key.
+        Mock::given(method("POST"))
+            .and(path("/api/v1/systemone"))
+            .and(|request: &Request| {
+                String::from_utf8_lossy(&request.body).contains(r#""hint_hides_answer_key":{"#)
+            })
+            .respond_with(ResponseTemplate::new(429).set_body_json(
+                json!({ "error": { "code": 429, "message": "Rate limit exceeded" } }),
+            ))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/api/v1/systemone"))
+            .respond_with(Jev {
+                answers: |_| Some(0.9),
+            })
+            .mount(&server)
+            .await;
+        let prepared = prepared(&format!("{GATE}{CANDIDATE}")).unwrap();
+
+        let measurements = measure(&connection(&server), &prepared, three()).await;
+
+        let failed: Vec<(&str, Option<QuestionCheckCall>, usize)> = measurements
+            .failures
+            .iter()
+            .map(|failure| (failure.example.as_str(), failure.call, failure.run))
+            .collect();
+        assert_eq!(
+            failed,
+            [1, 2, 3].map(|run| ("retry-key", Some(QuestionCheckCall::Hint), run))
+        );
+        assert_eq!(
+            answers(&measurements, "retry-key/hint_hides_answer_key"),
+            [0.0; 0]
+        );
+        assert_eq!(answers(&measurements, "retry-key/option_a"), [0.9; 3]);
     }
 
     #[tokio::test]

@@ -287,5 +287,6 @@ per run.
 - **Flagged labels:** the labels with an answer that is unclear or that
   disagrees under the policy in use, with their answers. Look at these
   first: either Jev is wrong, or the label is.
-- **Failed calls:** each one, by example and run. Nothing is retried, so a
-  failed call's labels have one answer fewer.
+- **Failed calls:** each one, by example and run, and for a candidate
+  example by which call of its question check failed. Nothing is retried,
+  so a failed call's labels have one answer fewer.

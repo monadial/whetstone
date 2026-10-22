@@ -145,6 +145,16 @@ impl Call {
         &self.example
     }
 
+    /// Which call of its question check it is, for a candidate example's
+    /// call; none for an example of one call.
+    #[must_use]
+    pub fn question_check_call(&self) -> Option<QuestionCheckCall> {
+        match &self.reader {
+            Reader::QuestionCheck(_, call, _) => Some(*call),
+            Reader::Gate(_) | Reader::Reasoning(_) | Reader::ExplanationCheck(_) => None,
+        }
+    }
+
     /// The request, as Practice would send it.
     #[must_use]
     pub fn request(&self) -> &JevRequest {

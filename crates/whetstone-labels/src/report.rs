@@ -10,7 +10,7 @@
 use std::collections::BTreeSet;
 use std::fmt::{self, Write as _};
 
-use whetstone_ai::AiError;
+use whetstone_ai::{AiError, QuestionCheckCall};
 use whetstone_core::{AssessmentPolicy, Band, Job, ModelId, Probability};
 
 use crate::labels::{ExampleId, Expected};
@@ -34,6 +34,9 @@ pub struct Measured {
 pub struct Failure {
     /// The example whose call it was.
     pub example: ExampleId,
+    /// Which call of a candidate example's question check it was; none for
+    /// an example of one call.
+    pub call: Option<QuestionCheckCall>,
     /// The run, counting from 1.
     pub run: usize,
     /// Why it failed.
@@ -428,9 +431,13 @@ impl fmt::Display for Report {
         if !run.failures.is_empty() {
             writeln!(f, "\n## Failed calls\n")?;
             for failure in &run.failures {
+                let call = failure
+                    .call
+                    .map(|call| format!(" ({} call)", call_name(call)))
+                    .unwrap_or_default();
                 writeln!(
                     f,
-                    "- `{}`, run {}: {}",
+                    "- `{}`{call}, run {}: {}",
                     failure.example, failure.run, failure.error
                 )?;
             }
@@ -439,6 +446,15 @@ impl fmt::Display for Report {
             write_job(f, job)?;
         }
         Ok(())
+    }
+}
+
+/// A question check call's name, as the report names a failed one.
+fn call_name(call: QuestionCheckCall) -> &'static str {
+    match call {
+        QuestionCheckCall::OptionRatings => "option ratings",
+        QuestionCheckCall::Hint => "hint",
+        QuestionCheckCall::Candidate => "candidate",
     }
 }
 
@@ -682,11 +698,20 @@ mod tests {
             reported_models: BTreeSet::from(["typesafe/jev-1.14-20261014".to_owned()]),
             runs: 3,
             calls: 6,
-            failures: vec![Failure {
-                example: ExampleId::new("b"),
-                run: 2,
-                error: AiError::RateLimited,
-            }],
+            failures: vec![
+                Failure {
+                    example: ExampleId::new("a"),
+                    call: Some(QuestionCheckCall::OptionRatings),
+                    run: 1,
+                    error: AiError::TimedOut,
+                },
+                Failure {
+                    example: ExampleId::new("b"),
+                    call: None,
+                    run: 2,
+                    error: AiError::RateLimited,
+                },
+            ],
             cost: 0.000_412,
             cost_not_reported: 1,
             labels: option_ratings(),
