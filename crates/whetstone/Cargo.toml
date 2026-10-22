@@ -54,6 +54,11 @@ futures-util = { version = "0.3", default-features = false }
 # release about monthly, so the minor version is pinned and upgraded on
 # purpose.
 gix = { version = "0.89", default-features = false, features = ["sha1", "blob-diff", "parallel"] }
+# Blocks the signals the UI loop acts on in every thread but the one that
+# takes them, through safe calls, which neither std nor rustix offers.
+# Already in the tree through rexpect, which the pseudo-terminal tests use,
+# at the same version.
+nix = { version = "0.31", default-features = false, features = ["signal"] }
 # Reads the links in touched Markdown as CommonMark defines them, with
 # reference links resolved and source positions for each. Without default
 # features it is the parser alone, with no HTML renderer and no command-line
@@ -111,6 +116,9 @@ whetstone-core = { path = "../whetstone-core" }
 [dev-dependencies]
 assert_cmd = "2.2"
 insta = "1.49"
+# Sends a signal to one thread, in the UI loop's tests of the thread that
+# takes signals.
+nix = { version = "0.31", default-features = false, features = ["pthread"] }
 tempfile = "3"
 # The scripted AI the app-seam tests give Practice.
 whetstone-ai = { path = "../whetstone-ai", features = ["scripted"] }

@@ -9617,6 +9617,7 @@ dependencies = [
  "futures-util",
  "gix",
  "insta",
+ "nix 0.31.3",
  "pulldown-cmark",
  "ratatui",
  "rexpect",
