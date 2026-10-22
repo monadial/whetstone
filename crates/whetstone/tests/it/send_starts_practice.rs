@@ -179,12 +179,13 @@ struct ShownConnection {
 }
 
 /// What the learner saw of one area on the outbound review: its row's name
-/// and prompt source, and its area prompt as its reader shows it, every run
-/// of white space as one space.
+/// and prompt source, and its description and area prompt as its reader
+/// shows them, every run of white space as one space.
 #[derive(Debug, PartialEq, Eq)]
 struct ShownArea {
     name: String,
     source: String,
+    description: String,
     prompt: String,
 }
 
@@ -235,8 +236,8 @@ fn read_under(session: &Session, heading: &str) -> (usize, Vec<String>) {
     (first.unwrap_or(1), lines)
 }
 
-/// The prose under `heading` on the reader, to the key hints, every run of
-/// white space as one space, however it wraps.
+/// The prose under `heading` on the reader, to the next blank row, every
+/// run of white space as one space, however it wraps.
 fn read_prose_under(session: &Session, heading: &str) -> String {
     let rows = session.rows();
     let start = rows.iter().position(|row| row.trim() == heading);
@@ -245,7 +246,7 @@ fn read_prose_under(session: &Session, heading: &str) -> String {
         .iter()
         .skip(start.unwrap_or_default() + 1)
         .map(|row| row.trim())
-        .take_while(|row| !row.starts_with("? keys"))
+        .take_while(|row| !row.is_empty())
         .collect();
     spaced(&prose.join(" "))
 }
@@ -339,10 +340,21 @@ fn shown(session: &mut Session) -> Shown {
         .map(|(at, row)| ShownArea {
             name: row[0].clone(),
             source: row[1].clone(),
+            description: reading(
+                session,
+                file_rows.len() + connection_rows.len() + at + 1,
+                |session| read_prose_under(session, "Description, as it is sent"),
+            ),
             prompt: reading(
                 session,
                 file_rows.len() + connection_rows.len() + at + 1,
-                |session| read_prose_under(session, "Area prompt, as it is sent"),
+                |session| {
+                    spaced(
+                        &read_under(session, "Area prompt, as it is sent")
+                            .1
+                            .join(" "),
+                    )
+                },
             ),
         })
         .collect();
@@ -403,6 +415,7 @@ fn as_shown(evidence: &Evidence) -> Shown {
             .map(|area| ShownArea {
                 name: area.name().to_owned(),
                 source: area.source().to_string(),
+                description: spaced(area.description()),
                 prompt: spaced(area.prompt()),
             })
             .collect(),
