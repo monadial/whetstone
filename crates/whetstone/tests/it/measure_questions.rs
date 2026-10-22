@@ -13,7 +13,8 @@
 //! - for each check, how many candidates it withheld, by band;
 //! - the questions shown, and how many criteria the show rule dropped from
 //!   the questions that passed, as asking for more than they need;
-//! - the generator's tokens, and what the run cost.
+//! - the generator's tokens, how many calls Jev answered, and what the run
+//!   cost.
 //!
 //! Each pair calls `OpenRouter` with a real key, about 0.12 to 0.15 USD a
 //! run with the base prompts of #119, so every test that does is ignored and
@@ -197,7 +198,7 @@ fn measure(subject: &str, area: &str) -> String {
 /// candidates written, the plain-check drops, the candidates withheld, each
 /// check's withheld count by band, the questions shown, the criteria dropped
 /// from the questions that passed, the generator's input and output tokens,
-/// and the cost of every request in USD.
+/// the calls Jev answered, and the cost of every request in USD.
 fn row(subject: &str, area: &str, gate: &str, lines: &[String]) -> String {
     let lines_with = |message: &str| -> Vec<&String> {
         lines.iter().filter(|line| line.contains(message)).collect()
@@ -234,13 +235,17 @@ fn row(subject: &str, area: &str, gate: &str, lines: &[String]) -> String {
             .filter_map(|line| number::<usize>(line, name))
             .sum()
     };
+    let jev_calls = replies
+        .iter()
+        .filter(|line| field(line, "role") == Some("Jev"))
+        .count();
     // Summing no costs gives -0.0, so the total starts at 0.0.
     let cost = replies
         .iter()
         .filter_map(|line| number::<f64>(line, "cost_usd"))
         .fold(0.0, |total, cost| total + cost);
     format!(
-        "| {subject} | {area} | {gate} | {written} | {dropped} | {} | {} | {shown} | {criteria_dropped} | {} / {} | {cost:.4} |",
+        "| {subject} | {area} | {gate} | {written} | {dropped} | {} | {} | {shown} | {criteria_dropped} | {} / {} | {jev_calls} | {cost:.4} |",
         withheld.len(),
         checks.join("; "),
         tokens("input_tokens"),
@@ -318,10 +323,10 @@ fn a_row_reads_what_the_app_logs_about_each_candidate() {
         generate(&ai, &[DOMAIN], PAYMENT_LIFECYCLE, 120, 32).settle();
     });
 
-    // A scripted AI reports no tokens or cost.
+    // A scripted AI logs none of its replies: no tokens, Jev calls or cost.
     assert_eq!(
         row("Model the payment lifecycle", "domain", "passed", &lines),
         "| Model the payment lifecycle | domain | passed | 4 | 1 | 2 | NeedsChange 1 (ClearNo 1); \
-         NoGiveaway 2 (Unclear 2) | 1 | 1 | 0 / 0 | 0.0000 |"
+         NoGiveaway 2 (Unclear 2) | 1 | 1 | 0 / 0 | 0 | 0.0000 |"
     );
 }
