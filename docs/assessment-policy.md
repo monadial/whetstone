@@ -24,7 +24,14 @@ Every released version stays built in (`AssessmentPolicy::released()`), so an ou
   - **The same six pairs:** 5 questions shown, on 2 pairs, where policy 0 showed none. Of 30 candidates, the answer probe withheld 10, each clear yes. Its probability on the answer key was clear yes for 10, unclear for 11 and clear no for 9.
   - **The check that now withholds most** is `about_area`: 17 of 30, each unclear.
   - **Three hand-made candidates, three runs each:** one whose wording gives the answer away scored 0.96 to 0.97 on its key; one answerable from general knowledge scored 1.0; one that needs the change scored 0.22 to 0.25.
-- **Still open:** #99's labels should check the 0.60 upper cut-off: eight of the ten candidates the probe withheld scored from 0.61 to 0.78 on their key, close to it.
+- **Decision ([#162](https://github.com/monadial/whetstone/issues/162)):** the question check's `about_area` withholds a candidate only when Jev clearly says it is off its area, which is clear no. Clear yes and unclear both pass, as a criterion Jev is unclear about stays in the rubric. No cut-off changes. Policy 1 isn't released yet, so this is part of it, not a new version.
+  - **Reason:** whether a question fits its area is a matter of focus, not fairness. A question slightly outside its area can still be answerable from the evidence, need the change and have exactly one right option, and each of those has a check of its own.
+  - **Evidence:** the #159 measurement above. `about_area` withheld 17 of the 30 candidates, every one unclear and none clear no.
+  - **Measured (22 October 2026), the same six pairs:** 12 questions shown, on all 6 pairs, where #159's run showed 5 on 2. Of 30 candidates, 13 passed and 17 were withheld, and `about_area` withheld none. Each run writes new candidates, so the counts per check move between runs too.
+  - **The check that now withholds most** is the option rating, every time unclear: `option_a` and `option_b` withheld 9 candidates each, and `option_c` 7. The answer probe withheld 6, each clear yes.
+- **Still open:**
+  - #99's labels should check the 0.60 upper cut-off: eight of the ten candidates the probe withheld scored from 0.61 to 0.78 on their key, close to it.
+  - The option ratings' unclear answers now withhold most candidates.
 
 ## Policy 0 (20 October 2026)
 
