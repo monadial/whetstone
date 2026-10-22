@@ -46,8 +46,9 @@ pub use crate::connection::{
     Relation, Tier, merge_into_whole_files,
 };
 pub use crate::evidence::{
-    ConnectionsState, Evidence, EvidenceConnection, EvidenceFile, Exclusion, FileIndex, FileStatus,
-    Finding, FindingStatus, Place, ReviewChoices, SentConnection, SentFile, Side, Unsendable,
+    AreaText, ConnectionsState, Evidence, EvidenceConnection, EvidenceFile, Exclusion, FileIndex,
+    FileStatus, Finding, FindingStatus, Place, ReviewChoices, SentConnection, SentFile, Side,
+    Unsendable,
 };
 pub use crate::excerpt::{DiffMark, Excerpt, ExcerptLine, ExcerptSource};
 pub use crate::exclusion::{

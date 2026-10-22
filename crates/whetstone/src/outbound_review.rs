@@ -37,10 +37,10 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::Paragraph;
 use whetstone_core::{
-    Area, AreaId, Change, CommitId, Comparison, ConnectedCodeLimit, ConnectedCodeLimitSource,
-    ConnectionGroup, Connections, ConnectionsState, Evidence, EvidenceConnection, EvidenceFile,
-    ExcludePatterns, Extent, FileIndex, Finding, FindingStatus, Origin, Place, RepositoryConfig,
-    ReviewChoices, Severity, Side, Unsendable,
+    Area, AreaId, AreaText, Change, CommitId, Comparison, ConnectedCodeLimit,
+    ConnectedCodeLimitSource, ConnectionGroup, Connections, ConnectionsState, Evidence,
+    EvidenceConnection, EvidenceFile, ExcludePatterns, Extent, FileIndex, Finding, FindingStatus,
+    Origin, Place, RepositoryConfig, ReviewChoices, Severity, Side, Unsendable,
 };
 
 use crate::columns;
@@ -978,10 +978,7 @@ impl OutboundReview {
     /// which the learner chose before the review, cannot.
     fn leave_out_label(&self, place: &Place) -> Option<&'static str> {
         match place {
-            Place::CommitMessage
-            | Place::AreaName(_)
-            | Place::AreaDescription(_)
-            | Place::AreaPrompt(_) => None,
+            Place::CommitMessage | Place::Area(..) => None,
             Place::Content(_) | Place::Diff(_) => Some("Leave out the file"),
             Place::Connection(id) => Some(
                 match self
@@ -1012,12 +1009,13 @@ impl OutboundReview {
             Place::Content(file) => format!("{}, line {line}", self.path(*file)),
             Place::Diff(file) => format!("{}, diff line {line}", self.path(*file)),
             Place::Connection(connection) => format!("{}, line {line}", connection.path()),
-            Place::AreaName(area) => format!("the {} area's name", self.area_name(area)),
-            Place::AreaDescription(area) => {
-                format!("the {} area's description", self.area_name(area))
-            }
-            Place::AreaPrompt(area) => {
-                format!("the {} area's prompt, line {line}", self.area_name(area))
+            Place::Area(area, text) => {
+                let name = self.area_name(area);
+                match text {
+                    AreaText::Name => format!("the {name} area's name"),
+                    AreaText::Description => format!("the {name} area's description"),
+                    AreaText::Prompt => format!("the {name} area's prompt, line {line}"),
+                }
             }
         };
         let lead = match finding.severity() {

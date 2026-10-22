@@ -141,15 +141,13 @@ fn reasoning_edited_to_hold_no_secret_is_submitted_at_once() {
     assert_eq!(saved(&session), ["Retries send the key again."]);
 }
 
-/// Reasoning that holds a password in a URL, which the secret check warns
-/// about. Snapshots use it rather than [`holding_a_key`], since the editor
-/// shows the reasoning whole, and no snapshot holds a whole fake key that a
-/// secret scanner would find.
+/// Reasoning that holds a quoted literal assigned to `password`, which the
+/// secret check warns about. Snapshots use it rather than
+/// [`holding_a_key`], since the editor shows the reasoning whole and no
+/// snapshot may hold a whole fake secret that a scanner would find: no
+/// scanner looks for a short literal like this one.
 fn holding_a_password() -> String {
-    format!(
-        "It connects to {} first.",
-        concat!("postgres://app:", "hunter2@db.internal/app")
-    )
+    concat!("It sets password = \"", "hunter22\" first.").to_owned()
 }
 
 #[test]
@@ -160,8 +158,9 @@ fn a_warning_stops_the_first_submit_too() {
     submit(&mut session, "a", &holding_a_password());
 
     assert!(
-        words(&session)
-            .contains("Possible secret in your reasoning: Password in a URL, post********"),
+        words(&session).contains(
+            "Possible secret in your reasoning: Literal assigned to a secret name, pass********"
+        ),
         "{}",
         session.text()
     );

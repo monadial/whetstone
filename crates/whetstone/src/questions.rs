@@ -376,7 +376,19 @@ struct Draft {
     /// The possible secrets the last Submit found in the reasoning, while
     /// its text is unchanged since. That Submit stopped, before saving or
     /// sending anything; the next sends the reasoning as it is.
-    secrets: Vec<SecretFinding>,
+    possible_secrets: Vec<SecretFinding>,
+}
+
+/// Whether Submit goes ahead, once it has checked the reasoning for possible
+/// secrets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SecretCheck {
+    /// It found none, or the learner submits again with the reasoning
+    /// unchanged since possible secrets showed: their "Not a secret".
+    Passed,
+    /// It found possible secrets, the first Submit since the reasoning last
+    /// changed, which now show under the editor.
+    Stopped,
 }
 
 impl Draft {
@@ -427,32 +439,32 @@ impl Draft {
     /// found in it if the edit changes its text, so the next Submit checks
     /// it again.
     fn edit_reasoning<T>(&mut self, edit: impl FnOnce(&mut ReasoningEditor) -> T) -> T {
-        let before = (!self.secrets.is_empty()).then(|| self.reasoning.text().to_owned());
+        let before = (!self.possible_secrets.is_empty()).then(|| self.reasoning.text().to_owned());
         let edited = edit(&mut self.reasoning);
         if before.is_some_and(|before| before != self.reasoning.text()) {
-            self.secrets.clear();
+            self.possible_secrets.clear();
         }
         edited
     }
 
-    /// Whether Submit goes ahead: unless it is the first since the
-    /// reasoning last changed and it finds possible secrets in it, which it
-    /// then keeps to show. The learner's second Submit, with the reasoning
-    /// unchanged, is their "Not a secret".
-    fn passes_the_secret_check(&mut self) -> bool {
-        if self.secrets.is_empty() {
-            self.secrets = find_secrets(self.reasoning.text());
-            if !self.secrets.is_empty() {
-                let rules: Vec<&str> = self
-                    .secrets
-                    .iter()
-                    .map(|secret| secret.rule().name())
-                    .collect();
-                tracing::info!(?rules, "a possible secret in the reasoning stopped Submit");
-                return false;
-            }
+    /// Checks the reasoning for possible secrets as Submit begins, unless
+    /// they show already, unchanged since: then the learner's second Submit
+    /// is their "Not a secret". Any it finds are kept, to show.
+    fn check_secrets(&mut self) -> SecretCheck {
+        if !self.possible_secrets.is_empty() {
+            return SecretCheck::Passed;
         }
-        true
+        self.possible_secrets = find_secrets(self.reasoning.text());
+        if self.possible_secrets.is_empty() {
+            return SecretCheck::Passed;
+        }
+        let rules: Vec<&str> = self
+            .possible_secrets
+            .iter()
+            .map(|secret| secret.rule().name())
+            .collect();
+        tracing::info!(?rules, "a possible secret in the reasoning stopped Submit");
+        SecretCheck::Stopped
     }
 }
 
@@ -1310,7 +1322,7 @@ impl Questions {
                 Control::Submit => {
                     if submit_disabled.is_none()
                         && let Some(response) = draft.response()
-                        && draft.passes_the_secret_check()
+                        && draft.check_secrets() == SecretCheck::Passed
                     {
                         draft.unsaved = None;
                         self.submitted = Some(response);
@@ -1540,11 +1552,11 @@ impl Questions {
     /// its rule and masked excerpt, then what the learner can do, in rows
     /// `width` cells wide drawn with `theme`.
     fn secret_notice(draft: &Draft, theme: &Theme, width: usize) -> Vec<Line<'static>> {
-        if draft.secrets.is_empty() {
+        if draft.possible_secrets.is_empty() {
             return Vec::new();
         }
         let mut lines: Vec<Line<'static>> = draft
-            .secrets
+            .possible_secrets
             .iter()
             .flat_map(|secret| {
                 columns::wrap(
