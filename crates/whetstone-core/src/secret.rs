@@ -201,6 +201,60 @@ impl SecretRules {
         &self.rules
     }
 
+    /// The possible secrets in `text`, as [`find_secrets`] finds them with
+    /// these rules.
+    fn find(&'static self, text: &str) -> Vec<SecretFinding> {
+        let mut matches: Vec<_> = self
+            .rules
+            .iter()
+            .zip(&self.regexes)
+            .flat_map(|(rule, regex)| {
+                regex.captures_iter(text).filter_map(move |captures| {
+                    let value = captures.name("value");
+                    if value.is_some_and(|value| self.is_placeholder(value.as_str())) {
+                        return None;
+                    }
+                    Some((rule, captures.get(0).expect("group 0 is the whole match")))
+                })
+            })
+            .collect();
+        matches.sort_by_key(|(_, found)| found.start());
+        let blocking: Vec<Range<usize>> = matches
+            .iter()
+            .filter(|(rule, _)| rule.severity == Severity::Blocking)
+            .map(|(_, found)| found.range())
+            .collect();
+        matches.retain(|(rule, found)| {
+            rule.severity == Severity::Blocking
+                || !blocking
+                    .iter()
+                    .any(|range| range.start < found.end() && found.start() < range.end)
+        });
+        // The byte offset where each line starts, found only if a rule matches.
+        let line_starts = LazyCell::new(|| {
+            std::iter::once(0)
+                .chain(text.match_indices('\n').map(|(at, _)| at + 1))
+                .collect::<Vec<_>>()
+        });
+        matches
+            .into_iter()
+            .map(|(rule, found)| {
+                let line = line_starts.partition_point(|&start| start <= found.start());
+                SecretFinding {
+                    line,
+                    column: found.start() - line_starts[line - 1] + 1,
+                    rule,
+                    excerpt: found
+                        .as_str()
+                        .chars()
+                        .take(4)
+                        .chain("********".chars())
+                        .collect(),
+                }
+            })
+            .collect()
+    }
+
     /// Whether a rule's `value` stands in for a secret: one of the
     /// placeholders matches it whole, or it is one character repeated, such
     /// as `********`.
@@ -327,56 +381,7 @@ impl fmt::Debug for SecretFinding {
 /// stops **Send** for the same text.
 #[must_use]
 pub fn find_secrets(text: &str) -> Vec<SecretFinding> {
-    let rules = SecretRules::embedded();
-    let mut matches: Vec<_> = rules
-        .rules
-        .iter()
-        .zip(&rules.regexes)
-        .flat_map(|(rule, regex)| {
-            regex.captures_iter(text).filter_map(move |captures| {
-                let value = captures.name("value");
-                if value.is_some_and(|value| rules.is_placeholder(value.as_str())) {
-                    return None;
-                }
-                Some((rule, captures.get(0).expect("group 0 is the whole match")))
-            })
-        })
-        .collect();
-    matches.sort_by_key(|(_, found)| found.start());
-    let blocking: Vec<Range<usize>> = matches
-        .iter()
-        .filter(|(rule, _)| rule.severity == Severity::Blocking)
-        .map(|(_, found)| found.range())
-        .collect();
-    matches.retain(|(rule, found)| {
-        rule.severity == Severity::Blocking
-            || !blocking
-                .iter()
-                .any(|range| range.start < found.end() && found.start() < range.end)
-    });
-    // The byte offset where each line starts, found only if a rule matches.
-    let line_starts = LazyCell::new(|| {
-        std::iter::once(0)
-            .chain(text.match_indices('\n').map(|(at, _)| at + 1))
-            .collect::<Vec<_>>()
-    });
-    matches
-        .into_iter()
-        .map(|(rule, found)| {
-            let line = line_starts.partition_point(|&start| start <= found.start());
-            SecretFinding {
-                line,
-                column: found.start() - line_starts[line - 1] + 1,
-                rule,
-                excerpt: found
-                    .as_str()
-                    .chars()
-                    .take(4)
-                    .chain("********".chars())
-                    .collect(),
-            }
-        })
-        .collect()
+    SecretRules::embedded().find(text)
 }
 
 #[cfg(test)]

@@ -238,13 +238,20 @@ pub enum Place {
     /// What this connection sends. Its line is the line in the
     /// connection's file.
     Connection(ConnectionId),
-    /// The name of the selected area with this ID.
-    AreaName(AreaId),
-    /// The description of the selected area with this ID.
-    AreaDescription(AreaId),
-    /// The area prompt of the selected area with this ID. Its line is the
-    /// line in the prompt, as it is sent.
-    AreaPrompt(AreaId),
+    /// This text of the selected area with this ID. A finding in its
+    /// prompt has the line in the prompt, as it is sent.
+    Area(AreaId, AreaText),
+}
+
+/// Which text of an area a finding is in: each is sent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AreaText {
+    /// Its name, one line.
+    Name,
+    /// Its description, one line.
+    Description,
+    /// Its area prompt.
+    Prompt,
 }
 
 /// Whether the learner has resolved a finding. One that blocks **Send**
@@ -586,15 +593,15 @@ fn findings(
     for area in areas {
         let id = area.id();
         let texts = [
-            (Place::AreaName(id.clone()), area.name()),
-            (Place::AreaDescription(id.clone()), area.description()),
-            (Place::AreaPrompt(id.clone()), area.prompt()),
+            (AreaText::Name, area.name()),
+            (AreaText::Description, area.description()),
+            (AreaText::Prompt, area.prompt()),
         ];
-        for (place, text) in texts {
+        for (part, text) in texts {
             found.extend(
                 find_secrets(text)
                     .into_iter()
-                    .map(|matched| (place.clone(), matched)),
+                    .map(|matched| (Place::Area(id.clone(), part), matched)),
             );
         }
     }
@@ -1041,11 +1048,7 @@ impl Place {
     #[must_use]
     pub fn file(&self) -> Option<FileIndex> {
         match self {
-            Self::CommitMessage
-            | Self::Connection(_)
-            | Self::AreaName(_)
-            | Self::AreaDescription(_)
-            | Self::AreaPrompt(_) => None,
+            Self::CommitMessage | Self::Connection(_) | Self::Area(..) => None,
             Self::Content(file) | Self::Diff(file) => Some(*file),
         }
     }
@@ -1055,12 +1058,7 @@ impl Place {
     pub fn connection(&self) -> Option<&ConnectionId> {
         match self {
             Self::Connection(connection) => Some(connection),
-            Self::CommitMessage
-            | Self::Content(_)
-            | Self::Diff(_)
-            | Self::AreaName(_)
-            | Self::AreaDescription(_)
-            | Self::AreaPrompt(_) => None,
+            Self::CommitMessage | Self::Content(_) | Self::Diff(_) | Self::Area(..) => None,
         }
     }
 }
@@ -1573,7 +1571,10 @@ mod tests {
         let [finding] = evidence.findings() else {
             panic!("one finding: {:?}", evidence.findings());
         };
-        assert_eq!(finding.place(), &Place::AreaPrompt(security.id().clone()));
+        assert_eq!(
+            finding.place(),
+            &Place::Area(security.id().clone(), AreaText::Prompt)
+        );
         assert_eq!(finding.place().file(), None);
         assert_eq!(finding.place().connection(), None);
         // The line in the prompt, as it is sent.
@@ -1611,8 +1612,8 @@ mod tests {
         assert_eq!(
             places,
             [
-                (&Place::AreaName(id.clone()), "JSON Web Token"),
-                (&Place::AreaDescription(id), "Password in a URL"),
+                (&Place::Area(id.clone(), AreaText::Name), "JSON Web Token"),
+                (&Place::Area(id, AreaText::Description), "Password in a URL"),
             ]
         );
     }

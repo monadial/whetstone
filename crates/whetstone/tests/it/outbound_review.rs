@@ -502,22 +502,27 @@ const DATABASE_URL: &str = concat!("postgres://app:", "hunter2@db.internal/app")
 const WARNINGS: &str = "Warnings don't block Send: their patterns often match what isn't a secret.";
 
 /// A repository called `payments` whose newest commit adds a password in a
-/// URL to `src/db.py`, and, if `blocking`, an AWS key to `src/settings.py`.
-fn with_a_warning(blocking: bool) -> TestRepo {
+/// URL to `src/db.py`, and `others`, each a path and its content.
+fn with_a_warning_and(others: &[(&str, String)]) -> TestRepo {
     let repo = TestRepo::new("payments");
     repo.write("README.md", "# Payments\n");
     repo.commit("Start the payments service");
     repo.write("src/db.py", format!("URL = \"{DATABASE_URL}\"\n"));
-    if blocking {
-        repo.write("src/settings.py", format!("KEY = \"{AWS_KEY}\"\n"));
+    for (path, content) in others {
+        repo.write(path, content.as_str());
     }
     repo.commit("Connect to the database");
     repo
 }
 
+/// [`with_a_warning_and`], with an AWS key in `src/settings.py` too.
+fn with_a_warning_and_a_key() -> TestRepo {
+    with_a_warning_and(&[("src/settings.py", format!("KEY = \"{AWS_KEY}\"\n"))])
+}
+
 #[test]
 fn a_warning_shows_with_the_same_actions_and_never_disables_send() {
-    let repo = with_a_warning(false);
+    let repo = with_a_warning_and(&[]);
     let mut session = started_with_a_key_in(repo.root(), 120, 60);
     session.press(REVIEW_NEWEST);
     session.settle();
@@ -549,7 +554,7 @@ fn a_warning_shows_with_the_same_actions_and_never_disables_send() {
 
 #[test]
 fn a_blocking_finding_disables_send_beside_a_warning_until_it_is_resolved() {
-    let repo = with_a_warning(true);
+    let repo = with_a_warning_and_a_key();
     let mut session = started_with_a_key_in(repo.root(), 120, 60);
     session.press(REVIEW_NEWEST);
     session.settle();
@@ -1158,7 +1163,7 @@ fn the_reviews_secret_check_at_80x24() {
 
 #[test]
 fn the_reviews_secret_check_with_a_warning_and_a_blocking_finding_at_120x32() {
-    let repo = with_a_warning(true);
+    let repo = with_a_warning_and_a_key();
     let mut session = started_in(repo.root(), 120, 32);
     session.press(REVIEW_NEWEST);
     session.press("<S-Tab> k k");
@@ -1171,7 +1176,7 @@ fn the_reviews_secret_check_with_a_warning_and_a_blocking_finding_at_120x32() {
 
 #[test]
 fn the_reviews_secret_check_with_a_warning_and_a_blocking_finding_at_80x24() {
-    let repo = with_a_warning(true);
+    let repo = with_a_warning_and_a_key();
     let mut session = started_in(repo.root(), 80, 24);
     session.press(REVIEW_NEWEST);
     session.press("<S-Tab> k k");
