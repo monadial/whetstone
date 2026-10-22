@@ -4,7 +4,10 @@
 //! The generator's preambles are Markdown; Jev's instructions are TOML, one
 //! table per question, with what yes and no mean. A repository can't
 //! replace any of them: nothing takes a base prompt from outside this crate.
-//! A repository's area prompt only adds focus to them.
+//! No text from an area file is ever filled into one either: an area's
+//! name, description and area prompt go in a request's input or state, as
+//! data the base prompts refer to, so its area prompt only adds focus to
+//! them.
 //!
 //! [`base_prompts_version`] is a hash over every file, so that provenance
 //! names exactly the prompts a result came from.
@@ -28,8 +31,8 @@ pub(crate) const EVIDENCE: &str = include_str!("../prompts/evidence.md");
 /// How the generator explains what reasoning missed.
 pub(crate) const EXPLANATION: &str = include_str!("../prompts/explanation.md");
 
-/// Introduces an area's prompt; `{name}`, `{description}` and `{prompt}` are
-/// the area's.
+/// What the generator's input's `area` is, and what it can't change. It has
+/// no placeholders: no text from an area file is ever part of a base prompt.
 pub(crate) const AREA: &str = include_str!("../prompts/area.md");
 
 const EXPLANATION_CHECK_FILE: &str = include_str!("../prompts/explanation-check.toml");

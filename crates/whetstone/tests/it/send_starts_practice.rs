@@ -457,7 +457,9 @@ fn requests_sent(ai: &ScriptedAi) -> Vec<(&'static str, Value, String)> {
                 let sent = candidates_request(&model, &evidence, &area, count.into());
                 (
                     "write",
-                    serde_json::from_str(&sent.input).expect("the input is JSON"),
+                    serde_json::from_str::<Value>(&sent.input).expect("the input is JSON")
+                        ["evidence"]
+                        .take(),
                     format!("{} {}", sent.preamble, sent.input),
                 )
             }
@@ -617,6 +619,46 @@ fn every_request_carries_exactly_the_evidence_the_outbound_review_showed() {
             .contains("You didn't say the retry sends a new key."),
         "the explanation shows: {}",
         session.text()
+    );
+}
+
+#[test]
+fn the_outbound_review_shows_the_area_prompt_exactly_as_the_generator_receives_it() {
+    let repo = doubling_the_charge();
+    let ai = writing_one_about_the_domain();
+    let mut session = reviewing(&repo, &ai, REVIEW_ABOUT_THE_DOMAIN, 120, 60);
+    let shown = shown(&mut session);
+
+    press_send(&mut session);
+    session.settle();
+
+    let model = ModelId::new("scripted".to_owned());
+    let written: Vec<Value> = ai
+        .asked()
+        .into_iter()
+        .filter_map(|asked| match asked {
+            Asked::WriteCandidates {
+                evidence,
+                area,
+                count,
+            } => Some(
+                serde_json::from_str::<Value>(
+                    &candidates_request(&model, &evidence, &area, count.into()).input,
+                )
+                .expect("the input is JSON")["area"]
+                    .take(),
+            ),
+            _ => None,
+        })
+        .collect();
+    let ([shown], [sent]) = (shown.areas.as_slice(), written.as_slice()) else {
+        panic!("one area shown and one written about: {shown:#?} {written:#?}");
+    };
+    assert_eq!(sent["name"], shown.name.as_str());
+    assert_eq!(
+        sent["prompt"].as_str().map(spaced),
+        Some(shown.prompt.clone()),
+        "the reader shows the prompt the generator's input quotes"
     );
 }
 
