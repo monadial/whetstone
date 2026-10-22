@@ -28,8 +28,8 @@ use whetstone_ai::{
 use whetstone_core::{
     AnswerProbe, Area, AssessmentPolicy, Candidate, CandidateCheck, Change, Citation,
     ConnectedCodeLimit, Connections, Criterion, Depth, DropReason, Evidence, ExcludePatterns, Job,
-    ModelId, OptionLetter, Probability, Question, QuestionCheckAnswers, ReviewChoices,
-    ShowcaseProject, Withheld, plain_checks, show_rule,
+    ModelId, Probability, Question, QuestionCheckAnswers, ReviewChoices, ShowcaseProject, Withheld,
+    plain_checks, show_rule,
 };
 
 use unicode_segmentation::UnicodeSegmentation as _;
@@ -895,16 +895,10 @@ fn as_labelled<'a>(
         .iter()
         .find(|&&(check, _)| check == CandidateCheck::AnswerProbe)
     {
-        let answer_key = candidate.answer_key();
-        answers = answers.with_probe(AnswerProbe::new(OptionLetter::ALL.map(|letter| {
-            let on_key = letter == answer_key;
-            Probability::new(match expected {
-                Expected::Yes => f64::from(u8::from(on_key)),
-                Expected::No if on_key => 0.0,
-                Expected::No => 0.5,
-            })
-            .expect("0, 0.5 and 1 are probabilities")
-        })));
+        answers = answers.with_probe(AnswerProbe::on_key(
+            candidate.answer_key(),
+            certain(expected),
+        ));
     }
     show_rule(candidate, answers, AssessmentPolicy::current())
 }
