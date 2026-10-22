@@ -1,10 +1,13 @@
 # The relevance gate: one yes/no question per chosen area, about the change
-# in the state's `evidence`.
+# in the state's `evidence`. The state's `areas` holds each chosen area's
+# `name` and `description`, under its ID.
 #
-# Placeholders: `{name}` and `{description}` are the area's. What yes and
-# no mean is the same for every area. Area prompts are never sent to Jev.
+# Placeholders: `{id}` is the area's ID, a validated file name, and the only
+# part of an area file a question names: its name and description are only
+# ever in the state. What yes and no mean is the same for every area. Area
+# prompts are never sent to Jev.
 
 [area]
-instructions = "This change gives a learner something worth answering about the area {name}: {description}."
+instructions = "This change gives a learner something worth answering about the area `{id}`, as its name and description in the state's `areas` define it."
 yes = "The change does something in this area that a fair question could ask about, and answering it would need understanding the change."
 no = "The change doesn't touch this area, or touches it only in passing, so any question about it would be forced."

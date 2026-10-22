@@ -68,7 +68,7 @@ pub(crate) struct ExplanationCheckPrompts {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct GatePrompts {
-    /// `{name}` and `{description}` are the area's.
+    /// `{id}` is the area's ID.
     pub(crate) area: YesNoPrompt,
 }
 

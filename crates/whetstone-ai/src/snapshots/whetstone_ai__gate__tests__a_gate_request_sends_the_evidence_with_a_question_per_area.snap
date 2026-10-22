@@ -41,12 +41,22 @@ expression: pretty(&body)
       "files_without_connected_code": [
         "CHANGELOG.md"
       ]
+    },
+    "areas": {
+      "domain": {
+        "name": "Domain",
+        "description": "The rules, concepts and language the work is about"
+      },
+      "observability": {
+        "name": "Observability",
+        "description": "What the running system tells you about itself"
+      }
     }
   },
   "questions": {
     "domain": {
       "type": "noul",
-      "instructions": "This change gives a learner something worth answering about the area Domain: The rules, concepts and language the work is about.",
+      "instructions": "This change gives a learner something worth answering about the area `domain`, as its name and description in the state's `areas` define it.",
       "criteria": {
         "false": "The change doesn't touch this area, or touches it only in passing, so any question about it would be forced.",
         "true": "The change does something in this area that a fair question could ask about, and answering it would need understanding the change."
@@ -54,7 +64,7 @@ expression: pretty(&body)
     },
     "observability": {
       "type": "noul",
-      "instructions": "This change gives a learner something worth answering about the area Observability: What the running system tells you about itself.",
+      "instructions": "This change gives a learner something worth answering about the area `observability`, as its name and description in the state's `areas` define it.",
       "criteria": {
         "false": "The change doesn't touch this area, or touches it only in passing, so any question about it would be forced.",
         "true": "The change does something in this area that a fair question could ask about, and answering it would need understanding the change."
