@@ -16,7 +16,7 @@
 //! would go out again without a new outbound review, and one citing lines
 //! this evidence doesn't send, such as connected code.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use whetstone_ai::{
@@ -68,13 +68,15 @@ impl Prepared {
         &self.calls
     }
 
-    /// How many examples the calls measure: a candidate example's calls,
-    /// which sit together, count as one.
+    /// How many examples the calls measure: a candidate example's calls
+    /// count as one.
     #[must_use]
     pub fn examples(&self) -> usize {
-        let mut examples: Vec<&ExampleId> = self.calls.iter().map(Call::example).collect();
-        examples.dedup();
-        examples.len()
+        self.calls
+            .iter()
+            .map(Call::example)
+            .collect::<BTreeSet<_>>()
+            .len()
     }
 
     /// Every label, in call order.
@@ -518,7 +520,8 @@ fn candidate_calls(
         .iter()
         .map(|&check| question_check_name(check))
         .collect();
-    let (checks, keys, labels): (Vec<CandidateCheck>, Vec<String>, Vec<Label>) = if vote {
+    // Each check the example labels, with its key and its label.
+    let labelled: Vec<(CandidateCheck, String, Label)> = if vote {
         let labels = labelled_only(example, &keys)?;
         asked
             .into_iter()
@@ -540,29 +543,29 @@ fn candidate_calls(
     let calls = QuestionCheckCall::ALL
         .into_iter()
         .filter_map(|call| {
-            let labelled: Vec<(CandidateCheck, &String, &Label)> = checks
+            let asked: Vec<&(CandidateCheck, String, Label)> = labelled
                 .iter()
-                .zip(&keys)
-                .zip(&labels)
-                .filter(|((check, _), _)| QuestionCheckCall::of(**check) == call)
-                .map(|((check, key), label)| (*check, key, label))
+                .filter(|(check, ..)| QuestionCheckCall::of(*check) == call)
                 .collect();
-            (!labelled.is_empty()).then(|| Call {
+            (!asked.is_empty()).then(|| Call {
                 example: example.id().to_owned(),
                 request: question_check_request(model, &evidence, passed, call),
-                items: labelled
+                items: asked
                     .iter()
-                    .map(|&(check, key, label)| item(example, key, check.job(), label))
+                    .map(|(check, key, label)| item(example, key, check.job(), label))
                     .collect(),
                 reader: Reader::QuestionCheck(
                     Box::new(passed.clone()),
                     call,
-                    labelled.iter().map(|&(check, ..)| check).collect(),
+                    asked.iter().map(|(check, ..)| *check).collect(),
                 ),
             })
         })
         .collect();
-    let question = as_labelled(passed.clone(), checks.into_iter().zip(&labels));
+    let question = as_labelled(
+        passed.clone(),
+        labelled.iter().map(|(check, _, label)| (*check, label)),
+    );
     Ok(Candidacy::Calls(Box::new((calls, evidence, question))))
 }
 
@@ -910,10 +913,10 @@ mod tests {
     fn a_candidate_example_asks_its_question_check_in_three_calls_with_each_label_in_its_job() {
         let prepared = prepared(CANDIDATE).unwrap();
 
-        let [ratings, hint, rest] = prepared.calls() else {
+        let [ratings, hint, candidate_call] = prepared.calls() else {
             panic!("expected three calls: {prepared:?}");
         };
-        for call in [ratings, hint, rest] {
+        for call in [ratings, hint, candidate_call] {
             let labelled: Vec<&str> = names(call)
                 .into_iter()
                 .map(|name| name.trim_start_matches("retry-key/"))
@@ -936,7 +939,7 @@ mod tests {
             "the option ratings call, as Practice sends it"
         );
         assert_eq!(asked(hint), ["hint_hides_answer_key"]);
-        assert!(rest.request().questions.contains_key("depth"));
+        assert!(candidate_call.request().questions.contains_key("depth"));
         let job = |name: &str| {
             prepared
                 .items()
