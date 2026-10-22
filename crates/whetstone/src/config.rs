@@ -172,11 +172,21 @@ struct CutOffsTable(Vec<(Job, CutOffs)>);
 #[derive(Debug, Clone, Copy)]
 struct CutOffsKey(Job);
 
-/// The settings of one AI role, whose model is read as a `Model`.
+/// The settings of one AI role. Its model is read as a `Model`, so that
+/// `[jev]` reads a [`JevModel`], which only a `TypeSafe` model makes.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Role<Model = String> {
     model: Option<Model>,
+}
+
+/// The model `role` names, or `default` when there is no role or it names
+/// none.
+fn role_model<Model: Into<String>>(role: Option<Role<Model>>, default: &str) -> Setting<String> {
+    Setting::or_default(
+        role.and_then(|role| role.model).map(Into::into),
+        default.to_owned(),
+    )
 }
 
 /// `[jev] model`: one of `TypeSafe`'s models, whose IDs start with
@@ -188,7 +198,7 @@ struct Role<Model = String> {
 struct JevModel(String);
 
 /// What every `TypeSafe` model's ID starts with.
-const TYPESAFE_MODELS: &str = "typesafe/";
+const TYPESAFE_MODEL_PREFIX: &str = "typesafe/";
 
 /// A `[jev] model` that isn't one of `TypeSafe`'s.
 #[derive(Debug, thiserror::Error)]
@@ -202,11 +212,17 @@ impl TryFrom<String> for JevModel {
     type Error = NotATypeSafeModel;
 
     fn try_from(model: String) -> Result<Self, NotATypeSafeModel> {
-        if model.starts_with(TYPESAFE_MODELS) {
+        if model.starts_with(TYPESAFE_MODEL_PREFIX) {
             Ok(Self(model))
         } else {
             Err(NotATypeSafeModel)
         }
+    }
+}
+
+impl From<JevModel> for String {
+    fn from(JevModel(model): JevModel) -> Self {
+        model
     }
 }
 
@@ -233,21 +249,10 @@ impl Settings {
             }
             Err(source) => return Err(ConfigError::Read { path, source }),
         };
-        let model =
-            |model: Option<String>, default: &str| Setting::or_default(model, default.to_owned());
         Ok(Self {
             provider: Setting::or_default(contents.provider, Provider::OpenRouter),
-            jev_model: model(
-                contents
-                    .jev
-                    .and_then(|role| role.model)
-                    .map(|JevModel(model)| model),
-                DEFAULT_JEV_MODEL,
-            ),
-            generator_model: model(
-                contents.generator.and_then(|role| role.model),
-                DEFAULT_GENERATOR_MODEL,
-            ),
+            jev_model: role_model(contents.jev, DEFAULT_JEV_MODEL),
+            generator_model: role_model(contents.generator, DEFAULT_GENERATOR_MODEL),
             colours: Setting::or_default(contents.colours, Colours::Auto),
             detected_color_support: ColorSupport::detect(environment),
             no_color: NoColorStatus::read(environment),
