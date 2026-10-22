@@ -12,8 +12,8 @@ A small sample codebase that ships with Whetstone so anyone can try Practice wit
 _Avoid_: demo repo, fixture, sample app.
 
 **Change**:
-The commit a Practice is built from: its message, its diff and the files it touches.
-_Avoid_: patch, diff (for the whole change).
+The work a Practice is built from: one commit, or for a gated push the commits it carries taken together, with their messages, their combined diff and the files it touches.
+_Avoid_: patch, diff (for the whole change); changeset.
 
 **Evidence**:
 Everything a Practice sends and can cite: the change, the chosen areas with their area prompts, its connected code, and related tests and configuration.
@@ -22,6 +22,10 @@ _Avoid_: context, payload, manifest.
 **Connected code**:
 What the touched files call, are called by, link to or name elsewhere in the repository at the change's commit.
 _Avoid_: dependency code, which reads as third-party library source; connections; context.
+
+**Source folders**:
+The folders of a repository whose code Whetstone sends and asks about. Connected code the change reaches outside them is shown in the outbound review and sent only if the learner chooses to.
+_Avoid_: scan directories, include paths, roots.
 
 **Area**:
 A lens on a change that questions focus on, chosen by the learner from the areas the repository defines, or from Whetstone's defaults when it defines none: domain, infrastructure, observability, scalability and system design.
@@ -34,6 +38,27 @@ _Avoid_: master prompt.
 **Outbound review**:
 The learner's check of exactly what a Practice on their own repository will send and where, before anything leaves the machine; approving it covers that evidence, those destinations and the learner's later responses in the session.
 _Avoid_: consent screen; review alone, which **Needs review** uses.
+
+**Repository approval**:
+The learner's remembered approval of what a repository's gated Practices may send: its destinations, models, exclusions and area files. Later outbound reviews for that repository show only the files being sent, possible secrets and whatever differs from the approval.
+
+## Gate
+
+**Gate**:
+Whetstone's Git hook that holds a commit or a push until the learner passes a Practice on its change.
+_Avoid_: check, which Jev's checks already use; push gate alone, since a gate can hold commits too.
+
+**Gated Practice**:
+The Practice a gate holds Git for. It is a session like any other, answered in the same terminal or in Whetstone in another pane.
+_Avoid_: pending check.
+
+**Receipt**:
+A gate's record that the learner passed a Gated Practice on a change's diff under an assessment policy version. A later commit or push with the same diff under that policy passes with no questions, however its commits were reworded or rebased.
+_Avoid_: pass token, certificate.
+
+**Bypass**:
+The learner's choice to let a gate's commit or push through without passing its Gated Practice. It is recorded and never becomes a receipt.
+_Avoid_: skip, which **Skip** uses for questions; override; force.
 
 ## Sessions
 
@@ -100,6 +125,10 @@ _Avoid_: mastery score, competence certificate.
 **Needs review**:
 An outcome whose support or reliability has not been established well enough to call it supported or not.
 _Avoid_: treating it as incorrect.
+
+**Learner verdict**:
+The learner's own decision that a Needs review criterion is met or not met, kept beside Jev's outcome and never replacing it.
+_Avoid_: override, which suggests Jev's outcome is gone.
 
 **Re-evaluation**:
 A later assessment of an already assessed response, saved beside the original and never replacing it. It is offered only when the assessment policy, the model or Whetstone's prompts have changed, or the earlier request failed.
