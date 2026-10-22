@@ -37,10 +37,10 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::Paragraph;
 use whetstone_core::{
-    Area, Change, CommitId, Comparison, ConnectedCodeLimit, ConnectedCodeLimitSource,
+    Area, AreaId, Change, CommitId, Comparison, ConnectedCodeLimit, ConnectedCodeLimitSource,
     ConnectionGroup, Connections, ConnectionsState, Evidence, EvidenceConnection, EvidenceFile,
     ExcludePatterns, Extent, FileIndex, Finding, FindingStatus, Origin, Place, RepositoryConfig,
-    ReviewChoices, Side, Unsendable,
+    ReviewChoices, Severity, Side, Unsendable,
 };
 
 use crate::columns;
@@ -100,6 +100,8 @@ const NOT_SENT: &str = "Author, committer, dates and the commit ID are not sent.
 /// What the secret check cannot promise.
 const DISCLAIMER: &str =
     "Whetstone checks for common secret formats and can't guarantee there are none.";
+/// What a warning means, said once one shows.
+const WARNINGS: &str = "Warnings don't block Send: their patterns often match what isn't a secret.";
 /// Said over the limit.
 const TOO_LARGE: &str = "This change is too large to practise on.";
 /// Why Send waits while connected code is found: what the learner approves
@@ -641,7 +643,8 @@ impl OutboundReview {
     }
 
     /// The secret check: each finding, with the actions that resolve it,
-    /// then what the check cannot promise.
+    /// then what a warning means, if one shows, and what the check cannot
+    /// promise.
     fn secret_check(&self, theme: &Theme, width: usize, doc: &mut Document<'static>) {
         doc.push(Line::styled("Secret check", theme.muted));
         if self.evidence.findings().is_empty() {
@@ -668,6 +671,14 @@ impl OutboundReview {
                 ),
                 start,
             );
+        }
+        if self
+            .evidence
+            .findings()
+            .iter()
+            .any(|finding| finding.severity() == Severity::Warning)
+        {
+            doc.wrapped(WARNINGS, width, theme.muted);
         }
         doc.wrapped(DISCLAIMER, width, theme.muted);
         doc.blank();
@@ -963,10 +974,14 @@ impl OutboundReview {
 
     /// The control that resolves a finding at `place` by leaving out what
     /// it is in, if that can be left out: a file, connected code, a related
-    /// test or related configuration can be, the commit message cannot.
+    /// test or related configuration can be, the commit message and an area,
+    /// which the learner chose before the review, cannot.
     fn leave_out_label(&self, place: &Place) -> Option<&'static str> {
         match place {
-            Place::CommitMessage => None,
+            Place::CommitMessage
+            | Place::AreaName(_)
+            | Place::AreaDescription(_)
+            | Place::AreaPrompt(_) => None,
             Place::Content(_) | Place::Diff(_) => Some("Leave out the file"),
             Place::Connection(id) => Some(
                 match self
@@ -986,8 +1001,9 @@ impl OutboundReview {
         }
     }
 
-    /// A finding as one sentence: where it is, the rule that matched and
-    /// the masked excerpt.
+    /// A finding as one sentence: whether it is only a warning, where it
+    /// is, the rule that matched and the masked excerpt. An area's name and
+    /// description are one line each, so a finding in either names no line.
     fn describe(&self, finding: &Finding) -> String {
         let matched = finding.matched();
         let line = matched.line();
@@ -996,12 +1012,33 @@ impl OutboundReview {
             Place::Content(file) => format!("{}, line {line}", self.path(*file)),
             Place::Diff(file) => format!("{}, diff line {line}", self.path(*file)),
             Place::Connection(connection) => format!("{}, line {line}", connection.path()),
+            Place::AreaName(area) => format!("the {} area's name", self.area_name(area)),
+            Place::AreaDescription(area) => {
+                format!("the {} area's description", self.area_name(area))
+            }
+            Place::AreaPrompt(area) => {
+                format!("the {} area's prompt, line {line}", self.area_name(area))
+            }
+        };
+        let lead = match finding.severity() {
+            Severity::Blocking => "Possible secret",
+            Severity::Warning => "Warning: possible secret",
         };
         format!(
-            "Possible secret in {place}: {}, {}",
+            "{lead} in {place}: {}, {}",
             matched.rule().name(),
             matched.excerpt()
         )
+    }
+
+    /// The name of the selected area `id` names.
+    fn area_name(&self, id: &AreaId) -> &str {
+        self.evidence
+            .areas()
+            .iter()
+            .find(|area| area.id() == id)
+            .map(Area::name)
+            .unwrap_or_default()
     }
 
     /// The path of the touched file at `index`.
