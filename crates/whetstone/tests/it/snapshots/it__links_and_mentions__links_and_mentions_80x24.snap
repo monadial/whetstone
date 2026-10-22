@@ -6,11 +6,11 @@ Buffer {
     area: Rect { x: 0, y: 0, width: 80, height: 24 },
     content: [
         "                                                                                ",
-        "  Review what will be sent                                                      ",
         "                                                                                ",
         "  Sends to OpenRouter · Jev: typesafe/jev-1.14 · Generator:                     ",
         "  anthropic/claude-sonnet-5.5                                                   ",
-        "  OpenRouter routes only to endpoints it lists as not keeping prompts.          ",
+        "  Jev runs only on TypeSafe, whose endpoints keep no prompts.                   ",
+        "  Generator requests ask OpenRouter only for endpoints that keep no prompts.    ",
         "  https://openrouter.ai/docs/guides/privacy/data-collection                     ",
         "                                                                                ",
         "  Your answers in this session go to the same places. Nothing outside this      ",
@@ -32,8 +32,6 @@ Buffer {
     ],
     styles: [
         x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
-        x: 2, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
-        x: 26, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 2, y: 20, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
         x: 16, y: 20, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
     ]

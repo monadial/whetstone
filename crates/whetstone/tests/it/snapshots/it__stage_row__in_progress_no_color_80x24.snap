@@ -14,7 +14,8 @@ Buffer {
         "                                                                                ",
         "  Sends to OpenRouter · Jev: typesafe/jev-1.14 · Generator:                     ",
         "  anthropic/claude-sonnet-5.5                                                   ",
-        "  OpenRouter routes only to endpoints it lists as not keeping prompts.          ",
+        "  Jev runs only on TypeSafe, whose endpoints keep no prompts.                   ",
+        "  Generator requests ask OpenRouter only for endpoints that keep no prompts.    ",
         "  https://openrouter.ai/docs/guides/privacy/data-collection                     ",
         "                                                                                ",
         "  Your answers in this session go to the same places. Nothing outside this      ",
@@ -26,7 +27,6 @@ Buffer {
         "                                                                                ",
         "  Files                                                                         ",
         "    ledger.py  1 KB  included                                                   ",
-        "                                                                                ",
         "  ? keys  : actions  Space toggle  Enter read  q back                           ",
         "                                                                                ",
     ],
@@ -44,7 +44,7 @@ Buffer {
         x: 62, y: 3, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 2, y: 5, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
         x: 26, y: 5, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
-        x: 2, y: 16, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
-        x: 28, y: 16, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 17, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 28, y: 17, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
     ]
 }

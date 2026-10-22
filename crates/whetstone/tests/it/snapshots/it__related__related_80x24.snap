@@ -6,7 +6,7 @@ Buffer {
     area: Rect { x: 0, y: 0, width: 80, height: 24 },
     content: [
         "                                                                                ",
-        "  OpenRouter routes only to endpoints it lists as not keeping prompts.          ",
+        "  Generator requests ask OpenRouter only for endpoints that keep no prompts.    ",
         "  https://openrouter.ai/docs/guides/privacy/data-collection                     ",
         "                                                                                ",
         "  Your answers in this session go to the same places. Nothing outside this      ",
