@@ -1,0 +1,46 @@
+---
+source: crates/whetstone/tests/it/outbound_review.rs
+expression: session.frame()
+---
+Buffer {
+    area: Rect { x: 0, y: 0, width: 120, height: 32 },
+    content: [
+        "                                                                                                                        ",
+        "  What is sent for the Domain area                                                                                      ",
+        "                                                                                                                        ",
+        "  Prompt source                                                                                                         ",
+        "  Whetstone default                                                                                                     ",
+        "                                                                                                                        ",
+        "  Description, as it is sent                                                                                            ",
+        "  The rules, concepts and language the work is about                                                                    ",
+        "                                                                                                                        ",
+        "  Area prompt, as it is sent                                                                                            ",
+        "   1 Focus on the subject the change is about: the concepts it names, the rules                                         ",
+        "   2 it encodes and the language it uses for them.                                                                      ",
+        "   3                                                                                                                    ",
+        "   4 Look for:                                                                                                          ",
+        "   5                                                                                                                    ",
+        "   6 - The concepts the change introduces, renames or redefines, and how they                                           ",
+        "   7   relate to the ones already there.                                                                                ",
+        "   8 - The rules and invariants it adds or changes: what must always hold, what                                         ",
+        "   9   is forbidden, and which states or cases are possible.                                                            ",
+        "  10 - Edge cases in the subject itself: unusual but legitimate situations the                                          ",
+        "  11   rules must cover, and what happens at their boundaries.                                                          ",
+        "  12 - Whether each word matches what it stands for, and means the same thing                                           ",
+        "  13   everywhere it appears.                                                                                           ",
+        "  14 - What the change assumes about the people, organisations or things it                                             ",
+        "  15   describes, and whether those assumptions hold.                                                                   ",
+        "  16                                                                                                                    ",
+        "  17 Prefer why the rules are the way they are, and what would go wrong if they                                         ",
+        "  18 were different, over naming style, formatting or tooling.                                                          ",
+        "  19                                                                                                                    ",
+        "  20 When the repository is not software, such as a course, a book or a set of                                          ",
+        "  ? keys  : actions  q back                                                                                             ",
+        "                                                                                                                        ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 34, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+    ]
+}
