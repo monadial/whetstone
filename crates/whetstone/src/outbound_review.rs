@@ -82,8 +82,14 @@ const ACTIONS: &[Action] = &[Action {
 
 /// The screen's title.
 const TITLE: &str = "Review what will be sent";
-/// How `OpenRouter` limits what is kept.
-const ROUTING: &str = "OpenRouter routes only to endpoints it lists as not keeping prompts.";
+/// What each destination keeps of a request, and why: Jev requests can't
+/// ask `OpenRouter` for zero-retention routing yet (#69), so the config
+/// accepts only `TypeSafe` models for Jev, while generator requests ask for
+/// it.
+const GUARANTEES: [&str; 2] = [
+    "Jev runs only on TypeSafe, whose endpoints keep no prompts.",
+    "Generator requests ask OpenRouter only for endpoints that keep no prompts.",
+];
 /// `OpenRouter`'s privacy page.
 const PRIVACY: &str = "https://openrouter.ai/docs/guides/privacy/data-collection";
 /// What one approval covers.
@@ -556,12 +562,12 @@ impl OutboundReview {
         StageRow::new(stages, ticks, theme)
     }
 
-    /// The title, then where the evidence goes, how it is routed, and what
-    /// one approval covers.
+    /// The title, then where the evidence goes, what each destination keeps
+    /// of it, and what one approval covers.
     fn destination_rows(&self, theme: &Theme, width: usize, doc: &mut Document<'static>) {
         doc.push(Line::styled(TITLE, theme.title));
         doc.blank();
-        for text in [self.destination.as_str(), ROUTING] {
+        for text in [self.destination.as_str()].into_iter().chain(GUARANTEES) {
             doc.lines
                 .extend(columns::wrap(text, width).into_iter().map(Line::raw));
         }

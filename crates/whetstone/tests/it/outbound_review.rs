@@ -50,7 +50,9 @@ fn the_review_names_the_destination_and_the_change_and_what_of_it_is_not_sent() 
             String::new(),
             "Sends to OpenRouter · Jev: typesafe/jev-1.14 · Generator: anthropic/claude-sonnet-5.5"
                 .to_owned(),
-            "OpenRouter routes only to endpoints it lists as not keeping prompts.".to_owned(),
+            "Jev runs only on TypeSafe, whose endpoints keep no prompts.".to_owned(),
+            "Generator requests ask OpenRouter only for endpoints that keep no prompts."
+                .to_owned(),
             "https://openrouter.ai/docs/guides/privacy/data-collection".to_owned(),
             String::new(),
             "Your answers in this session go to the same places. Nothing outside this list is sent."
