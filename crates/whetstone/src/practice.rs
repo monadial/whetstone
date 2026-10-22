@@ -12,7 +12,8 @@
 //! change is worth asking about: an unclear verdict lets an area through, and only a
 //! clear no drops it. The generator writes candidates, one request per area
 //! that passed, all at once; plain checks drop the malformed ones; Jev
-//! checks each candidate left, all at once; the show rule keeps the
+//! checks each candidate left, in three calls each, all at once, and their
+//! answers make one question check per candidate; the show rule keeps the
 //! clear-cut ones; and picking chooses up to `questions` of them for the
 //! questions screen. The stage row shows where it is. On the questions
 //! screen, and on feedback, Inspect source reads the evidence the questions
@@ -61,12 +62,15 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::Line;
 use ratatui::widgets::{List, Paragraph};
-use whetstone_ai::{Ai, CandidateCount, Pending, QuestionWithoutKey, Reply, RequestFailure, Stamp};
+use whetstone_ai::{
+    Ai, CandidateCount, CheckCallAnswers, Pending, QuestionCheckCall, QuestionWithoutKey, Reply,
+    RequestFailure, Stamp,
+};
 use whetstone_core::{
     Area, AreaId, Band, Candidate, CandidateCheck, CandidateId, Change, Citation, CommitId,
     ConnectedCodeLimit, Connections, ConnectionsState, DropReason, Evidence, ExcludePatterns, Job,
-    Origin, Probability, QuestionCheckAnswers, QuestionCount, RepositoryConfig, ReviewChoices,
-    Role, Side, Withheld, WrittenCandidate, pick, plain_checks, show_rule,
+    Origin, Probability, QuestionCount, RepositoryConfig, ReviewChoices, Role, Side, Withheld,
+    WrittenCandidate, pick, plain_checks, show_rule,
 };
 
 use crate::area_files;
@@ -250,8 +254,9 @@ enum Stage {
     /// order: what passed the plain checks.
     Writing(Vec<Request<Vec<Candidate>>>),
     /// Jev checks each candidate that passed the plain checks, in the order
-    /// written, area by area.
-    Checking(Vec<(Candidate, Request<QuestionCheckAnswers>)>),
+    /// written, area by area, in its question check's three calls, in
+    /// [`QuestionCheckCall::ALL`] order.
+    Checking(Vec<(Candidate, [Request<CheckCallAnswers>; 3])>),
     /// The questions picked.
     Shown(Box<Questions>),
     /// No question passed its checks.
@@ -690,34 +695,46 @@ impl Practice {
             self.stage = Stage::Checking(
                 candidates
                     .into_iter()
-                    .map(|candidate| (candidate, Request::Unsent))
+                    .map(|candidate| (candidate, QuestionCheckCall::ALL.map(|_| Request::Unsent)))
                     .collect(),
             );
             self.pick_if_checked();
         }
     }
 
-    /// Applies Jev's `reply` to the question check of `candidate`, or why
-    /// the request failed. Once every candidate is checked, picks the
-    /// questions to show.
+    /// Applies Jev's `reply` to the call `call` of the question check of
+    /// `candidate`, or why the request failed. Once every call of every
+    /// candidate's check replied, picks the questions to show.
     fn checked(
         &mut self,
         candidate: &CandidateId,
-        reply: Result<QuestionCheckAnswers, RequestFailure>,
+        call: QuestionCheckCall,
+        reply: Result<CheckCallAnswers, RequestFailure>,
     ) {
         let Stage::Checking(checks) = &mut self.stage else {
             return;
         };
-        let Some((_, check)) = checks
+        let Some(check) = checks
             .iter_mut()
             .find(|(checked, _)| checked.id() == candidate)
+            .and_then(|(_, calls)| {
+                QuestionCheckCall::ALL
+                    .into_iter()
+                    .zip(calls)
+                    .find_map(|(each, check)| (each == call).then_some(check))
+            })
         else {
             return;
         };
         *check = match reply {
             Ok(answers) => Request::Replied(answers),
             Err(failure) => {
-                tracing::info!(area = %candidate.area(), %failure, "checking a candidate failed");
+                tracing::info!(
+                    area = %candidate.area(),
+                    ?call,
+                    %failure,
+                    "checking a candidate failed"
+                );
                 self.failed_requests.note_refusal(Role::Jev, failure);
                 Request::Failed(failure)
             }
@@ -725,7 +742,8 @@ impl Practice {
         self.pick_if_checked();
     }
 
-    /// Once every candidate is checked, keeps those the show rule passes
+    /// Once every call of every candidate's check replied, makes each
+    /// candidate's answers one, keeps the candidates the show rule passes
     /// and picks the questions to show from them.
     fn pick_if_checked(&mut self) {
         let Stage::Checking(checks) = &mut self.stage else {
@@ -733,7 +751,8 @@ impl Practice {
         };
         if !checks
             .iter()
-            .all(|(_, check)| matches!(check, Request::Replied(_)))
+            .flat_map(|(_, calls)| calls)
+            .all(|check| matches!(check, Request::Replied(_)))
         {
             return;
         }
@@ -743,8 +762,10 @@ impl Practice {
         let checks = mem::take(checks);
         let checked = checks.len();
         let mut passed = Vec::new();
-        for (candidate, check) in checks {
-            let Some(answers) = check.replied() else {
+        for (candidate, calls) in checks {
+            let Some(answers) =
+                CheckCallAnswers::merged(calls.into_iter().filter_map(Request::replied))
+            else {
                 continue;
             };
             match show_rule(candidate, answers, policy) {
@@ -825,7 +846,10 @@ impl Practice {
         match &self.stage {
             Stage::CheckingAreas(gate) => gate.failure(),
             Stage::Writing(writes) => writes.iter().find_map(Request::failure),
-            Stage::Checking(checks) => checks.iter().find_map(|(_, check)| check.failure()),
+            Stage::Checking(checks) => checks
+                .iter()
+                .flat_map(|(_, calls)| calls)
+                .find_map(Request::failure),
             Stage::FindingConnectedCode(_)
             | Stage::NothingToPractice
             | Stage::Shown(_)
@@ -845,7 +869,10 @@ impl Practice {
         match &mut self.stage {
             Stage::CheckingAreas(gate) => gate.retry(),
             Stage::Writing(writes) => writes.iter_mut().for_each(Request::retry),
-            Stage::Checking(checks) => checks.iter_mut().for_each(|(_, check)| check.retry()),
+            Stage::Checking(checks) => checks
+                .iter_mut()
+                .flat_map(|(_, calls)| calls)
+                .for_each(Request::retry),
             Stage::NonePassed => self.write(),
             Stage::FindingConnectedCode(_)
             | Stage::NothingToPractice
@@ -1254,21 +1281,24 @@ impl View for Practice {
                 }
             }
             Stage::Checking(checks) => {
-                for (candidate, check) in checks {
-                    if let Request::Unsent = check {
-                        let id = candidate.id().clone();
-                        send(
-                            jobs,
-                            &mut self.waiting,
-                            &mut self.sent,
-                            Asking::Check(id.clone()),
-                            |stamp| self.ai.check_question(stamp, evidence, candidate),
-                            |reply| JobOutput::Checked {
-                                candidate: id,
-                                reply,
-                            },
-                        );
-                        *check = Request::Sent;
+                for (candidate, calls) in checks {
+                    for (call, check) in QuestionCheckCall::ALL.into_iter().zip(calls) {
+                        if let Request::Unsent = check {
+                            let id = candidate.id().clone();
+                            send(
+                                jobs,
+                                &mut self.waiting,
+                                &mut self.sent,
+                                Asking::Check(id.clone(), call),
+                                |stamp| self.ai.check_question(stamp, call, evidence, candidate),
+                                move |reply| JobOutput::Checked {
+                                    candidate: id,
+                                    call,
+                                    reply,
+                                },
+                            );
+                            *check = Request::Sent;
+                        }
                     }
                 }
             }
@@ -1366,11 +1396,15 @@ impl View for Practice {
                     self.written(&area, reply);
                 }
             }
-            JobOutput::Checked { candidate, reply } => {
-                let asking = Asking::Check(candidate.clone());
+            JobOutput::Checked {
+                candidate,
+                call,
+                reply,
+            } => {
+                let asking = Asking::Check(candidate.clone(), call);
                 if self.waiting.accept(job, &asking) {
                     let reply = self.sent.ended(&asking, reply);
-                    self.checked(&candidate, reply);
+                    self.checked(&candidate, call, reply);
                 }
             }
             JobOutput::Evaluated { saved, reply } => {

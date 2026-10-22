@@ -1,7 +1,15 @@
-# The question check: Jev's questions about one candidate question, which
-# the state holds as `candidate`, beside the `evidence`. Each yes/no question
-# has its instructions and what yes and no mean; the depth score has its
-# instructions and its levels, the shallowest first.
+# The question check: Jev's questions about one candidate question, asked in
+# three calls. Each call's state holds only what its questions are about:
+#
+# - the option ratings (`option`) and `no_giveaway`: the `evidence`, and the
+#   candidate's stem and options' text as `candidate`;
+# - `hint_hides_answer_key`: the candidate's stem, options' text and hint as
+#   `candidate`, and no evidence;
+# - every other question, and the depth score: the `evidence`, and the whole
+#   candidate as `candidate`.
+#
+# Each yes/no question has its instructions and what yes and no mean; the
+# depth score has its instructions and its levels, the shallowest first.
 #
 # Placeholders: `{letter}` is an option's letter, and `{criterion}` is a
 # criterion's name in the candidate's rubric, such as `criterion_1`.
@@ -22,7 +30,7 @@ yes = "Choosing the correct option needs understanding what the change does."
 no = "General knowledge alone is enough to choose the correct option."
 
 [no_giveaway]
-instructions = "The candidate's stem and options don't give the answer away: no option stands out as correct or wrong from its wording, length, detail or how it echoes the stem. Judge the stem and the options' text as the learner sees them before answering, without the answer key, rationales or hint."
+instructions = "The candidate's stem and options don't give the answer away: no option stands out as correct or wrong from its wording, length, detail or how it echoes the stem. The state holds the evidence, and of the candidate only its stem and its options' text, as the learner sees them before answering."
 yes = "Nothing in the wording of the stem or options points to the correct option."
 no = "The wording of the stem or options points to the correct option, or rules options out."
 
@@ -37,7 +45,7 @@ yes = "The criterion asks only for an idea a sufficient answer to the stem needs
 no = "The criterion asks for more than a sufficient answer to the stem needs: particular names or wording, a quoted condition, an exact value, or something the stem doesn't ask about."
 
 [option]
-instructions = "Given the evidence, option {letter} correctly answers the candidate's stem. Judge it from the evidence alone, not from the candidate's answer key or rationales."
+instructions = "Given the evidence, option {letter} correctly answers the candidate's stem. The state holds the evidence, and of the candidate only its stem and its options' text."
 yes = "The evidence shows that option {letter} is a correct answer to the stem."
 no = "The evidence doesn't show that option {letter} answers the stem correctly, or shows that it doesn't."
 
@@ -57,7 +65,7 @@ yes = "The hint points to specific parts of the evidence that bear on the answer
 no = "The hint is vague, or points to nothing in the evidence that bears on the answer."
 
 [hint_hides_answer_key]
-instructions = "The candidate's hint doesn't reveal the answer key: someone reading only the stem, the options and the hint couldn't tell which option is correct."
+instructions = "The candidate's hint doesn't reveal the correct option: someone reading the stem, the options and the hint couldn't tell which option is correct. The state holds only the candidate's stem, its options' text and its hint."
 yes = "The hint leaves the learner to work out which option is correct."
 no = "The hint reveals which option is correct, or rules options out."
 

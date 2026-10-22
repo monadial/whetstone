@@ -22,7 +22,9 @@
 //!
 //! - [`gate_request`] and [`gate_answers`] ask the relevance gate;
 //! - [`candidates_request`] and [`CandidatesOutput`] write candidates;
-//! - [`question_check_request`] and [`question_check_answers`] check one;
+//! - [`question_check_request`] and [`question_check_answers`] check one,
+//!   in three calls ([`QuestionCheckCall`]), whose answers
+//!   [`CheckCallAnswers::merged`] makes one;
 //! - [`reasoning_request`] and [`reasoning_answers`] assess a response's
 //!   reasoning;
 //! - [`explanation_request`], [`explanation_paragraphs`],
@@ -83,7 +85,8 @@ pub use crate::openrouter_ai::{Models, OpenRouterAi};
 pub use crate::port::{Ai, CandidateCount, Pending, Reply, RequestFailure, Saved, Stamp};
 pub use crate::prompts::{base_prompts_hash, base_prompts_version};
 pub use crate::question_check::{
-    name as question_check_name, question_check_answers, question_check_request,
+    CheckCallAnswers, QuestionCheckCall, name as question_check_name, question_check_answers,
+    question_check_request,
 };
 pub use crate::reasoning::{QuestionWithoutKey, reasoning_answers, reasoning_request};
 #[cfg(any(test, feature = "scripted"))]

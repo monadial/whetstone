@@ -24,14 +24,19 @@
 //! The job runs every ignored test whose name starts with `live_`, so the
 //! new test needs nothing else.
 
-use whetstone_core::{CriterionOutcome, DepthLevel, ModelId, Provenance, QuestionCount};
+use whetstone_core::{
+    CandidateCheck, CriterionOutcome, DepthLevel, ModelId, Provenance, QuestionCount,
+};
 
 use crate::replay::live_key;
 use crate::samples::{
     Acknowledged, OUTCOMES, REASONING, area, candidate, evidence, generator_model, jev_model,
     observability, paragraphs, question, stamp,
 };
-use crate::{Ai, CandidateCount, Models, OpenRouter, OpenRouterAi, QuestionWithoutKey};
+use crate::{
+    Ai, CandidateCount, CheckCallAnswers, Models, OpenRouter, OpenRouterAi, QuestionCheckCall,
+    QuestionWithoutKey,
+};
 
 /// The real AI on `OpenRouter`, with the key from `OPENROUTER_API_KEY`, the
 /// models the fixtures were recorded with, and the app's time limits.
@@ -137,23 +142,36 @@ async fn live_write_candidates() {
 async fn live_check_question() {
     let _log = log_replies();
     let candidate = candidate();
+    let ai = live_ai();
 
-    let reply = live_ai()
-        .check_question(stamp(), &evidence(), &candidate)
-        .await
-        .expect("Jev checks the candidate");
+    // Each of the check's three calls, as Practice sends them.
+    let mut answers = Vec::new();
+    for call in QuestionCheckCall::ALL {
+        let reply = ai
+            .check_question(stamp(), call, &evidence(), &candidate)
+            .await
+            .unwrap_or_else(|failure| panic!("Jev answers the {call:?} call: {failure}"));
 
-    for check in candidate.checks() {
-        assert!(
-            reply.content.get(check).is_some(),
-            "Jev didn't answer {check:?}"
+        let answered: Vec<CandidateCheck> = reply.content.iter().map(|(check, _)| check).collect();
+        assert_eq!(answered, call.checks(&candidate), "{call:?}");
+        assert_eq!(
+            reply.content.depth().is_some(),
+            call == QuestionCheckCall::Candidate,
+            "only the candidate call scores the depth"
         );
+        assert_reported(&reply.provenance);
+        answers.push(reply.content);
+    }
+
+    let answers = CheckCallAnswers::merged(answers).expect("each call's answers once");
+    for check in candidate.checks() {
+        assert!(answers.get(check).is_some(), "Jev didn't answer {check:?}");
     }
     // Depth is kept as returned, so its expected value must be what Depth
     // takes it for: the levels' places, counting from 0, weighted by their
     // probabilities. Rounding each to hundredths moves the two apart by at
     // most 0.02, while places counted from 1 would move them apart by 1.
-    let depth = reply.content.depth();
+    let depth = answers.depth();
     let weighted: f64 = DepthLevel::ALL
         .into_iter()
         .zip(0..)
@@ -164,7 +182,6 @@ async fn live_check_question() {
         "the depth's expected value, {}, isn't its levels' places from 0, weighted: {weighted}",
         depth.expected()
     );
-    assert_reported(&reply.provenance);
 }
 
 #[tokio::test]

@@ -32,9 +32,9 @@ use crate::samples::{
     paragraphs, question,
 };
 use crate::{
-    AiError, CandidatesOutput, ExplanationOutput, GeneratorRequest, OpenRouter, QuestionWithoutKey,
-    SecretString, Timeouts, candidates_request, explanation_check_request, explanation_request,
-    gate_request, question_check_request, reasoning_request,
+    AiError, CandidatesOutput, ExplanationOutput, GeneratorRequest, OpenRouter, QuestionCheckCall,
+    QuestionWithoutKey, SecretString, Timeouts, candidates_request, explanation_check_request,
+    explanation_request, gate_request, question_check_request, reasoning_request,
 };
 
 const UPSTREAM: &str = "https://openrouter.ai";
@@ -219,18 +219,29 @@ async fn record_candidates() {
     assert!(reply.is_ok());
 }
 
+/// Records the reply to each of the question check's three calls, as its
+/// own fixture.
 #[tokio::test]
 #[ignore = "calls OpenRouter with the maintainer's key"]
 async fn record_question_check() {
-    let (_server, connection) = recording("question-check", "/systemone", live_key()).await;
-    let request = question_check_request(&jev_model(), &evidence(), &candidate());
+    for (call, name) in [
+        (
+            QuestionCheckCall::OptionRatings,
+            "question-check-option-ratings",
+        ),
+        (QuestionCheckCall::Hint, "question-check-hint"),
+        (QuestionCheckCall::Candidate, "question-check-candidate"),
+    ] {
+        let (_server, connection) = recording(name, "/systemone", live_key()).await;
+        let request = question_check_request(&jev_model(), &evidence(), &candidate(), call);
 
-    let reply = connection
-        .evaluate(&request, &CancellationToken::new())
-        .await;
+        let reply = connection
+            .evaluate(&request, &CancellationToken::new())
+            .await;
 
-    println!("{reply:#?}");
-    assert!(reply.is_ok());
+        println!("{reply:#?}");
+        assert!(reply.is_ok(), "{call:?}");
+    }
 }
 
 #[tokio::test]

@@ -8,8 +8,11 @@
 //! answers that pass the show rule for whichever candidate is asked, with
 //! any checks a test answers otherwise, or at a depth a test chooses. Each
 //! reply scripted for one of them answers one request, in the order
-//! scripted, so a test scripts a Retry's reply as a second one. A reply
-//! reports no cost unless a test scripts one for its role.
+//! scripted, so a test scripts a Retry's reply as a second one. A question
+//! check's reply answers its three calls: each call takes the answers to
+//! the checks it asks, and a failure fails all three. A test can also script
+//! one call of a check to fail on its own. A reply reports no cost unless a
+//! test scripts one for its role.
 //!
 //! The gate lets through, clear yes, any area nothing was scripted for, so
 //! a test about writing or checking needn't script it. Any other request
@@ -33,7 +36,9 @@ use crate::explanation::{
 use crate::gate::gate_request;
 use crate::jev::{JevAnswer, JevReply, JevRequest};
 use crate::port::{Ai, CandidateCount, Pending, Reply, RequestFailure, Saved, Stamp};
-use crate::question_check::{self, DEPTH, question_check_request};
+use crate::question_check::{
+    self, CheckCallAnswers, DEPTH, QuestionCheckCall, question_check_request,
+};
 use crate::reasoning::{QuestionWithoutKey, reasoning_request};
 use crate::usage::Usage;
 
@@ -52,8 +57,13 @@ struct Script {
     gate_failures: VecDeque<RequestFailure>,
     /// The generator's next replies for each area.
     writes: HashMap<AreaId, VecDeque<Result<Vec<WrittenCandidate>, RequestFailure>>>,
-    /// Jev's next replies for each candidate, by its stem.
+    /// Jev's next replies for each candidate, by its stem, each of which
+    /// answers the three calls of a check.
     checks: HashMap<String, VecDeque<CheckReply>>,
+    /// Jev's next replies to each call of the check of each candidate, by
+    /// its stem: a call's share of a check's reply, or a failure scripted
+    /// for the call alone.
+    calls: HashMap<(String, QuestionCheckCall), VecDeque<Result<CheckCallAnswers, RequestFailure>>>,
     /// Jev's next replies to the reasoning written for each question, by
     /// its stem.
     assessments: HashMap<String, VecDeque<Result<Vec<Probability>, RequestFailure>>>,
@@ -103,8 +113,10 @@ pub enum Asked {
         /// How many to write.
         count: CandidateCount,
     },
-    /// Jev was asked to check a candidate.
+    /// Jev was asked one call of a candidate's question check.
     CheckQuestion {
+        /// The call.
+        call: QuestionCheckCall,
         /// The evidence it was given.
         evidence: Evidence,
         /// The candidate to check.
@@ -197,10 +209,27 @@ impl ScriptedAi {
             .push_back(reply);
     }
 
-    /// Scripts Jev's reply to the next request to check the candidate whose
-    /// stem is `stem`: exactly these answers, or a failure.
+    /// Scripts Jev's reply to the next check of the candidate whose stem is
+    /// `stem`: exactly these answers, each call taking the answers to the
+    /// checks it asks, or a failure of all three calls.
     pub fn on_check(&self, stem: &str, reply: Result<QuestionCheckAnswers, RequestFailure>) {
         self.script_check(stem, CheckReply::Exactly(reply));
+    }
+
+    /// Scripts the next request of `call` of the check of the candidate
+    /// whose stem is `stem` to fail with `failure`, before any reply
+    /// scripted for the whole check answers it.
+    pub fn on_check_call_failing(
+        &self,
+        stem: &str,
+        call: QuestionCheckCall,
+        failure: RequestFailure,
+    ) {
+        self.script()
+            .calls
+            .entry((stem.to_owned(), call))
+            .or_default()
+            .push_back(Err(failure));
     }
 
     /// Scripts Jev's reply to the next request to check the candidate whose
@@ -379,42 +408,63 @@ impl Ai for ScriptedAi {
     fn check_question(
         &self,
         stamp: Stamp,
+        call: QuestionCheckCall,
         evidence: &Evidence,
         candidate: &Candidate,
-    ) -> Pending<QuestionCheckAnswers> {
+    ) -> Pending<CheckCallAnswers> {
         let mut script = self.script();
         script.asked.push(Asked::CheckQuestion {
+            call,
             evidence: evidence.clone(),
             candidate: candidate.clone(),
         });
+        let key = (candidate.stem().to_owned(), call);
+        if script.calls.get(&key).is_none_or(VecDeque::is_empty) {
+            // A check's reply answers its three calls: each takes its share.
+            let reply = script
+                .checks
+                .get_mut(candidate.stem())
+                .and_then(VecDeque::pop_front)
+                .unwrap_or_else(|| panic!("no check scripted for {:?}", candidate.stem()))
+                .into_reply(candidate);
+            for each in QuestionCheckCall::ALL {
+                let share = reply
+                    .as_ref()
+                    .map(|answers| CheckCallAnswers::of_call(each, answers))
+                    .map_err(|failure| *failure);
+                script
+                    .calls
+                    .entry((candidate.stem().to_owned(), each))
+                    .or_default()
+                    .push_back(share);
+            }
+        }
         let reply = script
-            .checks
-            .get_mut(candidate.stem())
+            .calls
+            .get_mut(&key)
             .and_then(VecDeque::pop_front)
-            .unwrap_or_else(|| panic!("no check scripted for {:?}", candidate.stem()));
-        let sent = question_check_request(&jev_model(), evidence, candidate);
-        reply_at_once(
-            stamp,
-            reply.into_reply(candidate),
-            Role::Jev,
-            &script,
-            |answers| {
-                let depth = answers.depth();
-                let depth = JevAnswer::Score {
-                    probabilities: DepthLevel::ALL
-                        .map(|level| depth.probability(level).get())
-                        .into(),
-                    expected: depth.expected(),
-                };
-                kept(
-                    &sent,
-                    answers
-                        .iter()
-                        .map(|(check, answer)| (question_check::name(check), yes_no(answer)))
-                        .chain([(DEPTH.to_owned(), depth)]),
+            .expect("a call's share was just scripted, if none was before");
+        let sent = question_check_request(&jev_model(), evidence, candidate, call);
+        reply_at_once(stamp, reply, Role::Jev, &script, |answers| {
+            let depth = answers.depth().map(|depth| {
+                (
+                    DEPTH.to_owned(),
+                    JevAnswer::Score {
+                        probabilities: DepthLevel::ALL
+                            .map(|level| depth.probability(level).get())
+                            .into(),
+                        expected: depth.expected(),
+                    },
                 )
-            },
-        )
+            });
+            kept(
+                &sent,
+                answers
+                    .iter()
+                    .map(|(check, answer)| (question_check::name(check), yes_no(answer)))
+                    .chain(depth),
+            )
+        })
     }
 
     #[expect(
@@ -789,6 +839,28 @@ mod tests {
         CandidateCount::per_area(QuestionCount::DEFAULT, 2)
     }
 
+    /// `ai`'s check of `candidate`: its three calls, in order, and their
+    /// answers made one, or the first call's failure.
+    fn check(
+        ai: &ScriptedAi,
+        candidate: &Candidate,
+    ) -> Result<QuestionCheckAnswers, RequestFailure> {
+        let mut answers = Vec::new();
+        for call in QuestionCheckCall::ALL {
+            answers.push(at_once(ai.check_question(
+                stamp(),
+                call,
+                &evidence(),
+                candidate,
+            )));
+        }
+        let answers = answers
+            .into_iter()
+            .map(|reply| reply.map(|reply| reply.content))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(CheckCallAnswers::merged(answers).expect("each call's answers once"))
+    }
+
     #[test]
     fn the_generator_writes_what_is_scripted_for_each_area_at_once_and_each_request_is_logged() {
         let ai = ScriptedAi::new();
@@ -918,21 +990,76 @@ mod tests {
         ai.on_check("Why retry?", Err(RequestFailure::TimedOut));
         ai.on_check("Why log?", Ok(answers(0.5, 0.5, 0.5)));
 
-        let first = at_once(ai.check_question(stamp(), &evidence(), &candidate("Why retry?")));
-        let other = at_once(ai.check_question(stamp(), &evidence(), &candidate("Why log?")));
-        let again = at_once(ai.check_question(stamp(), &evidence(), &candidate("Why retry?")));
+        let first = check(&ai, &candidate("Why retry?"));
+        let other = check(&ai, &candidate("Why log?"));
+        let again = check(&ai, &candidate("Why retry?"));
 
-        let first = first.expect("scripted to answer");
-        assert_eq!(first.content, answers(0.9, 0.1, 0.05), "as scripted");
-        assert_eq!(first.provenance.role(), Role::Jev);
-        assert_eq!(other.map(|reply| reply.content), Ok(answers(0.5, 0.5, 0.5)));
+        assert_eq!(first, Ok(answers(0.9, 0.1, 0.05)), "as scripted");
+        assert_eq!(other, Ok(answers(0.5, 0.5, 0.5)));
         assert_eq!(again, Err(RequestFailure::TimedOut));
         assert_eq!(
             ai.asked(),
-            ["Why retry?", "Why log?", "Why retry?"].map(|stem| Asked::CheckQuestion {
-                evidence: evidence(),
-                candidate: candidate(stem),
-            })
+            ["Why retry?", "Why log?", "Why retry?"]
+                .into_iter()
+                .flat_map(
+                    |stem| QuestionCheckCall::ALL.map(|call| Asked::CheckQuestion {
+                        call,
+                        evidence: evidence(),
+                        candidate: candidate(stem),
+                    })
+                )
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn each_call_of_a_check_answers_only_the_checks_it_asks_and_a_failure_fails_every_call() {
+        let ai = ScriptedAi::new();
+        ai.on_check("Why retry?", Ok(answers(0.9, 0.1, 0.05)));
+        ai.on_check("Why retry?", Err(RequestFailure::RateLimited));
+        let candidate = candidate("Why retry?");
+        let ask = |call| at_once(ai.check_question(stamp(), call, &evidence(), &candidate));
+
+        let ratings = ask(QuestionCheckCall::OptionRatings).expect("scripted to answer");
+        let hint = ask(QuestionCheckCall::Hint).expect("scripted to answer");
+        let rest = ask(QuestionCheckCall::Candidate).expect("scripted to answer");
+        let failed = QuestionCheckCall::ALL.map(|call| ask(call).err());
+
+        assert_eq!(
+            ratings.content.iter().collect::<Vec<_>>(),
+            answers(0.9, 0.1, 0.05).iter().collect::<Vec<_>>(),
+            "the option ratings"
+        );
+        assert_eq!(ratings.content.depth(), None);
+        assert_eq!(hint.content.iter().count(), 0, "none scripted");
+        assert_eq!(
+            rest.content.depth(),
+            Some(depth(0.2, 0.3, 0.5, 1.3)),
+            "the depth goes with the candidate call"
+        );
+        assert_eq!(rest.provenance.role(), Role::Jev);
+        assert_eq!(failed, [Some(RequestFailure::RateLimited); 3]);
+    }
+
+    #[test]
+    fn one_call_of_a_check_scripted_to_fail_fails_alone_and_its_retry_is_answered() {
+        let ai = ScriptedAi::new();
+        ai.on_check_call_failing(
+            "Why retry?",
+            QuestionCheckCall::Hint,
+            RequestFailure::TimedOut,
+        );
+        ai.on_check_passing("Why retry?");
+        let candidate = candidate("Why retry?");
+        let ask = |call| at_once(ai.check_question(stamp(), call, &evidence(), &candidate));
+
+        let first = QuestionCheckCall::ALL.map(|call| ask(call).err());
+        let retried = ask(QuestionCheckCall::Hint).expect("the check's own reply");
+
+        assert_eq!(first, [None, Some(RequestFailure::TimedOut), None]);
+        assert_eq!(
+            retried.content.iter().collect::<Vec<_>>(),
+            [(CandidateCheck::HintHidesAnswerKey, probability(0.9))]
         );
     }
 
@@ -948,8 +1075,8 @@ mod tests {
         );
         let candidate = candidate_with("Why retry?", "B", 2);
 
-        let passing = at_once(ai.check_question(stamp(), &evidence(), &candidate));
-        let except = at_once(ai.check_question(stamp(), &evidence(), &candidate));
+        let passing = check(&ai, &candidate);
+        let except = check(&ai, &candidate);
 
         let answers = |answers: &[(CandidateCheck, f64)]| {
             QuestionCheckAnswers::new(
@@ -960,7 +1087,7 @@ mod tests {
             )
         };
         assert_eq!(
-            passing.map(|reply| reply.content),
+            passing,
             Ok(answers(&[
                 (Answerable, 0.9),
                 (AboutArea, 0.9),
@@ -984,7 +1111,7 @@ mod tests {
              and needs reading the change"
         );
         assert_eq!(
-            except.map(|reply| reply.content),
+            except,
             Ok(answers(&[
                 (Answerable, 0.9),
                 (AboutArea, 0.9),
@@ -1016,15 +1143,13 @@ mod tests {
         ai.on_check_passing("Why retry?");
         let candidate = candidate("Why retry?");
 
-        let deep =
-            at_once(ai.check_question(stamp(), &evidence(), &candidate)).expect("scripted to pass");
-        let usual =
-            at_once(ai.check_question(stamp(), &evidence(), &candidate)).expect("scripted to pass");
+        let deep = check(&ai, &candidate).expect("scripted to pass");
+        let usual = check(&ai, &candidate).expect("scripted to pass");
 
-        assert_eq!(deep.content.depth(), deepest, "the depth scripted");
+        assert_eq!(deep.depth(), deepest, "the depth scripted");
         assert_eq!(
-            deep.content.iter().collect::<Vec<_>>(),
-            usual.content.iter().collect::<Vec<_>>(),
+            deep.iter().collect::<Vec<_>>(),
+            usual.iter().collect::<Vec<_>>(),
             "every other answer passes, as without a depth"
         );
     }
@@ -1246,7 +1371,9 @@ mod tests {
         ai.on_check_passing_at("Why?", depth(0.1, 0.2, 0.7, 1.6));
 
         let gate = at_once(ai.check_areas(stamp(), &evidence(), &areas)).expect("scripted");
-        let check = at_once(ai.check_question(stamp(), &evidence(), &candidate)).expect("scripted");
+        let checks = QuestionCheckCall::ALL.map(|call| {
+            at_once(ai.check_question(stamp(), call, &evidence(), &candidate)).expect("scripted")
+        });
 
         let gate_request = gate_request(&model, &evidence(), &areas);
         let gate_sent = sent(&gate_request);
@@ -1257,16 +1384,21 @@ mod tests {
                 (gate_sent[1].0, gate_sent[1].1, Some(0.9)),
             ]
         );
-        let check_request = question_check_request(&model, &evidence(), &candidate);
-        let exchanges = kept(check.provenance.exchanges());
-        assert_eq!(
-            exchanges
-                .iter()
-                .map(|&(name, instructions, _)| (name, instructions))
-                .collect::<Vec<_>>(),
-            sent(&check_request),
-            "every question the check sends"
-        );
+        for (call, check) in QuestionCheckCall::ALL.into_iter().zip(&checks) {
+            let check_request = question_check_request(&model, &evidence(), &candidate, call);
+            assert_eq!(
+                kept(check.provenance.exchanges())
+                    .iter()
+                    .map(|&(name, instructions, _)| (name, instructions))
+                    .collect::<Vec<_>>(),
+                sent(&check_request),
+                "every question the {call:?} call sends"
+            );
+        }
+        let exchanges: Vec<_> = checks
+            .iter()
+            .flat_map(|check| kept(check.provenance.exchanges()))
+            .collect();
         let answer = |asked: &str| {
             exchanges
                 .iter()
@@ -1282,7 +1414,7 @@ mod tests {
             [Some(0.9), Some(0.1), Some(0.9)]
         );
         assert_eq!(
-            check
+            checks[2]
                 .provenance
                 .exchanges()
                 .iter()

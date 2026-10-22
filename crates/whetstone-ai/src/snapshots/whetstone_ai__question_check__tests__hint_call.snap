@@ -1,0 +1,28 @@
+---
+source: crates/whetstone-ai/src/question_check.rs
+expression: pretty(&sent(call).await)
+---
+{
+  "model": "typesafe/jev-1.14",
+  "state": {
+    "candidate": {
+      "stem": "Why does the retry in `charge_with_retry` now reuse `original.key` instead of making a new `OperationKey`?",
+      "options": {
+        "A": "So that the provider treats the retry as the same charge, and a charge that went through before the timeout isn't made twice.",
+        "B": "So that the retry skips the provider's checks on the card and completes faster than the first attempt.",
+        "C": "So that the provider rejects the retry if the first attempt failed, and the caller sees the original timeout."
+      },
+      "hint": "Read what `Client::charge` says about a key the provider has already seen."
+    }
+  },
+  "questions": {
+    "hint_hides_answer_key": {
+      "type": "noul",
+      "instructions": "The candidate's hint doesn't reveal the correct option: someone reading the stem, the options and the hint couldn't tell which option is correct. The state holds only the candidate's stem, its options' text and its hint.",
+      "criteria": {
+        "false": "The hint reveals which option is correct, or rules options out.",
+        "true": "The hint leaves the learner to work out which option is correct."
+      }
+    }
+  }
+}

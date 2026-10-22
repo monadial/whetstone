@@ -24,10 +24,11 @@ use std::pin::Pin;
 
 use whetstone_core::{
     Area, AreaId, Candidate, CriterionOutcome, Evidence, Probability, Provenance, Question,
-    QuestionCheckAnswers, QuestionCount, RequestId, Versions, WrittenCandidate,
+    QuestionCount, RequestId, Versions, WrittenCandidate,
 };
 
 use crate::explanation::{ParagraphCheck, WrittenParagraph};
+use crate::question_check::{CheckCallAnswers, QuestionCheckCall};
 use crate::reasoning::QuestionWithoutKey;
 
 /// What Practice asks of Jev and the generator. The real implementation
@@ -60,14 +61,22 @@ pub trait Ai: fmt::Debug + Send + Sync {
         count: CandidateCount,
     ) -> Pending<Vec<WrittenCandidate>>;
 
-    /// Jev's question check of `candidate` against `evidence`, in one call:
-    /// a yes/no answer to each of [`Candidate::checks`], as returned.
+    /// One call of Jev's question check of `candidate` against `evidence`:
+    /// a yes/no answer to each of [`Candidate::checks`] that `call` asks
+    /// and, for the candidate call, the depth, as returned. A question check
+    /// is three calls, sent together, each sent only what its questions are
+    /// about ([`QuestionCheckCall`]), so the option ratings never see the
+    /// answer key. [`CheckCallAnswers::merged`] makes the three calls'
+    /// answers one [`QuestionCheckAnswers`].
+    ///
+    /// [`QuestionCheckAnswers`]: whetstone_core::QuestionCheckAnswers
     fn check_question(
         &self,
         stamp: Stamp,
+        call: QuestionCheckCall,
         evidence: &Evidence,
         candidate: &Candidate,
-    ) -> Pending<QuestionCheckAnswers>;
+    ) -> Pending<CheckCallAnswers>;
 
     /// Jev's assessment of the reasoning of the response the session store
     /// acknowledged saving with `saved`, written for `question`, against

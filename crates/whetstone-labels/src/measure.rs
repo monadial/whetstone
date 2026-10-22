@@ -225,8 +225,9 @@ mod tests {
 
         let measurements = measure(&connection(&server), &prepared, three()).await;
 
-        assert_eq!(server.received_requests().await.unwrap().len(), 6);
-        assert_eq!((measurements.runs, measurements.calls), (3, 6));
+        // The gate's call and the candidate's three, three times each.
+        assert_eq!(server.received_requests().await.unwrap().len(), 12);
+        assert_eq!((measurements.runs, measurements.calls), (3, 12));
         assert_eq!(measurements.failures, []);
         assert_eq!(answers(&measurements, "gate-retry/observability"), [0.1; 3]);
         assert_eq!(answers(&measurements, "gate-retry/domain"), [0.9; 3]);
@@ -241,7 +242,7 @@ mod tests {
         );
         assert_eq!(measurements.labels.len(), 2 + 17);
         assert_eq!(measurements.by_agent, 2 + 17);
-        assert!((measurements.cost - 0.0006).abs() < 1e-12);
+        assert!((measurements.cost - 0.0012).abs() < 1e-12);
         assert_eq!(measurements.cost_not_reported, 0);
         assert_eq!(
             measurements.reported_models,
@@ -289,7 +290,7 @@ mod tests {
         );
         assert_eq!(answers(&measurements, "gate-retry/domain"), [0.0; 0]);
         assert_eq!(answers(&measurements, "retry-key/option_a"), [0.9; 3]);
-        assert!((measurements.cost - 0.0003).abs() < 1e-12);
+        assert!((measurements.cost - 0.0009).abs() < 1e-12);
         assert_eq!(measurements.cost_not_reported, 3);
     }
 
