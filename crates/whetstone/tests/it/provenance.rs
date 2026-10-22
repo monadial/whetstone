@@ -129,6 +129,20 @@ fn assert_kept_as_sent(exchanges: &[JevExchange], sent: &JevRequest) {
                 assert_eq!(instructions, sent);
                 assert_eq!(levels, sent_levels);
             }
+            (
+                JevExchange::Choice {
+                    instructions,
+                    options,
+                    ..
+                },
+                JevQuestion::Choice {
+                    instructions: sent,
+                    options: sent_options,
+                },
+            ) => {
+                assert_eq!(instructions, sent);
+                assert_eq!(options, sent_options);
+            }
             (exchange, question) => {
                 unreachable!("{exchange:?} is kept for {question:?}, a question of another kind")
             }
@@ -144,7 +158,7 @@ fn answers(request: &SentRequest) -> Vec<(&str, f64)> {
         .iter()
         .filter_map(|exchange| match exchange {
             JevExchange::YesNo { name, answer, .. } => Some((name.as_str(), answer.get())),
-            JevExchange::Score { .. } => None,
+            JevExchange::Score { .. } | JevExchange::Choice { .. } => None,
         })
         .collect()
 }
@@ -278,7 +292,9 @@ fn each_call_of_each_check_is_in_the_record_with_every_question_it_sent_and_its_
             .iter()
             .find_map(|exchange| match exchange {
                 JevExchange::Score { name, answer, .. } if name == "depth" => Some(*answer),
-                JevExchange::YesNo { .. } | JevExchange::Score { .. } => None,
+                JevExchange::YesNo { .. }
+                | JevExchange::Score { .. }
+                | JevExchange::Choice { .. } => None,
             });
         let question = record
             .questions

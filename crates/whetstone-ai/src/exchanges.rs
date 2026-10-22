@@ -9,12 +9,13 @@ use crate::jev::{JevQuestion, JevReply, JevRequest};
 
 /// The exchanges of one Jev call, in question-name order: each question in
 /// `request`, with its name, its instructions and its meanings of yes and
-/// no, or its levels, beside its answer in `reply`, exactly as returned. A
-/// score question is the depth score, over three levels.
+/// no, its levels or its options, beside its answer in `reply`, exactly as
+/// returned. A score question is the depth score, over three levels.
 ///
 /// Fails with [`AiError::InvalidReply`] when an answer is missing, of
-/// another kind, out of range, or to a question that wasn't asked, or when
-/// a score isn't over three levels.
+/// another kind, out of range, or to a question that wasn't asked, when a
+/// score isn't over three levels, or when a choice's probabilities aren't
+/// for exactly the options asked.
 pub fn jev_exchanges(request: &JevRequest, reply: &JevReply) -> Result<Vec<JevExchange>, AiError> {
     let mut answers = Answers::of(reply);
     let exchanges = request
@@ -41,6 +42,19 @@ pub fn jev_exchanges(request: &JevRequest, reply: &JevReply) -> Result<Vec<JevEx
                     levels: levels.clone(),
                     answer: answers.depth(name)?,
                 },
+                JevQuestion::Choice {
+                    instructions,
+                    options,
+                } => JevExchange::Choice {
+                    name: name.clone(),
+                    instructions: instructions.clone(),
+                    options: options.clone(),
+                    answer: options
+                        .keys()
+                        .cloned()
+                        .zip(answers.choice(name, options.keys().map(String::as_str))?)
+                        .collect(),
+                },
             })
         })
         .collect::<Result<Vec<_>, AiError>>()?;
@@ -50,9 +64,12 @@ pub fn jev_exchanges(request: &JevRequest, reply: &JevReply) -> Result<Vec<JevEx
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use whetstone_core::{Depth, Probability};
 
     use super::*;
+    use crate::jev::JevAnswer;
     use crate::replay::sample_jev_request;
     use crate::samples::evaluated;
 
@@ -134,13 +151,74 @@ mod tests {
         );
     }
 
+    /// The sample request with a choice question, `pick`, over options A
+    /// and B, and the recorded reply with `answer` to it.
+    async fn with_choice(answer: &[(&str, f64)]) -> (JevRequest, JevReply) {
+        let mut request = sample_jev_request();
+        request.questions.insert(
+            "pick".to_owned(),
+            JevQuestion::choice("Which option?", [("A", "Option A."), ("B", "Option B.")]),
+        );
+        let mut reply = recorded().await;
+        reply.answers.insert(
+            "pick".to_owned(),
+            JevAnswer::Choice {
+                probabilities: answer
+                    .iter()
+                    .map(|&(label, answer)| (label.to_owned(), answer))
+                    .collect(),
+            },
+        );
+        (request, reply)
+    }
+
+    #[tokio::test]
+    async fn a_choice_is_kept_with_its_options_and_a_probability_for_each() {
+        let (request, reply) = with_choice(&[("A", 0.25), ("B", 0.75)]).await;
+
+        let exchanges = jev_exchanges(&request, &reply).expect("every question is answered");
+
+        assert_eq!(
+            exchanges.iter().find(|exchange| exchange.name() == "pick"),
+            Some(&JevExchange::Choice {
+                name: "pick".to_owned(),
+                instructions: "Which option?".to_owned(),
+                options: BTreeMap::from([
+                    ("A".to_owned(), "Option A.".to_owned()),
+                    ("B".to_owned(), "Option B.".to_owned()),
+                ]),
+                answer: BTreeMap::from([
+                    ("A".to_owned(), probability(0.25)),
+                    ("B".to_owned(), probability(0.75)),
+                ]),
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn a_choice_answered_for_other_options_or_not_with_probabilities_is_an_invalid_reply() {
+        for answer in [
+            &[("A", 1.0)][..],
+            &[("A", 0.5), ("C", 0.5)],
+            &[("A", 0.5), ("B", 0.25), ("C", 0.25)],
+            &[("A", 1.2), ("B", -0.2)],
+        ] {
+            let (request, reply) = with_choice(answer).await;
+
+            assert_eq!(
+                jev_exchanges(&request, &reply),
+                Err(AiError::InvalidReply),
+                "{answer:?}"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn an_answer_to_a_question_not_asked_is_an_invalid_reply() {
         let mut reply = recorded().await;
-        reply.answers.insert(
-            "option_b".to_owned(),
-            crate::jev::JevAnswer::YesNo { yes: 0.5 },
-        );
+        reply
+            .answers
+            .insert("option_b".to_owned(), JevAnswer::YesNo { yes: 0.5 });
 
         assert_eq!(
             jev_exchanges(&sample_jev_request(), &reply),

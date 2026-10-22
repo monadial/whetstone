@@ -360,8 +360,8 @@ mod tests {
 
     /// Asserts that `exchanges`, kept in a Jev reply's provenance, hold each
     /// question the request `body` sent Jev exactly as it was sent, in name
-    /// order: its instructions and its meanings of yes and no, or its
-    /// levels.
+    /// order: its instructions and its meanings of yes and no, its levels or
+    /// its options.
     fn assert_kept_as_sent(exchanges: &[JevExchange], body: &Value) {
         let sent = body["questions"]
             .as_object()
@@ -389,6 +389,14 @@ mod tests {
                     assert_eq!(question["instructions"], instructions.as_str());
                     assert_eq!(question["criteria"], serde_json::json!(levels));
                 }
+                JevExchange::Choice {
+                    instructions,
+                    options,
+                    ..
+                } => {
+                    assert_eq!(question["instructions"], instructions.as_str());
+                    assert_eq!(question["criteria"], serde_json::json!(options));
+                }
             }
         }
     }
@@ -399,7 +407,7 @@ mod tests {
             .iter()
             .filter_map(|exchange| match exchange {
                 JevExchange::YesNo { name, answer, .. } => Some((name.as_str(), answer.get())),
-                JevExchange::Score { .. } => None,
+                JevExchange::Score { .. } | JevExchange::Choice { .. } => None,
             })
             .collect()
     }
@@ -624,7 +632,9 @@ mod tests {
         let probability = |value| Probability::new(value).expect("from 0 to 1");
         let depth = kept.iter().find_map(|exchange| match exchange {
             JevExchange::Score { name, answer, .. } if name == "depth" => Some(*answer),
-            JevExchange::YesNo { .. } | JevExchange::Score { .. } => None,
+            JevExchange::YesNo { .. } | JevExchange::Score { .. } | JevExchange::Choice { .. } => {
+                None
+            }
         });
         assert_eq!(
             depth,

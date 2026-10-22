@@ -61,6 +61,33 @@ impl<'a> Answers<'a> {
         .map_err(|_| AiError::InvalidReply)
     }
 
+    /// The probability Jev answered the choice question `name` with for
+    /// each option of `labels`, in their order, as returned. The answer
+    /// must give a probability, from 0 to 1, for exactly those options.
+    pub(crate) fn choice<'l>(
+        &mut self,
+        name: &str,
+        labels: impl IntoIterator<Item = &'l str>,
+    ) -> Result<Vec<Probability>, AiError> {
+        let Some(JevAnswer::Choice { probabilities }) = self.unread.remove(name) else {
+            return Err(AiError::InvalidReply);
+        };
+        let answered: Vec<Probability> = labels
+            .into_iter()
+            .map(|label| {
+                probabilities
+                    .get(label)
+                    .and_then(|&answer| Probability::new(answer).ok())
+                    .ok_or(AiError::InvalidReply)
+            })
+            .collect::<Result<_, _>>()?;
+        if answered.len() == probabilities.len() {
+            Ok(answered)
+        } else {
+            Err(AiError::InvalidReply)
+        }
+    }
+
     /// Succeeds when every answer was read: the reply answered nothing it
     /// wasn't asked.
     pub(crate) fn done(self) -> Result<(), AiError> {

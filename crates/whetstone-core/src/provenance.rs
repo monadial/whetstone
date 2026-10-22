@@ -6,6 +6,7 @@
 //! and cost are kept only as a reply reports them, never estimated, and a
 //! session's [`SessionCost`] adds up what was reported.
 
+use std::collections::BTreeMap;
 use std::fmt;
 
 use crate::area::{AreaId, AreaSource};
@@ -156,6 +157,18 @@ pub enum JevExchange {
         levels: Vec<String>,
         /// Jev's answer.
         answer: Depth,
+    },
+    /// A choice question among labelled options, answered with a
+    /// probability for each option: the answer probe.
+    Choice {
+        /// The question's name in the request, such as `answer_probe`.
+        name: String,
+        /// What Jev was asked.
+        instructions: String,
+        /// What choosing each option means, by its label.
+        options: BTreeMap<String, String>,
+        /// Jev's answer: its probability for each option, by its label.
+        answer: BTreeMap<String, Probability>,
     },
 }
 
@@ -393,7 +406,7 @@ impl JevExchange {
     #[must_use]
     pub fn name(&self) -> &str {
         match self {
-            Self::YesNo { name, .. } | Self::Score { name, .. } => name,
+            Self::YesNo { name, .. } | Self::Score { name, .. } | Self::Choice { name, .. } => name,
         }
     }
 }
@@ -429,6 +442,24 @@ impl fmt::Debug for JevExchange {
                 .field(
                     "levels_bytes",
                     &levels.iter().map(String::len).collect::<Vec<usize>>(),
+                )
+                .field("answer", answer)
+                .finish(),
+            Self::Choice {
+                name,
+                instructions,
+                options,
+                answer,
+            } => f
+                .debug_struct("Choice")
+                .field("name", name)
+                .field("instructions_bytes", &instructions.len())
+                .field(
+                    "options_bytes",
+                    &options
+                        .iter()
+                        .map(|(label, meaning)| (label, meaning.len()))
+                        .collect::<BTreeMap<&String, usize>>(),
                 )
                 .field("answer", answer)
                 .finish(),
@@ -659,6 +690,18 @@ mod tests {
                 levels: vec!["One line".to_owned(), "The change".to_owned()],
                 answer: depth(1.25),
             },
+            JevExchange::Choice {
+                name: "answer_probe".to_owned(),
+                instructions: "Which option answers the stem?".to_owned(),
+                options: BTreeMap::from([
+                    ("A".to_owned(), "Option A answers it.".to_owned()),
+                    ("B".to_owned(), "Option B answers it.".to_owned()),
+                ]),
+                answer: BTreeMap::from([
+                    ("A".to_owned(), probability(0.3)),
+                    ("B".to_owned(), probability(0.7)),
+                ]),
+            },
         ];
 
         let provenance = Provenance::new(
@@ -675,13 +718,15 @@ mod tests {
             .iter()
             .map(JevExchange::name)
             .collect();
-        assert_eq!(names, ["option_a", "depth"]);
+        assert_eq!(names, ["option_a", "depth", "answer_probe"]);
         let debug = format!("{provenance:?}");
         for text in [
             "Given the evidence",
             "answers the question",
             "much does",
             "One line",
+            "Which option",
+            "Option A answers",
         ] {
             assert!(!debug.contains(text), "{debug}");
         }
