@@ -26,13 +26,15 @@
 //! ```
 //!
 //! The values above are the defaults, used for anything the file leaves out
-//! and for everything when there is no file. The cut-offs are the
-//! assessment policy's, the current policy's by default: a job's own makes its
-//! outcomes not comparable with the policy's, and every outcome records the
-//! cut-offs that banded it. Only this config sets them, never a
-//! repository's. The API key never lives in the
-//! file: it is read from `OPENROUTER_API_KEY`, once, as the config loads,
-//! and Practice asks Jev and the generator with it ([`Settings::openrouter`]).
+//! and for everything when there is no file. `[jev] model` must be one of
+//! `TypeSafe`'s models, since Jev requests can't ask `OpenRouter` for
+//! zero-retention routing yet; the generator's can be any. The cut-offs
+//! are the assessment policy's, the current policy's by default: a job's
+//! own makes its outcomes not comparable with the policy's, and every
+//! outcome records the cut-offs that banded it. Only this config sets them,
+//! never a repository's. The API key never lives in the file: it is read
+//! from `OPENROUTER_API_KEY`, once, as the config loads, and Practice asks
+//! Jev and the generator with it ([`Settings::openrouter`]).
 
 use std::path::{Path, PathBuf};
 use std::{fmt, fs, io};
