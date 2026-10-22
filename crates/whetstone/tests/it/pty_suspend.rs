@@ -265,6 +265,75 @@ fn a_termination_signal_while_suspended_ends_whetstone_without_taking_the_termin
 }
 
 #[test]
+fn a_termination_signal_after_a_stop_it_cannot_catch_ends_whetstone_without_redrawing() {
+    let home = TempDir::new().expect("create a temporary home");
+    let mut session = start(
+        &launch_suspend_and_fg(r#"kill -TERM "$(cat "$HOME/pid")""#),
+        &[("HOME", home.path())],
+    );
+    let mut recording = Recording::new(&mut session);
+
+    recording.wait_for("Quit");
+    send_signal(&home, "STOP");
+    let transcript = recording.finish();
+
+    transcript.assert_exit_code(143);
+    let resumed = transcript.since_resumed();
+    assert!(
+        !resumed.contains(ENTER_ALTERNATE_SCREEN),
+        "the alternate screen is not entered again after fg:\n{resumed:?}"
+    );
+    transcript.assert_terminal_restored();
+}
+
+/// The names of `whetstone`'s threads whose signal mask does not block
+/// `signal`, from the process ID the launch wrote to `$HOME/pid`.
+#[cfg(target_os = "linux")]
+fn threads_taking(home: &TempDir, signal: nix::sys::signal::Signal) -> Vec<String> {
+    let pid = recorded(home.path(), "pid");
+    let threads = std::fs::read_dir(format!("/proc/{pid}/task")).expect("list whetstone's threads");
+    let mut taking = Vec::new();
+    for thread in threads {
+        let thread = thread.expect("read a thread").path();
+        let status = std::fs::read_to_string(thread.join("status")).expect("read its status");
+        let blocked = status
+            .lines()
+            .find_map(|line| line.strip_prefix("SigBlk:"))
+            .expect("its status has its signal mask");
+        let blocked = u64::from_str_radix(blocked.trim(), 16).expect("the mask is in hex");
+        if blocked & (1 << (signal as i32 - 1)) == 0 {
+            let name = std::fs::read_to_string(thread.join("comm")).expect("read its name");
+            taking.push(name.trim().to_owned());
+        }
+    }
+    taking
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn only_one_thread_takes_the_signals_whetstone_acts_on() {
+    use nix::sys::signal::Signal;
+
+    let home = TempDir::new().expect("create a temporary home");
+    let mut session = start(RECORDING_PID, &[("HOME", home.path())]);
+    let mut recording = Recording::new(&mut session);
+
+    // By home, every thread is started, crossterm's input thread among them.
+    recording.wait_for("Quit");
+    for signal in [
+        Signal::SIGHUP,
+        Signal::SIGINT,
+        Signal::SIGTERM,
+        Signal::SIGTSTP,
+        Signal::SIGCONT,
+    ] {
+        assert_eq!(threads_taking(&home, signal), ["signals"], "{signal}");
+    }
+    recording.send("q");
+    recording.finish().assert_exit_code(0);
+}
+
+#[test]
 fn after_a_suspend_and_fg_every_exit_turns_every_mode_off_again() {
     // The crash trigger panics right after the first draw, before any
     // suspend.

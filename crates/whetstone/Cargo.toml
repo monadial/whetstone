@@ -56,8 +56,8 @@ futures-util = { version = "0.3", default-features = false }
 gix = { version = "0.89", default-features = false, features = ["sha1", "blob-diff", "parallel"] }
 # Blocks the signals the UI loop acts on in every thread but the one that
 # takes them, through safe calls, which neither std nor rustix offers.
-# Already in the tree through rexpect, which the pseudo-terminal tests use,
-# at the same version.
+# Already in the lock at this version, through rexpect, which the
+# pseudo-terminal tests use, but new to the release build.
 nix = { version = "0.31", default-features = false, features = ["signal"] }
 # Reads the links in touched Markdown as CommonMark defines them, with
 # reference links resolved and source positions for each. Without default
