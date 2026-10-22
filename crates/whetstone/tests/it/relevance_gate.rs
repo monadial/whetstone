@@ -20,7 +20,8 @@ use crate::session::Session;
 const OBSERVABILITY: usize = 2;
 
 /// The requests `ai` was asked, as what each was for: the areas the gate
-/// was asked about, the area written about, or the stem checked.
+/// was asked about, the area written about, or the stem checked, once per
+/// call of its check.
 fn asked_for(ai: &ScriptedAi) -> Vec<String> {
     ai.asked()
         .iter()
@@ -336,8 +337,8 @@ fn ask_anyway_writes_about_every_chosen_area_without_the_gate_and_still_checks_e
             .iter()
             .filter(|asked| asked.starts_with("check "))
             .count(),
-        6,
-        "every candidate is checked: {asked:#?}"
+        18,
+        "every candidate is checked, in three calls: {asked:#?}"
     );
     let text = session.text();
     assert!(text.contains("Question 1 of 4 · Domain"), "{text}");

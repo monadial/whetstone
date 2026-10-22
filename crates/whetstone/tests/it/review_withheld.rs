@@ -508,6 +508,7 @@ fn the_votes_never_reach_any_ai_request() {
             Asked::CheckQuestion {
                 evidence,
                 candidate,
+                ..
             } => (
                 evidence,
                 vec![

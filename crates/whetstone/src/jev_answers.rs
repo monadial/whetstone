@@ -10,6 +10,7 @@
 //! feedback gives only the words the bands lead to and never a number. The
 //! answers show here alone: they are never logged (rules 43 and 44).
 
+use whetstone_ai::QuestionCheckCall;
 use whetstone_core::{
     AppliedCutOffs, Assessed, AssessmentPolicy, Band, CandidateCheck, CutOffsOrigin, DepthLevel,
     Job, PolicyVersion, Probability, Provenance, Question, Validation,
@@ -84,7 +85,10 @@ fn question_check(question: &Question, requests: &[SentRequest]) -> Section {
     let policy = question.policy();
     let mut lines = vec![
         models_line(
-            &replied(requests, &Asking::Check(question.id().clone())),
+            &QuestionCheckCall::ALL
+                .into_iter()
+                .flat_map(|call| replied(requests, &Asking::Check(question.id().clone(), call)))
+                .collect::<Vec<_>>(),
             policy.version(),
         ),
         cut_offs_line(Job::QuestionCheck, policy.cut_offs(Job::QuestionCheck)),

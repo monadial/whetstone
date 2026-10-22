@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use whetstone_ai::{RequestFailure, ScriptedAi, Timeouts};
+use whetstone_ai::{QuestionCheckCall, RequestFailure, ScriptedAi, Timeouts};
 use whetstone_core::Role;
 
 use crate::preparing_questions::{DOMAIN, PAYMENT_LIFECYCLE, area_id, candidate, generate};
@@ -148,13 +148,16 @@ const STAGES: [Failing; 3] = [
     Failing {
         stage: "Checking questions",
         asks: Role::Jev,
+        // One call of the check fails, and the other two answer: a failure
+        // of any call fails the check.
         fail: |ai, failure| {
             ai.on_write(
                 &area_id(DOMAIN),
                 Ok(vec![candidate(STEM, "A", PAYMENT_LIFECYCLE)]),
             );
-            ai.on_check(STEM, Err(failure));
-            ai.on_check(STEM, Err(failure));
+            ai.on_check_call_failing(STEM, QuestionCheckCall::OptionRatings, failure);
+            ai.on_check_call_failing(STEM, QuestionCheckCall::OptionRatings, failure);
+            ai.on_check_passing(STEM);
         },
     },
 ];
@@ -219,7 +222,12 @@ fn an_invalid_reply_is_a_failure_with_retry_never_needs_review() {
         &area_id(DOMAIN),
         Ok(vec![candidate(STEM, "A", PAYMENT_LIFECYCLE)]),
     );
-    ai.on_check(STEM, Err(RequestFailure::InvalidReply));
+    // The candidate call's reply can't be read; the other calls answer.
+    ai.on_check_call_failing(
+        STEM,
+        QuestionCheckCall::Candidate,
+        RequestFailure::InvalidReply,
+    );
     ai.on_check_passing(STEM);
     let mut session = generate(&ai, &[DOMAIN], PAYMENT_LIFECYCLE, 120, 32);
     session.settle();

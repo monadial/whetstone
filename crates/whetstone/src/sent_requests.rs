@@ -19,7 +19,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use whetstone_ai::{Models, Reply, RequestFailure, Stamp, base_prompts_hash};
+use whetstone_ai::{Models, QuestionCheckCall, Reply, RequestFailure, Stamp, base_prompts_hash};
 use whetstone_core::{
     AreaFileVersion, AreaId, AssessmentPolicy, CandidateId, ContentHash, Provenance, RequestId,
     Role, SessionCost, Versions,
@@ -35,8 +35,9 @@ pub enum Asking {
     Gate,
     /// The generator, to write candidates about this area.
     Write(AreaId),
-    /// Jev, to check this candidate.
-    Check(CandidateId),
+    /// Jev, to check this candidate, in one of its question check's three
+    /// calls.
+    Check(CandidateId, QuestionCheckCall),
     /// Jev, to assess the reasoning of the response this acknowledges: its
     /// session, question and attempt.
     Evaluate(SavedResponse),
@@ -75,7 +76,7 @@ impl Asking {
     /// Who the request goes to.
     fn role(&self) -> Role {
         match self {
-            Self::Gate | Self::Check(_) | Self::Evaluate(_) | Self::CheckExplanation(_) => {
+            Self::Gate | Self::Check(..) | Self::Evaluate(_) | Self::CheckExplanation(_) => {
                 Role::Jev
             }
             Self::Write(_) | Self::Explain(_) => Role::Generator,
@@ -88,7 +89,7 @@ impl Asking {
         match self {
             Self::Gate => None,
             Self::Write(area) => Some(area),
-            Self::Check(candidate) => Some(candidate.area()),
+            Self::Check(candidate, _) => Some(candidate.area()),
             Self::Evaluate(saved) | Self::Explain(saved) | Self::CheckExplanation(saved) => {
                 Some(saved.question().area())
             }

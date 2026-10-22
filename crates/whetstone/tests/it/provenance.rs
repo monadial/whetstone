@@ -1,9 +1,10 @@
 //! Provenance in the session record: every request Practice sends is saved
 //! with what produced its result, as the result arrives. The record starts
 //! with each request that ended before the questions showed (the relevance
-//! gate, writing and each question check, which holds the depth), and each
-//! later one is saved as it ends (the reasoning's evaluation, the
-//! explanation and its check), before the outcomes it gives.
+//! gate, writing and each question check's three calls, the candidate call
+//! holding the depth), and each later one is saved as it ends (the
+//! reasoning's evaluation, the explanation and its check), before the
+//! outcomes it gives.
 //!
 //! Each request's provenance holds Whetstone's own identity for it, counting
 //! from 1 in the order sent; the models asked and answering; the versions
@@ -20,9 +21,9 @@ use whetstone::{
     Asking, Assessment, ExplanationCheck, NewRecord, RequestEnded, SentRequest, StoreEntry,
 };
 use whetstone_ai::{
-    Asked, JevQuestion, JevRequest, ParagraphCheck, QuestionWithoutKey, RequestFailure, ScriptedAi,
-    WrittenParagraph, base_prompts_hash, explanation_check_request, question_check_request,
-    reasoning_request,
+    Asked, JevQuestion, JevRequest, ParagraphCheck, QuestionCheckCall, QuestionWithoutKey,
+    RequestFailure, ScriptedAi, WrittenParagraph, base_prompts_hash, explanation_check_request,
+    question_check_request, reasoning_request,
 };
 use whetstone_core::{
     Area, AreaFileVersion, AreaSource, AssessmentPolicy, ContentHash, CriterionOutcome,
@@ -182,18 +183,24 @@ fn the_record_starts_with_each_request_before_the_questions_with_its_provenance(
     session.settle();
 
     let record = started(&session);
-    let questions: Vec<Asking> = record
+    let checks: Vec<Asking> = record
         .questions
         .iter()
-        .map(|question| Asking::Check(question.id().clone()))
+        .flat_map(|question| {
+            QuestionCheckCall::ALL.map(|call| Asking::Check(question.id().clone(), call))
+        })
         .collect();
     let asking: Vec<&Asking> = record.requests.iter().map(|sent| &sent.asking).collect();
     assert_eq!(
         asking[..2],
         [&Asking::Gate, &Asking::Write(area_id(DOMAIN))]
     );
-    assert_eq!(asking[2..].len(), 4, "a check of each question: {asking:?}");
-    for check in &questions {
+    assert_eq!(
+        asking[2..].len(),
+        12,
+        "each call of each question's check: {asking:?}"
+    );
+    for check in &checks {
         assert!(asking.contains(&check), "{check:?}");
     }
     let mut identities: Vec<u64> = record
@@ -205,7 +212,7 @@ fn the_record_starts_with_each_request_before_the_questions_with_its_provenance(
     identities.sort_unstable();
     assert_eq!(
         identities,
-        [1, 2, 3, 4, 5, 6],
+        (1..=14).collect::<Vec<u64>>(),
         "each its own, in the order sent"
     );
     for sent in &record.requests {
@@ -236,9 +243,20 @@ fn the_record_starts_with_each_request_before_the_questions_with_its_provenance(
         write.provenance.generation(),
         Some(&GenerationId::new("scripted-generation-2".to_owned()))
     );
+}
 
-    for asked in &asked {
+#[test]
+fn each_call_of_each_check_is_in_the_record_with_every_question_it_sent_and_its_answer() {
+    let ai = writing_about_the_domain(4, PAYMENT_LIFECYCLE);
+    let mut session = generate(&ai, &[DOMAIN], PAYMENT_LIFECYCLE, 120, 32);
+
+    session.settle();
+
+    let record = started(&session);
+    let jev = ModelId::new(SCRIPTED_JEV.to_owned());
+    for asked in &ai.asked() {
         let Asked::CheckQuestion {
+            call,
             evidence,
             candidate,
         } = asked
@@ -248,12 +266,12 @@ fn the_record_starts_with_each_request_before_the_questions_with_its_provenance(
         let check = record
             .requests
             .iter()
-            .find(|sent| sent.asking == Asking::Check(candidate.id().clone()))
-            .expect("each check is in the record");
-        let request = question_check_request(&jev, evidence, candidate);
+            .find(|sent| sent.asking == Asking::Check(candidate.id().clone(), *call))
+            .expect("each call of each check is in the record");
+        assert_eq!(check.provenance.role(), Role::Jev);
+        assert_eq!(check.provenance.reported_model(), Some(&jev));
+        let request = question_check_request(&jev, evidence, candidate, *call);
         assert_kept_as_sent(check.provenance.exchanges(), &request);
-        assert!(answers(check).contains(&("option_a", 0.9)), "{check:?}");
-        assert!(answers(check).contains(&("option_b", 0.1)), "{check:?}");
         let depth = check
             .provenance
             .exchanges()
@@ -261,14 +279,31 @@ fn the_record_starts_with_each_request_before_the_questions_with_its_provenance(
             .find_map(|exchange| match exchange {
                 JevExchange::Score { name, answer, .. } if name == "depth" => Some(*answer),
                 JevExchange::YesNo { .. } | JevExchange::Score { .. } => None,
-            })
-            .expect("the depth, with the question check");
+            });
         let question = record
             .questions
             .iter()
             .find(|question| question.id() == candidate.id())
             .expect("each checked candidate passed");
-        assert_eq!(depth, question.depth(), "the depth the question holds");
+        match call {
+            QuestionCheckCall::OptionRatings => {
+                assert!(answers(check).contains(&("option_a", 0.9)), "{check:?}");
+                assert!(answers(check).contains(&("option_b", 0.1)), "{check:?}");
+                assert_eq!(depth, None);
+            }
+            QuestionCheckCall::Hint => {
+                assert_eq!(answers(check), [("hint_hides_answer_key", 0.9)]);
+                assert_eq!(depth, None);
+            }
+            QuestionCheckCall::Candidate => {
+                assert!(answers(check).contains(&("answerable", 0.9)), "{check:?}");
+                assert_eq!(
+                    depth,
+                    Some(question.depth()),
+                    "the depth the question holds, with the candidate call"
+                );
+            }
+        }
     }
 }
 
@@ -307,7 +342,7 @@ fn kinds(log: &[StoreEntry]) -> Vec<String> {
             StoreEntry::Request { request, .. } => match request.asking {
                 Asking::Gate => "request: gate",
                 Asking::Write(_) => "request: write",
-                Asking::Check(_) => "request: check",
+                Asking::Check(..) => "request: check",
                 Asking::Evaluate(_) => "request: evaluate",
                 Asking::Explain(_) => "request: explain",
                 Asking::CheckExplanation(_) => "request: check explanation",
@@ -376,8 +411,8 @@ fn each_later_request_is_saved_as_it_ends_before_the_outcomes_it_gives() {
     assert_eq!(check.asking, Asking::CheckExplanation(saved.clone()));
     assert_eq!(
         [&evaluate, &explain, &check].map(|sent| sent.provenance.request()),
-        [7, 8, 9].map(RequestId::new),
-        "after the gate, the write and four checks"
+        [15, 16, 17].map(RequestId::new),
+        "after the gate, the write and four checks of three calls each"
     );
     for sent in [&evaluate, &explain, &check] {
         assert_eq!(sent.ended, RequestEnded::Replied);
@@ -403,7 +438,7 @@ fn each_later_request_is_saved_as_it_ends_before_the_outcomes_it_gives() {
     assert_eq!(explain.provenance.role(), Role::Generator);
     assert_eq!(
         explain.provenance.generation(),
-        Some(&GenerationId::new("scripted-generation-8".to_owned()))
+        Some(&GenerationId::new("scripted-generation-16".to_owned()))
     );
     assert_eq!(
         answers(&check),
@@ -448,7 +483,7 @@ fn a_request_that_fails_is_saved_with_its_failure_and_no_reply() {
         evaluate.ended,
         RequestEnded::Failed(RequestFailure::TimedOut)
     );
-    assert_eq!(evaluate.provenance.request(), RequestId::new(7));
+    assert_eq!(evaluate.provenance.request(), RequestId::new(15));
     assert_eq!(evaluate.provenance.role(), Role::Jev);
     assert_eq!(
         evaluate.provenance.requested_model().as_str(),
@@ -480,7 +515,7 @@ fn a_request_still_running_when_the_learner_leaves_is_saved_as_cancelled() {
         evaluate.ended,
         RequestEnded::Failed(RequestFailure::Cancelled)
     );
-    assert_eq!(evaluate.provenance.request(), RequestId::new(7));
+    assert_eq!(evaluate.provenance.request(), RequestId::new(15));
 }
 
 #[test]
@@ -524,7 +559,7 @@ fn every_request_in_a_run_has_its_own_identity_across_practices() {
         panic!("two records: {records:?}");
     };
     assert_eq!(first[..2], [1, 2]);
-    assert_eq!(second[..2], [7, 8], "after the first Practice's six");
+    assert_eq!(second[..2], [15, 16], "after the first Practice's fourteen");
 }
 
 #[test]
@@ -550,7 +585,7 @@ fn an_evaluation_the_learner_cancels_is_saved_as_cancelled() {
         evaluate.ended,
         RequestEnded::Failed(RequestFailure::Cancelled)
     );
-    assert_eq!(evaluate.provenance.request(), RequestId::new(7));
+    assert_eq!(evaluate.provenance.request(), RequestId::new(15));
     assert_eq!(evaluate.provenance.reported_model(), None);
 }
 
@@ -613,8 +648,8 @@ fn an_area_file_from_the_repository_goes_into_each_request_with_its_source_and_h
     );
     assert_eq!(
         record.requests.len(),
-        3,
-        "the gate, the write and the check"
+        5,
+        "the gate, the write and the check's three calls"
     );
     for sent in &record.requests {
         assert_eq!(

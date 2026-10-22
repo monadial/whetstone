@@ -25,10 +25,11 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
-use whetstone_ai::{ParagraphCheck, Reply, RequestFailure, WrittenParagraph};
+use whetstone_ai::{
+    CheckCallAnswers, ParagraphCheck, QuestionCheckCall, Reply, RequestFailure, WrittenParagraph,
+};
 use whetstone_core::{
-    AreaId, CandidateId, ChangeSize, CommitId, Connections, Probability, QuestionCheckAnswers,
-    WrittenCandidate,
+    AreaId, CandidateId, ChangeSize, CommitId, Connections, Probability, WrittenCandidate,
 };
 
 use crate::connected_code::GraphOrigin;
@@ -77,13 +78,15 @@ pub enum JobOutput {
         /// The candidates as written, or why the request failed.
         reply: Result<Reply<Vec<WrittenCandidate>>, RequestFailure>,
     },
-    /// Jev's answers to one candidate's question check, or why the request
-    /// failed.
+    /// Jev's answers to one call of a candidate's question check, or why
+    /// the request failed.
     Checked {
         /// The candidate checked.
         candidate: CandidateId,
+        /// The call.
+        call: QuestionCheckCall,
         /// Jev's answers as returned, or why the request failed.
-        reply: Result<Reply<QuestionCheckAnswers>, RequestFailure>,
+        reply: Result<Reply<CheckCallAnswers>, RequestFailure>,
     },
     /// Jev's answers to whether a saved response's reasoning meets each
     /// criterion, or why the request failed.

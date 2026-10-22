@@ -8,9 +8,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use whetstone_ai::{Asked, RequestFailure, ScriptedAi};
+use whetstone_ai::{Asked, QuestionCheckCall, RequestFailure, ScriptedAi};
 use whetstone_core::{
-    AreaId, CandidateCheck, ConnectionsState, OptionLetter, Probability, QuestionType,
+    AreaId, CandidateCheck, ConnectionsState, Evidence, OptionLetter, Probability, QuestionType,
     WrittenCandidate, WrittenCitation, WrittenCriterion, WrittenOption,
 };
 
@@ -201,7 +201,7 @@ fn generate_questions_writes_checks_and_shows_the_first_of_the_questions_that_pa
     };
     assert_eq!(area.id(), &area_id(DOMAIN));
     assert_eq!(count.get(), 6, "4 questions and 2 more, for one area");
-    assert_eq!(checks.len(), 6, "one check per candidate");
+    assert_eq!(checks.len(), 18, "a check of three calls per candidate");
     let text = session.text();
     assert!(text.contains("Question 1 of 4"), "{text}");
     assert!(text.contains("Domain"), "{text}");
@@ -275,8 +275,12 @@ fn one_generator_call_per_chosen_area_goes_out_at_once_then_one_check_per_candid
         .collect();
     assert_eq!(
         checked,
-        [domain.clone(), infrastructure.clone()].concat(),
-        "every candidate checked before any check replies, in the order written"
+        [domain.clone(), infrastructure.clone()]
+            .concat()
+            .into_iter()
+            .flat_map(|stem| [stem.clone(), stem.clone(), stem])
+            .collect::<Vec<_>>(),
+        "each call of every candidate's check sent before any replies, in the order written"
     );
     assert!(session.text().contains("Preparing questions"));
 
@@ -396,15 +400,17 @@ fn a_failed_request_at_80x24() {
 }
 
 /// The requests `ai` was asked, as what each was for: the area written
-/// about, the stem checked, or the stem whose reasoning was assessed or
-/// explained, or whose explanation was checked.
+/// about, the stem checked with the call, or the stem whose reasoning was
+/// assessed or explained, or whose explanation was checked.
 fn asked_for(ai: &ScriptedAi) -> Vec<String> {
     ai.asked()
         .iter()
         .map(|asked| match asked {
             Asked::CheckAreas { .. } => "gate".to_owned(),
             Asked::WriteCandidates { area, .. } => format!("write {}", area.id()),
-            Asked::CheckQuestion { candidate, .. } => format!("check {}", candidate.stem()),
+            Asked::CheckQuestion {
+                call, candidate, ..
+            } => format!("check {} ({call:?})", candidate.stem()),
             Asked::AssessReasoning { stem, .. } => format!("assess {stem}"),
             Asked::Explain { stem, .. } => format!("explain {stem}"),
             Asked::CheckExplanation { stem, .. } => format!("check the explanation of {stem}"),
@@ -441,14 +447,23 @@ fn the_showcase_changes_connected_code_reaches_the_evidence_the_generator_and_je
             evidence: written_from,
             ..
         },
-        Asked::CheckQuestion {
-            evidence: checked_against,
-            ..
-        },
+        checks @ ..,
     ] = asked.as_slice()
     else {
         panic!("the relevance gate, one write and one check: {asked:#?}");
     };
+    let checked_against: Vec<&Evidence> = checks
+        .iter()
+        .filter_map(|asked| match asked {
+            Asked::CheckQuestion { evidence, .. } => Some(evidence),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        checked_against.len(),
+        3,
+        "one check's three calls: {asked:#?}"
+    );
     assert_eq!(written_from.connections_state(), ConnectionsState::Found);
     assert_ne!(
         written_from.connections().len(),
@@ -467,7 +482,7 @@ fn the_showcase_changes_connected_code_reaches_the_evidence_the_generator_and_je
         "the change's own message"
     );
     assert_eq!(
-        checked_against, written_from,
+        checked_against, [written_from; 3],
         "Jev checks against the same evidence"
     );
     assert!(session.text().contains("Served?"));
@@ -520,7 +535,7 @@ fn when_finding_connected_code_takes_too_long_questions_are_written_without_it()
         "the analysis's late result changes nothing:\n{}",
         session.text()
     );
-    assert_eq!(ai.asked().len(), 3, "nothing is asked again");
+    assert_eq!(ai.asked().len(), 5, "nothing is asked again");
 }
 
 #[test]
@@ -701,7 +716,11 @@ fn retry_after_a_failed_write_asks_again_only_for_the_area_that_failed() {
         ],
         "neither the gate nor the domain area is asked again"
     );
-    assert_eq!(asked.len(), 10, "then every candidate is checked once");
+    assert_eq!(
+        asked.len(),
+        22,
+        "then every call of every candidate's check is sent once"
+    );
     submit(&mut session, "a", "Because.");
     session.press("<Enter>");
     assert_eq!(
@@ -711,7 +730,7 @@ fn retry_after_a_failed_write_asks_again_only_for_the_area_that_failed() {
 }
 
 #[test]
-fn retry_after_a_failed_check_asks_again_only_for_the_check_that_failed() {
+fn retry_after_a_failed_check_asks_again_only_for_the_call_that_failed() {
     let ai = Arc::new(ScriptedAi::new());
     let stems = stems("Domain", 6);
     ai.on_write(
@@ -723,7 +742,7 @@ fn retry_after_a_failed_check_asks_again_only_for_the_check_that_failed() {
     );
     for (index, stem) in stems.iter().enumerate() {
         if index == 2 {
-            ai.on_check(stem, Err(RequestFailure::TimedOut));
+            ai.on_check_call_failing(stem, QuestionCheckCall::Hint, RequestFailure::TimedOut);
         }
         ai.on_check_passing(stem);
     }
@@ -749,7 +768,7 @@ fn retry_after_a_failed_check_asks_again_only_for_the_check_that_failed() {
     session.press("<Enter>");
     session.settle();
 
-    assert_eq!(asked_for(&ai)[asked..], ["check Domain question 3?"]);
+    assert_eq!(asked_for(&ai)[asked..], ["check Domain question 3? (Hint)"]);
     assert_eq!(
         session.question().row_with("Question 1"),
         "Question 1 of 4 · Domain"

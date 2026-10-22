@@ -88,8 +88,8 @@ pub struct NewRecord {
     /// The evidence the questions cite, exactly as it was sent.
     pub evidence: Evidence,
     /// Every request that ended so far, in the order they ended: the
-    /// relevance gate, writing and each question check, with what produced
-    /// each result.
+    /// relevance gate, writing and each call of each question check, with
+    /// what produced each result.
     pub requests: Vec<SentRequest>,
 }
 

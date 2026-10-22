@@ -1,7 +1,9 @@
 //! Labelled examples made ready for Jev: each example checked against the
-//! showcase project and turned into the one Jev call Practice would make
-//! for it, with the requests lane's builders, and the labels that call's
-//! answers are measured against.
+//! showcase project and turned into the Jev calls Practice would make for
+//! it, with the requests lane's builders, and the labels those calls'
+//! answers are measured against. Each example is one call, but a candidate
+//! example's question check is up to three, as in Practice: one for each
+//! of its calls that asks a check the example labels.
 //!
 //! Each example's evidence is its showcase commit's change, with every file
 //! the outbound review would send by default and no connected code: the
@@ -18,9 +20,10 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use whetstone_ai::{
-    AiError, JevReply, JevRequest, QuestionWithoutKey, WrittenParagraph, explanation_check_answers,
-    explanation_check_request, gate_answers, gate_request, question_check_answers,
-    question_check_name, question_check_request, reasoning_answers, reasoning_request,
+    AiError, JevReply, JevRequest, QuestionCheckCall, QuestionWithoutKey, WrittenParagraph,
+    explanation_check_answers, explanation_check_request, gate_answers, gate_request,
+    question_check_answers, question_check_name, question_check_request, reasoning_answers,
+    reasoning_request,
 };
 use whetstone_core::{
     Area, AssessmentPolicy, Candidate, CandidateCheck, Change, Citation, ConnectedCodeLimit,
@@ -40,7 +43,7 @@ use crate::labels::{
 /// editor's limit (rule 58).
 const REASONING_LIMIT: usize = 4_000;
 
-/// The labelled examples, each as the Jev call that measures it.
+/// The labelled examples, each as the Jev calls that measure it.
 #[derive(Debug)]
 pub struct Prepared {
     model: ModelId,
@@ -55,11 +58,23 @@ impl Prepared {
         &self.model
     }
 
-    /// One call per example: the gate examples', then the candidates',
-    /// the responses' and the explanations', each in file order.
+    /// The gate examples' calls, then the candidates', the responses' and
+    /// the explanations', each in file order: one per example, but up to
+    /// three for a candidate example, one for each call of its question
+    /// check that asks a check it labels, in [`QuestionCheckCall::ALL`]
+    /// order.
     #[must_use]
     pub fn calls(&self) -> &[Call] {
         &self.calls
+    }
+
+    /// How many examples the calls measure: a candidate example's calls
+    /// count as one.
+    #[must_use]
+    pub fn examples(&self) -> usize {
+        let mut examples: Vec<&ExampleId> = self.calls.iter().map(Call::example).collect();
+        examples.dedup();
+        examples.len()
     }
 
     /// Every label, in call order.
@@ -114,7 +129,8 @@ impl SkipReason {
     pub const ALL: [Self; 2] = [Self::OwnRepository, Self::NotInEvidence];
 }
 
-/// One example's Jev call, and the labels its answers are measured against.
+/// One of an example's Jev calls, and the labels its answers are measured
+/// against.
 pub struct Call {
     example: ExampleId,
     request: JevRequest,
@@ -151,8 +167,8 @@ impl Call {
                 .into_iter()
                 .map(|(_, answer)| answer)
                 .collect()),
-            Reader::QuestionCheck(candidate, checks) => {
-                let answers = question_check_answers(candidate, reply)?;
+            Reader::QuestionCheck(candidate, call, checks) => {
+                let answers = question_check_answers(candidate, *call, reply)?;
                 checks
                     .iter()
                     .map(|&check| answers.get(check).ok_or(AiError::InvalidReply))
@@ -188,8 +204,9 @@ impl fmt::Debug for Call {
 /// How a call's reply is read: what its decoder needs.
 enum Reader {
     Gate(Vec<Area>),
-    /// The candidate, and the checks its labels measure, in order.
-    QuestionCheck(Box<Candidate>, Vec<CandidateCheck>),
+    /// The candidate, the call of its question check, and the checks of
+    /// that call its labels measure, in order.
+    QuestionCheck(Box<Candidate>, QuestionCheckCall, Vec<CandidateCheck>),
     Reasoning(Vec<Criterion>),
     ExplanationCheck(Vec<WrittenParagraph>),
 }
@@ -355,17 +372,19 @@ pub enum ParagraphDrop {
 
 impl Labels {
     /// Checks every example against `showcase` and turns it into the Jev
-    /// call Practice would make for it, asking `model`:
+    /// calls Practice would make for it, asking `model`:
     ///
     /// - a gate example, the relevance gate for its commit and labelled
     ///   areas;
-    /// - a candidate example, its question check, once it passes the plain
-    ///   checks;
+    /// - a candidate example, once it passes the plain checks, each call of
+    ///   its question check that asks a check it labels: all three for a
+    ///   labelled example, and for a learner's vote the one that asks the
+    ///   check voted on;
     /// - a response example, the reasoning request for its candidate's
     ///   question;
     /// - an explanation example, the explanation check of its paragraphs.
     ///
-    /// Each label becomes an [`Item`] of its call's job. A learner's vote the
+    /// Each label becomes an [`Item`] of its check's job. A learner's vote the
     /// tool can't send as Practice sent it is [skipped](Prepared::skipped).
     /// Fails on the first
     /// example that names a commit, area or candidate there isn't; whose
@@ -388,9 +407,9 @@ impl Labels {
         let mut skipped = Vec::new();
         for candidate in self.candidates() {
             match candidate_call(showcase, model, candidate)? {
-                Candidacy::Call(prepared) => {
-                    let (call, evidence, question) = *prepared;
-                    calls.push(call);
+                Candidacy::Calls(prepared) => {
+                    let (checks, evidence, question) = *prepared;
+                    calls.extend(checks);
                     questions.insert(candidate.example().id(), (evidence, question));
                 }
                 Candidacy::Skipped(reason) => skipped.push(Skipped {
@@ -442,17 +461,18 @@ fn gate_call(
     })
 }
 
-/// What a candidate example makes: its call, or why a learner's vote is
+/// What a candidate example makes: its calls, or why a learner's vote is
 /// skipped.
 enum Candidacy {
-    /// Its question check, with its evidence and its question as its labels
-    /// judge it, boxed.
-    Call(Box<(Call, Evidence, Result<Question, Withheld>)>),
+    /// The calls of its question check that ask a check it labels, with its
+    /// evidence and its question as its labels judge it, boxed.
+    Calls(Box<(Vec<Call>, Evidence, Result<Question, Withheld>)>),
     Skipped(SkipReason),
 }
 
-/// The candidate's question check, with its evidence and its question as
-/// its labels judge it, or why the tool skips it, a learner's vote.
+/// The calls of the candidate's question check that ask a check it labels,
+/// with its evidence and its question as its labels judge it, or why the
+/// tool skips it, a learner's vote.
 fn candidate_call(
     showcase: &ShowcaseProject,
     model: &ModelId,
@@ -505,19 +525,35 @@ fn candidate_call(
             .map(|((check, key), label)| (check, key, label))
             .collect()
     };
-    let call = Call {
-        example: example.id().to_owned(),
-        request: question_check_request(model, &evidence, passed),
-        items: checks
-            .iter()
-            .zip(&keys)
-            .zip(&labels)
-            .map(|((check, key), label)| item(example, key, check.job(), label))
-            .collect(),
-        reader: Reader::QuestionCheck(Box::new(passed.clone()), checks.clone()),
-    };
+    // Each call that asks a labelled check, as Practice sends it: a vote's
+    // other calls would measure nothing.
+    let calls = QuestionCheckCall::ALL
+        .into_iter()
+        .filter_map(|call| {
+            let labelled: Vec<(CandidateCheck, &String, &Label)> = checks
+                .iter()
+                .zip(&keys)
+                .zip(&labels)
+                .filter(|((check, _), _)| QuestionCheckCall::of(**check) == call)
+                .map(|((check, key), label)| (*check, key, label))
+                .collect();
+            (!labelled.is_empty()).then(|| Call {
+                example: example.id().to_owned(),
+                request: question_check_request(model, &evidence, passed, call),
+                items: labelled
+                    .iter()
+                    .map(|&(check, key, label)| item(example, key, check.job(), label))
+                    .collect(),
+                reader: Reader::QuestionCheck(
+                    Box::new(passed.clone()),
+                    call,
+                    labelled.iter().map(|&(check, ..)| check).collect(),
+                ),
+            })
+        })
+        .collect();
     let question = as_labelled(passed.clone(), checks.into_iter().zip(&labels));
-    Ok(Candidacy::Call(Box::new((call, evidence, question))))
+    Ok(Candidacy::Calls(Box::new((calls, evidence, question))))
 }
 
 fn response_call(
@@ -850,38 +886,57 @@ mod tests {
         assert_eq!(call.items()[1].label().by(), &Labeller::Agent);
     }
 
-    #[test]
-    fn a_candidate_example_asks_its_question_check_with_each_label_in_its_job() {
-        let prepared = prepared(CANDIDATE).unwrap();
-
-        let [call] = prepared.calls() else {
-            panic!("expected one call: {prepared:?}");
-        };
-        let mut asked: Vec<&str> = call
-            .request()
+    /// The names of the questions `call` asks, but depth.
+    fn asked(call: &Call) -> Vec<&str> {
+        call.request()
             .questions
             .keys()
             .map(String::as_str)
-            .collect();
-        asked.retain(|name| *name != "depth");
-        let mut labelled: Vec<&str> = names(call)
-            .into_iter()
-            .map(|name| name.trim_start_matches("retry-key/"))
-            .collect();
-        labelled.sort_unstable();
+            .filter(|name| *name != "depth")
+            .collect()
+    }
+
+    #[test]
+    fn a_candidate_example_asks_its_question_check_in_three_calls_with_each_label_in_its_job() {
+        let prepared = prepared(CANDIDATE).unwrap();
+
+        let [ratings, hint, rest] = prepared.calls() else {
+            panic!("expected three calls: {prepared:?}");
+        };
+        for call in [ratings, hint, rest] {
+            let labelled: Vec<&str> = names(call)
+                .into_iter()
+                .map(|name| name.trim_start_matches("retry-key/"))
+                .collect();
+            let mut asked = asked(call);
+            asked.sort_unstable();
+            let mut sorted = labelled.clone();
+            sorted.sort_unstable();
+            assert_eq!(
+                sorted, asked,
+                "every question each call asks but depth is labelled"
+            );
+        }
         assert_eq!(
-            labelled, asked,
-            "every question asked but depth is labelled"
+            asked(ratings),
+            ["no_giveaway", "option_a", "option_b", "option_c"]
         );
+        assert!(
+            !ratings.request().state.to_string().contains("answer_key"),
+            "the option ratings call, as Practice sends it"
+        );
+        assert_eq!(asked(hint), ["hint_hides_answer_key"]);
+        assert!(rest.request().questions.contains_key("depth"));
         let job = |name: &str| {
-            call.items()
-                .iter()
+            prepared
+                .items()
                 .find(|item| item.name() == format!("retry-key/{name}"))
                 .map(Item::job)
         };
         assert_eq!(job("answerable"), Some(Job::QuestionCheck));
         assert_eq!(job("criterion_2"), Some(Job::QuestionCheck));
         assert_eq!(job("criterion_1_minimum"), Some(Job::QuestionCheck));
+        assert_eq!(job("no_giveaway"), Some(Job::QuestionCheck));
         assert_eq!(job("option_b"), Some(Job::OptionRating));
         assert_eq!(job("rationale_c"), Some(Job::RationaleAndHintChecks));
         assert_eq!(
@@ -913,7 +968,7 @@ mod tests {
     }
 
     #[test]
-    fn a_learner_vote_labels_only_the_check_it_voted_on_and_its_call_measures_only_that() {
+    fn a_learner_vote_labels_only_the_check_it_voted_on_and_only_its_call_is_sent() {
         let prepared = prepared(&vote("", "no_giveaway = \"yes\"\noption_b = \"no\"\n")).unwrap();
 
         let [call] = prepared.calls() else {
@@ -928,11 +983,18 @@ mod tests {
         );
         assert_eq!(call.items()[0].job(), Job::QuestionCheck);
         assert_eq!(call.items()[1].job(), Job::OptionRating);
-        assert!(
-            call.request().questions.contains_key("answerable"),
-            "Jev is asked the whole question check, as in Practice"
+        assert_eq!(
+            asked(call),
+            ["no_giveaway", "option_a", "option_b", "option_c"],
+            "Jev is asked the option ratings call whole, as in Practice"
         );
         assert_eq!(prepared.skipped(), []);
+
+        let hint = crate::samples::prepared(&vote("", "hint_hides_answer_key = \"no\"\n")).unwrap();
+        let [call] = hint.calls() else {
+            panic!("expected one call: {hint:?}");
+        };
+        assert_eq!(asked(call), ["hint_hides_answer_key"]);
     }
 
     #[test]
@@ -1003,7 +1065,7 @@ mod tests {
     fn a_response_example_asks_reasoning_for_its_candidate_s_question_per_criterion() {
         let prepared = prepared(&format!("{CANDIDATE}{RESPONSE}")).unwrap();
 
-        let call = &prepared.calls()[1];
+        let call = prepared.calls().last().unwrap();
         assert_eq!(
             names(call),
             [
@@ -1042,7 +1104,7 @@ mod tests {
         );
         let kept = RESPONSE.replace(", criterion_2 = \"no\"", "");
         let prepared = prepared(&format!("{asks_too_much}{kept}")).unwrap();
-        let call = &prepared.calls()[1];
+        let call = prepared.calls().last().unwrap();
         assert_eq!(names(call), ["retry-key-injection/criterion_1"]);
         assert_eq!(
             call.request().questions.keys().collect::<Vec<_>>(),
@@ -1126,7 +1188,7 @@ mod tests {
     fn an_explanation_example_asks_the_explanation_check_with_two_labels_per_paragraph() {
         let prepared = prepared(&format!("{CANDIDATE}{EXPLANATION}")).unwrap();
 
-        let call = &prepared.calls()[1];
+        let call = prepared.calls().last().unwrap();
         assert_eq!(
             names(call),
             [

@@ -8,7 +8,7 @@
 //! - `check` reads the examples in `showcase/labels/` ([`Labels::parse`]) and
 //!   checks them against the showcase project ([`Labels::prepare`]),
 //!   offline and free;
-//! - `measure` also sends each example's Jev call three times
+//! - `measure` also sends each example's Jev calls three times
 //!   ([`measure()`]), and prints the [`Report`] as Markdown.
 //!
 //! Jev is called exactly as Practice calls it, with the AI crate's request
@@ -61,7 +61,7 @@ const LABELS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../showcase/labels
 /// Measures Jev against the showcase project's labelled examples.
 ///
 /// `check` reads and checks the examples, offline. `measure` also sends each
-/// example's Jev call three times, through `OpenRouter` with the key in
+/// example's Jev calls three times, through `OpenRouter` with the key in
 /// `OPENROUTER_API_KEY`, and prints how often Jev's clear answers disagree
 /// with the labels at candidate cut-offs, how many answers are unclear, and
 /// how much answers spread across runs. Neither changes the assessment
@@ -273,7 +273,7 @@ fn summary(prepared: &Prepared) -> String {
     let items: Vec<&Item> = prepared.items().collect();
     let mut summary = format!(
         "{} examples, {} labels, {} of them by an agent, as seeds still to review.\n",
-        prepared.calls().len(),
+        prepared.examples(),
         items.len(),
         prepared.by_agent(),
     );
@@ -379,6 +379,23 @@ mod tests {
 
         assert_ne!(file.gate(), []);
         assert_eq!(file.candidates(), []);
+    }
+
+    #[test]
+    fn check_counts_each_example_once_and_each_of_its_calls() {
+        let prepared =
+            samples::prepared(&format!("{}{}", samples::GATE, samples::CANDIDATE)).unwrap();
+
+        let summary = summary(&prepared);
+
+        assert!(
+            summary.starts_with("2 examples, 19 labels"),
+            "the gate and the candidate: {summary}"
+        );
+        assert!(
+            summary.ends_with("Measuring them makes 12 calls to Jev: 3 runs of 4.\n"),
+            "the gate's call and the candidate's three: {summary}"
+        );
     }
 
     #[test]

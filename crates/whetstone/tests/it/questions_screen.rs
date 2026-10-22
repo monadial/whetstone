@@ -268,7 +268,10 @@ fn plain_checks_drop_malformed_candidates_before_jev_sees_them() {
             | Asked::CheckExplanation { .. } => None,
         })
         .collect();
-    assert_eq!(checked, ["Well formed?"]);
+    assert_eq!(
+        checked, ["Well formed?"; 3],
+        "the one well-formed candidate's check, in three calls"
+    );
     assert_eq!(
         session.question().rows()[1].trim(),
         "1 passed checks, 4 asked for · see why in actions"
@@ -335,7 +338,11 @@ fn retry_when_none_pass_writes_and_checks_new_candidates() {
         matches!(again.first(), Some(Asked::WriteCandidates { area, .. }) if area.id() == &area_id(DOMAIN)),
         "the generator writes again: {again:#?}"
     );
-    assert_eq!(again.len(), 3, "one write, then a check for each of two");
+    assert_eq!(
+        again.len(),
+        7,
+        "one write, then a check of three calls for each of two"
+    );
     assert_eq!(
         session.question().row_with("Question 1"),
         "Question 1 of 2 · Domain"

@@ -14,7 +14,7 @@ use std::num::NonZeroUsize;
 use tokio_util::sync::CancellationToken;
 use whetstone_core::{
     Area, AreaId, Candidate, Cost, CriterionOutcome, Evidence, GenerationId, ModelId, Probability,
-    Provenance, Question, QuestionCheckAnswers, Role, WrittenCandidate, shuffle_options,
+    Provenance, Question, Role, WrittenCandidate, shuffle_options,
 };
 
 use crate::candidates::{CandidatesOutput, candidates_request};
@@ -28,7 +28,9 @@ use crate::failure::AiError;
 use crate::gate::{gate_answers, gate_request};
 use crate::jev::{JevReply, JevRequest};
 use crate::port::{Ai, CandidateCount, Pending, Reply, RequestFailure, Saved, Stamp};
-use crate::question_check::{question_check_answers, question_check_request};
+use crate::question_check::{
+    CheckCallAnswers, QuestionCheckCall, question_check_answers, question_check_request,
+};
 use crate::reasoning::{QuestionWithoutKey, reasoning_answers, reasoning_request};
 use crate::usage::Usage;
 
@@ -128,16 +130,17 @@ impl Ai for OpenRouterAi {
     fn check_question(
         &self,
         stamp: Stamp,
+        call: QuestionCheckCall,
         evidence: &Evidence,
         candidate: &Candidate,
-    ) -> Pending<QuestionCheckAnswers> {
-        let request = question_check_request(&self.models.jev, evidence, candidate);
+    ) -> Pending<CheckCallAnswers> {
+        let request = question_check_request(&self.models.jev, evidence, candidate, call);
         let candidate = candidate.clone();
         let connection = self.connection.clone();
         let model = self.models.jev.clone();
         Box::pin(async move {
             let reply = connection.evaluate(&request, &never_cancelled()).await?;
-            let content = question_check_answers(&candidate, &reply)?;
+            let content = question_check_answers(&candidate, call, &reply)?;
             let provenance = jev_provenance(stamp, model, &request, reply)?;
             log_reply(&provenance);
             Ok(Reply {
@@ -330,7 +333,11 @@ mod tests {
     use crate::{AiError, ParagraphCheck, QuestionWithoutKey, Timeouts};
 
     const CANDIDATES: &str = include_str!("../fixtures/candidates.json");
-    const QUESTION_CHECK: &str = include_str!("../fixtures/question-check.json");
+    const QUESTION_CHECK_OPTION_RATINGS: &str =
+        include_str!("../fixtures/question-check-option-ratings.json");
+    const QUESTION_CHECK_HINT: &str = include_str!("../fixtures/question-check-hint.json");
+    const QUESTION_CHECK_CANDIDATE: &str =
+        include_str!("../fixtures/question-check-candidate.json");
     const GATE: &str = include_str!("../fixtures/gate.json");
     const REASONING_REPLY: &str = include_str!("../fixtures/reasoning.json");
     const EXPLANATION: &str = include_str!("../fixtures/explanation.json");
@@ -492,21 +499,70 @@ mod tests {
         );
     }
 
+    /// The recorded reply to each call of the sample candidate's check, and
+    /// the tokens and cost it reports.
+    fn recorded_checks() -> [(QuestionCheckCall, &'static str, Usage, f64); 3] {
+        let usage = |input, output| Usage {
+            input_tokens: Some(input),
+            output_tokens: Some(output),
+        };
+        [
+            (
+                QuestionCheckCall::OptionRatings,
+                QUESTION_CHECK_OPTION_RATINGS,
+                usage(1563, 74),
+                0.000_065_646,
+            ),
+            (
+                QuestionCheckCall::Hint,
+                QUESTION_CHECK_HINT,
+                usage(512, 24),
+                0.000_021_504,
+            ),
+            (
+                QuestionCheckCall::Candidate,
+                QUESTION_CHECK_CANDIDATE,
+                usage(2952, 250),
+                0.000_123_984,
+            ),
+        ]
+    }
+
     #[tokio::test]
-    async fn jev_checks_a_candidate_with_the_model_it_was_asked_and_what_it_cost() {
-        let (server, ai) = ai("/systemone", 200, QUESTION_CHECK).await;
-
+    async fn jev_checks_a_candidate_in_three_calls_each_with_the_model_it_was_asked_and_what_it_cost()
+     {
         let candidate = candidate();
-        let reply = ai
-            .check_question(stamp(), &evidence(), &candidate)
-            .await
-            .expect("the recorded reply decodes");
+        let mut answers = Vec::new();
+        for (call, recorded, usage, cost) in recorded_checks() {
+            let (server, ai) = ai("/systemone", 200, recorded).await;
 
-        let answered: Vec<CandidateCheck> = reply.content.iter().map(|(check, _)| check).collect();
+            let reply = ai
+                .check_question(stamp(), call, &evidence(), &candidate)
+                .await
+                .expect("the recorded reply decodes");
+
+            let answered: Vec<CandidateCheck> =
+                reply.content.iter().map(|(check, _)| check).collect();
+            assert_eq!(answered, call.checks(&candidate), "{call:?}");
+            assert_eq!(
+                without_exchanges(&reply.provenance),
+                Provenance::new(stamp().request, Role::Jev, jev_model(), versions())
+                    .with_reported_model(ModelId::new("typesafe/jev-1.14-20261014".to_owned()))
+                    .with_usage(usage)
+                    .with_cost(Cost::new(cost).expect("a recorded cost")),
+                "{call:?}"
+            );
+            let (_, body) = received(&server).await;
+            assert_eq!(body["model"], jev_model().as_str());
+            assert_eq!(body.get("provider"), None::<&Value>);
+            answers.push(reply.content);
+        }
+
+        let answers = CheckCallAnswers::merged(answers).expect("each call's answers once");
+        let answered: Vec<CandidateCheck> = answers.iter().map(|(check, _)| check).collect();
         assert_eq!(answered, candidate.checks(), "an answer to every check");
         let rating = |letter| {
-            reply
-                .content
+            answers
                 .get(CandidateCheck::Option(letter))
                 .map(Probability::get)
         };
@@ -516,104 +572,67 @@ mod tests {
                 rating(OptionLetter::B),
                 rating(OptionLetter::C)
             ],
-            [Some(0.98), Some(0.01), Some(0.01)]
+            [Some(0.99), Some(0.01), Some(0.02)]
         );
         assert_eq!(
-            reply
-                .content
+            answers
                 .get(CandidateCheck::NoGiveaway)
                 .map(Probability::get),
-            Some(0.15)
+            Some(0.2)
         );
         let probability = |value| Probability::new(value).expect("from 0 to 1");
         assert_eq!(
-            reply.content.depth(),
-            Depth::new([0.11, 0.29, 0.6].map(probability), 1.48).expect("from 0 to 2"),
+            answers.depth(),
+            Depth::new([0.12, 0.3, 0.58].map(probability), 1.46).expect("from 0 to 2"),
             "the depth's distribution and expected value, as returned"
-        );
-        assert_eq!(
-            without_exchanges(&reply.provenance),
-            Provenance::new(stamp().request, Role::Jev, jev_model(), versions())
-                .with_reported_model(ModelId::new("typesafe/jev-1.14-20261014".to_owned()))
-                .with_usage(Usage {
-                    input_tokens: Some(3416),
-                    output_tokens: Some(340),
-                })
-                .with_cost(Cost::new(0.000_143_472).expect("0.000143472 is a cost"))
-        );
-        let (_, body) = received(&server).await;
-        assert_eq!(body["model"], jev_model().as_str());
-        assert_eq!(body.get("provider"), None::<&Value>);
-        let state: Vec<&str> = body["state"]
-            .as_object()
-            .expect("the state is an object")
-            .keys()
-            .map(String::as_str)
-            .collect();
-        assert_eq!(state, ["evidence", "candidate"]);
-        let questions: Vec<&str> = body["questions"]
-            .as_object()
-            .expect("the questions are an object")
-            .keys()
-            .map(String::as_str)
-            .collect();
-        assert_eq!(
-            questions,
-            [
-                "about_area",
-                "answerable",
-                "criterion_1",
-                "criterion_1_minimum",
-                "criterion_2",
-                "criterion_2_minimum",
-                "depth",
-                "hint_hides_answer_key",
-                "hint_points_to_evidence",
-                "needs_change",
-                "no_giveaway",
-                "option_a",
-                "option_b",
-                "option_c",
-                "rationale_a",
-                "rationale_b",
-                "rationale_c",
-                "why_it_matters",
-            ],
-            "every check and the depth score, in the same call, named per criterion and per \
-             rationale"
         );
     }
 
     #[tokio::test]
-    async fn jev_s_question_check_keeps_each_question_sent_with_its_answer_as_returned() {
-        let (server, ai) = ai("/systemone", 200, QUESTION_CHECK).await;
+    async fn each_call_of_jev_s_question_check_keeps_each_question_sent_with_its_answer_as_returned()
+     {
+        let mut kept = Vec::new();
+        for (call, recorded, ..) in recorded_checks() {
+            let (server, ai) = ai("/systemone", 200, recorded).await;
 
-        let reply = ai
-            .check_question(stamp(), &evidence(), &candidate())
-            .await
-            .expect("the recorded reply decodes");
+            let reply = ai
+                .check_question(stamp(), call, &evidence(), &candidate())
+                .await
+                .expect("the recorded reply decodes");
 
-        let (_, body) = received(&server).await;
-        let probability = |value| Probability::new(value).expect("from 0 to 1");
-        let exchanges = reply.provenance.exchanges();
-        assert_kept_as_sent(exchanges, &body);
-        let kept = yes_no_answers(exchanges);
-        for answer in [
-            ("option_a", 0.98),
-            ("option_b", 0.01),
-            ("no_giveaway", 0.15),
-            ("criterion_2_minimum", 0.93),
-        ] {
-            assert!(kept.contains(&answer), "{answer:?}, as returned: {kept:?}");
+            let (_, body) = received(&server).await;
+            let exchanges = reply.provenance.exchanges();
+            assert_kept_as_sent(exchanges, &body);
+            assert_eq!(
+                exchanges.len(),
+                call.checks(&candidate()).len() + usize::from(call == QuestionCheckCall::Candidate),
+                "every question the {call:?} call sent, and only those"
+            );
+            kept.extend(exchanges.iter().cloned());
         }
-        assert_eq!(kept.len(), 17, "every yes/no question: {kept:?}");
-        let depth = exchanges.iter().find_map(|exchange| match exchange {
+
+        let answers = yes_no_answers(&kept);
+        for answer in [
+            ("option_a", 0.99),
+            ("option_b", 0.01),
+            ("no_giveaway", 0.2),
+            ("hint_hides_answer_key", 0.27),
+            ("criterion_2_minimum", 0.92),
+        ] {
+            assert!(
+                answers.contains(&answer),
+                "{answer:?}, as returned: {answers:?}"
+            );
+        }
+        assert_eq!(answers.len(), 17, "every yes/no question: {answers:?}");
+        let probability = |value| Probability::new(value).expect("from 0 to 1");
+        let depth = kept.iter().find_map(|exchange| match exchange {
             JevExchange::Score { name, answer, .. } if name == "depth" => Some(*answer),
             JevExchange::YesNo { .. } | JevExchange::Score { .. } => None,
         });
         assert_eq!(
             depth,
-            Some(Depth::new([0.11, 0.29, 0.6].map(probability), 1.48).expect("from 0 to 2")),
+            Some(Depth::new([0.12, 0.3, 0.58].map(probability), 1.46).expect("from 0 to 2")),
             "the depth's distribution and expected value, as returned"
         );
     }
@@ -763,7 +782,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_reasoning_reply_that_answers_other_questions_is_an_invalid_reply() {
-        let (_server, ai) = ai("/systemone", 200, QUESTION_CHECK).await;
+        let (_server, ai) = ai("/systemone", 200, QUESTION_CHECK_CANDIDATE).await;
         let question = question();
 
         assert_eq!(
@@ -1034,9 +1053,14 @@ mod tests {
         let (_server, ai) = ai("/systemone", 400, body).await;
 
         assert_eq!(
-            ai.check_question(stamp(), &evidence(), &candidate())
-                .await
-                .err(),
+            ai.check_question(
+                stamp(),
+                QuestionCheckCall::OptionRatings,
+                &evidence(),
+                &candidate()
+            )
+            .await
+            .err(),
             Some(RequestFailure::InvalidRequest)
         );
     }
@@ -1049,9 +1073,14 @@ mod tests {
         let (_server, ai) = ai("/systemone", 200, other).await;
 
         assert_eq!(
-            ai.check_question(stamp(), &evidence(), &candidate())
-                .await
-                .err(),
+            ai.check_question(
+                stamp(),
+                QuestionCheckCall::OptionRatings,
+                &evidence(),
+                &candidate()
+            )
+            .await
+            .err(),
             Some(RequestFailure::InvalidReply)
         );
     }
@@ -1072,7 +1101,12 @@ mod tests {
                 .await
                 .err(),
             check
-                .check_question(stamp(), &evidence(), &candidate())
+                .check_question(
+                    stamp(),
+                    QuestionCheckCall::OptionRatings,
+                    &evidence(),
+                    &candidate(),
+                )
                 .await
                 .err(),
         ]
@@ -1175,7 +1209,12 @@ mod tests {
         let started = tokio::time::Instant::now();
         assert_eq!(
             check
-                .check_question(stamp(), &evidence(), &candidate())
+                .check_question(
+                    stamp(),
+                    QuestionCheckCall::OptionRatings,
+                    &evidence(),
+                    &candidate(),
+                )
                 .await
                 .err(),
             Some(RequestFailure::TimedOut)
@@ -1287,10 +1326,15 @@ mod tests {
             .write_candidates(stamp(), &evidence(), &area(), two_per_area())
             .await
             .expect("the recorded reply decodes");
-        let (_jev, jev) = ai("/systemone", 200, QUESTION_CHECK).await;
-        jev.check_question(stamp(), &evidence(), &candidate())
-            .await
-            .expect("the recorded reply decodes");
+        let (_jev, jev) = ai("/systemone", 200, QUESTION_CHECK_OPTION_RATINGS).await;
+        jev.check_question(
+            stamp(),
+            QuestionCheckCall::OptionRatings,
+            &evidence(),
+            &candidate(),
+        )
+        .await
+        .expect("the recorded reply decodes");
         let (_gate, gate) = ai("/systemone", 200, GATE).await;
         gate.check_areas(stamp(), &evidence(), &[area(), observability()])
             .await
@@ -1328,7 +1372,7 @@ mod tests {
             log.contains("cost_usd=0.036766"),
             "the generator's cost: {log}"
         );
-        assert!(log.contains("cost_usd=0.000143472"), "Jev's cost: {log}");
+        assert!(log.contains("cost_usd=6.5646e-5"), "Jev's cost: {log}");
         assert!(log.contains("cost_usd=5.1828e-5"), "the gate's cost: {log}");
         assert!(log.contains("request=1"), "Whetstone's identity: {log}");
         assert!(
@@ -1338,7 +1382,7 @@ mod tests {
         for never in [
             // Jev's answers: an option rating, the depth, the gate's answer
             // about an area, and an explanation check's.
-            "0.98",
+            "0.99",
             "1.47",
             "0.89",
             "0.71",
