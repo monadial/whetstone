@@ -362,72 +362,7 @@ impl Evidence {
                 .filter(|connection| connection.is_connected_code_for(&file.path))
                 .count();
         }
-        let mut found: Vec<(Place, SecretFinding)> = find_secrets(change.message())
-            .into_iter()
-            .map(|matched| (Place::CommitMessage, matched))
-            .collect();
-        for file in &files {
-            let Some(sent) = &file.sent else {
-                continue;
-            };
-            found.extend(
-                find_secrets(&sent.content)
-                    .into_iter()
-                    .map(|matched| (Place::Content(file.index), matched)),
-            );
-            // A deleted file's content holds every line its diff removes.
-            if sent.side == Side::After {
-                let removed = removed_lines(&sent.diff);
-                found.extend(
-                    find_secrets(&sent.diff)
-                        .into_iter()
-                        .filter(|matched| removed.contains(&matched.line()))
-                        .map(|matched| (Place::Diff(file.index), matched)),
-                );
-            }
-        }
-        for connection in &connections {
-            let Some(sent) = connection.sent() else {
-                continue;
-            };
-            found.extend(find_secrets(sent.text).into_iter().map(|matched| {
-                (
-                    Place::Connection(connection.id.clone()),
-                    matched.lines_down(sent.first_line - 1),
-                )
-            }));
-        }
-        for area in areas {
-            let id = area.id();
-            let texts = [
-                (Place::AreaName(id.clone()), area.name()),
-                (Place::AreaDescription(id.clone()), area.description()),
-                (Place::AreaPrompt(id.clone()), area.prompt()),
-            ];
-            for (place, text) in texts {
-                found.extend(
-                    find_secrets(text)
-                        .into_iter()
-                        .map(|matched| (place.clone(), matched)),
-                );
-            }
-        }
-        let findings = found
-            .into_iter()
-            .map(|key| {
-                let status = if choices.not_secrets.contains(&key) {
-                    FindingStatus::NotASecret
-                } else {
-                    FindingStatus::Unresolved
-                };
-                let (place, matched) = key;
-                Finding {
-                    place,
-                    matched,
-                    status,
-                }
-            })
-            .collect();
+        let findings = findings(change.message(), &files, &connections, areas, choices);
         let size = change.message().len()
             + files
                 .iter()
@@ -600,6 +535,85 @@ fn room(message: &str, files: &[EvidenceFile], areas_size: usize) -> usize {
         .filter_map(|file| file.size)
         .sum();
     Evidence::SIZE_LIMIT.saturating_sub(message.len() + files_size + areas_size)
+}
+
+/// The possible secrets in what is sent: in `message`, in each included
+/// file of `files` and connection of `connections`, and in each of `areas`'
+/// name, description and prompt, in that order, each resolved or not as
+/// `choices` say.
+fn findings(
+    message: &str,
+    files: &[EvidenceFile],
+    connections: &[EvidenceConnection],
+    areas: &[Area],
+    choices: &ReviewChoices,
+) -> Vec<Finding> {
+    let mut found: Vec<(Place, SecretFinding)> = find_secrets(message)
+        .into_iter()
+        .map(|matched| (Place::CommitMessage, matched))
+        .collect();
+    for file in files {
+        let Some(sent) = &file.sent else {
+            continue;
+        };
+        found.extend(
+            find_secrets(&sent.content)
+                .into_iter()
+                .map(|matched| (Place::Content(file.index), matched)),
+        );
+        // A deleted file's content holds every line its diff removes.
+        if sent.side == Side::After {
+            let removed = removed_lines(&sent.diff);
+            found.extend(
+                find_secrets(&sent.diff)
+                    .into_iter()
+                    .filter(|matched| removed.contains(&matched.line()))
+                    .map(|matched| (Place::Diff(file.index), matched)),
+            );
+        }
+    }
+    for connection in connections {
+        let Some(sent) = connection.sent() else {
+            continue;
+        };
+        found.extend(find_secrets(sent.text).into_iter().map(|matched| {
+            (
+                Place::Connection(connection.id.clone()),
+                matched.lines_down(sent.first_line - 1),
+            )
+        }));
+    }
+    for area in areas {
+        let id = area.id();
+        let texts = [
+            (Place::AreaName(id.clone()), area.name()),
+            (Place::AreaDescription(id.clone()), area.description()),
+            (Place::AreaPrompt(id.clone()), area.prompt()),
+        ];
+        for (place, text) in texts {
+            found.extend(
+                find_secrets(text)
+                    .into_iter()
+                    .map(|matched| (place.clone(), matched)),
+            );
+        }
+    }
+    found
+        .into_iter()
+        .map(|key| {
+            let status = if choices.not_secrets.contains(&key) {
+                FindingStatus::NotASecret
+            } else {
+                FindingStatus::Unresolved
+            };
+            let (place, matched) = key;
+            Finding {
+                place,
+                matched,
+                status,
+            }
+        })
+        .collect()
 }
 
 /// The 1-based lines of `diff` that its hunks remove.
