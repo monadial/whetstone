@@ -88,7 +88,7 @@ These rules apply from the Practice spec, when the AI crate and the session reco
 | 42 | No `std::env::set_var` or `remove_var`. Tests pass environment variables through `Command::env` or an injected `Environment`. | **Lint/CI**: `unsafe_code = "forbid"` (both are unsafe in edition 2024). |
 | 43 | *From the AI crate:* `#[instrument]` on functions that take secrets, source text or learner reasoning uses `skip` or `skip_all`. Rig's content telemetry stays off. | **Review**. |
 | 44 | Logging starts once, at launch, and writes to `whetstone.log` in the state directory. If a non-blocking writer (`tracing-appender`) is added, its `WorkerGuard` is bound to a named variable that lives until exit. | **Review**. |
-| 45 | Workflows set least-privilege `permissions` (`contents: read` by default), pin actions to a full commit SHA with a version comment, check out with `persist-credentials: false`, and never check out PR code under `pull_request_target`. | **Review**. |
+| 45 | Workflows set least-privilege `permissions` (`contents: read` by default), pin actions to a full commit SHA with a version comment, check out with `persist-credentials: false`, and never check out PR code under `pull_request_target`. The exception is `release.yml`, which dist generates (ADR 0003): its pins come from `dist-workspace.toml`, whose comments carry the versions, and it grants `contents: write` workflow-wide to publish the release. | **Lint/CI**: the repository requires full-SHA pins, and the Release config job fails when `release.yml` isn't what dist generates. **Review**: the rest. |
 
 ## Structure and tests
 
@@ -148,9 +148,10 @@ The root `clippy.toml` allows `unwrap`, `expect`, `panic!` and printing in tests
 | Docs | `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps --locked` | Linux x86_64 |
 | cargo-deny | `cargo deny --locked check` | Linux x86_64 (`deny.toml` checks every supported target at once) |
 | cargo-shear | `cargo shear --deny-warnings --locked` | Linux x86_64 |
+| Release config | `dist generate --check`, then `cargo about generate --locked --fail -o /dev/null about.hbs`: `release.yml` is what dist generates from `dist-workspace.toml`, and the licenses each release archive carries can be written ([`docs/releasing.md`](docs/releasing.md)) | Linux x86_64 |
 | Clippy and tests | `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`, then `cargo nextest run --workspace --all-features --locked --profile ci`, then `cargo test --workspace --all-features --locked --doc` | Linux and macOS, each on x86_64 and arm64 |
 
-Run the same commands locally before pushing. The tools are `cargo-nextest`, `cargo-deny` and `cargo-shear`, at the versions the workflow pins.
+Run the same commands locally before pushing. The tools are `cargo-nextest`, `cargo-deny`, `cargo-shear`, dist and `cargo-about`, at the versions the workflow pins.
 
 ### The keyed end-to-end job
 

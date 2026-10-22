@@ -8,6 +8,11 @@ version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
+    # dist generates release.yml, and pins its actions from
+    # dist-workspace.toml, which Dependabot doesn't read. docs/releasing.md
+    # says when to update those pins by hand.
+    exclude-paths:
+      - .github/workflows/release.yml
     schedule:
       interval: weekly
     groups:

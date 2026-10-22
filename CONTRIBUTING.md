@@ -44,6 +44,8 @@ cargo deny --locked check
 cargo shear --deny-warnings --locked
 ```
 
+A change to the release setup (`dist-workspace.toml`, `about.toml`, `about.hbs` or `.github/build-setup.yml`) also needs the Release config job's two commands, from the same table, and the dist and cargo-about versions the release pins.
+
 Snapshot tests ([insta](https://insta.rs)) check every screen at 120×32 and 80×24. When a change alters a screen on purpose, review the new snapshots with `cargo insta review`, and commit them with the change.
 
 Tests make no network calls. The live tests call OpenRouter with a real key, so they are ignored, and running them is optional. CI runs them with the project's key. [The keyed end-to-end job](CODING_STANDARDS.md#the-keyed-end-to-end-job) says how to run them with your own key, which costs a few cents.

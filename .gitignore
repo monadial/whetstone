@@ -8,3 +8,6 @@
 
 # Cargo build output.
 /target/
+
+# Written by cargo-about before each release build (about.toml).
+/THIRD-PARTY-LICENSES.md

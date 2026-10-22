@@ -1,0 +1,16 @@
+# Third-party licenses
+
+Whetstone is licensed under Apache-2.0 (see LICENSE). It is built with the crates below, each under the license whose text follows it.
+{{#each licenses}}
+
+## {{{name}}}
+
+Used by:
+{{#each used_by}}
+- {{{crate.name}}} {{{crate.version}}}
+{{/each}}
+
+```text
+{{{text}}}
+```
+{{/each}}
