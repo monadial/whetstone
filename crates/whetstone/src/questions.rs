@@ -16,6 +16,13 @@
 //! written reasoning is assessed. Each question's draft stays in memory
 //! until it is submitted.
 //!
+//! Submit first checks the reasoning with the secret rules, blocking and
+//! warning alike, before anything is saved or sent. A possible secret stops
+//! that Submit, and each shows under the editor with its rule and masked
+//! excerpt. Submitting again with the reasoning unchanged sends it as it is,
+//! which is the learner's "Not a secret"; any edit to its text clears the
+//! notice, and the next Submit checks it again.
+//!
 //! The help controls and signals are reached by focus, like the rest, and
 //! Hint also by `h`, but never while the reasoning is edited, where every
 //! key stays text (rule 29). None is held against the learner:
@@ -88,7 +95,7 @@ use ratatui::widgets::{Block, List, Padding, Paragraph, Wrap};
 use whetstone_ai::{ParagraphCheck, RequestFailure, WrittenParagraph};
 use whetstone_core::{
     Area, CandidateId, CriterionOutcome, Evidence, OptionLetter, Picked, Probability, Question,
-    QuestionCount, Response,
+    QuestionCount, Response, SecretFinding, find_secrets,
 };
 
 use crate::cannot_answer::{self, CannotAnswer};
@@ -352,6 +359,9 @@ const NO_CHOICE: &str = "choose an option";
 /// optional.
 const OPTIONAL_NOTE: &str = "Optional: explain why, to have your reasoning assessed.";
 
+/// What the learner can do about a possible secret in their reasoning.
+const SECRET_CHOICES: &str = "Edit your reasoning, or submit again to send it as it is.";
+
 /// The learner's draft response to one question, kept in memory until it
 /// is submitted.
 #[derive(Debug, Default)]
@@ -363,6 +373,10 @@ struct Draft {
     /// Why the last Submit wasn't saved, if it wasn't: the draft stays, and
     /// nothing was submitted.
     unsaved: Option<StoreError>,
+    /// The possible secrets the last Submit found in the reasoning, while
+    /// its text is unchanged since. That Submit stopped, before saving or
+    /// sending anything; the next sends the reasoning as it is.
+    secrets: Vec<SecretFinding>,
 }
 
 impl Draft {
@@ -407,6 +421,38 @@ impl Draft {
     /// Whether the reasoning editor has focus, so that it grows.
     fn editor_grows(&self) -> bool {
         self.mode == Mode::Editing || self.focused() == Control::Reasoning
+    }
+
+    /// Applies `edit` to the reasoning, and forgets the possible secrets
+    /// found in it if the edit changes its text, so the next Submit checks
+    /// it again.
+    fn edit_reasoning<T>(&mut self, edit: impl FnOnce(&mut ReasoningEditor) -> T) -> T {
+        let before = (!self.secrets.is_empty()).then(|| self.reasoning.text().to_owned());
+        let edited = edit(&mut self.reasoning);
+        if before.is_some_and(|before| before != self.reasoning.text()) {
+            self.secrets.clear();
+        }
+        edited
+    }
+
+    /// Whether Submit goes ahead: unless it is the first since the
+    /// reasoning last changed and it finds possible secrets in it, which it
+    /// then keeps to show. The learner's second Submit, with the reasoning
+    /// unchanged, is their "Not a secret".
+    fn passes_the_secret_check(&mut self) -> bool {
+        if self.secrets.is_empty() {
+            self.secrets = find_secrets(self.reasoning.text());
+            if !self.secrets.is_empty() {
+                let rules: Vec<&str> = self
+                    .secrets
+                    .iter()
+                    .map(|secret| secret.rule().name())
+                    .collect();
+                tracing::info!(?rules, "a possible secret in the reasoning stopped Submit");
+                return false;
+            }
+        }
+        true
     }
 }
 
@@ -755,7 +801,7 @@ impl Questions {
         } else if let Attempt::Draft(draft) = &mut self.picked[self.at].attempt
             && draft.mode == Mode::Editing
         {
-            draft.reasoning.paste(text);
+            draft.edit_reasoning(|reasoning| reasoning.paste(text));
         }
     }
 
@@ -1241,7 +1287,7 @@ impl Questions {
         };
         if draft.mode == Mode::Editing {
             let [_, body] = layout(self.shortfall, beside);
-            match draft.reasoning.apply(command, editor_width(body)) {
+            match draft.edit_reasoning(|reasoning| reasoning.apply(command, editor_width(body))) {
                 Editing::Stay => {}
                 Editing::Stop => draft.mode = Mode::Moving,
                 Editing::Next => {
@@ -1264,6 +1310,7 @@ impl Questions {
                 Control::Submit => {
                     if submit_disabled.is_none()
                         && let Some(response) = draft.response()
+                        && draft.passes_the_secret_check()
                     {
                         draft.unsaved = None;
                         self.submitted = Some(response);
@@ -1488,8 +1535,40 @@ impl Questions {
         lines
     }
 
+    /// What shows right under the reasoning editor while the last Submit
+    /// found possible secrets in the reasoning, unchanged since: each, with
+    /// its rule and masked excerpt, then what the learner can do, in rows
+    /// `width` cells wide drawn with `theme`.
+    fn secret_notice(draft: &Draft, theme: &Theme, width: usize) -> Vec<Line<'static>> {
+        if draft.secrets.is_empty() {
+            return Vec::new();
+        }
+        let mut lines: Vec<Line<'static>> = draft
+            .secrets
+            .iter()
+            .flat_map(|secret| {
+                columns::wrap(
+                    &format!(
+                        "Possible secret in your reasoning: {}, {}",
+                        secret.rule().name(),
+                        secret.excerpt()
+                    ),
+                    width,
+                )
+            })
+            .map(Line::raw)
+            .collect();
+        lines.extend(
+            columns::wrap(SECRET_CHOICES, width)
+                .into_iter()
+                .map(|line| Line::styled(line, theme.muted)),
+        );
+        lines
+    }
+
     /// The controls below the reasoning editor, with `draft`'s focus, drawn
-    /// with `theme` in rows `width` cells wide: Submit response and Inspect
+    /// with `theme` in rows `width` cells wide: any possible secrets the
+    /// last Submit found in the reasoning, then Submit response and Inspect
     /// source, each on its own row, then the help controls and signals,
     /// packed, then why Submit didn't save the response, if it didn't.
     fn draft_controls(&self, draft: &Draft, theme: &Theme, width: usize) -> Vec<Line<'static>> {
@@ -1504,7 +1583,8 @@ impl Questions {
                 },
             )
         };
-        let mut controls = theme.control_rows(
+        let mut controls = Self::secret_notice(draft, theme, width);
+        controls.extend(theme.control_rows(
             Control::Submit.label(),
             ControlState {
                 focused: focused == Some(Control::Submit),
@@ -1512,7 +1592,7 @@ impl Questions {
                 ..ControlState::default()
             },
             width,
-        );
+        ));
         controls.push(control(Control::InspectSource, None));
         let skip = self
             .skip_to(self.at)

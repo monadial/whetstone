@@ -58,6 +58,7 @@ mod question_check;
 mod questions_screen;
 mod questions_setting;
 mod reasoning_evaluation;
+mod reasoning_secrets;
 mod related;
 mod relevance_gate;
 mod repo;
