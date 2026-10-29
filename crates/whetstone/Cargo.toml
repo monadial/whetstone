@@ -53,7 +53,7 @@ futures-util = { version = "0.3", default-features = false }
 # blocking thread; it adds no crate to the tree. gix makes a breaking 0.x
 # release about monthly, so the minor version is pinned and upgraded on
 # purpose.
-gix = { version = "0.89", default-features = false, features = ["sha1", "blob-diff", "parallel"] }
+gix = { version = "0.90", default-features = false, features = ["sha1", "blob-diff", "parallel"] }
 # Blocks the signals the UI loop acts on in every thread but the one that
 # takes them, through safe calls, which neither std nor rustix offers.
 # Already in the lock at this version, through rexpect, which the
